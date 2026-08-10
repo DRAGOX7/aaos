@@ -1,0 +1,43 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime and user data
+data/auth/
+data/credentials/
+data/database/
+data/chroma/
+data/documents/
+data/logs/
+data/temporary/
+
+# Python
+**pycache**/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+
+# JavaScript and framework output
+node_modules/
+.next/
+
+# Coverage output
+.coverage
+.coverage.*
+coverage/
+coverage.xml
+htmlcov/
+lcov.info
+
+# IDE and system files
+.refact/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
