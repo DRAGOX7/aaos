@@ -45,6 +45,4 @@ These are planned capabilities assigned to gated phases. They are not claims abo
 
 ## Current implementation status
 
-**Bootstrap / pre-Phase 0.**
-
-This repository currently contains governance documentation only. No application, model, Moodle, RAG, MCP, database, container, REPL, dashboard, or agent functionality has been implemented.
+**Phase 0 is in progress. Phase 0A, Phase 0B, and Phase 0C have passed their sub-gates. Phase 0 as a whole has not passed yet.**

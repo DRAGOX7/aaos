@@ -4,6 +4,6 @@ AAOS (Autonomous Academic Operating System) is a local-first system intended to 
 
 ## Development status
 
-Current implementation: Phase 0B — Python environment/tooling implemented, Phase 0 still in progress.
+Current implementation: Phase 0C — minimal FastAPI foundation implemented; Phase 0 remains in progress.
 
-Development is governed by the phase gates in [`docs/PHASES.md`](docs/PHASES.md). No application implementation has begun.
+Development remains governed by the phase gates in [`docs/PHASES.md`](docs/PHASES.md). Phase 0 is not complete.
