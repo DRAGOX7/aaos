@@ -22,7 +22,7 @@ class ChatMessage:
 
 @dataclass(frozen=True, slots=True)
 class ChatRequest:
-    """An ordered, reasoning-disabled request for visible chat generation."""
+    """An ordered request for visible chat generation."""
 
     messages: tuple[ChatMessage, ...]
     max_output_tokens: int | None = None
@@ -43,8 +43,6 @@ class ChatRequest:
             raise ValueError("max_output_tokens must be positive")
         if not isinstance(self.reasoning, bool):
             raise ValueError("reasoning must be a bool")
-        if self.reasoning:
-            raise ValueError("reasoning must be disabled")
 
 
 @dataclass(frozen=True, slots=True)

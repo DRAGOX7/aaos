@@ -156,9 +156,8 @@ def test_closed_generate_precedes_request_validation(invalid_request: str) -> No
         request = ChatRequest(
             messages=(ChatMessage(role="user", content="SECRET_PROMPT"),),
             max_output_tokens=8193 if invalid_request == "oversized" else None,
+            reasoning=invalid_request == "reasoning",
         )
-        if invalid_request == "reasoning":
-            object.__setattr__(request, "reasoning", True)
 
         with pytest.raises(InferenceError) as caught:
             await gateway.generate(request)
@@ -313,8 +312,10 @@ def test_generate_rejects_enabled_reasoning_before_transport() -> None:
         requests.append(request)
         return httpx2.Response(500)
 
-    request = ChatRequest(messages=(ChatMessage(role="user", content="Hello"),))
-    object.__setattr__(request, "reasoning", True)
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="Hello"),),
+        reasoning=True,
+    )
 
     with pytest.raises(
         UnsupportedInferenceFeatureError,

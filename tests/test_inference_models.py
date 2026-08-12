@@ -75,12 +75,14 @@ def test_chat_request_rejects_non_boolean_reasoning() -> None:
         )
 
 
-def test_chat_request_rejects_enabled_reasoning() -> None:
-    with pytest.raises(ValueError, match="reasoning must be disabled"):
-        ChatRequest(
-            messages=(ChatMessage(role="user", content="Hello"),),
-            reasoning=True,
-        )
+@pytest.mark.parametrize("reasoning", [False, True])
+def test_chat_request_accepts_boolean_reasoning(reasoning: bool) -> None:
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="Hello"),),
+        reasoning=reasoning,
+    )
+
+    assert request.reasoning is reasoning
 
 
 @pytest.mark.parametrize(
