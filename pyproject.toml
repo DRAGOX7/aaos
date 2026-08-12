@@ -5,7 +5,9 @@ description = "Local-first, policy-governed academic workflow assistant"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "alembic>=1.19.1",
     "fastapi>=0.141.1",
+    "sqlalchemy>=2,<3",
     "uvicorn>=0.52.1",
 ]
 

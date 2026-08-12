@@ -55,4 +55,4 @@ The model never receives direct, unrestricted access to credentials, Moodle auth
 - **Environment:** contains the local or external academic systems and data being observed or changed.
 - **Structured observation:** reports a tool or environment outcome without granting it authority over the next action.
 
-This document describes intended architecture. The current implementation status remains Bootstrap / pre-Phase 0.
+This document describes intended architecture. Phase 0D has established the SQLite/Alembic baseline, while Phase 0 as a whole remains in progress.
