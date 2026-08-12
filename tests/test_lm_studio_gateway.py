@@ -145,6 +145,32 @@ def test_gateway_cleanup_is_idempotent_and_closed_use_fails_before_transport(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("invalid_request", ("oversized", "reasoning"))
+def test_closed_generate_precedes_request_validation(invalid_request: str) -> None:
+    transport = RecordingTransport()
+
+    async def scenario() -> None:
+        gateway = LMStudioGateway(AppSettings(), transport)
+        await gateway.aclose()
+
+        request = ChatRequest(
+            messages=(ChatMessage(role="user", content="SECRET_PROMPT"),),
+            max_output_tokens=8193 if invalid_request == "oversized" else None,
+        )
+        if invalid_request == "reasoning":
+            object.__setattr__(request, "reasoning", True)
+
+        with pytest.raises(InferenceError) as caught:
+            await gateway.generate(request)
+
+        assert str(caught.value) == "LM Studio gateway is closed"
+        assert caught.value.__cause__ is None
+        assert transport.request_count == 0
+        assert transport.close_count == 1
+
+    asyncio.run(scenario())
+
+
 def test_generate_sends_one_direct_non_reasoning_request() -> None:
     requests: list[httpx2.Request] = []
 

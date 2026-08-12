@@ -66,6 +66,8 @@ class LMStudioGateway:
         operation = "generation"
         model = self._settings.lm_studio_model
 
+        if self._closed:
+            raise InferenceError("LM Studio gateway is closed") from None
         if request.reasoning:
             raise UnsupportedInferenceFeatureError(
                 "Reasoning is not supported in Phase 0E"
