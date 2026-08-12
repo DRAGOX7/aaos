@@ -13,8 +13,9 @@ from .gateway import (
     InferenceConnectionError,
     InferenceProtocolError,
     InferenceTimeoutError,
+    UnsupportedInferenceFeatureError,
 )
-from .models import ModelAvailability
+from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
 
 _SUPPORTED_MODEL_TYPES = frozenset({"llm", "embedding"})
 
@@ -63,6 +64,60 @@ class LMStudioGateway:
         try:
             payload: object = response.json()
             return _parse_availability(payload, configured_model=model)
+        except (TypeError, ValueError):
+            raise InferenceProtocolError(
+                f"LM Studio returned invalid data during {operation} for model '{model}'"
+            ) from None
+
+    async def generate(self, request: ChatRequest) -> ChatResponse:
+        """Send one plain chat request and return validated visible output."""
+        operation = "generation"
+        model = self._settings.lm_studio_model
+
+        if request.reasoning:
+            raise UnsupportedInferenceFeatureError(
+                "Reasoning is not supported in Phase 0E"
+            )
+        if (
+            request.max_output_tokens is not None
+            and request.max_output_tokens > self._settings.lm_studio_context_length
+        ):
+            raise ValueError("max_output_tokens exceeds the configured context length")
+
+        request_payload: dict[str, object] = {
+            "model": model,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in request.messages
+            ],
+            "stream": False,
+            "reasoning_effort": "none",
+        }
+        if request.max_output_tokens is not None:
+            request_payload["max_tokens"] = request.max_output_tokens
+
+        try:
+            response = await self._client.post(
+                "/v1/chat/completions", json=request_payload
+            )
+        except httpx2.TimeoutException:
+            raise InferenceTimeoutError(
+                f"LM Studio request timed out during {operation} for model '{model}'"
+            ) from None
+        except httpx2.RequestError:
+            raise InferenceConnectionError(
+                f"LM Studio connection failed during {operation} for model '{model}'"
+            ) from None
+
+        if not response.is_success:
+            raise InferenceBackendError(
+                f"LM Studio backend failed during {operation} for model '{model}' "
+                f"(status {response.status_code})"
+            ) from None
+
+        try:
+            payload: object = response.json()
+            return _parse_generation(payload)
         except (TypeError, ValueError):
             raise InferenceProtocolError(
                 f"LM Studio returned invalid data during {operation} for model '{model}'"
@@ -117,6 +172,59 @@ def _parse_availability(payload: object, *, configured_model: str) -> ModelAvail
         available_models=tuple(available_models),
         loaded_context_lengths=context_tuple,
     )
+
+
+def _parse_generation(payload: object) -> ChatResponse:
+    if not isinstance(payload, dict):
+        raise ValueError("generation response must be an object")
+
+    model = payload.get("model")
+    choices = payload.get("choices")
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("model must be a non-empty string")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("choices must be a non-empty list")
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ValueError("choice must be an object")
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("message must be an object")
+    if "tool_calls" in message:
+        raise ValueError("tool calls are not supported")
+    for reasoning_field in ("reasoning", "reasoning_content"):
+        reasoning_value = message.get(reasoning_field)
+        if reasoning_value not in (None, "", [], {}):
+            raise ValueError("reasoning content is not supported")
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("content must be a non-empty string")
+
+    usage = _parse_usage(payload.get("usage")) if "usage" in payload else None
+    return ChatResponse(content=content, model_identifier=model, usage=usage)
+
+
+def _parse_usage(payload: object) -> TokenUsage | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("usage must be an object")
+    prompt_tokens = _parse_token_count(payload.get("prompt_tokens"))
+    completion_tokens = _parse_token_count(payload.get("completion_tokens"))
+    total_tokens = _parse_token_count(payload.get("total_tokens"))
+    return TokenUsage(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _parse_token_count(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("token count must be a non-negative integer")
+    return value
 
 
 def _parse_loaded_context_lengths(loaded_instances: list[Any]) -> list[int]:
