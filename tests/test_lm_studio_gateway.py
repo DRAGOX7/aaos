@@ -16,13 +16,40 @@ from aaos.inference import (
     ChatResponse,
     InferenceBackendError,
     InferenceConnectionError,
+    InferenceError,
     InferenceProtocolError,
     InferenceTimeoutError,
     ModelAvailability,
+    ModelUnavailableError,
     TokenUsage,
     UnsupportedInferenceFeatureError,
 )
 from aaos.inference.lm_studio import LMStudioGateway
+
+
+class RecordingTransport(httpx2.AsyncBaseTransport):
+    """Record requests and closes without contacting a network."""
+
+    def __init__(self) -> None:
+        self.request_count = 0
+        self.close_count = 0
+
+    async def handle_async_request(
+        self, request: httpx2.Request
+    ) -> httpx2.Response:
+        self.request_count += 1
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "Visible"}}
+                ],
+            },
+        )
+
+    async def aclose(self) -> None:
+        self.close_count += 1
 
 
 def _check_availability(
@@ -54,6 +81,68 @@ def _generate(
             await gateway.aclose()
 
     return asyncio.run(scenario())
+
+
+def test_constructor_applies_the_required_private_client_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class ClientProbe:
+        async def aclose(self) -> None:
+            return None
+
+    def client_factory(**kwargs: object) -> ClientProbe:
+        captured.update(kwargs)
+        return ClientProbe()
+
+    monkeypatch.setattr(httpx2, "AsyncClient", client_factory)
+    settings = AppSettings(
+        lm_studio_base_url="http://127.0.0.1:4321",
+        lm_studio_request_timeout_seconds=7.5,
+    )
+    transport = RecordingTransport()
+
+    gateway = LMStudioGateway(settings, transport)
+    asyncio.run(gateway.aclose())
+
+    assert captured == {
+        "transport": transport,
+        "base_url": "http://127.0.0.1:4321",
+        "timeout": 7.5,
+        "follow_redirects": False,
+        "trust_env": False,
+    }
+
+
+@pytest.mark.parametrize("operation", ("availability", "generation"))
+def test_gateway_cleanup_is_idempotent_and_closed_use_fails_before_transport(
+    operation: str,
+) -> None:
+    transport = RecordingTransport()
+
+    async def scenario() -> None:
+        gateway = LMStudioGateway(AppSettings(), transport)
+        assert transport.request_count == 0
+        assert transport.close_count == 0
+
+        await gateway.aclose()
+        assert transport.close_count == 1
+        await gateway.aclose()
+        assert transport.close_count == 1
+
+        with pytest.raises(InferenceError, match="^LM Studio gateway is closed$"):
+            if operation == "availability":
+                await gateway.check_availability()
+            else:
+                request = ChatRequest(
+                    messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
+                )
+                await gateway.generate(request)
+
+        assert transport.request_count == 0
+
+    asyncio.run(scenario())
 
 
 def test_generate_sends_one_direct_non_reasoning_request() -> None:
@@ -292,6 +381,238 @@ def test_generate_rejects_non_plain_or_malformed_response(
     assert caught.value.__cause__ is None
 
 
+@pytest.mark.parametrize(
+    ("backend_error", "expected_type", "expected_message"),
+    (
+        (
+            {"error": {"code": "model_not_found", "message": "SECRET_BODY"}},
+            ModelUnavailableError,
+            "LM Studio model 'qwen/qwen3.5-4b' is unavailable during generation",
+        ),
+        (
+            {"error": {"type": "model_not_found", "message": "SECRET_BODY"}},
+            ModelUnavailableError,
+            "LM Studio model 'qwen/qwen3.5-4b' is unavailable during generation",
+        ),
+        (
+            {
+                "error": {
+                    "param": "reasoning_effort",
+                    "message": "SECRET_BODY",
+                }
+            },
+            UnsupportedInferenceFeatureError,
+            (
+                "LM Studio does not support required reasoning-off generation "
+                "for model 'qwen/qwen3.5-4b'"
+            ),
+        ),
+        (
+            {
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "SECRET_BODY",
+                }
+            },
+            InferenceBackendError,
+            (
+                "LM Studio backend failed during generation for model "
+                "'qwen/qwen3.5-4b' (status 400)"
+            ),
+        ),
+        (
+            {"error": {"code": "SECRET_CODE", "message": "SECRET_BODY"}},
+            InferenceBackendError,
+            (
+                "LM Studio backend failed during generation for model "
+                "'qwen/qwen3.5-4b' (status 400)"
+            ),
+        ),
+    ),
+)
+def test_generation_backend_errors_are_typed_without_sensitive_data(
+    backend_error: dict[str, object],
+    expected_type: type[InferenceError],
+    expected_message: str,
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            400,
+            json=backend_error,
+            headers={
+                "set-cookie": "SECRET_COOKIE",
+                "authorization": "SECRET_AUTHORIZATION",
+            },
+        )
+
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
+    )
+
+    with pytest.raises(expected_type) as caught:
+        _generate(request, handler)
+
+    assert str(caught.value) == expected_message
+    for secret in (
+        "SECRET_BODY",
+        "SECRET_CODE",
+        "SECRET_COOKIE",
+        "SECRET_AUTHORIZATION",
+        "SECRET_PROMPT",
+    ):
+        assert secret not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("native_error", "expected_type", "expected_message"),
+    (
+        (
+            httpx2.TimeoutException("SECRET_TIMEOUT"),
+            InferenceTimeoutError,
+            (
+                "LM Studio request timed out during generation for model "
+                "'qwen/qwen3.5-4b'"
+            ),
+        ),
+        (
+            httpx2.RequestError("SECRET_CONNECTION"),
+            InferenceConnectionError,
+            (
+                "LM Studio connection failed during generation for model "
+                "'qwen/qwen3.5-4b'"
+            ),
+        ),
+    ),
+)
+def test_generation_transport_errors_are_typed_without_sensitive_data(
+    native_error: httpx2.RequestError,
+    expected_type: type[InferenceError],
+    expected_message: str,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        native_error.request = request
+        raise native_error
+
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
+    )
+
+    with pytest.raises(expected_type) as caught:
+        _generate(request, handler)
+
+    assert str(caught.value) == expected_message
+    assert "SECRET_TIMEOUT" not in str(caught.value)
+    assert "SECRET_CONNECTION" not in str(caught.value)
+    assert "SECRET_PROMPT" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        httpx2.Response(
+            200,
+            content=b"SECRET_MALFORMED_JSON",
+            headers={"set-cookie": "SECRET_COOKIE"},
+        ),
+        httpx2.Response(
+            200,
+            json={"model": "qwen/qwen3.5-4b", "private": "SECRET_BODY"},
+            headers={"authorization": "SECRET_AUTHORIZATION"},
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {"message": {"role": "assistant", "content": " "}}
+                ],
+                "private": "SECRET_BODY",
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Visible",
+                            "reasoning_content": "SECRET_REASONING",
+                        }
+                    }
+                ],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Visible",
+                            "tool_calls": [{"secret": "SECRET_TOOL"}],
+                        }
+                    }
+                ],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "Visible"}}
+                ],
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 1,
+                    "total_tokens": "SECRET_USAGE",
+                },
+            },
+        ),
+    ),
+)
+def test_generation_malformed_success_is_redacted_protocol_error(
+    response: httpx2.Response,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return response
+
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
+    )
+
+    with pytest.raises(InferenceProtocolError) as caught:
+        _generate(request, handler)
+
+    assert str(caught.value) == (
+        "LM Studio returned invalid data during generation for model "
+        "'qwen/qwen3.5-4b'"
+    )
+    for secret in (
+        "SECRET_MALFORMED_JSON",
+        "SECRET_BODY",
+        "SECRET_COOKIE",
+        "SECRET_AUTHORIZATION",
+        "SECRET_REASONING",
+        "SECRET_TOOL",
+        "SECRET_USAGE",
+        "SECRET_PROMPT",
+    ):
+        assert secret not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
 def test_availability_matches_exact_configured_model() -> None:
     seen: list[httpx2.Request] = []
 
@@ -418,6 +739,21 @@ def test_matching_loaded_non_llm_model_is_unavailable() -> None:
     assert result.available is False
     assert result.available_models == ("qwen/qwen3.5-4b",)
     assert result.loaded_context_lengths == ()
+
+
+def test_empty_inventory_is_reachable_but_unavailable() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"models": []})
+
+    result = _check_availability(handler)
+
+    assert result == ModelAvailability(
+        reachable=True,
+        available=False,
+        configured_model="qwen/qwen3.5-4b",
+        available_models=(),
+        loaded_context_lengths=(),
+    )
 
 
 @pytest.mark.parametrize(

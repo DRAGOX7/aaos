@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import httpx2
 
@@ -11,13 +12,16 @@ from aaos.config import AppSettings
 from .gateway import (
     InferenceBackendError,
     InferenceConnectionError,
+    InferenceError,
     InferenceProtocolError,
     InferenceTimeoutError,
+    ModelUnavailableError,
     UnsupportedInferenceFeatureError,
 )
 from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
 
 _SUPPORTED_MODEL_TYPES = frozenset({"llm", "embedding"})
+_ParsedResponse = TypeVar("_ParsedResponse")
 
 
 class LMStudioGateway:
@@ -43,31 +47,19 @@ class LMStudioGateway:
         """Query native inventory once and validate all data before reporting it."""
         operation = "availability"
         model = self._settings.lm_studio_model
-
-        try:
-            response = await self._client.get("/api/v1/models")
-        except httpx2.TimeoutException:
-            raise InferenceTimeoutError(
-                f"LM Studio request timed out during {operation} for model '{model}'"
-            ) from None
-        except httpx2.RequestError:
-            raise InferenceConnectionError(
-                f"LM Studio connection failed during {operation} for model '{model}'"
-            ) from None
-
-        if not response.is_success:
-            raise InferenceBackendError(
-                f"LM Studio backend failed during {operation} for model '{model}' "
-                f"(status {response.status_code})"
-            ) from None
-
-        try:
-            payload: object = response.json()
-            return _parse_availability(payload, configured_model=model)
-        except (TypeError, ValueError):
-            raise InferenceProtocolError(
-                f"LM Studio returned invalid data during {operation} for model '{model}'"
-            ) from None
+        response = await self._send(
+            method="GET",
+            path="/api/v1/models",
+            operation=operation,
+        )
+        return _parse_success_response(
+            response,
+            operation=operation,
+            model=model,
+            parser=lambda payload: _parse_availability(
+                payload, configured_model=model
+            ),
+        )
 
     async def generate(self, request: ChatRequest) -> ChatResponse:
         """Send one plain chat request and return validated visible output."""
@@ -96,10 +88,39 @@ class LMStudioGateway:
         if request.max_output_tokens is not None:
             request_payload["max_tokens"] = request.max_output_tokens
 
+        response = await self._send(
+            method="POST",
+            path="/v1/chat/completions",
+            operation=operation,
+            request_payload=request_payload,
+        )
+        return _parse_success_response(
+            response,
+            operation=operation,
+            model=model,
+            parser=_parse_generation,
+        )
+
+    async def _send(
+        self,
+        *,
+        method: str,
+        path: str,
+        operation: str,
+        request_payload: dict[str, object] | None = None,
+    ) -> httpx2.Response:
+        """Execute one request and expose only fixed AAOS failures."""
+        model = self._settings.lm_studio_model
+        if self._closed:
+            raise InferenceError("LM Studio gateway is closed") from None
+
         try:
-            response = await self._client.post(
-                "/v1/chat/completions", json=request_payload
-            )
+            if request_payload is None:
+                response = await self._client.request(method, path)
+            else:
+                response = await self._client.request(
+                    method, path, json=request_payload
+                )
         except httpx2.TimeoutException:
             raise InferenceTimeoutError(
                 f"LM Studio request timed out during {operation} for model '{model}'"
@@ -110,18 +131,12 @@ class LMStudioGateway:
             ) from None
 
         if not response.is_success:
-            raise InferenceBackendError(
-                f"LM Studio backend failed during {operation} for model '{model}' "
-                f"(status {response.status_code})"
-            ) from None
-
-        try:
-            payload: object = response.json()
-            return _parse_generation(payload)
-        except (TypeError, ValueError):
-            raise InferenceProtocolError(
-                f"LM Studio returned invalid data during {operation} for model '{model}'"
-            ) from None
+            _raise_backend_error(
+                response,
+                operation=operation,
+                model=model,
+            )
+        return response
 
     async def aclose(self) -> None:
         """Close the exclusively owned client at most once."""
@@ -129,6 +144,63 @@ class LMStudioGateway:
             return
         self._closed = True
         await self._client.aclose()
+
+
+def _raise_backend_error(
+    response: httpx2.Response,
+    *,
+    operation: str,
+    model: str,
+) -> None:
+    if operation == "generation":
+        backend_error = _read_structured_backend_error(response)
+        if backend_error is not None:
+            if (
+                backend_error.get("code") == "model_not_found"
+                or backend_error.get("type") == "model_not_found"
+            ):
+                raise ModelUnavailableError(
+                    f"LM Studio model '{model}' is unavailable during generation"
+                ) from None
+            if backend_error.get("param") == "reasoning_effort":
+                raise UnsupportedInferenceFeatureError(
+                    "LM Studio does not support required reasoning-off generation "
+                    f"for model '{model}'"
+                ) from None
+
+    raise InferenceBackendError(
+        f"LM Studio backend failed during {operation} for model '{model}' "
+        f"(status {response.status_code})"
+    ) from None
+
+
+def _read_structured_backend_error(
+    response: httpx2.Response,
+) -> dict[Any, Any] | None:
+    try:
+        payload: object = response.json()
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    backend_error = payload.get("error")
+    return backend_error if isinstance(backend_error, dict) else None
+
+
+def _parse_success_response(
+    response: httpx2.Response,
+    *,
+    operation: str,
+    model: str,
+    parser: Callable[[object], _ParsedResponse],
+) -> _ParsedResponse:
+    try:
+        payload: object = response.json()
+        return parser(payload)
+    except (TypeError, ValueError):
+        raise InferenceProtocolError(
+            f"LM Studio returned invalid data during {operation} for model '{model}'"
+        ) from None
 
 
 def _parse_availability(payload: object, *, configured_model: str) -> ModelAvailability:
