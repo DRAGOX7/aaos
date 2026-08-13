@@ -8,12 +8,12 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy.engine import Connection
 
+from aaos.persistence.academic_models import Base
 from aaos.persistence.database import (
     DEFAULT_DATABASE_PATH,
     build_sqlite_url,
     create_database_engine,
 )
-from aaos.persistence.academic_models import Base
 
 config = context.config
 

@@ -110,18 +110,33 @@ def test_session_factory_opens_working_sessions(tmp_path: Path) -> None:
 
 
 def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
-    """Catch migrations that cannot upgrade, downgrade, and re-upgrade cleanly."""
+    """Catch baseline and Phase 1 migrations that cannot round-trip cleanly."""
     database_path = tmp_path / "migration" / "aaos.db"
     config = make_alembic_config(database_path)
     head_revision = ScriptDirectory.from_config(config).get_current_head()
     assert head_revision is not None
+
+    command.upgrade(config, "0001_baseline")
+    assert current_revision(database_path) == "0001_baseline"
+
+    engine = create_database_engine(database_path)
+    try:
+        assert inspect(engine).get_table_names() == ["alembic_version"]
+    finally:
+        engine.dispose()
 
     command.upgrade(config, "head")
     assert current_revision(database_path) == head_revision
 
     engine = create_database_engine(database_path)
     try:
-        assert inspect(engine).get_table_names() == ["alembic_version"]
+        assert set(inspect(engine).get_table_names()) == {
+            "alembic_version",
+            "courses",
+            "assignments",
+            "announcements",
+            "remote_files",
+        }
     finally:
         engine.dispose()
 

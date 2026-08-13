@@ -67,6 +67,7 @@ def test_duplicate_assignment_identity_is_rejected() -> None:
     with pytest.raises(NormalizationError, match="duplicate"):
         normalize_collection(source)
 
+
 def test_offset_timestamp_is_aware_utc() -> None:
     result = normalize_collection(complete_snapshot(due_at="2026-08-13T15:00:00+03:00"))
     assert result.assignments[0].due_at == datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
