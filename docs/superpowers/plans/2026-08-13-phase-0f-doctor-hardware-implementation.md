@@ -13,6 +13,7 @@
 - Implement only approved Phase 0F behavior from `docs/superpowers/specs/2026-08-13-phase-0f-doctor-hardware-design.md` at commit `967d159bb3828212f7e01576bfa0b28d78325191`.
 - Diagnostics are local, read-only, and explicitly invoked; they never repair or manage the environment.
 - Add no Typer, Click, CUDA, PyTorch, `lms`, or other runtime dependency.
+- AAOS has installable package semantics: retain the `src` layout and define its console entry point through explicit PEP 517 package metadata. Do not use `[tool.uv] package = true`; do not add publishing, PyPI, release automation, package-data customization, or distribution tooling.
 - Python 3.11 and a 64-bit interpreter are the only hardware/runtime identity requirements currently supported by repository evidence.
 - CPU, RAM, GPU identity, and VRAM differences are warning-only; introduce no hardware minimum.
 - Missing NVIDIA information is `WARN` unless a separately required AAOS capability fails.
@@ -60,8 +61,8 @@ tests/
 ├── test_doctor_cli.py
 └── test_doctor_imports.py
 
-pyproject.toml                     # only [project.scripts] aaos = "aaos.cli:main"
-uv.lock                            # refreshed only if uv records entry-point metadata changes
+pyproject.toml                     # explicit uv_build PEP 517 metadata and aaos console entry point
+uv.lock                            # generated/updated only when the packaging metadata changes it; diff inspected
 
 .superpowers/sdd/2026-08-13-phase-0f-doctor-hardware-implementation/
 └── *.md                           # ignored execution/acceptance evidence, never product output
@@ -950,11 +951,11 @@ git -c safe.directory="C:/Users/aljaf/aaos" commit -m "feat: aggregate doctor di
 - Create: `src/aaos/cli.py`
 - Create: `tests/test_doctor_cli.py`
 - Modify: `pyproject.toml`
-- Modify: `uv.lock` only if `uv lock --check` proves entry-point metadata changed
+- Modify: `uv.lock` only if the packaging metadata update changes it; inspect its diff
 
 **Interfaces:**
 - Consumes: `DoctorReport`, `DiagnosticResult`, `DEFAULT_SETTINGS`, `LMStudioGateway`, `FixedCommandInspector`, production runtime/system/NVIDIA/reference inspectors, and `httpx2.AsyncHTTPTransport`.
-- Produces: `render_report(report) -> str`, `run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int`, `main() -> int`, and project script `aaos = "aaos.cli:main"`.
+- Produces: `render_report(report) -> str`, `run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int`, `main() -> int`, and an installable `aaos = "aaos.cli:main"` console script backed by explicit PEP 517 metadata.
 
 - [ ] **Step 1: Write failing renderer and CLI tests**
 
@@ -991,14 +992,20 @@ def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int:
     return report.exit_code
 ```
 
-`main()` passes a private synchronous `_run_configured_doctor() -> DoctorReport` callback to `run_cli`. That callback uses `asyncio.run()` around a private async composition function which creates `LMStudioGateway(DEFAULT_SETTINGS, httpx2.AsyncHTTPTransport())`, injects `LocalRuntimeInspector`, `LocalSystemInspector`, `FixedCommandInspector`, `CommandNvidiaInspector`, and `LocalReferenceInspector` into `DoctorService`, and relies on the service's `finally` cleanup. It returns the integer from `run_cli`; the console-script wrapper handles process exit. Add only:
+`main()` passes a private synchronous `_run_configured_doctor() -> DoctorReport` callback to `run_cli`. That callback uses `asyncio.run()` around a private async composition function which creates `LMStudioGateway(DEFAULT_SETTINGS, httpx2.AsyncHTTPTransport())`, injects `LocalRuntimeInspector`, `LocalSystemInspector`, `FixedCommandInspector`, `CommandNvidiaInspector`, and `LocalReferenceInspector` into `DoctorService`, and relies on the service's `finally` cleanup. It returns the integer from `run_cli`; the console-script wrapper handles process exit.
+
+Make AAOS explicitly installable. The prior non-packaged configuration caused uv to skip the project entry point, so `[project.scripts]` alone is not sufficient. Add exactly this PEP 517 metadata alongside the script:
 
 ```toml
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
 [project.scripts]
 aaos = "aaos.cli:main"
 ```
 
-Run `uv lock --check`. If it reports metadata drift, run `uv lock`, inspect the lock diff, and include `uv.lock`; do not change any dependency declaration.
+The bounded backend requirement is generated evidence from installed `uv 0.12.3`, not an invented version. Do not add `[tool.uv] package = true`, runtime dependencies, publishing, PyPI configuration, package-data customization, release automation, or other distribution tooling. First parse the metadata with `uv run python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"`. Run `uv lock`; inspect its diff and include `uv.lock` only if the metadata update changes it. Then require `uv lock --check` and `uv sync --locked --all-groups`.
 
 - [ ] **Step 4: Run GREEN and CLI checks**
 
@@ -1006,13 +1013,15 @@ Run `uv lock --check`. If it reports metadata drift, run `uv lock`, inspect the 
 uv run pytest tests/test_doctor_cli.py -v
 uv run aaos
 uv run aaos unknown
+uv run aaos doctor extra
 uv run ruff format --check src/aaos/cli.py src/aaos/doctor/rendering.py tests/test_doctor_cli.py
 uv run ruff check src/aaos/cli.py src/aaos/doctor/rendering.py tests/test_doctor_cli.py
 uv run mypy src/aaos/cli.py src/aaos/doctor/rendering.py tests/test_doctor_cli.py
 uv lock --check
+uv sync --locked --all-groups
 ```
 
-Expected: tests pass; both invalid invocations print exactly `usage: aaos doctor` and exit 2 without running diagnostics; lock passes.
+Expected: tests pass; the deterministic invalid invocations (`uv run aaos`, `uv run aaos unknown`, and `uv run aaos doctor extra`) print exactly `usage: aaos doctor` and exit 2 without running diagnostics; lock and sync pass. `uv run aaos doctor` must resolve the installed entry point. Its manual environment diagnostic exit may fail when the existing external LM Studio prerequisites are absent; that does not negate entry-point resolution.
 
 - [ ] **Step 5: Review and commit**
 
@@ -1176,6 +1185,7 @@ Do not create a tag, claim Phase 0 passed, update status documents to claim acce
 
 - [ ] The changed-file set matches the proposed structure and contains no Phase 0G+ file.
 - [ ] `aaos doctor` uses the standard library/package entry point with no CLI dependency.
+- [ ] AAOS is explicitly installable through `[build-system]` using `uv_build` with generated bounded requirement `uv_build>=0.12.3,<0.13.0`; `[project.scripts]` defines `aaos = "aaos.cli:main"`, and no `[tool.uv] package = true`, publishing, or package customization is present.
 - [ ] All results use the frozen typed model and deterministic order.
 - [ ] PASS/WARN/FAIL aggregation and exit codes match the approved policy exactly.
 - [ ] Python 3.11 and 64-bit are required; no other hardware minimum exists.
@@ -1192,6 +1202,7 @@ Do not create a tag, claim Phase 0 passed, update status documents to claim acce
 - [ ] Imports perform no network, subprocess, registry, hardware, persistence, or filesystem work.
 - [ ] Default tests are offline and require no local executable, GPU, LM Studio, or network.
 - [ ] `uv lock --check` and `uv sync --locked --all-groups` pass.
+- [ ] TOML metadata parsing passes; `uv run aaos doctor` resolves the installed console script even if its manual runtime diagnostics report external LM Studio failures; invalid CLI calls have deterministic usage/exit-2 behavior.
 - [ ] `uv run ruff format --check .` and `uv run ruff check .` pass.
 - [ ] `uv run mypy src tests` passes.
 - [ ] `uv run pytest -v` passes with the real-machine checks opt-in/manual.
