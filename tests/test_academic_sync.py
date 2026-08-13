@@ -6,12 +6,14 @@ from typing import TypeAlias
 from pytest import MonkeyPatch
 from sqlalchemy import Engine
 
-from aaos.academic.models import (
-    CanonicalAssignment,
-    CanonicalCourse,
-    CanonicalSnapshot,
+from aaos.academic.models import CanonicalSnapshot
+from aaos.academic.normalization import normalize_collection
+from aaos.academic.source import CompleteSourceSnapshot, RawAssignment, RawCourse
+from aaos.academic.sync import (
+    AcademicSyncService,
+    SynchronizationConflict,
+    SynchronizationValidationError,
 )
-from aaos.academic.sync import AcademicSyncService, SynchronizationConflict
 from aaos.persistence.academic_models import AssignmentORM, CourseORM
 from aaos.persistence.database import create_database_engine, create_session_factory
 
@@ -33,44 +35,44 @@ def snapshot(
     assignment_id: str | None = "a1",
     assignment_title: str = "Task",
 ) -> CanonicalSnapshot:
-    assignments: tuple[CanonicalAssignment, ...] = ()
+    assignments: tuple[RawAssignment, ...] = ()
     if assignment_id is not None:
         assignments = (
-            CanonicalAssignment(
-                source_system=namespace,
+            RawAssignment(
                 source_id=assignment_id,
                 course_source_id=course_id,
                 title=assignment_title,
             ),
         )
-    return CanonicalSnapshot(
-        source_system=namespace,
-        courses=(
-            CanonicalCourse(source_system=namespace, source_id=course_id, title=course_title),
-        ),
-        assignments=assignments,
+    return normalize_collection(
+        CompleteSourceSnapshot(
+            source_system=namespace,
+            courses=(RawCourse(source_id=course_id, title=course_title),),
+            assignments=assignments,
+        )
     )
 
 
 def empty_snapshot(namespace: str = "mock:primary") -> CanonicalSnapshot:
-    return CanonicalSnapshot(source_system=namespace)
+    return normalize_collection(CompleteSourceSnapshot(source_system=namespace))
 
 
 def two_course_snapshot(*, child_course_id: str) -> CanonicalSnapshot:
-    return CanonicalSnapshot(
-        source_system="mock:primary",
-        courses=(
-            CanonicalCourse(source_system="mock:primary", source_id="course-a", title="A"),
-            CanonicalCourse(source_system="mock:primary", source_id="course-b", title="B"),
-        ),
-        assignments=(
-            CanonicalAssignment(
-                source_system="mock:primary",
-                source_id="assignment-1",
-                course_source_id=child_course_id,
-                title="Task",
+    return normalize_collection(
+        CompleteSourceSnapshot(
+            source_system="mock:primary",
+            courses=(
+                RawCourse(source_id="course-a", title="A"),
+                RawCourse(source_id="course-b", title="B"),
             ),
-        ),
+            assignments=(
+                RawAssignment(
+                    source_id="assignment-1",
+                    course_source_id=child_course_id,
+                    title="Task",
+                ),
+            ),
+        )
     )
 
 
@@ -102,6 +104,46 @@ def test_changed_mutable_fields_preserve_internal_ids(tmp_path: Path) -> None:
             assert assignment.id == assignment_id
             assert course.title == "Updated"
             assert assignment.title == "Updated task"
+    finally:
+        engine.dispose()
+
+
+def test_first_discovery_persists_course_metadata(tmp_path: Path) -> None:
+    service, engine = service_for(tmp_path)
+    try:
+        source = normalize_collection(
+            CompleteSourceSnapshot(
+                source_system="mock:primary",
+                courses=(
+                    RawCourse(
+                        source_id="c1",
+                        title="Math",
+                        code="MATH",
+                        description="Intro",
+                    ),
+                ),
+            )
+        )
+        service.sync(source)
+        with create_session_factory(engine)() as session:
+            row = session.query(CourseORM).one()
+            assert row.code == "MATH"
+            assert row.description == "Intro"
+    finally:
+        engine.dispose()
+
+
+def test_forged_canonical_snapshot_is_rejected_before_deactivation(tmp_path: Path) -> None:
+    service, engine = service_for(tmp_path)
+    try:
+        service.sync(snapshot())
+        forged = CanonicalSnapshot(source_system="mock:primary")
+        try:
+            service.sync(forged)
+        except SynchronizationValidationError:
+            pass
+        with create_session_factory(engine)() as session:
+            assert session.query(CourseORM).one().is_active is True
     finally:
         engine.dispose()
 

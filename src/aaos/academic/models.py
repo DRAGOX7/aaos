@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+_NORMALIZED_SNAPSHOT_TOKEN = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,3 +57,4 @@ class CanonicalSnapshot:
     assignments: tuple[CanonicalAssignment, ...] = ()
     announcements: tuple[CanonicalAnnouncement, ...] = ()
     remote_files: tuple[CanonicalRemoteFile, ...] = ()
+    _validation_token: object = field(default=None, repr=False, compare=False)

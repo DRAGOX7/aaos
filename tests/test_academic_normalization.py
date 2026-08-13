@@ -130,6 +130,8 @@ def test_absent_optional_timestamp_remains_none() -> None:
         "ftp://example.test/file",
         "https://user:pass@example.test/file",
         "https://example.test/\nfile",
+        "https://[invalid/file",
+        "https://example.test:bad/file",
     ],
 )
 def test_unsafe_remote_url_is_rejected(url: str) -> None:

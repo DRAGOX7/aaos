@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from aaos.academic.models import (
+    _NORMALIZED_SNAPSHOT_TOKEN,
     CanonicalAnnouncement,
     CanonicalAssignment,
     CanonicalCourse,
@@ -69,7 +70,11 @@ def _remote_url(value: str | None) -> str | None:
         return None
     if not isinstance(value, str) or any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise NormalizationError("remote URL contains unsafe control characters")
-    parts = urlsplit(value)
+    try:
+        parts = urlsplit(value)
+        _ = parts.port
+    except ValueError as exc:
+        raise NormalizationError("remote URL must be structurally valid") from exc
     if (
         parts.scheme.lower() not in {"http", "https"}
         or not parts.netloc
@@ -172,4 +177,5 @@ def normalize_collection(collection: SourceCollection) -> CanonicalSnapshot:
         assignments=assignments,
         announcements=announcements,
         remote_files=remote_files,
+        _validation_token=_NORMALIZED_SNAPSHOT_TOKEN,
     )

@@ -8,7 +8,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from aaos.academic.models import CanonicalSnapshot
+from aaos.academic.models import _NORMALIZED_SNAPSHOT_TOKEN, CanonicalSnapshot
 from aaos.persistence.academic_models import (
     AnnouncementORM,
     AssignmentORM,
@@ -25,6 +25,10 @@ class SynchronizationPersistenceError(RuntimeError):
     """Raised for a persistence failure without exposing native details."""
 
 
+class SynchronizationValidationError(ValueError):
+    """Raised when a caller bypasses source collection normalization."""
+
+
 class AcademicSyncService:
     """Apply one validated complete snapshot in one database transaction."""
 
@@ -32,6 +36,10 @@ class AcademicSyncService:
         self._session_factory = session_factory
 
     def sync(self, snapshot: CanonicalSnapshot) -> None:
+        if snapshot._validation_token is not _NORMALIZED_SNAPSHOT_TOKEN:
+            raise SynchronizationValidationError(
+                "snapshot was not produced by complete source normalization"
+            )
         session = self._session_factory()
         try:
             with session.begin():
@@ -72,6 +80,9 @@ class AcademicSyncService:
                     source_system=snapshot.source_system,
                     source_id=record.source_id,
                     title=record.title,
+                    code=record.code,
+                    description=record.description,
+                    source_updated_at=record.source_updated_at,
                 )
                 session.add(row)
                 session.flush()
