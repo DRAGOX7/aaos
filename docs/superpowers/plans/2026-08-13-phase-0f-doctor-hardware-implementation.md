@@ -363,7 +363,7 @@ def test_all_pass_report_exits_zero() -> None:
     assert report.exit_code == 0
 ```
 
-Also test rejection of empty reports, duplicate `check_id` values, blank fact names/summaries, a `PASS` with an error code, an unavailable `FactObservation` without a code, an available fact with a code, negative numeric hardware facts, and `NvidiaObservation` containing both GPUs and an error code.
+Also test rejection of empty reports, duplicate `check_id` values, blank fact names/summaries, a `PASS` with an error code, an unavailable `FactObservation` without a code, an available fact with a code, non-bool non-positive CPU count, RAM, and total VRAM values, non-bool negative used/free VRAM values, boolean numeric hardware values, and `NvidiaObservation` containing both GPUs and an error code.
 
 - [ ] **Step 2: Run RED**
 
@@ -382,7 +382,7 @@ Implement the exact names in “Frozen cross-task interfaces.” Enforce these i
 - `DoctorReport.results` is non-empty and has unique check identifiers;
 - `FactObservation.value` is present exactly when `code` is absent;
 - runtime integers are non-negative;
-- CPU count, RAM, VRAM, and GPU resource values are positive when present;
+- CPU count, RAM, and `GpuObservation.total_vram_mib` are non-bool positive integers; optional `GpuObservation.used_vram_mib` and `GpuObservation.free_vram_mib` are non-bool non-negative integers when present;
 - a successful `NvidiaObservation` contains at least one GPU; a failed observation contains none;
 - aggregate precedence is `FAIL`, then `WARN`, then `PASS`.
 
@@ -687,7 +687,8 @@ Cover:
 - two GPU rows preserve backend order;
 - zero/blank rows -> `MALFORMED_OUTPUT`;
 - missing command, permission denied, timeout, command failure, and oversized output propagate as typed `NvidiaObservation` and warning result;
-- wrong column count, blank name/driver, non-integer/negative memory, or used/free values individually exceeding total -> `MALFORMED_OUTPUT`;
+- wrong column count, malformed CSV quoting, blank name/driver, non-integer memory, non-positive total VRAM, negative used/free VRAM, or used/free values individually exceeding total -> `MALFORMED_OUTPUT`;
+- zero used VRAM and zero free VRAM each parse successfully;
 - a different GPU model or VRAM amount remains successful observation data and never fails;
 - raw CSV and sentinel stderr/exception strings never appear in `DiagnosticResult.summary` or facts.
 
@@ -701,7 +702,7 @@ Expected: import fails because `aaos.doctor.nvidia` does not exist.
 
 - [ ] **Step 3: Implement strict CSV parsing and warning policy**
 
-Parse with the standard-library `csv` module. Validate exactly five columns and explicit integer constraints. `CommandNvidiaInspector.inspect()` calls `inspect_nvidia_output()` once and parses it. `nvidia_result` returns `PASS` for established GPU facts and `WARN` with the observation code for unavailable/malformed optional NVIDIA data.
+Parse with the standard-library `csv` module using `csv.reader(..., strict=True)`. Map malformed quoting to `MALFORMED_OUTPUT` without exposing raw payload. Validate exactly five columns and explicit integer constraints: total VRAM is positive; optional used/free VRAM values are non-negative, so zero is valid; used/free values individually cannot exceed total. `CommandNvidiaInspector.inspect()` calls `inspect_nvidia_output()` once and parses it. `nvidia_result` returns `PASS` for established GPU facts and `WARN` with the observation code for unavailable/malformed optional NVIDIA data.
 
 - [ ] **Step 4: Run GREEN and static checks**
 
