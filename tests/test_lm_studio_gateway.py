@@ -212,6 +212,53 @@ def test_generate_sends_one_direct_non_reasoning_request() -> None:
     }
 
 
+@pytest.mark.parametrize("reasoning_content", ("", None))
+def test_generate_accepts_empty_lm_studio_reasoning_and_tool_metadata(
+    reasoning_content: object,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chatcmpl-dizh74j354h9s2eh5yxjp8",
+                "object": "chat.completion",
+                "created": 1786594699,
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "AAOS ready",
+                            "reasoning_content": reasoning_content,
+                            "tool_calls": [],
+                        },
+                        "logprobs": None,
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 19,
+                    "completion_tokens": 4,
+                    "total_tokens": 23,
+                    "completion_tokens_details": {"reasoning_tokens": 0},
+                },
+                "stats": {},
+                "system_fingerprint": "qwen/qwen3.5-4b",
+            },
+        )
+
+    request = ChatRequest(messages=(ChatMessage(role="user", content="Hello"),))
+
+    result = _generate(request, handler)
+
+    assert result == ChatResponse(
+        content="AAOS ready",
+        model_identifier="qwen/qwen3.5-4b",
+        usage=TokenUsage(input_tokens=19, output_tokens=4, total_tokens=23),
+    )
+
+
 def test_generate_preserves_optional_max_tokens() -> None:
     requests: list[httpx2.Request] = []
 
@@ -330,7 +377,31 @@ def test_generate_rejects_enabled_reasoning_before_transport() -> None:
                     "message": {
                         "role": "assistant",
                         "content": "Visible",
-                        "tool_calls": [],
+                        "tool_calls": [{"id": "SECRET_TOOL_CALL"}],
+                    }
+                }
+            ],
+        },
+        {
+            "model": "qwen/qwen3.5-4b",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Visible",
+                        "tool_calls": "SECRET_MALFORMED_TOOL_CALLS",
+                    }
+                }
+            ],
+        },
+        {
+            "model": "qwen/qwen3.5-4b",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Visible",
+                        "reasoning_content": [],
                     }
                 }
             ],
