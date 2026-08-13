@@ -148,6 +148,15 @@ def test_output_above_accepted_bound_is_discarded_without_partial_payload() -> N
     assert sentinel not in repr(output)
 
 
+def test_oversized_output_is_rejected_before_invalid_utf8_is_decoded() -> None:
+    def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(args, 0, stdout=(b"x" * 16_384) + b"\xff")
+
+    output = inspector_for(runner).inspect_nvidia_output()
+
+    assert output == CommandOutput(text=None, code=DiagnosticCode.OVERSIZED_OUTPUT)
+
+
 def test_missing_discovery_and_file_not_found_map_to_missing_command() -> None:
     def unavailable(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         raise FileNotFoundError("SENTINEL native path")
@@ -158,6 +167,35 @@ def test_missing_discovery_and_file_not_found_map_to_missing_command() -> None:
     output = inspector_for(unavailable).inspect_uv()
     assert output == UvObservation(version=None, code=DiagnosticCode.MISSING_COMMAND)
     assert "SENTINEL" not in repr(output)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (FileNotFoundError("SENTINEL missing discovery path"), DiagnosticCode.MISSING_COMMAND),
+        (PermissionError("SENTINEL denied discovery path"), DiagnosticCode.PERMISSION_DENIED),
+        (OSError("SENTINEL native discovery detail"), DiagnosticCode.COMMAND_FAILED),
+    ],
+)
+def test_discovery_exceptions_map_safely_before_execution(
+    error: OSError,
+    expected_code: DiagnosticCode,
+) -> None:
+    runner_called = False
+
+    def finder(name: str) -> str:
+        raise error
+
+    def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        nonlocal runner_called
+        runner_called = True
+        return subprocess.CompletedProcess(args, 0, stdout=b"must not execute")
+
+    output = inspector_for(runner, finder=finder).inspect_nvidia_output()
+
+    assert output == CommandOutput(text=None, code=expected_code)
+    assert "SENTINEL" not in repr(output)
+    assert not runner_called
 
 
 def test_permission_denied_maps_without_native_detail() -> None:
