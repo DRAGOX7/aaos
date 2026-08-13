@@ -76,10 +76,12 @@ Task 1 defines these shared types:
 ```python
 from typing import Generic, TypeAlias, TypeVar
 
+
 class DiagnosticStatus(StrEnum):
     PASS = "PASS"
     WARN = "WARN"
     FAIL = "FAIL"
+
 
 class DiagnosticCode(StrEnum):
     UNSUPPORTED_RUNTIME = "unsupported_runtime"
@@ -102,12 +104,15 @@ class DiagnosticCode(StrEnum):
     REFERENCE_MISMATCH = "reference_mismatch"
     REFERENCE_UNKNOWN = "reference_unknown"
 
+
 FactValue: TypeAlias = str | int | bool
+
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticFact:
     name: str
     value: FactValue
+
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticResult:
@@ -116,6 +121,7 @@ class DiagnosticResult:
     summary: str
     facts: tuple[DiagnosticFact, ...] = ()
     code: DiagnosticCode | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class DoctorReport:
@@ -127,18 +133,22 @@ class DoctorReport:
     @property
     def exit_code(self) -> int: ...
 
+
 T = TypeVar("T")
+
 
 @dataclass(frozen=True, slots=True)
 class FactObservation(Generic[T]):
     value: T | None
     code: DiagnosticCode | None = None
 
+
 @dataclass(frozen=True, slots=True)
 class RuntimeObservation:
     python_major: int
     python_minor: int
     pointer_width_bits: int
+
 
 @dataclass(frozen=True, slots=True)
 class SystemObservation:
@@ -148,15 +158,18 @@ class SystemObservation:
     logical_processors: FactObservation[int]
     total_memory_bytes: FactObservation[int]
 
+
 @dataclass(frozen=True, slots=True)
 class CommandOutput:
     text: str | None
     code: DiagnosticCode | None = None
 
+
 @dataclass(frozen=True, slots=True)
 class UvObservation:
     version: str | None
     code: DiagnosticCode | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class GpuObservation:
@@ -166,15 +179,18 @@ class GpuObservation:
     used_vram_mib: int | None = None
     free_vram_mib: int | None = None
 
+
 @dataclass(frozen=True, slots=True)
 class NvidiaObservation:
     gpus: tuple[GpuObservation, ...]
     code: DiagnosticCode | None = None
 
+
 class ReferenceMatch(StrEnum):
     MATCH = "match"
     MISMATCH = "mismatch"
     UNKNOWN = "unknown"
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceObservation:
@@ -190,34 +206,50 @@ Shared protocols and functions are introduced by the named tasks:
 class RuntimeInspector(Protocol):
     def inspect(self) -> RuntimeObservation: ...
 
+
 class LocalRuntimeInspector:
     def inspect(self) -> RuntimeObservation: ...
+
 
 class SystemInspector(Protocol):
     def inspect(self) -> SystemObservation: ...
 
+
 class LocalSystemInspector:
     def inspect(self) -> SystemObservation: ...
+
 
 class CommandInspector(Protocol):
     def inspect_uv(self) -> UvObservation: ...
     def inspect_nvidia_output(self) -> CommandOutput: ...
 
+
 class NvidiaInspector(Protocol):
     def inspect(self) -> NvidiaObservation: ...
 
+
 class ReferenceInspector(Protocol):
-    def compare(self, system: SystemObservation, nvidia: NvidiaObservation) -> ReferenceObservation: ...
+    def compare(
+        self, system: SystemObservation, nvidia: NvidiaObservation
+    ) -> ReferenceObservation: ...
+
 
 class LocalReferenceInspector:
-    def compare(self, system: SystemObservation, nvidia: NvidiaObservation) -> ReferenceObservation: ...
+    def compare(
+        self, system: SystemObservation, nvidia: NvidiaObservation
+    ) -> ReferenceObservation: ...
+
 
 def inspect_runtime() -> RuntimeObservation: ...
 def inspect_local_system() -> SystemObservation: ...
 def parse_uv_version(output: CommandOutput) -> UvObservation: ...
 def parse_nvidia_output(output: CommandOutput) -> NvidiaObservation: ...
-def compare_reference_profile(system: SystemObservation, nvidia: NvidiaObservation) -> ReferenceObservation: ...
-def model_diagnostic_results(gateway: ModelGateway, settings: AppSettings) -> Awaitable[tuple[DiagnosticResult, ...]]: ...
+def compare_reference_profile(
+    system: SystemObservation, nvidia: NvidiaObservation
+) -> ReferenceObservation: ...
+def model_diagnostic_results(
+    gateway: ModelGateway, settings: AppSettings
+) -> Awaitable[tuple[DiagnosticResult, ...]]: ...
 def render_report(report: DoctorReport) -> str: ...
 def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int: ...
 def main() -> int: ...
@@ -318,10 +350,12 @@ def test_report_status_and_exit_code_follow_failure_precedence() -> None:
     assert report.status is DiagnosticStatus.FAIL
     assert report.exit_code == 1
 
+
 def test_warning_report_exits_zero() -> None:
     report = DoctorReport((DiagnosticResult("gpu", DiagnosticStatus.WARN, "unknown"),))
     assert report.status is DiagnosticStatus.WARN
     assert report.exit_code == 0
+
 
 def test_all_pass_report_exits_zero() -> None:
     report = DoctorReport((DiagnosticResult("python", DiagnosticStatus.PASS, "ok"),))
@@ -396,11 +430,13 @@ def test_python_311_and_64_bit_pass() -> None:
     results = runtime_results(RuntimeObservation(3, 11, 64))
     assert [result.status for result in results] == [DiagnosticStatus.PASS] * 2
 
+
 @pytest.mark.parametrize("version", [(3, 10), (3, 12), (4, 0)])
 def test_unsupported_python_version_fails(version: tuple[int, int]) -> None:
     result = runtime_results(RuntimeObservation(*version, pointer_width_bits=64))[0]
     assert result.status is DiagnosticStatus.FAIL
     assert result.code is DiagnosticCode.UNSUPPORTED_RUNTIME
+
 
 def test_non_64_bit_runtime_fails() -> None:
     result = runtime_results(RuntimeObservation(3, 11, 32))[1]
@@ -427,11 +463,14 @@ Define:
 class RuntimeInspector(Protocol):
     def inspect(self) -> RuntimeObservation: ...
 
+
 class LocalRuntimeInspector:
     def inspect(self) -> RuntimeObservation:
         return inspect_runtime()
 
+
 def inspect_runtime() -> RuntimeObservation: ...
+
 
 def runtime_results(
     observation: RuntimeObservation,
@@ -778,8 +817,7 @@ Use:
 
 ```python
 context_ok = any(
-    loaded >= settings.lm_studio_context_length
-    for loaded in availability.loaded_context_lengths
+    loaded >= settings.lm_studio_context_length for loaded in availability.loaded_context_lengths
 )
 ```
 
@@ -846,7 +884,9 @@ Cover:
 - optional uv/NVIDIA/reference warnings give aggregate `WARN`/exit 0;
 - runtime or model failure gives aggregate `FAIL`/exit 1;
 - `inspect_uv()` is translated to `uv` pass/warn without raw output;
-- one failed mechanism already recovered inside a system observation does not add a failure;
+- established optional system facts produce `PASS` results;
+- unavailable optional system facts produce `WARN`, never `FAIL`;
+- optional system warnings produce aggregate `WARN`/exit 0 unless an independent required invariant fails;
 - `check_availability()` occurs exactly once;
 - closer runs exactly once after success and after every mapped inference error;
 - an unexpected collector programming error still runs closer and then propagates;
