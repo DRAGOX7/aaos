@@ -1,35 +1,9 @@
-from aaos.doctor.models import (
-    CommandOutput,
-    DiagnosticCode,
-    DiagnosticFact,
-    DiagnosticResult,
-    DiagnosticStatus,
-    DoctorReport,
-    FactObservation,
-    FactValue,
-    GpuObservation,
-    NvidiaObservation,
-    ReferenceMatch,
-    ReferenceObservation,
-    RuntimeObservation,
-    SystemObservation,
-    UvObservation,
-)
+from aaos.doctor.models import DiagnosticResult, DiagnosticStatus, DoctorReport
+from aaos.doctor.service import DoctorService
 
 __all__ = [
-    "CommandOutput",
-    "DiagnosticCode",
-    "DiagnosticFact",
+    "DoctorService",
+    "DoctorReport",
     "DiagnosticResult",
     "DiagnosticStatus",
-    "DoctorReport",
-    "FactObservation",
-    "FactValue",
-    "GpuObservation",
-    "NvidiaObservation",
-    "ReferenceMatch",
-    "ReferenceObservation",
-    "RuntimeObservation",
-    "SystemObservation",
-    "UvObservation",
 ]
