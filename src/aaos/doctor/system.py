@@ -146,8 +146,11 @@ def inspect_local_system() -> SystemObservation:
     if os_name.value == "Windows":
         cpu_model = _read_windows_cpu_model()
         total_memory_bytes = _read_windows_total_memory_bytes()
-    else:
+    elif os_name.value is not None:
         cpu_model = _read_text(platform.processor)
+        total_memory_bytes = _unavailable()
+    else:
+        cpu_model = _unavailable()
         total_memory_bytes = _unavailable()
 
     return SystemObservation(

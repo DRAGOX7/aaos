@@ -121,6 +121,67 @@ def test_blank_platform_facts_become_typed_warnings(monkeypatch: pytest.MonkeyPa
     assert all(result.status is not DiagnosticStatus.FAIL for result in results)
 
 
+def test_known_non_windows_blank_processor_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("aaos.doctor.system.platform.system", lambda: "Linux")
+    monkeypatch.setattr("aaos.doctor.system.platform.machine", lambda: "x86_64")
+    monkeypatch.setattr("aaos.doctor.system.platform.processor", lambda: " ")
+    monkeypatch.setattr("aaos.doctor.system.os.cpu_count", lambda: 16)
+    monkeypatch.setattr(
+        system,
+        "_read_windows_cpu_model",
+        lambda: pytest.fail("Windows CPU reader must not run on Linux"),
+    )
+    monkeypatch.setattr(
+        system,
+        "_read_windows_total_memory_bytes",
+        lambda: pytest.fail("Windows memory reader must not run on Linux"),
+    )
+
+    observation = inspect_local_system()
+
+    assert observation.cpu_model == FactObservation(None, DiagnosticCode.UNSUPPORTED_PLATFORM)
+    cpu_result = system_results(observation)[1]
+    assert cpu_result.status is DiagnosticStatus.WARN
+    assert cpu_result.code is DiagnosticCode.UNSUPPORTED_PLATFORM
+
+
+def test_unknown_os_does_not_run_any_platform_specific_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("aaos.doctor.system.platform.system", lambda: " ")
+    monkeypatch.setattr("aaos.doctor.system.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("aaos.doctor.system.os.cpu_count", lambda: 20)
+    monkeypatch.setattr(
+        "aaos.doctor.system.platform.processor",
+        lambda: pytest.fail("non-Windows CPU reader must not run for an unknown OS"),
+    )
+    monkeypatch.setattr(
+        system,
+        "_read_windows_cpu_model",
+        lambda: pytest.fail("Windows CPU reader must not run for an unknown OS"),
+    )
+    monkeypatch.setattr(
+        system,
+        "_read_windows_total_memory_bytes",
+        lambda: pytest.fail("Windows memory reader must not run for an unknown OS"),
+    )
+
+    observation = inspect_local_system()
+
+    assert observation.cpu_model == FactObservation(None, DiagnosticCode.UNSUPPORTED_PLATFORM)
+    assert observation.total_memory_bytes == FactObservation(
+        None, DiagnosticCode.UNSUPPORTED_PLATFORM
+    )
+    _, cpu_result, memory_result = system_results(observation)
+    assert cpu_result.status is DiagnosticStatus.WARN
+    assert memory_result.status is DiagnosticStatus.WARN
+    assert all(
+        result.code is DiagnosticCode.UNSUPPORTED_PLATFORM for result in (cpu_result, memory_result)
+    )
+
+
 @pytest.mark.parametrize("logical_processors", [None, 0, -1])
 def test_unavailable_logical_processor_count_is_typed(
     monkeypatch: pytest.MonkeyPatch, logical_processors: int | None
