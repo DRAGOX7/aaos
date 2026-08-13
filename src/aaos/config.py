@@ -39,6 +39,9 @@ class AppSettings:
         ):
             raise ValueError("lm_studio_base_url must be a root HTTP loopback URL")
 
+        if not isinstance(self.lm_studio_model, str):
+            raise ValueError("lm_studio_model must be a non-blank string")
+
         model_identifier = self.lm_studio_model.strip()
         if not model_identifier:
             raise ValueError("lm_studio_model must not be blank")

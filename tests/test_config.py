@@ -59,6 +59,13 @@ def test_blank_model_identifier_is_rejected(model_identifier: str) -> None:
         AppSettings(lm_studio_model=model_identifier)
 
 
+@pytest.mark.parametrize("model_identifier", (None, 123, True, []))
+def test_non_string_model_identifier_is_rejected(model_identifier: object) -> None:
+    """The model identifier must be a string before whitespace normalization."""
+    with pytest.raises(ValueError, match="lm_studio_model"):
+        AppSettings(lm_studio_model=model_identifier)  # type: ignore[arg-type]
+
+
 def test_model_identifier_surrounding_whitespace_is_normalized() -> None:
     """Model identifiers are trimmed without altering their meaningful content."""
     settings = AppSettings(lm_studio_model="  qwen/qwen3.5-4b  ")
@@ -73,8 +80,8 @@ def test_invalid_context_length_is_rejected(context_length: int | bool) -> None:
         AppSettings(lm_studio_context_length=context_length)
 
 
-@pytest.mark.parametrize("timeout_seconds", (0.0, -1.0, inf, nan))
-def test_invalid_request_timeout_is_rejected(timeout_seconds: float) -> None:
+@pytest.mark.parametrize("timeout_seconds", (0.0, -1.0, inf, nan, True, False))
+def test_invalid_request_timeout_is_rejected(timeout_seconds: float | bool) -> None:
     """Request timeout must be finite and strictly positive."""
     with pytest.raises(ValueError, match="lm_studio_request_timeout_seconds"):
         AppSettings(lm_studio_request_timeout_seconds=timeout_seconds)
