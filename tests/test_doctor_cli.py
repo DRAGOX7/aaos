@@ -65,14 +65,14 @@ def test_render_report_is_deterministic_and_preserves_result_and_fact_order() ->
 def test_render_report_exposes_only_allowlisted_typed_report_values() -> None:
     from aaos.doctor.rendering import render_report
 
-    sentinels = (
-        "raw stdout sentinel",
-        "raw stderr sentinel",
-        "exception sentinel",
-        "prompt sentinel",
-        "response body sentinel",
-        "token sentinel",
-        "environment value sentinel",
+    disallowed_facts = (
+        DiagnosticFact("raw_stdout", "raw stdout sentinel"),
+        DiagnosticFact("raw_stderr", "raw stderr sentinel"),
+        DiagnosticFact("exception_detail", "exception sentinel"),
+        DiagnosticFact("model_prompt", "prompt sentinel"),
+        DiagnosticFact("response_body", "response body sentinel"),
+        DiagnosticFact("access_token", "token sentinel"),
+        DiagnosticFact("environment_value", "environment value sentinel"),
     )
     report = DoctorReport(
         (
@@ -82,18 +82,21 @@ def test_render_report_exposes_only_allowlisted_typed_report_values() -> None:
                 "uv version available",
                 facts=(
                     DiagnosticFact("uv_version", "0.12.3"),
-                    DiagnosticFact("unapproved_fact", "environment value sentinel"),
+                    DiagnosticFact("python_version", "3.11"),
+                    *disallowed_facts,
                 ),
             ),
         )
     )
 
     rendered = render_report(report)
+    sentinel_values = tuple(str(fact.value) for fact in disallowed_facts)
 
     assert "[PASS]" in rendered
     assert "uv version available" in rendered
     assert "uv_version=0.12.3" in rendered
-    assert all(sentinel not in rendered for sentinel in sentinels)
+    assert "python_version=3.11" in rendered
+    assert all(sentinel not in rendered for sentinel in sentinel_values)
 
 
 @pytest.mark.parametrize(
@@ -141,10 +144,40 @@ def test_run_cli_rejects_invalid_arguments_without_running_doctor(
     assert captured.err == "usage: aaos doctor\n"
 
 
-def test_cli_import_does_not_construct_transport_or_run_inspectors() -> None:
+def test_fresh_cli_import_does_not_construct_transport_gateway_or_collectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aaos.doctor.commands as commands
+    import aaos.doctor.nvidia as nvidia
+    import aaos.doctor.reference as reference
+    import aaos.doctor.runtime as runtime
+    import aaos.doctor.service as service
+    import aaos.doctor.system as system
+    import aaos.inference.lm_studio as lm_studio
+
+    constructions: list[str] = []
+
+    def probe_constructor(label: str) -> type[object]:
+        class ConstructorProbe:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                constructions.append(label)
+
+        return ConstructorProbe
+
+    monkeypatch.setattr(httpx2, "AsyncHTTPTransport", probe_constructor("transport"))
+    monkeypatch.setattr(lm_studio, "LMStudioGateway", probe_constructor("gateway"))
+    monkeypatch.setattr(runtime, "LocalRuntimeInspector", probe_constructor("runtime"))
+    monkeypatch.setattr(system, "LocalSystemInspector", probe_constructor("system"))
+    monkeypatch.setattr(commands, "FixedCommandInspector", probe_constructor("command"))
+    monkeypatch.setattr(nvidia, "CommandNvidiaInspector", probe_constructor("nvidia"))
+    monkeypatch.setattr(reference, "LocalReferenceInspector", probe_constructor("reference"))
+    monkeypatch.setattr(service, "DoctorService", probe_constructor("service"))
+    monkeypatch.delitem(sys.modules, "aaos.cli", raising=False)
+
     module = importlib.import_module("aaos.cli")
 
     assert module is not None
+    assert constructions == []
 
 
 def test_main_composes_one_transport_gateway_and_service_cleanup(
