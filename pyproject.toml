@@ -12,6 +12,13 @@ dependencies = [
     "uvicorn>=0.52.1",
 ]
 
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[project.scripts]
+aaos = "aaos.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=2.3.0",
