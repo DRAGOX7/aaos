@@ -19,7 +19,7 @@
 - LM Studio reachability, exact configured-model availability, and at least one loaded context length meeting the configured requirement are required.
 - Compare loaded context with `settings.lm_studio_context_length`; never encode 8192 as a production doctor-policy constant.
 - Use `ModelGateway.check_availability()` exactly once per doctor run, send no generation request, create no second LM Studio client, and close the exclusively owned gateway deterministically.
-- Run only fixed `uv --version` and fixed `nvidia-smi` queries through the subprocess boundary; use exact module-owned specifications, fixed arrays, `shell=False`, a five-second timeout, stdout bounded to 16,384 retained bytes while the process is running, discarded stderr, deterministic process/reader cleanup, a sanitized environment, explicit parsing, and no raw-output exposure.
+- Run only fixed `uv --version` and fixed `nvidia-smi` queries through the subprocess boundary; use exact module-owned specifications, fixed arrays, `shell=False`, a five-second timeout for the directly launched command, binary stdout capture with a maximum accepted completed payload of 16,384 bytes, discarded stderr, a sanitized environment, strict decoding after size validation, explicit parsing, and no raw-output exposure. This is not an in-flight or operating-system buffering guarantee, nor a hostile process-tree containment boundary.
 - Add no retry, persistent doctor report, dashboard, HTTP endpoint, telemetry, model lifecycle action, or Phase 0G+ capability.
 - Imports perform no network, subprocess, registry, hardware, persistence, or filesystem effects.
 - Default automated tests remain offline and require no installed `uv`, `nvidia-smi`, NVIDIA hardware, LM Studio, port 1234, or network access.
@@ -592,7 +592,7 @@ Its private runner accepts only module-owned command specifications. No public a
 
 - [ ] **Step 1: Write failing subprocess tests**
 
-Use injected executable discovery and `subprocess.Popen` factories plus controlled binary stdout streams and process lifecycle probes. Define the private command specifications from exact module-owned constants:
+Use injected controlled absolute executable discovery and `subprocess.run` fakes. Define the private command specifications from exact module-owned constants:
 
 ```python
 UV_ARGS = ("--version",)
@@ -608,20 +608,19 @@ Cover these RED cases:
 
 - successful `uv 0.12.3 (...)` parsing to version `0.12.3`;
 - stdout sizes of 16,383 and exactly 16,384 bytes complete without `OVERSIZED_OUTPUT`, while 16,385 bytes returns `OVERSIZED_OUTPUT` with `text=None`;
-- an in-flight producer that writes beyond 16,384 bytes is terminated as soon as the extra byte is observed, never grows retained stdout beyond `MAX_COMMAND_OUTPUT_BYTES`, is reaped, has its stdout closed, and leaves no reader blocked or alive;
-- executable discovery returning no path and `Popen` raising `FileNotFoundError` both map to `MISSING_COMMAND`;
-- `Popen` raising `PermissionError` maps to `PERMISSION_DENIED`;
-- any other expected `OSError` from discovery, process start, reading, waiting, termination, or reaping maps to `COMMAND_FAILED` without native details;
-- reaching the five-second monotonic deadline returns `TIMEOUT`, terminates then kills if needed, reaps the child, closes stdout, and joins the reader;
+- a completed stdout payload of 16,385 bytes returns `OVERSIZED_OUTPUT` with `text=None`; partial or raw output is never exposed;
+- executable discovery returning no path and `subprocess.run` raising `FileNotFoundError` both map to `MISSING_COMMAND`;
+- `subprocess.run` raising `PermissionError` maps to `PERMISSION_DENIED`;
+- any other expected process-start `OSError` maps to `COMMAND_FAILED` without native details;
+- reaching the five-second `subprocess.run` timeout returns `TIMEOUT` for the directly launched command;
 - nonzero exit -> `COMMAND_FAILED`;
 - malformed uv text -> `MALFORMED_OUTPUT`;
-- invalid UTF-8 -> `MALFORMED_OUTPUT` only after the completed process has been reaped and its reader joined;
-- a child that would fill stderr cannot deadlock because `Popen` receives `stderr=subprocess.DEVNULL`; sentinel stderr and native exception strings never appear in `CommandOutput`;
-- successful completion, parser failure, reader failure, timeout, overflow, and process-start failure all leave no live child, unreaped child, open stdout pipe, or blocked reader;
-- the runner receives a fixed absolute executable followed by the exact list arguments, `shell=False`, `stdin=subprocess.DEVNULL`, `stdout=subprocess.PIPE`, `stderr=subprocess.DEVNULL`, `text=False`, and a sanitized environment containing only the minimal Windows executable-discovery variables (`PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`) that were present;
+- invalid UTF-8 -> `MALFORMED_OUTPUT` only after completed output passes the size check;
+- stderr is discarded because `subprocess.run` receives `stderr=subprocess.DEVNULL`; sentinel stderr and native exception strings never appear in `CommandOutput`;
+- the runner receives a fixed absolute executable followed by the exact list arguments, `shell=False`, `stdin=subprocess.DEVNULL`, binary `stdout=subprocess.PIPE`, `stderr=subprocess.DEVNULL`, `timeout=5.0`, `check=False`, and a sanitized environment containing only the minimal Windows executable-discovery variables (`PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`) that were present;
 - no `communicate`, shell, caller-controlled command, registry/plugin framework, `lms`, or PowerShell path exists.
 
-Use lifecycle fakes that record `terminate`, `kill`, `wait`, pipe close, and reader completion. The timeout fake must require escalation from `terminate` to `kill`; the overflow fake must continue producing until termination. Assert cleanup order and final reader absence rather than sleeping in tests.
+Use `subprocess.run` fakes that capture the fixed invocation and return completed binary output or raise the relevant standard subprocess exception. Assert the timeout mapping applies to the directly launched command; Phase 0F does not simulate hostile descendants or process-tree containment.
 
 - [ ] **Step 2: Run RED**
 
@@ -633,13 +632,13 @@ Expected: import fails because `aaos.doctor.commands` does not exist.
 
 - [ ] **Step 3: Implement the two-command allowlist**
 
-Create a frozen private `_CommandSpec` and exactly two singleton specifications, `_UV_SPEC` and `_NVIDIA_SPEC`, from the fixed arguments above. The private runner rejects every object that is not one of those two singletons by identity. Use `shutil.which` for controlled discovery, normalize the discovered executable to an absolute path, and start it with `subprocess.Popen` using only the exact options tested in Step 1. `FixedCommandInspector.inspect_uv()` passes `_UV_SPEC`; `inspect_nvidia_output()` passes `_NVIDIA_SPEC`.
+Create a frozen private `_CommandSpec` and exactly two singleton specifications, `_UV_SPEC` and `_NVIDIA_SPEC`, from the fixed arguments above. The private runner rejects every object that is not one of those two singletons by identity. Use `shutil.which` for controlled discovery, normalize the discovered executable to an absolute path, and execute it with `subprocess.run` using only the exact options tested in Step 1. `FixedCommandInspector.inspect_uv()` passes `_UV_SPEC`; `inspect_nvidia_output()` passes `_NVIDIA_SPEC`.
 
-Enforce `MAX_COMMAND_OUTPUT_BYTES` continuously during execution. A dedicated binary stdout reader reads at most the remaining capacity plus one byte, appends no more than 16,384 bytes total, and signals overflow on the first additional byte without retaining it. Stderr goes directly to `subprocess.DEVNULL`, so it is discarded concurrently by the OS and can neither be exposed nor fill a pipe. Do not use `communicate` or an unbounded bytes accumulator.
+Invoke `subprocess.run` with binary stdout capture, `stderr=subprocess.DEVNULL`, `timeout=COMMAND_TIMEOUT_SECONDS`, `check=False`, and the sanitized environment. Once standard subprocess completion returns, reject completed stdout larger than `MAX_COMMAND_OUTPUT_BYTES` with `OVERSIZED_OUTPUT` and `text=None`; this bound applies only to accepted diagnostic payload, not in-flight or operating-system buffering. Strictly decode only size-accepted stdout, then parse it. Stderr is discarded and never exposed.
 
-The coordinator uses a monotonic five-second deadline and observes process completion, stdout overflow, and reader failure. On overflow, timeout, or reader failure, terminate the live child, wait for a short bounded grace period, kill if it is still alive, and reap it. In one cleanup path used by success and every failure, close stdout and join the reader; no return may leave a live/unreaped child or blocked reader. If process start fails, no reader is started. After successful bounded completion and cleanup, decode strict UTF-8 and parse; parser or decoder failures expose no raw bytes.
+The five-second timeout is the standard `subprocess.run` timeout for the directly launched diagnostic command. Phase 0F makes no hostile-code sandbox, descendant-process inheritance, or process-tree-containment guarantee. If process start fails, no output is accepted. Never expose partial stdout, raw bytes, stderr, environment contents, or native exception details.
 
-Map discovery/start `FileNotFoundError` to `MISSING_COMMAND`, `PermissionError` to `PERMISSION_DENIED`, the deadline to `TIMEOUT`, overflow to `OVERSIZED_OUTPUT`, nonzero exit and reader failure to `COMMAND_FAILED`, and invalid UTF-8 or malformed uv version to `MALFORMED_OUTPUT`. Map every residual expected `OSError` to `COMMAND_FAILED`. Never copy native exception text, partial stdout, or stderr into `CommandOutput`.
+Map discovery/start `FileNotFoundError` to `MISSING_COMMAND`, `PermissionError` to `PERMISSION_DENIED`, `subprocess.TimeoutExpired` to `TIMEOUT`, oversized completed stdout to `OVERSIZED_OUTPUT`, nonzero exit to `COMMAND_FAILED`, and invalid UTF-8 or malformed uv version to `MALFORMED_OUTPUT`. Map every residual expected process-start `OSError` to `COMMAND_FAILED`. Never copy native exception text, stdout, or stderr into `CommandOutput`.
 
 The `CommandInspector` protocol contains only `inspect_uv` and `inspect_nvidia_output`. No caller can supply an executable, argument, specification, or command. Add no registry/plugin framework, `lms`, PowerShell, shell command, or retry.
 
@@ -654,7 +653,7 @@ uv run mypy src/aaos/doctor/commands.py tests/test_doctor_commands.py
 
 - [ ] **Step 5: Security review and commit**
 
-Confirm canonical-spec identity checks, fixed arguments, `shell=False`, the hard in-flight stdout retention bound, `stderr=DEVNULL`, timeout/overflow termination and reaping, reader cleanup, safe environment allowlist, residual `OSError` redaction, no `lms`, and no arbitrary public runner.
+Confirm canonical-spec identity checks, fixed arguments, `shell=False`, binary stdout capture with the completed-payload acceptance bound, `stderr=DEVNULL`, direct-child timeout scope, safe environment allowlist, residual process-start `OSError` redaction, no `lms`, and no arbitrary public runner.
 
 ```powershell
 git -c safe.directory="C:/Users/aljaf/aaos" add -- src/aaos/doctor/commands.py tests/test_doctor_commands.py
@@ -1057,7 +1056,7 @@ Run in a disposable directory and assert:
 - no database created;
 - a sentinel fake `nvidia-smi`, `uv`, and LM Studio endpoint are never contacted.
 
-Add a source-level AST test that fails if module-scope code calls `subprocess.Popen`, `shutil.which`, registry readers, `inspect_*`, `AsyncHTTPTransport`, `LMStudioGateway`, or `DoctorService.run`.
+Add a source-level AST test that fails if module-scope code calls `subprocess.run`, `shutil.which`, registry readers, `inspect_*`, `AsyncHTTPTransport`, `LMStudioGateway`, or `DoctorService.run`.
 
 - [ ] **Step 2: Run RED**
 
@@ -1180,11 +1179,11 @@ Do not create a tag, claim Phase 0 passed, update status documents to claim acce
 - [ ] PASS/WARN/FAIL aggregation and exit codes match the approved policy exactly.
 - [ ] Python 3.11 and 64-bit are required; no other hardware minimum exists.
 - [ ] Reference-profile mismatch/unknown and missing optional NVIDIA data remain warning-only.
-- [ ] Only fixed `uv --version` and fixed `nvidia-smi` queries cross the bounded subprocess seam.
+- [ ] Only fixed `uv --version` and fixed `nvidia-smi` queries cross the subprocess seam.
 - [ ] Only the exact module-owned uv and NVIDIA command specifications are accepted; cloned/value-equal specifications and every caller-supplied command are rejected.
-- [ ] `Popen` discovery, fixed arrays, `shell=False`, the five-second deadline, sanitized environment, and safe parsing are tested.
-- [ ] Stdout retention is bounded to 16,384 bytes while the process is running; below/exact/above-bound behavior and immediate overflow termination are tested.
-- [ ] Stderr is discarded without deadlock, and completion, timeout, overflow, reader/parser failure, and start failure leave no live/unreaped child, open pipe, or blocked reader.
+- [ ] Controlled absolute discovery, fixed arrays, `subprocess.run`, `shell=False`, the five-second direct-child timeout, sanitized environment, and safe parsing are tested.
+- [ ] Completed stdout acceptance is bounded to 16,384 bytes; below/exact/above-bound behavior is tested, oversized output is discarded, and partial/raw output is never exposed.
+- [ ] Stderr is discarded; completion, timeout, oversized output, parser failure, and process-start failure map only to safe result codes without exposing raw output or native exception details.
 - [ ] No raw stdout/stderr, exception detail, environment value, credential, prompt, response body, or private data is exposed.
 - [ ] Model diagnostics call `check_availability()` exactly once and never call `generate()`.
 - [ ] Loaded context is compared only with `settings.lm_studio_context_length`; production doctor code contains no literal `8192` policy.
