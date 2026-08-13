@@ -25,11 +25,7 @@ SOURCE_ROOT = PROJECT_ROOT / "src"
 
 def assert_import_does_not_create_database(module_name: str, tmp_path: Path) -> None:
     """Import a module in a fresh process and assert that it performs no DB writes."""
-    script = (
-        "import sys; "
-        f"sys.path.insert(0, {str(SOURCE_ROOT)!r}); "
-        f"import {module_name}"
-    )
+    script = f"import sys; sys.path.insert(0, {str(SOURCE_ROOT)!r}); import {module_name}"
 
     result = subprocess.run(
         [sys.executable, "-I", "-B", "-c", script],

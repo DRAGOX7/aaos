@@ -128,10 +128,12 @@ class AppSettings:
 # src/aaos/inference/models.py
 ChatRole = Literal["system", "user", "assistant"]
 
+
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
     role: ChatRole
     content: str
+
 
 @dataclass(frozen=True, slots=True)
 class ChatRequest:
@@ -139,17 +141,20 @@ class ChatRequest:
     max_output_tokens: int | None = None
     reasoning: bool = False
 
+
 @dataclass(frozen=True, slots=True)
 class TokenUsage:
     input_tokens: int
     output_tokens: int
     total_tokens: int
 
+
 @dataclass(frozen=True, slots=True)
 class ChatResponse:
     content: str
     model_identifier: str
     usage: TokenUsage | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class ModelAvailability:
@@ -166,16 +171,39 @@ class ModelAvailability:
 # src/aaos/inference/gateway.py
 @runtime_checkable
 class ModelGateway(Protocol):
-    async def check_availability(self) -> ModelAvailability: pass
-    async def generate(self, request: ChatRequest) -> ChatResponse: pass
+    async def check_availability(self) -> ModelAvailability:
+        pass
 
-class InferenceError(RuntimeError): pass
-class InferenceConnectionError(InferenceError): pass
-class InferenceTimeoutError(InferenceError): pass
-class ModelUnavailableError(InferenceError): pass
-class InferenceProtocolError(InferenceError): pass
-class InferenceBackendError(InferenceError): pass
-class UnsupportedInferenceFeatureError(InferenceError): pass
+    async def generate(self, request: ChatRequest) -> ChatResponse:
+        pass
+
+
+class InferenceError(RuntimeError):
+    pass
+
+
+class InferenceConnectionError(InferenceError):
+    pass
+
+
+class InferenceTimeoutError(InferenceError):
+    pass
+
+
+class ModelUnavailableError(InferenceError):
+    pass
+
+
+class InferenceProtocolError(InferenceError):
+    pass
+
+
+class InferenceBackendError(InferenceError):
+    pass
+
+
+class UnsupportedInferenceFeatureError(InferenceError):
+    pass
 ```
 
 The protocol remains exactly the approved two-operation boundary. Cleanup is intentionally a concrete adapter lifecycle method, not a third inference capability on the model-independent protocol.
@@ -187,11 +215,17 @@ class LMStudioGateway:
         self,
         settings: AppSettings,
         transport: httpx2.AsyncBaseTransport,
-    ) -> None: pass
+    ) -> None:
+        pass
 
-    async def check_availability(self) -> ModelAvailability: pass
-    async def generate(self, request: ChatRequest) -> ChatResponse: pass
-    async def aclose(self) -> None: pass
+    async def check_availability(self) -> ModelAvailability:
+        pass
+
+    async def generate(self, request: ChatRequest) -> ChatResponse:
+        pass
+
+    async def aclose(self) -> None:
+        pass
 ```
 
 The constructor creates one private `httpx2.AsyncClient` with the supplied transport, `base_url=settings.lm_studio_base_url`, `timeout=settings.lm_studio_request_timeout_seconds`, `follow_redirects=False`, and `trust_env=False`. Construction transfers exclusive ownership of the transport to the gateway. Production callers supply a fresh `httpx2.AsyncHTTPTransport()`; tests supply a fresh controlled `AsyncBaseTransport`. Callers must not reuse either transport after construction.
@@ -250,6 +284,7 @@ def test_inference_settings_have_safe_local_defaults() -> None:
     assert settings.lm_studio_model == "qwen/qwen3.5-4b"
     assert settings.lm_studio_context_length == 8192
     assert settings.lm_studio_request_timeout_seconds == 30.0
+
 
 def test_base_url_is_normalized_without_trailing_slash() -> None:
     settings = AppSettings(lm_studio_base_url="http://localhost:1234/")
@@ -324,6 +359,7 @@ def test_chat_request_preserves_ordered_messages() -> None:
     )
     assert ChatRequest(messages=messages).messages == messages
 
+
 def test_non_positive_output_limit_is_rejected() -> None:
     with pytest.raises(ValueError, match="max_output_tokens must be positive"):
         ChatRequest(
@@ -393,6 +429,7 @@ class FakeGateway:
 
     async def generate(self, request: ChatRequest) -> ChatResponse:
         return ChatResponse(content="ready", model_identifier="qwen/qwen3.5-4b")
+
 
 def test_two_operation_gateway_satisfies_protocol() -> None:
     assert isinstance(FakeGateway(), ModelGateway)
@@ -623,6 +660,7 @@ def test_generate_sends_one_direct_non_reasoning_request() -> None:
         )
 
     request = ChatRequest(messages=(ChatMessage(role="user", content="Hello"),))
+
     async def scenario() -> ChatResponse:
         gateway = LMStudioGateway(AppSettings(), httpx2.MockTransport(handler))
         try:
@@ -710,7 +748,10 @@ Use sentinel values in the prompt, backend JSON, `set-cookie`, and `authorizatio
     ("backend_error", "expected_type"),
     [
         ({"error": {"code": "model_not_found", "message": "SECRET_BODY"}}, ModelUnavailableError),
-        ({"error": {"code": "context_length_exceeded", "message": "SECRET_BODY"}}, InferenceBackendError),
+        (
+            {"error": {"code": "context_length_exceeded", "message": "SECRET_BODY"}},
+            InferenceBackendError,
+        ),
     ],
 )
 def test_backend_errors_are_typed_without_body_leakage(

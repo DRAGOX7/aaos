@@ -16,4 +16,6 @@ def test_supported_python_version() -> None:
 def test_interpreter_is_64_bit() -> None:
     """AAOS requires a 64-bit interpreter for its later local ML workloads."""
     pointer_width_bits = struct.calcsize("P") * 8
-    assert pointer_width_bits == 64, f"AAOS requires a 64-bit interpreter, got {pointer_width_bits}-bit"
+    assert pointer_width_bits == 64, (
+        f"AAOS requires a 64-bit interpreter, got {pointer_width_bits}-bit"
+    )
