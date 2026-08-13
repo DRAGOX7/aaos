@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from aaos.doctor.models import (
@@ -11,6 +13,8 @@ from aaos.doctor.models import (
     FactObservation,
     GpuObservation,
     NvidiaObservation,
+    ReferenceMatch,
+    ReferenceObservation,
     RuntimeObservation,
     SystemObservation,
 )
@@ -135,3 +139,73 @@ def test_gpu_and_nvidia_observations_reject_invalid_resource_states() -> None:
         NvidiaObservation(())
     with pytest.raises(ValueError, match="no GPUs"):
         NvidiaObservation((gpu,), DiagnosticCode.COMMAND_FAILED)
+
+
+def test_tuple_fields_reject_mutable_lists() -> None:
+    result = DiagnosticResult("python", DiagnosticStatus.PASS, "ok")
+    fact = DiagnosticFact("python", "3.11")
+    gpu = GpuObservation("RTX 4050", 6144, "576.80")
+
+    with pytest.raises(TypeError, match="results must be a tuple"):
+        DoctorReport(cast(Any, [result]))
+    with pytest.raises(TypeError, match="facts must be a tuple"):
+        DiagnosticResult("python", DiagnosticStatus.PASS, "ok", cast(Any, [fact]))
+    with pytest.raises(TypeError, match="gpus must be a tuple"):
+        NvidiaObservation(cast(Any, [gpu]))
+    with pytest.raises(TypeError, match="facts must be a tuple"):
+        ReferenceObservation(ReferenceMatch.MATCH, cast(Any, [fact]))
+
+
+def test_tuple_fields_reject_wrong_member_types() -> None:
+    with pytest.raises(TypeError, match="DiagnosticResult"):
+        DoctorReport(cast(Any, ("python",)))
+    with pytest.raises(TypeError, match="DiagnosticFact"):
+        DiagnosticResult("python", DiagnosticStatus.PASS, "ok", cast(Any, ("fact",)))
+    with pytest.raises(TypeError, match="GpuObservation"):
+        NvidiaObservation(cast(Any, ("gpu",)))
+    with pytest.raises(TypeError, match="DiagnosticFact"):
+        ReferenceObservation(ReferenceMatch.MATCH, cast(Any, ("fact",)))
+
+
+@pytest.mark.parametrize("field_name", ["python_major", "python_minor", "pointer_width_bits"])
+def test_runtime_numeric_fields_reject_bool(field_name: str) -> None:
+    values: dict[str, int] = {
+        "python_major": 3,
+        "python_minor": 11,
+        "pointer_width_bits": 64,
+    }
+    values[field_name] = True
+
+    with pytest.raises(TypeError, match=field_name):
+        RuntimeObservation(**values)
+
+
+@pytest.mark.parametrize("field_name", ["logical_processors", "total_memory_bytes"])
+def test_system_numeric_facts_reject_bool(field_name: str) -> None:
+    unavailable_text = FactObservation[str](None, DiagnosticCode.COMMAND_FAILED)
+    values = {
+        "os_name": unavailable_text,
+        "architecture": unavailable_text,
+        "cpu_model": unavailable_text,
+        "logical_processors": FactObservation(12),
+        "total_memory_bytes": FactObservation(16_000_000_000),
+    }
+    values[field_name] = cast(Any, FactObservation(True))
+
+    with pytest.raises(TypeError, match=field_name):
+        SystemObservation(**cast(Any, values))
+
+
+@pytest.mark.parametrize("field_name", ["total_vram_mib", "used_vram_mib", "free_vram_mib"])
+def test_gpu_numeric_fields_reject_bool(field_name: str) -> None:
+    values: dict[str, Any] = {
+        "name": "RTX 4050",
+        "total_vram_mib": 6144,
+        "driver_version": "576.80",
+        "used_vram_mib": 1024,
+        "free_vram_mib": 5120,
+    }
+    values[field_name] = True
+
+    with pytest.raises(TypeError, match=field_name):
+        GpuObservation(**values)

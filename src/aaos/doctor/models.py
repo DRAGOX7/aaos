@@ -41,6 +41,18 @@ def _require_non_blank(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be non-blank")
 
 
+def _require_tuple_of(value: object, field_name: str, member_type: type[object]) -> None:
+    if type(value) is not tuple:
+        raise TypeError(f"{field_name} must be a tuple")
+    if any(type(member) is not member_type for member in value):
+        raise TypeError(f"{field_name} members must be {member_type.__name__} instances")
+
+
+def _require_int(value: object, field_name: str) -> None:
+    if type(value) is not int:
+        raise TypeError(f"{field_name} must be an int")
+
+
 @dataclass(frozen=True, slots=True)
 class DiagnosticFact:
     name: str
@@ -63,6 +75,7 @@ class DiagnosticResult:
     def __post_init__(self) -> None:
         _require_non_blank(self.check_id, "check_id")
         _require_non_blank(self.summary, "summary")
+        _require_tuple_of(self.facts, "facts", DiagnosticFact)
         if self.status is DiagnosticStatus.PASS and self.code is not None:
             raise ValueError("PASS results must not have a code")
         if self.status is not DiagnosticStatus.PASS and self.code is None:
@@ -74,6 +87,7 @@ class DoctorReport:
     results: tuple[DiagnosticResult, ...]
 
     def __post_init__(self) -> None:
+        _require_tuple_of(self.results, "results", DiagnosticResult)
         if not self.results:
             raise ValueError("DoctorReport must contain at least one result")
         check_ids = tuple(result.check_id for result in self.results)
@@ -113,6 +127,9 @@ class RuntimeObservation:
     pointer_width_bits: int
 
     def __post_init__(self) -> None:
+        _require_int(self.python_major, "python_major")
+        _require_int(self.python_minor, "python_minor")
+        _require_int(self.pointer_width_bits, "pointer_width_bits")
         if self.python_major < 0:
             raise ValueError("python_major must be non-negative")
         if self.python_minor < 0:
@@ -135,7 +152,10 @@ class SystemObservation:
 
     @staticmethod
     def _require_positive_when_present(observation: FactObservation[int], field_name: str) -> None:
-        if observation.value is not None and observation.value <= 0:
+        if observation.value is None:
+            return
+        _require_int(observation.value, field_name)
+        if observation.value <= 0:
             raise ValueError(f"{field_name} must be positive when present")
 
 
@@ -162,12 +182,19 @@ class GpuObservation:
     def __post_init__(self) -> None:
         _require_non_blank(self.name, "name")
         _require_non_blank(self.driver_version, "driver_version")
+        _require_int(self.total_vram_mib, "total_vram_mib")
         if self.total_vram_mib <= 0:
             raise ValueError("total_vram_mib must be positive")
-        if self.used_vram_mib is not None and self.used_vram_mib <= 0:
-            raise ValueError("used_vram_mib must be positive when present")
-        if self.free_vram_mib is not None and self.free_vram_mib <= 0:
-            raise ValueError("free_vram_mib must be positive when present")
+        self._require_positive_when_present(self.used_vram_mib, "used_vram_mib")
+        self._require_positive_when_present(self.free_vram_mib, "free_vram_mib")
+
+    @staticmethod
+    def _require_positive_when_present(value: int | None, field_name: str) -> None:
+        if value is None:
+            return
+        _require_int(value, field_name)
+        if value <= 0:
+            raise ValueError(f"{field_name} must be positive when present")
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +203,7 @@ class NvidiaObservation:
     code: DiagnosticCode | None = None
 
     def __post_init__(self) -> None:
+        _require_tuple_of(self.gpus, "gpus", GpuObservation)
         if self.code is None and not self.gpus:
             raise ValueError("successful NvidiaObservation must contain at least one GPU")
         if self.code is not None and self.gpus:
@@ -192,3 +220,6 @@ class ReferenceMatch(StrEnum):
 class ReferenceObservation:
     match: ReferenceMatch
     facts: tuple[DiagnosticFact, ...]
+
+    def __post_init__(self) -> None:
+        _require_tuple_of(self.facts, "facts", DiagnosticFact)
