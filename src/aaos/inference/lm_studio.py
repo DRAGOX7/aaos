@@ -116,6 +116,7 @@ class LMStudioGateway:
         if self._closed:
             raise InferenceError("LM Studio gateway is closed") from None
 
+        translated_error: InferenceError
         try:
             if request_payload is None:
                 response = await self._client.request(method, path)
@@ -124,21 +125,23 @@ class LMStudioGateway:
                     method, path, json=request_payload
                 )
         except httpx2.TimeoutException:
-            raise InferenceTimeoutError(
+            translated_error = InferenceTimeoutError(
                 f"LM Studio request timed out during {operation} for model '{model}'"
-            ) from None
-        except httpx2.RequestError:
-            raise InferenceConnectionError(
-                f"LM Studio connection failed during {operation} for model '{model}'"
-            ) from None
-
-        if not response.is_success:
-            _raise_backend_error(
-                response,
-                operation=operation,
-                model=model,
             )
-        return response
+        except httpx2.RequestError:
+            translated_error = InferenceConnectionError(
+                f"LM Studio connection failed during {operation} for model '{model}'"
+            )
+        else:
+            if not response.is_success:
+                _raise_backend_error(
+                    response,
+                    operation=operation,
+                    model=model,
+                )
+            return response
+
+        raise translated_error
 
     async def aclose(self) -> None:
         """Close the exclusively owned client at most once."""
@@ -198,11 +201,15 @@ def _parse_success_response(
 ) -> _ParsedResponse:
     try:
         payload: object = response.json()
-        return parser(payload)
+        parsed_response = parser(payload)
     except (TypeError, ValueError):
-        raise InferenceProtocolError(
+        translated_error = InferenceProtocolError(
             f"LM Studio returned invalid data during {operation} for model '{model}'"
-        ) from None
+        )
+    else:
+        return parsed_response
+
+    raise translated_error
 
 
 def _parse_availability(payload: object, *, configured_model: str) -> ModelAvailability:

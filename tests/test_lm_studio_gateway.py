@@ -537,7 +537,10 @@ def test_generation_transport_errors_are_typed_without_sensitive_data(
     assert "SECRET_TIMEOUT" not in str(caught.value)
     assert "SECRET_CONNECTION" not in str(caught.value)
     assert "SECRET_PROMPT" not in str(caught.value)
+    assert native_error.request is not None
+    assert b"SECRET_PROMPT" in native_error.request.content
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -638,6 +641,7 @@ def test_generation_malformed_success_is_redacted_protocol_error(
     ):
         assert secret not in str(caught.value)
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_availability_matches_exact_configured_model() -> None:
@@ -912,6 +916,7 @@ def test_invalid_json_availability_response_raises_protocol_error() -> None:
     )
     assert "SECRET_INVALID_JSON" not in str(caught.value)
     assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_non_success_availability_response_raises_safe_backend_error() -> None:
