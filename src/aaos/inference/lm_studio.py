@@ -265,6 +265,8 @@ def _parse_generation(payload: object) -> ChatResponse:
     message = first_choice.get("message")
     if not isinstance(message, dict):
         raise ValueError("message must be an object")
+    if message.get("role") != "assistant":
+        raise ValueError("message role must be assistant")
     if "tool_calls" in message:
         raise ValueError("tool calls are not supported")
     for reasoning_field in ("reasoning", "reasoning_content"):

@@ -532,6 +532,36 @@ def test_generation_transport_errors_are_typed_without_sensitive_data(
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"content": "SECRET_MISSING_ROLE_CONTENT"}}],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "user", "content": "SECRET_USER_ROLE_CONTENT"}}],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [
+                    {"message": {"role": "system", "content": "SECRET_SYSTEM_ROLE_CONTENT"}}
+                ],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": 7, "content": "SECRET_INVALID_ROLE_CONTENT"}}],
+            },
+        ),
+        httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
                 "choices": [
                     {
                         "message": {
@@ -591,6 +621,10 @@ def test_generation_malformed_success_is_redacted_protocol_error(
         "SECRET_BODY",
         "SECRET_COOKIE",
         "SECRET_AUTHORIZATION",
+        "SECRET_MISSING_ROLE_CONTENT",
+        "SECRET_USER_ROLE_CONTENT",
+        "SECRET_SYSTEM_ROLE_CONTENT",
+        "SECRET_INVALID_ROLE_CONTENT",
         "SECRET_REASONING",
         "SECRET_TOOL",
         "SECRET_USAGE",
