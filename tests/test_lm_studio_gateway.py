@@ -34,17 +34,13 @@ class RecordingTransport(httpx2.AsyncBaseTransport):
         self.request_count = 0
         self.close_count = 0
 
-    async def handle_async_request(
-        self, request: httpx2.Request
-    ) -> httpx2.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         self.request_count += 1
         return httpx2.Response(
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
-                "choices": [
-                    {"message": {"role": "assistant", "content": "Visible"}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": "Visible"}}],
             },
         )
 
@@ -135,9 +131,7 @@ def test_gateway_cleanup_is_idempotent_and_closed_use_fails_before_transport(
             if operation == "availability":
                 await gateway.check_availability()
             else:
-                request = ChatRequest(
-                    messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
-                )
+                request = ChatRequest(messages=(ChatMessage(role="user", content="SECRET_PROMPT"),))
                 await gateway.generate(request)
 
         assert transport.request_count == 0
@@ -179,9 +173,7 @@ def test_generate_sends_one_direct_non_reasoning_request() -> None:
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
-                "choices": [
-                    {"message": {"role": "assistant", "content": "Plain reply"}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": "Plain reply"}}],
                 "usage": {
                     "prompt_tokens": 4,
                     "completion_tokens": 2,
@@ -206,9 +198,7 @@ def test_generate_sends_one_direct_non_reasoning_request() -> None:
         model_identifier="qwen/qwen3.5-4b",
         usage=TokenUsage(input_tokens=4, output_tokens=2, total_tokens=6),
     )
-    assert [(item.method, item.url.path) for item in requests] == [
-        ("POST", "/v1/chat/completions")
-    ]
+    assert [(item.method, item.url.path) for item in requests] == [("POST", "/v1/chat/completions")]
     assert json.loads(requests[0].content) == {
         "model": "qwen/qwen3.5-4b",
         "messages": [
@@ -231,9 +221,7 @@ def test_generate_preserves_optional_max_tokens() -> None:
             200,
             json={
                 "model": "configured/custom-model",
-                "choices": [
-                    {"message": {"role": "assistant", "content": "Done"}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": "Done"}}],
             },
         )
 
@@ -266,9 +254,7 @@ def test_generate_accepts_context_length_output_limit_without_inspecting_input()
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
-                "choices": [
-                    {"message": {"role": "assistant", "content": "Accepted"}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": "Accepted"}}],
             },
         )
 
@@ -331,9 +317,7 @@ def test_generate_rejects_enabled_reasoning_before_transport() -> None:
     (
         {
             "model": "",
-            "choices": [
-                {"message": {"role": "assistant", "content": "Visible"}}
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "Visible"}}],
         },
         {
             "model": "qwen/qwen3.5-4b",
@@ -377,9 +361,7 @@ def test_generate_rejects_enabled_reasoning_before_transport() -> None:
         },
         {
             "model": "qwen/qwen3.5-4b",
-            "choices": [
-                {"message": {"role": "assistant", "content": "Visible"}}
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "Visible"}}],
             "usage": {
                 "prompt_tokens": 2,
                 "completion_tokens": 1,
@@ -398,10 +380,7 @@ def test_generate_rejects_non_plain_or_malformed_response(
 
     with pytest.raises(
         InferenceProtocolError,
-        match=(
-            "^LM Studio returned invalid data during generation for model "
-            "'qwen/qwen3.5-4b'$"
-        ),
+        match=("^LM Studio returned invalid data during generation for model 'qwen/qwen3.5-4b'$"),
     ) as caught:
         _generate(request, handler)
 
@@ -442,18 +421,12 @@ def test_generate_rejects_non_plain_or_malformed_response(
                 }
             },
             InferenceBackendError,
-            (
-                "LM Studio backend failed during generation for model "
-                "'qwen/qwen3.5-4b' (status 400)"
-            ),
+            ("LM Studio backend failed during generation for model 'qwen/qwen3.5-4b' (status 400)"),
         ),
         (
             {"error": {"code": "SECRET_CODE", "message": "SECRET_BODY"}},
             InferenceBackendError,
-            (
-                "LM Studio backend failed during generation for model "
-                "'qwen/qwen3.5-4b' (status 400)"
-            ),
+            ("LM Studio backend failed during generation for model 'qwen/qwen3.5-4b' (status 400)"),
         ),
     ),
 )
@@ -475,9 +448,7 @@ def test_generation_backend_errors_are_typed_without_sensitive_data(
             },
         )
 
-    request = ChatRequest(
-        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
-    )
+    request = ChatRequest(messages=(ChatMessage(role="user", content="SECRET_PROMPT"),))
 
     with pytest.raises(expected_type) as caught:
         _generate(request, handler)
@@ -502,18 +473,12 @@ def test_generation_backend_errors_are_typed_without_sensitive_data(
         (
             httpx2.TimeoutException("SECRET_TIMEOUT"),
             InferenceTimeoutError,
-            (
-                "LM Studio request timed out during generation for model "
-                "'qwen/qwen3.5-4b'"
-            ),
+            ("LM Studio request timed out during generation for model 'qwen/qwen3.5-4b'"),
         ),
         (
             httpx2.RequestError("SECRET_CONNECTION"),
             InferenceConnectionError,
-            (
-                "LM Studio connection failed during generation for model "
-                "'qwen/qwen3.5-4b'"
-            ),
+            ("LM Studio connection failed during generation for model 'qwen/qwen3.5-4b'"),
         ),
     ),
 )
@@ -526,9 +491,7 @@ def test_generation_transport_errors_are_typed_without_sensitive_data(
         native_error.request = request
         raise native_error
 
-    request = ChatRequest(
-        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
-    )
+    request = ChatRequest(messages=(ChatMessage(role="user", content="SECRET_PROMPT"),))
 
     with pytest.raises(expected_type) as caught:
         _generate(request, handler)
@@ -561,9 +524,7 @@ def test_generation_transport_errors_are_typed_without_sensitive_data(
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
-                "choices": [
-                    {"message": {"role": "assistant", "content": " "}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": " "}}],
                 "private": "SECRET_BODY",
             },
         ),
@@ -601,9 +562,7 @@ def test_generation_transport_errors_are_typed_without_sensitive_data(
             200,
             json={
                 "model": "qwen/qwen3.5-4b",
-                "choices": [
-                    {"message": {"role": "assistant", "content": "Visible"}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": "Visible"}}],
                 "usage": {
                     "prompt_tokens": 2,
                     "completion_tokens": 1,
@@ -619,16 +578,13 @@ def test_generation_malformed_success_is_redacted_protocol_error(
     def handler(request: httpx2.Request) -> httpx2.Response:
         return response
 
-    request = ChatRequest(
-        messages=(ChatMessage(role="user", content="SECRET_PROMPT"),)
-    )
+    request = ChatRequest(messages=(ChatMessage(role="user", content="SECRET_PROMPT"),))
 
     with pytest.raises(InferenceProtocolError) as caught:
         _generate(request, handler)
 
     assert str(caught.value) == (
-        "LM Studio returned invalid data during generation for model "
-        "'qwen/qwen3.5-4b'"
+        "LM Studio returned invalid data during generation for model 'qwen/qwen3.5-4b'"
     )
     for secret in (
         "SECRET_MALFORMED_JSON",
@@ -693,9 +649,7 @@ def test_availability_matches_exact_configured_model() -> None:
         available_models=("qwen/qwen3.5-4b", "another/downloaded-model"),
         loaded_context_lengths=(8192, 4096),
     )
-    assert [(request.method, request.url.path) for request in seen] == [
-        ("GET", "/api/v1/models")
-    ]
+    assert [(request.method, request.url.path) for request in seen] == [("GET", "/api/v1/models")]
 
 
 def test_downloaded_but_unloaded_model_is_unavailable() -> None:
@@ -733,9 +687,7 @@ def test_absent_model_is_unavailable_without_prefix_matching() -> None:
                     {
                         "key": "qwen/qwen3.5-4b-extra",
                         "type": "llm",
-                        "loaded_instances": [
-                            {"config": {"context_length": 16384}}
-                        ],
+                        "loaded_instances": [{"config": {"context_length": 16384}}],
                     }
                 ]
             },
@@ -758,9 +710,7 @@ def test_matching_loaded_non_llm_model_is_unavailable() -> None:
                     {
                         "key": "qwen/qwen3.5-4b",
                         "type": "embedding",
-                        "loaded_instances": [
-                            {"config": {"context_length": 8192}}
-                        ],
+                        "loaded_instances": [{"config": {"context_length": 8192}}],
                     }
                 ]
             },
@@ -798,11 +748,7 @@ def test_empty_inventory_is_reachable_but_unavailable() -> None:
         {"models": {}},
         {"models": [None]},
         {"models": [{"key": "", "type": "llm", "loaded_instances": []}]},
-        {
-            "models": [
-                {"key": "valid/model", "type": "unsupported", "loaded_instances": []}
-            ]
-        },
+        {"models": [{"key": "valid/model", "type": "unsupported", "loaded_instances": []}]},
         {"models": [{"key": "valid/model", "type": "llm", "loaded_instances": None}]},
         {
             "models": [
@@ -857,9 +803,7 @@ def test_empty_inventory_is_reachable_but_unavailable() -> None:
                     "key": "valid/model",
                     "type": "llm",
                     "loaded_instances": [],
-                    "capabilities": {
-                        "reasoning": {"allowed_options": "off", "default": "off"}
-                    },
+                    "capabilities": {"reasoning": {"allowed_options": "off", "default": "off"}},
                 }
             ]
         },
@@ -881,9 +825,7 @@ def test_empty_inventory_is_reachable_but_unavailable() -> None:
                     "key": "valid/model",
                     "type": "llm",
                     "loaded_instances": [],
-                    "capabilities": {
-                        "reasoning": {"allowed_options": ["off"], "default": "on"}
-                    },
+                    "capabilities": {"reasoning": {"allowed_options": ["off"], "default": "on"}},
                 }
             ]
         },
@@ -895,10 +837,7 @@ def test_malformed_availability_payload_raises_protocol_error(payload: object) -
 
     with pytest.raises(
         InferenceProtocolError,
-        match=(
-            "^LM Studio returned invalid data during availability for model "
-            "'qwen/qwen3.5-4b'$"
-        ),
+        match=("^LM Studio returned invalid data during availability for model 'qwen/qwen3.5-4b'$"),
     ) as caught:
         _check_availability(handler)
 
@@ -913,8 +852,7 @@ def test_invalid_json_availability_response_raises_protocol_error() -> None:
         _check_availability(handler)
 
     assert str(caught.value) == (
-        "LM Studio returned invalid data during availability for model "
-        "'qwen/qwen3.5-4b'"
+        "LM Studio returned invalid data during availability for model 'qwen/qwen3.5-4b'"
     )
     assert "SECRET_INVALID_JSON" not in str(caught.value)
     assert caught.value.__cause__ is None
@@ -930,8 +868,7 @@ def test_non_success_availability_response_raises_safe_backend_error() -> None:
         _check_availability(handler)
 
     assert str(caught.value) == (
-        "LM Studio backend failed during availability for model "
-        "'qwen/qwen3.5-4b' (status 503)"
+        "LM Studio backend failed during availability for model 'qwen/qwen3.5-4b' (status 503)"
     )
     assert "SECRET_BACKEND_RESPONSE" not in str(caught.value)
     assert caught.value.__cause__ is None
@@ -945,8 +882,7 @@ def test_availability_timeout_is_translated_without_native_text() -> None:
         _check_availability(handler)
 
     assert str(caught.value) == (
-        "LM Studio request timed out during availability for model "
-        "'qwen/qwen3.5-4b'"
+        "LM Studio request timed out during availability for model 'qwen/qwen3.5-4b'"
     )
     assert "SECRET_TIMEOUT" not in str(caught.value)
     assert caught.value.__cause__ is None
@@ -960,8 +896,7 @@ def test_availability_request_error_is_translated_without_native_text() -> None:
         _check_availability(handler)
 
     assert str(caught.value) == (
-        "LM Studio connection failed during availability for model "
-        "'qwen/qwen3.5-4b'"
+        "LM Studio connection failed during availability for model 'qwen/qwen3.5-4b'"
     )
     assert "SECRET_CONNECTION" not in str(caught.value)
     assert caught.value.__cause__ is None

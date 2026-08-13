@@ -56,7 +56,10 @@ class TokenUsage:
     def __post_init__(self) -> None:
         token_counts = (self.input_tokens, self.output_tokens, self.total_tokens)
         if (
-            any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in token_counts)
+            any(
+                not isinstance(count, int) or isinstance(count, bool) or count < 0
+                for count in token_counts
+            )
             or self.total_tokens != self.input_tokens + self.output_tokens
         ):
             raise ValueError("token counts must be non-negative integers with an exact total")

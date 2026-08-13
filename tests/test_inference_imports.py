@@ -25,9 +25,7 @@ import aaos.main
     source_root = Path(__file__).resolve().parents[1] / "src"
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join(
-        part
-        for part in (str(source_root), environment.get("PYTHONPATH", ""))
-        if part
+        part for part in (str(source_root), environment.get("PYTHONPATH", "")) if part
     )
 
     completed = subprocess.run(

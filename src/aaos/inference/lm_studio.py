@@ -56,9 +56,7 @@ class LMStudioGateway:
             response,
             operation=operation,
             model=model,
-            parser=lambda payload: _parse_availability(
-                payload, configured_model=model
-            ),
+            parser=lambda payload: _parse_availability(payload, configured_model=model),
         )
 
     async def generate(self, request: ChatRequest) -> ChatResponse:
@@ -69,9 +67,7 @@ class LMStudioGateway:
         if self._closed:
             raise InferenceError("LM Studio gateway is closed") from None
         if request.reasoning:
-            raise UnsupportedInferenceFeatureError(
-                "Reasoning is not supported in Phase 0E"
-            )
+            raise UnsupportedInferenceFeatureError("Reasoning is not supported in Phase 0E")
         if (
             request.max_output_tokens is not None
             and request.max_output_tokens > self._settings.lm_studio_context_length
@@ -81,8 +77,7 @@ class LMStudioGateway:
         request_payload: dict[str, object] = {
             "model": model,
             "messages": [
-                {"role": message.role, "content": message.content}
-                for message in request.messages
+                {"role": message.role, "content": message.content} for message in request.messages
             ],
             "stream": False,
             "reasoning_effort": "none",
@@ -121,9 +116,7 @@ class LMStudioGateway:
             if request_payload is None:
                 response = await self._client.request(method, path)
             else:
-                response = await self._client.request(
-                    method, path, json=request_payload
-                )
+                response = await self._client.request(method, path, json=request_payload)
         except httpx2.TimeoutException:
             translated_error = InferenceTimeoutError(
                 f"LM Studio request timed out during {operation} for model '{model}'"
