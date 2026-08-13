@@ -165,3 +165,10 @@ def test_failed_collection_cannot_be_synchronized() -> None:
 def test_complete_empty_snapshot_is_valid() -> None:
     result = normalize_collection(complete_snapshot(courses=(), assignments=()))
     assert result.courses == ()
+
+
+def test_invalid_collection_is_rejected_before_any_sync_boundary() -> None:
+    with pytest.raises(SourceCollectionError):
+        normalize_collection(
+            SourceCollectionFailure(source_system="mock:primary", code="incomplete")
+        )

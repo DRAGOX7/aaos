@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypeAlias
 
+from pytest import MonkeyPatch
 from sqlalchemy import Engine
 
 from aaos.academic.models import (
@@ -10,7 +11,7 @@ from aaos.academic.models import (
     CanonicalCourse,
     CanonicalSnapshot,
 )
-from aaos.academic.sync import AcademicSyncService
+from aaos.academic.sync import AcademicSyncService, SynchronizationConflict
 from aaos.persistence.academic_models import AssignmentORM, CourseORM
 from aaos.persistence.database import create_database_engine, create_session_factory
 
@@ -48,6 +49,28 @@ def snapshot(
             CanonicalCourse(source_system=namespace, source_id=course_id, title=course_title),
         ),
         assignments=assignments,
+    )
+
+
+def empty_snapshot(namespace: str = "mock:primary") -> CanonicalSnapshot:
+    return CanonicalSnapshot(source_system=namespace)
+
+
+def two_course_snapshot(*, child_course_id: str) -> CanonicalSnapshot:
+    return CanonicalSnapshot(
+        source_system="mock:primary",
+        courses=(
+            CanonicalCourse(source_system="mock:primary", source_id="course-a", title="A"),
+            CanonicalCourse(source_system="mock:primary", source_id="course-b", title="B"),
+        ),
+        assignments=(
+            CanonicalAssignment(
+                source_system="mock:primary",
+                source_id="assignment-1",
+                course_source_id=child_course_id,
+                title="Task",
+            ),
+        ),
     )
 
 
@@ -103,5 +126,70 @@ def test_independent_namespaces_with_colliding_ids_do_not_collide(tmp_path: Path
         with create_session_factory(engine)() as session:
             assert session.query(CourseORM).count() == 2
             assert session.query(AssignmentORM).count() == 2
+    finally:
+        engine.dispose()
+
+
+def test_disappearance_and_reactivation_are_namespace_scoped(tmp_path: Path) -> None:
+    service, engine = service_for(tmp_path)
+    try:
+        service.sync(snapshot("mock:primary"))
+        service.sync(empty_snapshot("mock:primary"))
+        service.sync(snapshot("mock:other"))
+        with create_session_factory(engine)() as session:
+            assert (
+                session.query(CourseORM).filter_by(source_system="mock:primary").one().is_active
+                is False
+            )
+            assert (
+                session.query(CourseORM).filter_by(source_system="mock:other").one().is_active
+                is True
+            )
+        service.sync(snapshot("mock:primary"))
+        with create_session_factory(engine)() as session:
+            assert (
+                session.query(CourseORM).filter_by(source_system="mock:primary").one().is_active
+                is True
+            )
+    finally:
+        engine.dispose()
+
+
+def test_reparent_conflict_rolls_back(tmp_path: Path) -> None:
+    service, engine = service_for(tmp_path)
+    try:
+        service.sync(two_course_snapshot(child_course_id="course-a"))
+        with create_session_factory(engine)() as session:
+            persisted_course = session.query(CourseORM).filter_by(source_id="course-a").one().id
+        try:
+            service.sync(two_course_snapshot(child_course_id="course-b"))
+        except SynchronizationConflict:
+            pass
+        with create_session_factory(engine)() as session:
+            assignment = session.query(AssignmentORM).one()
+            assert assignment.course_id == persisted_course
+            assert assignment.is_active is True
+    finally:
+        engine.dispose()
+
+
+def test_persistence_failure_rolls_back_prior_deactivation(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    service, engine = service_for(tmp_path)
+    try:
+        service.sync(snapshot())
+
+        def fail(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("injected failure")
+
+        monkeypatch.setattr(AcademicSyncService, "_upsert_assignments", classmethod(fail))
+        try:
+            service.sync(empty_snapshot())
+        except RuntimeError:
+            pass
+        with create_session_factory(engine)() as session:
+            assert session.query(CourseORM).one().is_active is True
+            assert session.query(AssignmentORM).one().is_active is True
     finally:
         engine.dispose()
