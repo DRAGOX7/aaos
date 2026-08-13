@@ -34,7 +34,7 @@ def parse_nvidia_output(output: CommandOutput) -> NvidiaObservation:
         return NvidiaObservation((), DiagnosticCode.MALFORMED_OUTPUT)
 
     try:
-        rows = tuple(csv.reader(io.StringIO(output.text, newline="")))
+        rows = tuple(csv.reader(io.StringIO(output.text, newline=""), strict=True))
     except csv.Error:
         return NvidiaObservation((), DiagnosticCode.MALFORMED_OUTPUT)
     if not rows:
@@ -87,8 +87,8 @@ def _parse_row(row: list[str]) -> GpuObservation | None:
         return None
 
     total = _parse_positive_integer(total_vram)
-    used = _parse_positive_integer(used_vram)
-    free = _parse_positive_integer(free_vram)
+    used = _parse_non_negative_integer(used_vram)
+    free = _parse_non_negative_integer(free_vram)
     if total is None or used is None or free is None:
         return None
     if used > total or free > total:
@@ -97,7 +97,11 @@ def _parse_row(row: list[str]) -> GpuObservation | None:
 
 
 def _parse_positive_integer(value: str) -> int | None:
+    parsed = _parse_non_negative_integer(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _parse_non_negative_integer(value: str) -> int | None:
     if _INTEGER_PATTERN.fullmatch(value) is None:
         return None
-    parsed = int(value)
-    return parsed if parsed > 0 else None
+    return int(value)

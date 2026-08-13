@@ -128,11 +128,21 @@ def test_runtime_and_system_reject_invalid_numeric_resources() -> None:
 
 def test_gpu_and_nvidia_observations_reject_invalid_resource_states() -> None:
     gpu = GpuObservation("RTX 4050", 6144, "576.80")
+    idle_gpu = GpuObservation(
+        "RTX 4050",
+        6144,
+        "576.80",
+        used_vram_mib=0,
+        free_vram_mib=0,
+    )
+
+    assert idle_gpu.used_vram_mib == 0
+    assert idle_gpu.free_vram_mib == 0
 
     with pytest.raises(ValueError, match="total_vram_mib"):
         GpuObservation("RTX 4050", 0, "576.80")
     with pytest.raises(ValueError, match="used_vram_mib"):
-        GpuObservation("RTX 4050", 6144, "576.80", used_vram_mib=0)
+        GpuObservation("RTX 4050", 6144, "576.80", used_vram_mib=-1)
     with pytest.raises(ValueError, match="free_vram_mib"):
         GpuObservation("RTX 4050", 6144, "576.80", free_vram_mib=-1)
     with pytest.raises(ValueError, match="at least one GPU"):

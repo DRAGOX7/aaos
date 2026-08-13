@@ -185,16 +185,16 @@ class GpuObservation:
         _require_int(self.total_vram_mib, "total_vram_mib")
         if self.total_vram_mib <= 0:
             raise ValueError("total_vram_mib must be positive")
-        self._require_positive_when_present(self.used_vram_mib, "used_vram_mib")
-        self._require_positive_when_present(self.free_vram_mib, "free_vram_mib")
+        self._require_non_negative_when_present(self.used_vram_mib, "used_vram_mib")
+        self._require_non_negative_when_present(self.free_vram_mib, "free_vram_mib")
 
     @staticmethod
-    def _require_positive_when_present(value: int | None, field_name: str) -> None:
+    def _require_non_negative_when_present(value: int | None, field_name: str) -> None:
         if value is None:
             return
         _require_int(value, field_name)
-        if value <= 0:
-            raise ValueError(f"{field_name} must be positive when present")
+        if value < 0:
+            raise ValueError(f"{field_name} must be non-negative when present")
 
 
 @dataclass(frozen=True, slots=True)

@@ -67,6 +67,34 @@ def test_parse_nvidia_output_rejects_blank_rows(text: str) -> None:
     )
 
 
+def test_parse_nvidia_output_rejects_unterminated_quoted_field() -> None:
+    text = 'NVIDIA RTX, 6141, 610.62, 4781,"1360'
+
+    assert parse_nvidia_output(CommandOutput(text=text)) == NvidiaObservation(
+        (), DiagnosticCode.MALFORMED_OUTPUT
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_used", "expected_free"),
+    [
+        ("NVIDIA RTX, 6141, 610.62, 0, 1360", 0, 1360),
+        ("NVIDIA RTX, 6141, 610.62, 4781, 0", 4781, 0),
+    ],
+)
+def test_parse_nvidia_output_accepts_zero_used_or_free_vram(
+    text: str,
+    expected_used: int,
+    expected_free: int,
+) -> None:
+    observation = parse_nvidia_output(CommandOutput(text=text))
+
+    assert observation.code is None
+    assert len(observation.gpus) == 1
+    assert observation.gpus[0].used_vram_mib == expected_used
+    assert observation.gpus[0].free_vram_mib == expected_free
+
+
 @pytest.mark.parametrize(
     "text",
     [
