@@ -141,7 +141,7 @@ class LMStudioGateway:
                 )
             return response
 
-        raise translated_error
+        raise translated_error from None
 
     async def aclose(self) -> None:
         """Close the exclusively owned client at most once."""
@@ -209,7 +209,7 @@ def _parse_success_response(
     else:
         return parsed_response
 
-    raise translated_error
+    raise translated_error from None
 
 
 def _parse_availability(payload: object, *, configured_model: str) -> ModelAvailability:
