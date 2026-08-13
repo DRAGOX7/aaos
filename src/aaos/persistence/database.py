@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import URL, Engine
+from sqlalchemy import URL, Engine, event
 from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -30,7 +31,17 @@ def create_database_engine(
     """Create an engine after deliberately preparing its parent directory."""
     resolved_path = resolve_database_path(database_path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    return sqlalchemy_create_engine(build_sqlite_url(resolved_path), echo=echo)
+    engine = sqlalchemy_create_engine(build_sqlite_url(resolved_path), echo=echo)
+
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    return engine
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

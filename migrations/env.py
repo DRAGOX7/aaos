@@ -13,13 +13,14 @@ from aaos.persistence.database import (
     build_sqlite_url,
     create_database_engine,
 )
+from aaos.persistence.academic_models import Base
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def configured_database_path() -> Path:
