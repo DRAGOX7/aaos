@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from aaos.doctor.models import (
@@ -29,16 +28,14 @@ _WHITESPACE = re.compile(r"\s+")
 
 @runtime_checkable
 class ReferenceInspector(Protocol):
-    def compare(self) -> ReferenceObservation: ...
+    def compare(
+        self, system: SystemObservation, nvidia: NvidiaObservation
+    ) -> ReferenceObservation: ...
 
 
-@dataclass(frozen=True, slots=True)
 class LocalReferenceInspector:
-    system: SystemObservation
-    nvidia: NvidiaObservation
-
-    def compare(self) -> ReferenceObservation:
-        return compare_reference_profile(self.system, self.nvidia)
+    def compare(self, system: SystemObservation, nvidia: NvidiaObservation) -> ReferenceObservation:
+        return compare_reference_profile(system, nvidia)
 
 
 def compare_reference_profile(

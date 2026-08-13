@@ -9,6 +9,7 @@ from aaos.doctor.models import (
     GpuObservation,
     NvidiaObservation,
     ReferenceMatch,
+    ReferenceObservation,
     SystemObservation,
 )
 from aaos.doctor.reference import (
@@ -122,11 +123,18 @@ def test_local_reference_inspector_delegates_to_comparison_function(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = compare_reference_profile(_system(), _nvidia(_REFERENCE_GPU))
-    monkeypatch.setattr("aaos.doctor.reference.compare_reference_profile", lambda *_: expected)
-    inspector = LocalReferenceInspector(_system(), _nvidia(_REFERENCE_GPU))
+    received: list[tuple[SystemObservation, NvidiaObservation]] = []
+
+    def compare(system: SystemObservation, nvidia: NvidiaObservation) -> ReferenceObservation:
+        received.append((system, nvidia))
+        return expected
+
+    monkeypatch.setattr("aaos.doctor.reference.compare_reference_profile", compare)
+    inspector = LocalReferenceInspector()
 
     assert isinstance(inspector, ReferenceInspector)
-    assert inspector.compare() is expected
+    assert inspector.compare(_system(), _nvidia(_REFERENCE_GPU)) is expected
+    assert received == [(_system(), _nvidia(_REFERENCE_GPU))]
 
 
 def test_reference_facts_are_normalized_comparison_values_not_raw_command_output() -> None:
