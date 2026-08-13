@@ -55,4 +55,4 @@ The model never receives direct, unrestricted access to credentials, Moodle auth
 - **Environment:** contains the local or external academic systems and data being observed or changed.
 - **Structured observation:** reports a tool or environment outcome without granting it authority over the next action.
 
-This document describes intended architecture. Phase 0F — Doctor / Hardware Diagnostics — is accepted; Phase 0G Security Baseline Verification and Phase 0H Final Acceptance remain pending, and Phase 0 as a whole remains in progress.
+This document describes intended architecture. Phase 0F — Doctor / Hardware Diagnostics — is accepted; Phase 0G Security Baseline Verification and Phase 0H Final Acceptance have not started, and Phase 0 as a whole remains in progress.
