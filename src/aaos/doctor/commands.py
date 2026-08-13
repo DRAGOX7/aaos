@@ -91,6 +91,7 @@ class FixedCommandInspector:
             completed = self._process_runner(
                 arguments,
                 shell=False,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 timeout=COMMAND_TIMEOUT_SECONDS,

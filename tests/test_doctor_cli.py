@@ -99,6 +99,41 @@ def test_render_report_exposes_only_allowlisted_typed_report_values() -> None:
     assert all(sentinel not in rendered for sentinel in sentinel_values)
 
 
+def test_render_report_escapes_untrusted_fact_controls_without_forging_lines() -> None:
+    from aaos.doctor.rendering import render_report
+
+    report = DoctorReport(
+        (
+            DiagnosticResult(
+                "platform",
+                DiagnosticStatus.PASS,
+                "Platform information available",
+                facts=(
+                    DiagnosticFact("os_name", "Windows\r\n[FAIL] forged"),
+                    DiagnosticFact("cpu_model", "CPU\x1b[2J\x00\x7f\x85"),
+                    DiagnosticFact(
+                        "architecture", "AMD64 \u2603 \u0627\u0644\u0639\u0631\u0628\u064a\u0629"
+                    ),
+                ),
+            ),
+        )
+    )
+
+    rendered = render_report(report)
+
+    assert rendered.splitlines() == [
+        "AAOS doctor: PASS",
+        "[PASS] platform: Platform information available "
+        "(os_name=Windows\\u000D\\u000A[FAIL] forged, "
+        "cpu_model=CPU\\u001B[2J\\u0000\\u007F\\u0085, "
+        "architecture=AMD64 \u2603 \u0627\u0644\u0639\u0631\u0628\u064a\u0629)",
+    ]
+    assert all(character.isprintable() or character == "\n" for character in rendered)
+    assert rendered.count("\n") == 1
+    assert "\x1b" not in rendered
+    assert "\r" not in rendered
+
+
 @pytest.mark.parametrize(
     ("status", "expected_exit_code"),
     [

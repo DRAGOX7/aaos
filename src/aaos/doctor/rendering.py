@@ -51,7 +51,15 @@ def _render_result(result: DiagnosticResult) -> str:
 
 
 def _render_facts(facts: tuple[DiagnosticFact, ...]) -> str:
-    return ", ".join(f"{fact.name}={fact.value}" for fact in facts)
+    return ", ".join(f"{fact.name}={_render_fact_value(fact.value)}" for fact in facts)
+
+
+def _render_fact_value(value: str | int | bool) -> str:
+    if not isinstance(value, str):
+        return str(value)
+    return "".join(
+        character if character.isprintable() else f"\\u{ord(character):04X}" for character in value
+    )
 
 
 def _is_allowed_fact(fact: DiagnosticFact) -> bool:

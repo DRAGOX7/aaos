@@ -66,6 +66,21 @@ def test_canonical_nvidia_spec_executes_with_exact_fixed_arguments() -> None:
     )
 
 
+def test_both_canonical_invocations_disable_stdin() -> None:
+    stdin_values: list[object] = []
+
+    def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        stdin_values.append(kwargs["stdin"])
+        return subprocess.CompletedProcess(args, 0, stdout=b"uv 0.12.3")
+
+    inspector = inspector_for(runner)
+
+    inspector.inspect_uv()
+    inspector.inspect_nvidia_output()
+
+    assert stdin_values == [subprocess.DEVNULL, subprocess.DEVNULL]
+
+
 def test_value_equal_clone_is_rejected_before_discovery_or_execution() -> None:
     discovered: list[str] = []
     executed: list[list[str]] = []
@@ -111,6 +126,7 @@ def test_invocation_uses_the_safe_fixed_run_contract(
             [r"C:\Tools\uv.exe", "--version"],
             {
                 "shell": False,
+                "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.DEVNULL,
                 "timeout": 5.0,
