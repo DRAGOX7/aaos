@@ -12,7 +12,18 @@ Every phase ends with:
 4. a review of failures and limitations;
 5. an explicit decision to proceed.
 
-## PHASE 0 — Foundation, Hardware Benchmark, and Security Baseline
+## PHASE 0 — Foundation and Local Runtime
+
+Phase 0 is decomposed into the following governed subphases:
+
+- **0A — Preflight** — complete.
+- **0B — Python + uv Tooling** — complete.
+- **0C — FastAPI Foundation** — complete.
+- **0D — SQLite + Alembic** — complete.
+- **0E — Local Model Gateway** — accepted.
+- **0F — Doctor / Hardware Diagnostics** — accepted.
+- **0G — Security Baseline Verification** — not started.
+- **0H — Phase 0 Final Acceptance** — not started.
 
 ### Purpose
 
@@ -31,7 +42,7 @@ Establish the reproducible development environment and verify the laptop, Docker
 - Initial threat model.
 - `aaos doctor` command.
 
-### Acceptance gate
+### Overall Phase 0 acceptance gate
 
 - The environment is reproducible from documented steps.
 - The FastAPI health endpoint works.
@@ -40,6 +51,40 @@ Establish the reproducible development environment and verify the laptop, Docker
 - The local model can return schema-valid structured output.
 - Git contains no credentials or authentication state.
 - Docker configuration validates if Docker is introduced in this phase.
+
+### Phase 0G — Security Baseline Verification
+
+0G is a verification gate, not a new security subsystem. It organizes, tests,
+and evidences only security properties already stated in AAOS governance and
+approved Phase 0 specifications:
+
+- Git credential and authentication-state hygiene;
+- safe logging and error boundaries;
+- local-first and default-boundary verification;
+- import and startup side-effect guarantees;
+- dependency and lock reproducibility;
+- validation of untrusted environment, tool, and model observations;
+- verification of already-approved execution and security boundaries.
+
+Security functionality owned by Moodle authentication, document ingestion,
+RAG, agent approvals, external integrations, dashboards, or the restricted
+REPL remains in its owning later phase.
+
+**0G acceptance gate:** the existing Phase 0 security properties are
+demonstrated by focused verification and an acceptance report, without adding
+new security functionality or changing later-phase boundaries.
+
+### Phase 0H — Phase 0 Final Acceptance
+
+0H is the final integration and acceptance gate, not a feature-development
+phase. It verifies all Phase 0 acceptance requirements, reruns deterministic
+verification, performs required live/local smoke checks, verifies repository
+cleanliness and reproducibility, reviews all Phase 0 evidence, performs the
+final whole-Phase-0 review, and obtains explicit human acceptance.
+
+**0H acceptance gate:** only after explicit human acceptance may the
+`phase-00-passed` tag be created. Until then, overall Phase 0 remains
+incomplete.
 
 ## PHASE 1 — Domain Model and Mock Portal
 

@@ -45,4 +45,4 @@ These are planned capabilities assigned to gated phases. They are not claims abo
 
 ## Current implementation status
 
-**Phase 0 is in progress. Phase 0A, Phase 0B, Phase 0C, and Phase 0D have passed their sub-gates. Phase 0 as a whole has not passed yet.**
+**Phase 0 is in progress. Phase 0A, Phase 0B, Phase 0C, and Phase 0D are complete; Phase 0E and Phase 0F are accepted; Phase 0G and Phase 0H have not started. Phase 0 as a whole has not passed yet.**
