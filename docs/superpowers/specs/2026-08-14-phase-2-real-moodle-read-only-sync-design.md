@@ -76,6 +76,11 @@ Each Moodle source has a configured stable, non-secret namespace such as
 alias for one Moodle installation, one user-owned account namespace, and one
 complete collection scope; it is not the generic literal `moodle`, a title, a
 cookie, a token, a password, or an account identifier supplied by the portal.
+For JUST, `/current/` and the observed semester label (`JUST LMS Summer 2026`)
+are provisional clues, not a finalized namespace. Authenticated safe site
+metadata plus configured operational context must establish an instance
+identity before the namespace is frozen; it must not be finalized as
+`moodle:just:current`.
 Changing the alias creates a different Phase 1 namespace and therefore needs a
 human-reviewed migration or operational decision rather than an implicit rename.
 
@@ -120,6 +125,108 @@ path proposed for this phase. Token-bearing requests and storage state have
 redacted representations only; native URLs, headers, bodies, exceptions, and
 traces never reach CLI output, normal logs, evidence, or model context.
 
+### Narrow authentication-bootstrap amendment
+
+JUST deployment evidence shows that a student can authenticate through the
+official Moodle app, the Moodle browser login, and Microsoft SSO/MFA, then
+return to the app with enrolled courses available. It does not prove that this
+user can self-issue a token from Moodle Preferences or that every required API
+function is enabled. Moodle documents browser-window SSO for mobile
+authentication and a mobile web-service token handoff; these facts make a
+user-controlled bootstrap plausible, not approved for execution.
+
+The Phase 2 data-collection mode remains API when its complete read capability
+is approved. Authentication preparation is a separate, one-time boundary. The
+current Moodle mobile launch protocol is not a generic OAuth callback: its
+`admin/tool/mobile/launch.php` flow accepts fixed `service` and `passport`
+values plus an optional `urlscheme`, then returns a custom URI of the form
+`<scheme>://token=<encoded-app-token>`. A non-empty site `forcedurlscheme`
+overrides the requested scheme. Therefore the current design approves only a
+registered URI callback, not a loopback HTTP listener:
+
+| Bootstrap option | Advantages | Risks / decision |
+| --- | --- | --- |
+| A. User-controlled system browser plus an AAOS-owned registered URI callback | No browser automation or new browser dependency; credentials and MFA stay on the trusted SSO page; the callback can hand one bounded app-token envelope directly to the existing credential path. | Must prove that JUST honors the requested AAOS scheme. AAOS never attaches to, copies, or reads a normal browser profile. Recommended if protocol compatibility is proven. |
+| B. Dedicated ephemeral Playwright browser for SSO/token callback | Fully controlled ephemeral context and deterministic callback observation. | Adds a dependency and browser security surface, and must not become data scraping. Consider only if option A is technically incompatible and receive separate Playwright approval. |
+| C. Another documented Moodle-supported user-controlled mechanism | May avoid custom callback work. | Accept only if repository and official Moodle evidence proves it avoids password automation, private-app storage extraction, and profile reuse. |
+
+Option A is the recommended candidate, conditional on a protocol-compatibility
+check. Option B is not currently required. No loopback HTTP callback is
+approved for this Moodle flow, and no option may automate password entry, call
+`token.php` with credentials, extract a token from the installed Moodle app,
+attach to a normal browser profile, or silently turn bootstrap into browser
+scraping. If JUST forces `moodlemobile` or any other non-AAOS scheme, bootstrap
+is blocked for human review; AAOS must not hijack or register Moodle's official
+scheme and must not substitute another mechanism implicitly.
+
+Windows URI-scheme registration for an AAOS-owned scheme is an explicit,
+human-controlled installation/setup action. AAOS runtime must not modify the
+Windows registry or take over another application's scheme.
+
+The proposed bootstrap contract for separate human approval is deliberately
+narrow:
+
+1. The user initiates the fixed Moodle mobile launch URL for the approved
+   origin in a trusted system browser (or, only after separate approval, a
+   dedicated ephemeral context). AAOS generates a cryptographically strong
+   one-time `passport`, retains it only for this attempt, and supplies the
+   module-owned `service`, `passport`, and requested `urlscheme` values. The
+   user enters Microsoft credentials and completes MFA directly; AAOS never
+   sees password fields or SSO content.
+2. The application-owned callback accepts only the exact registered-URI grammar
+   `<approved-scheme>://token=<encoded-app-token>`: exact scheme, no userinfo,
+   host, port, path, query, fragment, or extra structure, and exactly one
+   non-empty token payload. Unexpected scheme, malformed URI shape, duplicate
+   token payloads, empty payload, oversized payload, or invalid encoding fails
+   closed. The parser does not treat the token as a query parameter.
+3. Before decoding, the encoded app-token is bounded to the approved maximum.
+   AAOS then performs strict base64 decoding, applies a decoded-size bound, and
+   accepts exactly two or three `:::`-separated components:
+   `siteid ::: web_service_token` with an optional `private_token`. It computes
+   the protocol-defined `MD5(canonical_wwwroot + passport)` site identity from
+   the approved canonical Moodle wwwroot and compares it safely with the
+   received `siteid`. The MD5 operation is a Moodle compatibility rule, not a
+   substitute for a security primitive. Any mismatch, malformed component,
+   empty web-service token, or wrong component count fails closed.
+4. AAOS extracts only the web-service token, explicitly discards an optional
+   private token, and writes only the extracted token to the exact per-source
+   `AuthPaths.api_token_path`. It never stores the encoded envelope, siteid,
+   private token, raw callback URI, Microsoft session material, or passport
+   beyond the attempt. No sensitive value is returned, printed, represented,
+   logged, placed in evidence, or sent to the model.
+5. Temporary callback/passport state is cleared deterministically on success,
+   timeout, cancellation, or validation failure. No academic collection occurs
+   during bootstrap. No screenshots, video, tracing, HAR, HTML dumps, console
+   capture, or password instrumentation is enabled.
+
+Authentication capability is deliberately split from academic collection:
+
+```text
+OFFLINE Task 3A contracts + synthetic tests
+    -> pre-auth security review
+    -> human authorization for bootstrap + site-info probe
+    -> user-controlled Microsoft SSO/MFA and registered-URI callback
+    -> extract/store web-service token
+    -> exactly one authenticated core_webservice_get_site_info request
+    -> safe capability report
+    -> human approval of exact entity functions and source namespace
+    -> later Task 3B entity adapter
+```
+
+The first authenticated probe is limited to the fixed REST
+`core_webservice_get_site_info` function. It retains only safe canonical
+wwwroot/base identity, release/version when compatibility requires it,
+available web-service function names, whether the requested scheme was honored
+or overridden, and other non-secret site identity facts. It does not retain
+usernames, user IDs unless later justified, names, email, images, keys, tokens,
+course content, raw callback URIs, or raw response bodies. No Course,
+Assignment, Announcement, or RemoteFile function may run before the separate
+human API-function/source-namespace approval.
+
+The protocol decision must be checked against the deployment and the official
+Moodle documentation, including [Moodle mobile authentication guidance](https://docs.moodle.org/502/en/Moodle_Mobile_guide_for_admins),
+[Mobile Open Auth](https://docs.moodle.org/dev/Mobile_Open_Auth), and [Mobile web services](https://docs.moodle.org/502/en/Mobile_web_services).
+
 ### Human-approved capability record
 
 The capability record is the non-secret execution contract between human
@@ -140,13 +247,20 @@ configuration contract, not a generic policy engine.
 
 ## 7. API adapter boundary
 
-The API adapter is enabled only when a human-approved capability record names
-the source namespace and Moodle base origin, exact read-only Moodle
-functions/endpoints, pagination/completeness behavior, and stable provider-ID
-and timestamp mapping. Implementation exposes typed, application-owned calls
-for only that approved set. It has no generic `call(function_name, params)`
-interface, caller-supplied Moodle function name, arbitrary URL, or raw response
-return value. API tokens are introduced only at the private transport boundary.
+Task 3A exposes only the fixed `core_webservice_get_site_info` operation after
+the separate human bootstrap-and-probe authorization. It has no entity
+operations, guessed Moodle function names, or collection behavior. The probe
+receives an injected one-shot authorization capability from the human-gated
+caller; Task 3A does not mint that capability itself. It returns only the safe
+capability facts listed above and is followed by a stop for human review.
+
+Task 3B is created only after that review approves the exact available Moodle
+function names, request schemas, source namespace, and complete read scope. It
+then exposes typed, application-owned calls for only those approved functions
+for Course, Assignment, Announcement, and RemoteFile metadata. It has no
+generic `call(function_name, params)` interface, caller-supplied Moodle
+function name, arbitrary URL, or raw response return value. API tokens are
+introduced only at the private transport boundary.
 
 The API transport disables automatic redirect following by default. If an
 approved capability genuinely requires a redirect, the adapter validates the
@@ -288,12 +402,15 @@ changes remote Moodle state.
 
 ### Offline unit tests
 
-Use synthetic API payloads and static sanitized HTML. Cover source IDs and
-parents, namespace handling, pagination termination/totals, complete-empty
-proof, duplicate IDs, timestamp conversion/rejection, safe URL mapping, typed
+Use synthetic callback URIs, app-token envelopes, API payloads, and static
+sanitized HTML. Cover passport/siteid validation, strict base64 and component
+counts, encoded/decoded bounds, private-token discard, source IDs and parents,
+namespace handling, pagination termination/totals, complete-empty proof,
+duplicate IDs, timestamp conversion/rejection, safe URL mapping, typed
 failure/redaction, login-page detection including HTTP 200, unexpected
-redirects, and API/browser allowlists. Prove no generic API invocation, generic
-browser control, raw secret, or private content crosses an adapter boundary.
+redirects, and API/browser allowlists. Prove that Task 3A performs no entity
+request and that no generic API invocation, generic browser control, raw
+secret, or private content crosses an adapter boundary.
 
 ### Controlled adapter integration tests
 
@@ -305,9 +422,9 @@ unchanged. No university credential, portal, or actual browser login is needed.
 
 ### Opt-in real portal smoke
 
-Later acceptance requires human-prepared approved API token or dedicated AAOS
-browser session and explicit user initiation. The first real-portal acceptance
-is staged:
+Later acceptance requires explicit human authorization for the registered-URI
+bootstrap plus site-info probe, or a separately approved dedicated AAOS browser
+session. The first real-portal acceptance is staged:
 
 1. **Real adapter read:** run the selected approved mode and prove complete
    collection for the capability record's exact scope, producing a
@@ -338,7 +455,10 @@ The later approved plan may add only focused Phase 2 files:
 - `src/aaos/moodle/models.py` — typed capability and safe outcome contracts;
 - `src/aaos/moodle/auth.py` — private sensitive-state access and typed auth
   outcomes;
-- `src/aaos/moodle/api.py` — fixed allowlisted read-only API adapter;
+- `src/aaos/moodle/bootstrap.py` — registered-URI Moodle mobile bootstrap,
+  app-token envelope validation, and token extraction;
+- `src/aaos/moodle/api.py` — Task 3A site-info probe, then later fixed
+  capability-approved read-only API adapter;
 - `src/aaos/moodle/browser.py` — fixed Playwright adapter only if browser mode
   is separately approved;
 - `src/aaos/moodle/normalization.py` — Moodle-to-Phase-1 raw-record mapping;
@@ -355,25 +475,29 @@ Phase 2 is ready for human acceptance only when:
 
 1. the selected API or browser mode is explicitly configured from a
    human-approved capability record; no automatic fallback exists;
-2. session expiry, token rejection, login-page redirects including HTTP 200,
+2. the registered-URI bootstrap validates the exact Moodle callback grammar,
+   passport/siteid app-token envelope, size bounds, and safe token extraction;
+   the site-info probe runs only after explicit human authorization and makes
+   no entity request;
+3. session expiry, token rejection, login-page redirects including HTTP 200,
    SSO/MFA, permission denial, parser failure, course failure, and pagination
    incompleteness all fail closed with no sync;
-3. only fixed read operations/routes execute, with no arbitrary Moodle API or
+4. only fixed read operations/routes execute, with no arbitrary Moodle API or
    browser-control surface and no portal mutation request;
-4. a complete result normalizes through the frozen Phase 1 contract and syncs
+5. a complete result normalizes through the frozen Phase 1 contract and syncs
    atomically and idempotently;
-5. first real-portal acceptance proves the staged adapter-read, normalization,
+6. first real-portal acceptance proves the staged adapter-read, normalization,
    isolated-database sync, and (where feasible) repeat-sync sequence; normal-
    database sync requires separate explicit human authorization;
-6. manual samples confirm all four entity types match the approved real scope;
-7. timestamps are UTC-safe, unsafe locators never persist, and secrets/private
+7. manual samples confirm all four entity types match the approved real scope;
+8. timestamps are UTC-safe, unsafe locators never persist, and secrets/private
    content never reach Git, logs, CLI, fixtures, evidence, or model context;
-8. API redirects are disabled or target-validated without credential
+9. API redirects are disabled or target-validated without credential
    forwarding, browser state is dedicated and source/origin-bound, and the
    capability record cannot expand at runtime;
-9. the opt-in live smoke uses human-prepared auth, is read-only, and records
+10. the opt-in live smoke uses human-prepared auth, is read-only, and records
    only safe summaries; and
-10. all relevant deterministic tests, formatting, lint, type, lock, diff, and
+11. all relevant deterministic tests, formatting, lint, type, lock, diff, and
    credential/auth-path hygiene checks pass without weakening prior gates.
 
 ## 18. Explicit exclusions
