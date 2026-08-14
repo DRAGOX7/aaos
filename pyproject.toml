@@ -18,6 +18,7 @@ build-backend = "uv_build"
 
 [project.scripts]
 aaos = "aaos.cli:main"
+aaos-moodle-callback = "aaos.moodle.receiver:main"
 
 [dependency-groups]
 dev = [
