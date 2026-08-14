@@ -10,6 +10,7 @@ from aaos.moodle.auth import (
     CredentialReadError,
     load_browser_state_path,
     read_api_token,
+    write_api_token,
 )
 from aaos.moodle.models import MoodleSettings, resolve_auth_paths
 
@@ -63,6 +64,15 @@ def test_read_api_token_rejects_missing_file_without_exposing_path(tmp_path: Pat
         read_api_token(paths)
 
     assert str(paths.api_token_path) not in str(error.value)
+
+
+def test_write_api_token_creates_only_the_exact_approved_file(tmp_path: Path) -> None:
+    paths = resolve_auth_paths(SETTINGS, data_root=tmp_path)
+
+    write_api_token(paths, "synthetic-token")
+
+    assert paths.api_token_path.read_text(encoding="utf-8") == "synthetic-token\n"
+    assert not paths.browser_state_dir.exists()
 
 
 def test_browser_state_loader_accepts_only_dedicated_directory(tmp_path: Path) -> None:

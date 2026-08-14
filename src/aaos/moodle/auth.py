@@ -16,6 +16,10 @@ class CredentialReadError(RuntimeError):
     """Raised when the configured API token cannot be safely read."""
 
 
+class CredentialWriteError(RuntimeError):
+    """Raised when the configured API token cannot be safely written."""
+
+
 class BrowserStateError(RuntimeError):
     """Raised when dedicated browser state is unavailable or unbound."""
 
@@ -61,6 +65,25 @@ def read_api_token(paths: AuthPaths) -> str:
     if not token or any(ord(char) < 32 or ord(char) == 127 for char in token):
         raise CredentialReadError("API credential unavailable")
     return token
+
+
+def write_api_token(paths: AuthPaths, token: str) -> None:
+    """Write one validated token to the exact application-owned path."""
+    if (
+        not isinstance(token, str)
+        or not token.strip()
+        or len(token.encode("utf-8")) > MAX_API_TOKEN_BYTES
+        or any(ord(char) < 32 or ord(char) == 127 for char in token)
+    ):
+        raise CredentialWriteError("API credential unavailable")
+    try:
+        token_path = paths.api_token_path
+        if token_path.resolve(strict=False) != token_path:
+            raise CredentialWriteError("API credential unavailable")
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(token.strip() + "\n", encoding="utf-8")
+    except (OSError, ValueError, UnicodeError):
+        raise CredentialWriteError("API credential unavailable") from None
 
 
 def load_browser_state_path(paths: AuthPaths, expected_origin: str) -> Path:
