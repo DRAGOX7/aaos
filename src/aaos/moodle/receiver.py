@@ -26,6 +26,13 @@ PENDING_ATTEMPT_TTL_SECONDS = 300
 _PASSPORT_MAX_BYTES = 512
 _ATTEMPT_ID_MAX_BYTES = 128
 _LOCK_FILENAME = ".pending_bootstrap.lock"
+_REQUIRED_CONFIG_NAMES = (
+    "AAOS_MOODLE_SOURCE_SYSTEM",
+    "AAOS_MOODLE_BASE_ORIGIN",
+    "AAOS_MOODLE_AUTH_ALIAS",
+    "AAOS_DATA_ROOT",
+)
+_MISSING = object()
 
 __all__ = [
     "PENDING_ATTEMPT_FILENAME",
@@ -47,6 +54,18 @@ def _failure() -> ReceiverError:
     return ReceiverError("Moodle callback receiver failed")
 
 
+def _configuration_unavailable() -> ReceiverError:
+    return ReceiverError("Moodle callback configuration unavailable")
+
+
+def _configuration_invalid() -> ReceiverError:
+    return ReceiverError("Moodle callback configuration invalid")
+
+
+def _configuration_conflict() -> ReceiverError:
+    return ReceiverError("Moodle callback configuration conflict")
+
+
 @dataclass(frozen=True, slots=True)
 class PendingBootstrapAttempt:
     """Non-secret metadata for one pending callback attempt."""
@@ -57,6 +76,64 @@ class PendingBootstrapAttempt:
     attempt_id: str = field(repr=False)
     created_at: int
     expires_at: int
+
+
+def _read_user_environment() -> dict[str, object]:
+    """Read only the approved per-user configuration names on Windows."""
+    if sys.platform != "win32":
+        return {}
+    try:
+        import winreg
+    except ImportError:
+        raise _configuration_unavailable() from None
+    values: dict[str, object] = {}
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ)
+    except FileNotFoundError:
+        return values
+    except OSError:
+        raise _configuration_unavailable() from None
+    try:
+        with key:
+            for name in _REQUIRED_CONFIG_NAMES:
+                try:
+                    values[name] = winreg.QueryValueEx(key, name)[0]
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    raise _configuration_unavailable() from None
+    except AttributeError:
+        # Keep the production boundary safe if a platform shim is incomplete.
+        raise _configuration_unavailable() from None
+    return values
+
+
+def _validated_configuration_values() -> dict[str, str]:
+    user_values = _read_user_environment() if sys.platform == "win32" else {}
+    values: dict[str, str] = {}
+    for name in _REQUIRED_CONFIG_NAMES:
+        process_value: object = os.environ.get(name, _MISSING)
+        user_value = user_values.get(name, _MISSING)
+        if process_value is not _MISSING and user_value is not _MISSING:
+            if process_value != user_value:
+                raise _configuration_conflict()
+        selected = process_value if process_value is not _MISSING else user_value
+        if selected is _MISSING:
+            raise _configuration_unavailable()
+        if (
+            not isinstance(selected, str)
+            or not selected.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in selected)
+        ):
+            raise _configuration_invalid()
+        if name == "AAOS_DATA_ROOT":
+            try:
+                if not Path(selected).is_absolute():
+                    raise _configuration_invalid()
+            except (OSError, RuntimeError, ValueError):
+                raise _configuration_invalid() from None
+        values[name] = selected
+    return values
 
 
 def _pending_path(paths: AuthPaths) -> Path:
@@ -329,12 +406,11 @@ def receive_callback(
 
 
 def _runtime_configuration() -> tuple[MoodleBootstrapConfig, AuthPaths]:
-    source_system = os.environ.get("AAOS_MOODLE_SOURCE_SYSTEM")
-    base_origin = os.environ.get("AAOS_MOODLE_BASE_ORIGIN")
-    auth_alias = os.environ.get("AAOS_MOODLE_AUTH_ALIAS")
-    data_root = os.environ.get("AAOS_DATA_ROOT")
-    if source_system is None or base_origin is None or auth_alias is None or data_root is None:
-        raise _failure()
+    values = _validated_configuration_values()
+    source_system = values["AAOS_MOODLE_SOURCE_SYSTEM"]
+    base_origin = values["AAOS_MOODLE_BASE_ORIGIN"]
+    auth_alias = values["AAOS_MOODLE_AUTH_ALIAS"]
+    data_root = values["AAOS_DATA_ROOT"]
     config = MoodleBootstrapConfig(
         source_system=source_system,
         canonical_wwwroot=base_origin,

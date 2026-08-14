@@ -333,6 +333,7 @@ def test_main_valid_activation_is_silent_and_uses_stable_data_root(
     monkeypatch.setenv("AAOS_MOODLE_BASE_ORIGIN", CONFIG.canonical_wwwroot)
     monkeypatch.setenv("AAOS_MOODLE_AUTH_ALIAS", "just")
     monkeypatch.setenv("AAOS_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr("aaos.moodle.receiver._read_user_environment", lambda: {})
 
     assert main([_callback(attempt.passport)]) == 0
     captured = capsys.readouterr()
