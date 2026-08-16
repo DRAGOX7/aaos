@@ -148,6 +148,22 @@ def test_provider_without_oauth_id_is_retained_without_candidate() -> None:
     assert result.identity_providers[0].oauth_provider_id is None
 
 
+@pytest.mark.parametrize(
+    "query",
+    ["", "?id=", "?id=abc", "?id=0", "?id=-1", "?id=7&id=8"],
+)
+def test_unusable_oauth_id_does_not_invalidate_provider(query: str) -> None:
+    payload = _payload()
+    payload["identityproviders"] = [
+        {"name": "Provider", "url": "https://elearn.just.edu.jo/login.php" + query}
+    ]
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert result.identity_providers[0].oauth_provider_id is None
+
+
 def test_invalid_provider_path_reports_safe_internal_code() -> None:
     payload = _payload()
     payload["identityproviders"] = [{"name": "Microsoft", "url": "not-a-url"}]
@@ -200,14 +216,6 @@ def test_internal_codes_identify_top_level_field_validators() -> None:
         ("not-an-object", "invalid_provider_entry"),
         ({"url": "https://elearn.just.edu.jo/login?id=7"}, "invalid_provider_name"),
         ({"name": "Provider", "url": "https://other.example/login?id=7"}, "provider_cross_origin"),
-        (
-            {"name": "Provider", "url": "https://elearn.just.edu.jo/login?id=abc"},
-            "provider_invalid_id",
-        ),
-        (
-            {"name": "Provider", "url": "https://elearn.just.edu.jo/login?id=7&id=8"},
-            "provider_invalid_id",
-        ),
     ],
 )
 def test_internal_codes_identify_provider_validators(provider: object, expected: str) -> None:
@@ -216,13 +224,17 @@ def test_internal_codes_identify_provider_validators(provider: object, expected:
     _assert_internal_code(payload, expected)
 
 
-def test_internal_code_identifies_duplicate_provider_ids() -> None:
+def test_duplicate_usable_provider_ids_remain_visible_without_auto_selection() -> None:
     payload = _payload()
     payload["identityproviders"] = [
         {"name": "One", "url": "https://elearn.just.edu.jo/login?id=7"},
         {"name": "Two", "url": "https://elearn.just.edu.jo/other?id=7"},
     ]
-    _assert_internal_code(payload, "provider_duplicate_id")
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert [provider.oauth_provider_id for provider in result.identity_providers] == [None, None]
 
 
 @pytest.mark.parametrize(
@@ -233,14 +245,14 @@ def test_internal_code_identifies_duplicate_provider_ids() -> None:
         "https://elearn.just.edu.jo/auth/oauth2/login.php?id=7&extra=1",
     ],
 )
-def test_parse_rejects_malformed_local_identity_provider_ids(provider_url: str) -> None:
+def test_parse_retains_provider_with_unusable_identity_provider_id(provider_url: str) -> None:
     payload = _payload()
     payload["identityproviders"] = [{"name": "Provider", "url": provider_url}]
-    with pytest.raises(MoodlePublicConfigError):
-        parse_public_config(
-            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
-            "https://elearn.just.edu.jo/current",
-        )
+    result = parse_public_config(
+        json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert result.identity_providers[0].oauth_provider_id is None
 
 
 def test_parse_rejects_response_for_wrong_same_origin_path() -> None:
@@ -367,17 +379,17 @@ def test_parse_classifies_operation_ajax_error_without_leaking_details() -> None
     assert str(error.value) == "Moodle public configuration reported an AJAX error"
 
 
-def test_parse_rejects_duplicate_provider_ids() -> None:
+def test_parse_accepts_duplicate_provider_ids_without_auto_selection() -> None:
     payload = _payload()
     payload["identityproviders"] = [
         {"name": "One", "url": "https://elearn.just.edu.jo/auth/oauth2/login.php?id=7"},
         {"name": "Two", "url": "https://elearn.just.edu.jo/auth/oauth2/login.php?id=7"},
     ]
-    with pytest.raises(MoodlePublicConfigError):
-        parse_public_config(
-            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
-            "https://elearn.just.edu.jo/current",
-        )
+    result = parse_public_config(
+        json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert [provider.oauth_provider_id for provider in result.identity_providers] == [None, None]
 
 
 def test_transport_rejects_oversized_response_before_parsing() -> None:

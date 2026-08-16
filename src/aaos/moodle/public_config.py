@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
@@ -167,12 +167,14 @@ def _provider(value: object, expected_origin: str) -> PublicIdentityProvider:
         raise _invalid("invalid_provider_url")
     if f"{parsed.scheme}://{parsed.netloc}" != _expected_origin(expected_origin):
         raise _invalid("provider_cross_origin")
-    if identifiers is None:
+    if (
+        identifiers is None
+        or set(query) != {"id"}
+        or len(identifiers) != 1
+        or not identifiers[0].isdigit()
+        or int(identifiers[0]) <= 0
+    ):
         return PublicIdentityProvider(name=name, oauth_provider_id=None)
-    if set(query) != {"id"} or not identifiers:
-        raise _invalid("provider_invalid_id")
-    if len(identifiers) != 1 or not identifiers[0].isdigit() or int(identifiers[0]) <= 0:
-        raise _invalid("provider_invalid_id")
     return PublicIdentityProvider(name=name, oauth_provider_id=int(identifiers[0]))
 
 
@@ -219,13 +221,22 @@ def parse_public_config(payload: bytes, expected_origin: str) -> MoodlePublicCon
     if not isinstance(providers_value, list):
         raise _invalid("invalid_identityproviders_type")
     providers = tuple(_provider(item, expected_origin_value) for item in providers_value)
-    provider_ids = [
+    duplicate_ids = {
         provider.oauth_provider_id
         for provider in providers
         if provider.oauth_provider_id is not None
-    ]
-    if len(set(provider_ids)) != len(provider_ids):
-        raise _invalid("provider_duplicate_id")
+        and sum(
+            candidate.oauth_provider_id == provider.oauth_provider_id for candidate in providers
+        )
+        > 1
+    }
+    if duplicate_ids:
+        providers = tuple(
+            replace(provider, oauth_provider_id=None)
+            if provider.oauth_provider_id in duplicate_ids
+            else provider
+            for provider in providers
+        )
     typeoflogin = document.get("typeoflogin")
     if (
         isinstance(typeoflogin, bool)
