@@ -12,12 +12,17 @@ import httpx2
 from aaos.moodle.models import MoodleSettings
 
 PUBLIC_CONFIG_OPERATION: Final = "tool_mobile_get_public_config"
+PUBLIC_CONFIG_LANGUAGE: Final = "en"
 AJAX_ENDPOINT: Final = "/lib/ajax/service-nologin.php"
 MAX_PUBLIC_CONFIG_RESPONSE_BYTES: Final = 256 * 1024
 
 
 class MoodlePublicConfigError(RuntimeError):
     """Raised for a fixed, redacted public-configuration failure."""
+
+    def __init__(self, message: str, *, category: str) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +43,19 @@ class MoodlePublicConfig:
 
 
 def _failure() -> MoodlePublicConfigError:
-    return MoodlePublicConfigError("Moodle public configuration request failed")
+    return MoodlePublicConfigError("Moodle public configuration request failed", category="request")
 
 
 def _invalid() -> MoodlePublicConfigError:
-    return MoodlePublicConfigError("Moodle public configuration response was invalid")
+    return MoodlePublicConfigError(
+        "Moodle public configuration response was invalid", category="malformed"
+    )
+
+
+def _ajax_error() -> MoodlePublicConfigError:
+    return MoodlePublicConfigError(
+        "Moodle public configuration reported an AJAX error", category="ajax_error"
+    )
 
 
 def _safe_text(value: object, *, maximum: int) -> str:
@@ -149,15 +162,24 @@ def parse_public_config(payload: bytes, expected_origin: str) -> MoodlePublicCon
         document = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         raise _invalid() from None
-    if (
-        not isinstance(document, list)
-        or len(document) != 1
-        or not isinstance(document[0], dict)
-        or document[0].get("error") is not False
-        or not isinstance(document[0].get("data"), dict)
+    if isinstance(document, dict):
+        if document.get("error") is True:
+            raise _ajax_error()
+        raise _invalid()
+    if not isinstance(document, list) or len(document) != 1 or not isinstance(document[0], dict):
+        raise _invalid()
+    response = document[0]
+    index = response.get("index")
+    if isinstance(index, bool) or not isinstance(index, int) or index != 0:
+        raise _invalid()
+    error_value = response.get("error", False)
+    if error_value is True:
+        raise _ajax_error()
+    if (error_value is not False and error_value is not None) or not isinstance(
+        response.get("data"), dict
     ):
         raise _invalid()
-    document = document[0]["data"]
+    document = response["data"]
     expected_canonical, expected_origin_value = _canonical_parts(expected_origin)
     wwwroot = _https_url(document.get("wwwroot"), expected_canonical, exact_path=True)
     httpswwwroot = _https_url(document.get("httpswwwroot"), expected_canonical, exact_path=True)
@@ -226,6 +248,7 @@ class MoodlePublicConfigTransport:
             request = self._client.build_request(
                 "POST",
                 AJAX_ENDPOINT,
+                params={"info": PUBLIC_CONFIG_OPERATION, "lang": PUBLIC_CONFIG_LANGUAGE},
                 json=[{"index": 0, "methodname": PUBLIC_CONFIG_OPERATION, "args": {}}],
             )
             response = await self._client.send(request, stream=True)

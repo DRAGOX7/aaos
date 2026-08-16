@@ -42,7 +42,7 @@ def _payload() -> dict[str, object]:
 
 
 def _response_payload() -> list[dict[str, object]]:
-    return [{"error": False, "data": _payload()}]
+    return [{"index": 0, "error": False, "data": _payload()}]
 
 
 def test_parse_public_config_keeps_only_safe_typed_fields() -> None:
@@ -68,7 +68,7 @@ def test_parse_rejects_non_local_or_non_numeric_identity_provider() -> None:
     ]
     with pytest.raises(MoodlePublicConfigError):
         parse_public_config(
-            json.dumps([{"error": False, "data": payload}]).encode(),
+            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
             "https://elearn.just.edu.jo/current",
         )
 
@@ -86,7 +86,7 @@ def test_parse_rejects_malformed_local_identity_provider_ids(provider_url: str) 
     payload["identityproviders"] = [{"name": "Provider", "url": provider_url}]
     with pytest.raises(MoodlePublicConfigError):
         parse_public_config(
-            json.dumps([{"error": False, "data": payload}]).encode(),
+            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
             "https://elearn.just.edu.jo/current",
         )
 
@@ -97,7 +97,7 @@ def test_parse_rejects_response_for_wrong_same_origin_path() -> None:
     payload["httpswwwroot"] = "https://elearn.just.edu.jo/other"
     with pytest.raises(MoodlePublicConfigError):
         parse_public_config(
-            json.dumps([{"error": False, "data": payload}]).encode(),
+            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
             "https://elearn.just.edu.jo/current",
         )
 
@@ -150,6 +150,10 @@ def test_transport_posts_one_unauthenticated_public_config_request() -> None:
     assert result.typeoflogin == 2
     assert len(requests) == 1
     assert requests[0].url.path == "/current/lib/ajax/service-nologin.php"
+    assert dict(requests[0].url.params) == {
+        "info": "tool_mobile_get_public_config",
+        "lang": "en",
+    }
     assert json.loads(requests[0].content) == [
         {"index": 0, "methodname": "tool_mobile_get_public_config", "args": {}}
     ]
@@ -175,15 +179,41 @@ def test_transport_maps_backend_and_protocol_failures_to_fixed_error() -> None:
 @pytest.mark.parametrize(
     "response",
     [
-        [{"error": True, "exception": "private backend detail"}],
-        [{"error": False}],
+        [{"index": 0, "error": False}],
+        [{"index": 0, "error": {}, "data": _payload()}],
         {"error": False, "data": _payload()},
-        [{"error": False, "data": _payload()}, {"error": False, "data": _payload()}],
+        [
+            {"index": 0, "error": False, "data": _payload()},
+            {"index": 1, "error": False, "data": _payload()},
+        ],
+        [{"index": 1, "error": False, "data": _payload()}],
     ],
 )
 def test_parse_rejects_invalid_ajax_envelopes(response: object) -> None:
     with pytest.raises(MoodlePublicConfigError):
         parse_public_config(json.dumps(response).encode(), "https://elearn.just.edu.jo/current")
+
+
+def test_parse_classifies_top_level_ajax_error_without_leaking_details() -> None:
+    with pytest.raises(MoodlePublicConfigError) as error:
+        parse_public_config(
+            json.dumps({"error": True, "exception": "private backend detail"}).encode(),
+            "https://elearn.just.edu.jo/current",
+        )
+    assert error.value.category == "ajax_error"
+    assert str(error.value) == "Moodle public configuration reported an AJAX error"
+
+
+def test_parse_classifies_operation_ajax_error_without_leaking_details() -> None:
+    with pytest.raises(MoodlePublicConfigError) as error:
+        parse_public_config(
+            json.dumps(
+                [{"index": 0, "error": True, "exception": "private backend detail"}]
+            ).encode(),
+            "https://elearn.just.edu.jo/current",
+        )
+    assert error.value.category == "ajax_error"
+    assert str(error.value) == "Moodle public configuration reported an AJAX error"
 
 
 def test_parse_rejects_duplicate_provider_ids() -> None:
@@ -194,7 +224,7 @@ def test_parse_rejects_duplicate_provider_ids() -> None:
     ]
     with pytest.raises(MoodlePublicConfigError):
         parse_public_config(
-            json.dumps([{"error": False, "data": payload}]).encode(),
+            json.dumps([{"index": 0, "error": False, "data": payload}]).encode(),
             "https://elearn.just.edu.jo/current",
         )
 
