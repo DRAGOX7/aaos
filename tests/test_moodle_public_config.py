@@ -61,6 +61,30 @@ def test_parse_public_config_keeps_only_safe_typed_fields() -> None:
     assert not hasattr(result, "privateaccesskey")
 
 
+@pytest.mark.parametrize("field", ["enablewebservices", "enablemobilewebservice"])
+@pytest.mark.parametrize(("raw", "expected"), [(0, False), (1, True)])
+def test_parse_numeric_service_flags_as_booleans(field: str, raw: object, expected: bool) -> None:
+    payload = _payload()
+    payload[field] = raw
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert getattr(result, field) is expected
+
+
+@pytest.mark.parametrize("field", ["enablewebservices", "enablemobilewebservice"])
+@pytest.mark.parametrize("raw", [-1, 2, 99, 1.0, "1", "0", None, {}, [], True, False])
+def test_parse_rejects_non_integer_service_flags(field: str, raw: object) -> None:
+    payload = _payload()
+    payload[field] = raw
+    with pytest.raises(MoodlePublicConfigError):
+        parse_public_config(
+            json.dumps([{"error": False, "data": payload}]).encode(),
+            "https://elearn.just.edu.jo/current",
+        )
+
+
 def test_parse_rejects_non_local_or_non_numeric_identity_provider() -> None:
     payload = _payload()
     payload["identityproviders"] = [
