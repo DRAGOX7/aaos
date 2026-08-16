@@ -132,6 +132,22 @@ def test_just_shaped_public_config_fixture_parses_without_provider_path_assumpti
     assert result.identity_providers[0].oauth_provider_id == 7
 
 
+def test_provider_without_oauth_id_is_retained_without_candidate() -> None:
+    payload = _payload()
+    payload["identityproviders"] = [
+        {
+            "name": "Microsoft",
+            "iconurl": "https://elearn.just.edu.jo/theme/icon.png",
+            "url": "https://elearn.just.edu.jo/auth/plugin/login.php",
+        }
+    ]
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert result.identity_providers[0].oauth_provider_id is None
+
+
 def test_invalid_provider_path_reports_safe_internal_code() -> None:
     payload = _payload()
     payload["identityproviders"] = [{"name": "Microsoft", "url": "not-a-url"}]
@@ -184,7 +200,6 @@ def test_internal_codes_identify_top_level_field_validators() -> None:
         ("not-an-object", "invalid_provider_entry"),
         ({"url": "https://elearn.just.edu.jo/login?id=7"}, "invalid_provider_name"),
         ({"name": "Provider", "url": "https://other.example/login?id=7"}, "provider_cross_origin"),
-        ({"name": "Provider", "url": "https://elearn.just.edu.jo/login"}, "provider_missing_id"),
         (
             {"name": "Provider", "url": "https://elearn.just.edu.jo/login?id=abc"},
             "provider_invalid_id",

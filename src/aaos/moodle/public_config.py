@@ -29,7 +29,7 @@ class MoodlePublicConfigError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class PublicIdentityProvider:
     name: str
-    oauth_provider_id: int
+    oauth_provider_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,8 +167,10 @@ def _provider(value: object, expected_origin: str) -> PublicIdentityProvider:
         raise _invalid("invalid_provider_url")
     if f"{parsed.scheme}://{parsed.netloc}" != _expected_origin(expected_origin):
         raise _invalid("provider_cross_origin")
-    if set(query) != {"id"} or identifiers is None or not identifiers:
-        raise _invalid("provider_missing_id")
+    if identifiers is None:
+        return PublicIdentityProvider(name=name, oauth_provider_id=None)
+    if set(query) != {"id"} or not identifiers:
+        raise _invalid("provider_invalid_id")
     if len(identifiers) != 1 or not identifiers[0].isdigit() or int(identifiers[0]) <= 0:
         raise _invalid("provider_invalid_id")
     return PublicIdentityProvider(name=name, oauth_provider_id=int(identifiers[0]))
@@ -217,7 +219,12 @@ def parse_public_config(payload: bytes, expected_origin: str) -> MoodlePublicCon
     if not isinstance(providers_value, list):
         raise _invalid("invalid_identityproviders_type")
     providers = tuple(_provider(item, expected_origin_value) for item in providers_value)
-    if len({provider.oauth_provider_id for provider in providers}) != len(providers):
+    provider_ids = [
+        provider.oauth_provider_id
+        for provider in providers
+        if provider.oauth_provider_id is not None
+    ]
+    if len(set(provider_ids)) != len(provider_ids):
         raise _invalid("provider_duplicate_id")
     typeoflogin = document.get("typeoflogin")
     if (
