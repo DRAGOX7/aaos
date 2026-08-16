@@ -146,7 +146,6 @@ def _provider(value: object, expected_origin: str) -> PublicIdentityProvider:
         or parsed.username is not None
         or parsed.password is not None
         or f"{parsed.scheme}://{parsed.netloc}" != _expected_origin(expected_origin)
-        or parsed.path != "/auth/oauth2/login.php"
         or set(query) != {"id"}
         or identifiers is None
         or len(identifiers) != 1

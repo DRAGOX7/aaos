@@ -97,6 +97,21 @@ def test_parse_rejects_non_local_or_non_numeric_identity_provider() -> None:
         )
 
 
+def test_parse_accepts_same_origin_identity_provider_on_nonfixed_path() -> None:
+    payload = _payload()
+    payload["identityproviders"] = [
+        {
+            "name": "Microsoft",
+            "url": "https://elearn.just.edu.jo/auth/plugin/login.php?id=7",
+        }
+    ]
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert result.identity_providers[0].oauth_provider_id == 7
+
+
 @pytest.mark.parametrize(
     "provider_url",
     [
