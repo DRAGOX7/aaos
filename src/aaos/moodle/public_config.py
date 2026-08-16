@@ -169,9 +169,6 @@ def parse_public_config(payload: bytes, expected_origin: str) -> MoodlePublicCon
     if not isinstance(document, list) or len(document) != 1 or not isinstance(document[0], dict):
         raise _invalid()
     response = document[0]
-    index = response.get("index")
-    if isinstance(index, bool) or not isinstance(index, int) or index != 0:
-        raise _invalid()
     error_value = response.get("error", False)
     if error_value is True:
         raise _ajax_error()

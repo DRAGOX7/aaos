@@ -42,7 +42,7 @@ def _payload() -> dict[str, object]:
 
 
 def _response_payload() -> list[dict[str, object]]:
-    return [{"index": 0, "error": False, "data": _payload()}]
+    return [{"error": False, "data": _payload()}]
 
 
 def test_parse_public_config_keeps_only_safe_typed_fields() -> None:
@@ -186,7 +186,6 @@ def test_transport_maps_backend_and_protocol_failures_to_fixed_error() -> None:
             {"index": 0, "error": False, "data": _payload()},
             {"index": 1, "error": False, "data": _payload()},
         ],
-        [{"index": 1, "error": False, "data": _payload()}],
     ],
 )
 def test_parse_rejects_invalid_ajax_envelopes(response: object) -> None:
