@@ -112,6 +112,104 @@ def test_parse_accepts_same_origin_identity_provider_on_nonfixed_path() -> None:
     assert result.identity_providers[0].oauth_provider_id == 7
 
 
+def test_just_shaped_public_config_fixture_parses_without_provider_path_assumption() -> None:
+    payload = _payload()
+    payload["enablewebservices"] = 0
+    payload["enablemobilewebservice"] = 1
+    payload["identityproviders"] = [
+        {
+            "name": "Microsoft",
+            "iconurl": "https://elearn.just.edu.jo/theme/icon.png",
+            "url": "https://elearn.just.edu.jo/auth/plugin/login.php?id=7",
+        }
+    ]
+    result = parse_public_config(
+        json.dumps([{"error": False, "data": payload}]).encode(),
+        "https://elearn.just.edu.jo/current",
+    )
+    assert result.enablewebservices is False
+    assert result.enablemobilewebservice is True
+    assert result.identity_providers[0].oauth_provider_id == 7
+
+
+def test_invalid_provider_path_reports_safe_internal_code() -> None:
+    payload = _payload()
+    payload["identityproviders"] = [{"name": "Microsoft", "url": "not-a-url"}]
+    with pytest.raises(MoodlePublicConfigError) as error:
+        parse_public_config(
+            json.dumps([{"error": False, "data": payload}]).encode(),
+            "https://elearn.just.edu.jo/current",
+        )
+    assert error.value.code == "invalid_provider_url"
+    assert str(error.value) == "Moodle public configuration response was invalid"
+
+
+def _assert_internal_code(payload: dict[str, object], expected: str) -> None:
+    with pytest.raises(MoodlePublicConfigError) as error:
+        parse_public_config(
+            json.dumps([{"error": False, "data": payload}]).encode(),
+            "https://elearn.just.edu.jo/current",
+        )
+    assert error.value.code == expected
+    assert str(error.value) == "Moodle public configuration response was invalid"
+
+
+def test_internal_codes_identify_top_level_field_validators() -> None:
+    payload = _payload()
+    payload["wwwroot"] = "not-a-url"
+    _assert_internal_code(payload, "invalid_wwwroot")
+    payload = _payload()
+    payload["httpswwwroot"] = "not-a-url"
+    _assert_internal_code(payload, "invalid_httpswwwroot")
+    payload = _payload()
+    payload["enablewebservices"] = 2
+    _assert_internal_code(payload, "invalid_enablewebservices")
+    payload = _payload()
+    payload["enablemobilewebservice"] = 2
+    _assert_internal_code(payload, "invalid_enablemobilewebservice")
+    payload = _payload()
+    payload["typeoflogin"] = 9
+    _assert_internal_code(payload, "invalid_typeoflogin")
+    payload = _payload()
+    payload["launchurl"] = "not-a-url"
+    _assert_internal_code(payload, "invalid_launchurl")
+    payload = _payload()
+    payload["identityproviders"] = "not-an-array"
+    _assert_internal_code(payload, "invalid_identityproviders_type")
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("not-an-object", "invalid_provider_entry"),
+        ({"url": "https://elearn.just.edu.jo/login?id=7"}, "invalid_provider_name"),
+        ({"name": "Provider", "url": "https://other.example/login?id=7"}, "provider_cross_origin"),
+        ({"name": "Provider", "url": "https://elearn.just.edu.jo/login"}, "provider_missing_id"),
+        (
+            {"name": "Provider", "url": "https://elearn.just.edu.jo/login?id=abc"},
+            "provider_invalid_id",
+        ),
+        (
+            {"name": "Provider", "url": "https://elearn.just.edu.jo/login?id=7&id=8"},
+            "provider_invalid_id",
+        ),
+    ],
+)
+def test_internal_codes_identify_provider_validators(provider: object, expected: str) -> None:
+    payload = _payload()
+    payload["identityproviders"] = [provider]
+    _assert_internal_code(payload, expected)
+
+
+def test_internal_code_identifies_duplicate_provider_ids() -> None:
+    payload = _payload()
+    payload["identityproviders"] = [
+        {"name": "One", "url": "https://elearn.just.edu.jo/login?id=7"},
+        {"name": "Two", "url": "https://elearn.just.edu.jo/other?id=7"},
+    ]
+    _assert_internal_code(payload, "provider_duplicate_id")
+
+
 @pytest.mark.parametrize(
     "provider_url",
     [

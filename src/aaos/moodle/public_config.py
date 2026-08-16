@@ -20,9 +20,10 @@ MAX_PUBLIC_CONFIG_RESPONSE_BYTES: Final = 256 * 1024
 class MoodlePublicConfigError(RuntimeError):
     """Raised for a fixed, redacted public-configuration failure."""
 
-    def __init__(self, message: str, *, category: str) -> None:
+    def __init__(self, message: str, *, category: str, code: str = "invalid_response") -> None:
         super().__init__(message)
         self.category = category
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,18 +44,22 @@ class MoodlePublicConfig:
 
 
 def _failure() -> MoodlePublicConfigError:
-    return MoodlePublicConfigError("Moodle public configuration request failed", category="request")
-
-
-def _invalid() -> MoodlePublicConfigError:
     return MoodlePublicConfigError(
-        "Moodle public configuration response was invalid", category="malformed"
+        "Moodle public configuration request failed", category="request", code="request_failed"
+    )
+
+
+def _invalid(code: str = "invalid_response") -> MoodlePublicConfigError:
+    return MoodlePublicConfigError(
+        "Moodle public configuration response was invalid", category="malformed", code=code
     )
 
 
 def _ajax_error() -> MoodlePublicConfigError:
     return MoodlePublicConfigError(
-        "Moodle public configuration reported an AJAX error", category="ajax_error"
+        "Moodle public configuration reported an AJAX error",
+        category="ajax_error",
+        code="ajax_error",
     )
 
 
@@ -128,16 +133,29 @@ def _binary_flag(value: object) -> bool:
     return bool(value)
 
 
+def _parse_flag(value: object, field: str) -> bool:
+    try:
+        return _binary_flag(value)
+    except MoodlePublicConfigError:
+        raise _invalid(f"invalid_{field}") from None
+
+
 def _provider(value: object, expected_origin: str) -> PublicIdentityProvider:
     if not isinstance(value, dict):
-        raise _invalid()
-    name = _safe_text(value.get("name"), maximum=256)
-    url = _safe_text(value.get("url"), maximum=4096).rstrip("/")
+        raise _invalid("invalid_provider_entry")
+    try:
+        name = _safe_text(value.get("name"), maximum=256)
+    except MoodlePublicConfigError:
+        raise _invalid("invalid_provider_name") from None
+    try:
+        url = _safe_text(value.get("url"), maximum=4096).rstrip("/")
+    except MoodlePublicConfigError:
+        raise _invalid("invalid_provider_url") from None
     try:
         parsed = urlsplit(url)
         _ = parsed.port
     except (TypeError, ValueError):
-        raise _invalid() from None
+        raise _invalid("invalid_provider_url") from None
     query = parse_qs(parsed.query, keep_blank_values=True)
     identifiers = query.get("id")
     if (
@@ -145,14 +163,14 @@ def _provider(value: object, expected_origin: str) -> PublicIdentityProvider:
         or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None
-        or f"{parsed.scheme}://{parsed.netloc}" != _expected_origin(expected_origin)
-        or set(query) != {"id"}
-        or identifiers is None
-        or len(identifiers) != 1
-        or not identifiers[0].isdigit()
-        or int(identifiers[0]) <= 0
     ):
-        raise _invalid()
+        raise _invalid("invalid_provider_url")
+    if f"{parsed.scheme}://{parsed.netloc}" != _expected_origin(expected_origin):
+        raise _invalid("provider_cross_origin")
+    if set(query) != {"id"} or identifiers is None or not identifiers:
+        raise _invalid("provider_missing_id")
+    if len(identifiers) != 1 or not identifiers[0].isdigit() or int(identifiers[0]) <= 0:
+        raise _invalid("provider_invalid_id")
     return PublicIdentityProvider(name=name, oauth_provider_id=int(identifiers[0]))
 
 
@@ -177,30 +195,44 @@ def parse_public_config(payload: bytes, expected_origin: str) -> MoodlePublicCon
         raise _invalid()
     document = response["data"]
     expected_canonical, expected_origin_value = _canonical_parts(expected_origin)
-    wwwroot = _https_url(document.get("wwwroot"), expected_canonical, exact_path=True)
-    httpswwwroot = _https_url(document.get("httpswwwroot"), expected_canonical, exact_path=True)
+    try:
+        wwwroot = _https_url(document.get("wwwroot"), expected_canonical, exact_path=True)
+    except MoodlePublicConfigError:
+        raise _invalid("invalid_wwwroot") from None
+    try:
+        httpswwwroot = _https_url(document.get("httpswwwroot"), expected_canonical, exact_path=True)
+    except MoodlePublicConfigError:
+        raise _invalid("invalid_httpswwwroot") from None
     if wwwroot != httpswwwroot:
         raise _invalid()
     launch_value = document.get("launchurl")
-    launchurl = None if launch_value is None else _https_url(launch_value, expected_canonical)
+    if launch_value is None:
+        launchurl = None
+    else:
+        try:
+            launchurl = _https_url(launch_value, expected_canonical)
+        except MoodlePublicConfigError:
+            raise _invalid("invalid_launchurl") from None
     providers_value = document.get("identityproviders", [])
     if not isinstance(providers_value, list):
-        raise _invalid()
+        raise _invalid("invalid_identityproviders_type")
     providers = tuple(_provider(item, expected_origin_value) for item in providers_value)
     if len({provider.oauth_provider_id for provider in providers}) != len(providers):
-        raise _invalid()
+        raise _invalid("provider_duplicate_id")
     typeoflogin = document.get("typeoflogin")
     if (
         isinstance(typeoflogin, bool)
         or not isinstance(typeoflogin, int)
         or typeoflogin not in {1, 2, 3}
     ):
-        raise _invalid()
+        raise _invalid("invalid_typeoflogin")
     return MoodlePublicConfig(
         canonical_wwwroot=wwwroot,
         httpswwwroot=httpswwwroot,
-        enablewebservices=_binary_flag(document.get("enablewebservices")),
-        enablemobilewebservice=_binary_flag(document.get("enablemobilewebservice")),
+        enablewebservices=_parse_flag(document.get("enablewebservices"), "enablewebservices"),
+        enablemobilewebservice=_parse_flag(
+            document.get("enablemobilewebservice"), "enablemobilewebservice"
+        ),
         typeoflogin=typeoflogin,
         launchurl=launchurl,
         identity_providers=providers,
