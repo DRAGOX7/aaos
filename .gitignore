@@ -20,6 +20,10 @@ data/temporary/
 .mypy_cache/
 .venv/
 
+# Native helper build output
+native/**/bin/
+native/**/obj/
+
 # JavaScript and framework output
 node_modules/
 .next/

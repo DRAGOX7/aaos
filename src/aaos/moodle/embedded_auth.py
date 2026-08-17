@@ -137,8 +137,13 @@ class WebView2EmbeddedAuthHost:
                 result = self._runtime.run(fixed_url, profile.path, timeout_seconds)
             except Exception:
                 return "HOST_ERROR"
+            if not getattr(self._runtime, "cleanup_pass", True):
+                return "HOST_ERROR"
             if result not in {"CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"}:
                 return "HOST_ERROR"
             return result
         finally:
-            profile.cleanup()
+            try:
+                profile.cleanup()
+            except WebView2RuntimeUnavailable:
+                return "HOST_ERROR"
