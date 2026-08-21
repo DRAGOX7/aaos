@@ -10,6 +10,7 @@ from aaos.moodle.api import (
     MoodleApiError,
     MoodleApiTransport,
     SafeSiteInfo,
+    SingleUseSiteInfoProbeAuthorization,
     SiteInfoProbeAuthorization,
 )
 from aaos.moodle.models import MoodleSettings
@@ -20,6 +21,7 @@ SETTINGS = MoodleSettings(
     mode="api",
     auth_alias="just",
 )
+CANONICAL_WWWROOT = "https://elearn.just.edu.jo/current"
 
 
 class FakeAuthorization:
@@ -33,7 +35,7 @@ class FakeAuthorization:
 
 
 def _authorization() -> SiteInfoProbeAuthorization:
-    return FakeAuthorization()
+    return SingleUseSiteInfoProbeAuthorization()
 
 
 class Reader:
@@ -47,16 +49,20 @@ class Reader:
 
 
 def _probe(
-    handler: Callable[[httpx2.Request], httpx2.Response], reader: Reader | None = None
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    reader: Reader | None = None,
+    *,
+    canonical_wwwroot: str = CANONICAL_WWWROOT,
 ) -> tuple[SafeSiteInfo, Reader]:
     selected_reader = reader or Reader()
 
     async def scenario() -> SafeSiteInfo:
         transport = MoodleApiTransport(
-            SETTINGS,
-            httpx2.MockTransport(handler),
-            selected_reader,
-            _authorization(),
+            settings=SETTINGS,
+            canonical_wwwroot=canonical_wwwroot,
+            transport=httpx2.MockTransport(handler),
+            credential_reader=selected_reader,
+            authorization=_authorization(),
         )
         try:
             return await transport.get_site_info()
@@ -78,7 +84,7 @@ def test_site_info_uses_one_fixed_read_operation_and_safe_fields() -> None:
         return httpx2.Response(
             200,
             json={
-                "siteurl": "https://elearn.just.edu.jo",
+                "siteurl": CANONICAL_WWWROOT,
                 "release": "4.5.0",
                 "functions": [
                     {"name": "core_webservice_get_site_info"},
@@ -94,9 +100,10 @@ def test_site_info_uses_one_fixed_read_operation_and_safe_fields() -> None:
     result, reader = _probe(handler)
 
     assert seen[0].method == "POST"
-    assert seen[0].url.path == "/webservice/rest/server.php"
+    assert str(seen[0].url) == f"{CANONICAL_WWWROOT}/webservice/rest/server.php"
+    assert seen[0].url.path != "/webservice/rest/server.php"
     assert result == SafeSiteInfo(
-        canonical_wwwroot="https://elearn.just.edu.jo",
+        canonical_wwwroot=CANONICAL_WWWROOT,
         release="4.5.0",
         available_functions=("core_webservice_get_site_info", "core_course_get_courses"),
     )
@@ -109,9 +116,44 @@ def test_site_info_requires_explicit_probe_authorization() -> None:
     with pytest.raises(TypeError):
         MoodleApiTransport(  # type: ignore[call-arg]
             SETTINGS,
+            CANONICAL_WWWROOT,
             httpx2.MockTransport(lambda _: httpx2.Response(500)),
             Reader(),
         )
+
+
+def test_site_info_rejects_cross_origin_wwwroot_before_reading_credential() -> None:
+    reader = Reader()
+
+    with pytest.raises(MoodleApiError) as error:
+        _probe(
+            lambda _: httpx2.Response(500),
+            reader,
+            canonical_wwwroot="https://other.example.edu/moodle",
+        )
+
+    assert str(error.value) == "Moodle site-info configuration was invalid"
+    assert reader.calls == 0
+
+
+def test_site_info_preserves_any_validated_application_path() -> None:
+    canonical_wwwroot = "https://elearn.just.edu.jo/academic/moodle"
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "siteurl": canonical_wwwroot,
+                "functions": [{"name": "core_webservice_get_site_info"}],
+            },
+        )
+
+    result, _ = _probe(handler, canonical_wwwroot=canonical_wwwroot)
+
+    assert str(seen[0].url) == f"{canonical_wwwroot}/webservice/rest/server.php"
+    assert result.canonical_wwwroot == canonical_wwwroot
 
 
 def test_site_info_authorization_is_single_use() -> None:
@@ -123,7 +165,7 @@ def test_site_info_authorization_is_single_use() -> None:
         return httpx2.Response(
             200,
             json={
-                "siteurl": SETTINGS.base_origin,
+                "siteurl": CANONICAL_WWWROOT,
                 "functions": [{"name": "core_webservice_get_site_info"}],
             },
         )
@@ -131,6 +173,7 @@ def test_site_info_authorization_is_single_use() -> None:
     async def scenario() -> None:
         transport = MoodleApiTransport(
             SETTINGS,
+            CANONICAL_WWWROOT,
             httpx2.MockTransport(handler),
             Reader(),
             _authorization(),
@@ -156,16 +199,18 @@ def test_site_info_authorization_cannot_be_reused_across_transports() -> None:
         return httpx2.Response(
             200,
             json={
-                "siteurl": SETTINGS.base_origin,
+                "siteurl": CANONICAL_WWWROOT,
                 "functions": [{"name": "core_webservice_get_site_info"}],
             },
         )
 
     async def scenario() -> None:
         authorization = _authorization()
-        first = MoodleApiTransport(SETTINGS, httpx2.MockTransport(handler), Reader(), authorization)
+        first = MoodleApiTransport(
+            SETTINGS, CANONICAL_WWWROOT, httpx2.MockTransport(handler), Reader(), authorization
+        )
         second = MoodleApiTransport(
-            SETTINGS, httpx2.MockTransport(handler), Reader(), authorization
+            SETTINGS, CANONICAL_WWWROOT, httpx2.MockTransport(handler), Reader(), authorization
         )
         try:
             await first.get_site_info()

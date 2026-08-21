@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NoReturn, Sequence
+from typing import Callable, NoReturn, Sequence
 from urllib.parse import urlsplit
 
 from aaos.moodle.auth import CredentialWriteError, write_api_token
@@ -23,6 +23,7 @@ from aaos.moodle.models import AuthPaths, MoodleSettings, resolve_auth_paths
 PENDING_ATTEMPT_FILENAME = "pending_bootstrap.json"
 PENDING_ATTEMPT_MAX_BYTES = 4096
 PENDING_ATTEMPT_TTL_SECONDS = 300
+COMPLETION_FILENAME = "bootstrap_completion.json"
 _PASSPORT_MAX_BYTES = 512
 _ATTEMPT_ID_MAX_BYTES = 128
 _LOCK_FILENAME = ".pending_bootstrap.lock"
@@ -35,14 +36,17 @@ _REQUIRED_CONFIG_NAMES = (
 _MISSING = object()
 
 __all__ = [
+    "COMPLETION_FILENAME",
     "PENDING_ATTEMPT_FILENAME",
     "PENDING_ATTEMPT_TTL_SECONDS",
     "PendingBootstrapAttempt",
+    "BootstrapCompletion",
     "ReceiverError",
     "begin_bootstrap_attempt",
     "cancel_bootstrap_attempt",
     "main",
     "receive_callback",
+    "wait_for_bootstrap_completion",
 ]
 
 
@@ -76,6 +80,16 @@ class PendingBootstrapAttempt:
     attempt_id: str = field(repr=False)
     created_at: int
     expires_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapCompletion:
+    """Non-secret proof that one exact callback persisted its token."""
+
+    source_system: str
+    canonical_wwwroot: str
+    attempt_id: str
+    completed_at: int
 
 
 def _read_user_environment() -> dict[str, object]:
@@ -163,6 +177,17 @@ def _lock_path(paths: AuthPaths) -> Path:
     return path
 
 
+def _completion_path(paths: AuthPaths) -> Path:
+    root = paths.browser_state_dir
+    path = root / COMPLETION_FILENAME
+    try:
+        if path.resolve(strict=False) != path or path.resolve(strict=False).parent != root:
+            raise _failure()
+    except (OSError, RuntimeError, ValueError):
+        raise _failure() from None
+    return path
+
+
 def _acquire_lock(paths: AuthPaths) -> Path:
     lock = _lock_path(paths)
     try:
@@ -205,6 +230,113 @@ def _safe_string(value: object, maximum_bytes: int) -> str:
     if len(encoded) > maximum_bytes or any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise _failure()
     return value
+
+
+def _write_completion(
+    paths: AuthPaths, attempt: PendingBootstrapAttempt, completed_at: int
+) -> None:
+    path = _completion_path(paths)
+    document = {
+        "source_system": attempt.source_system,
+        "canonical_wwwroot": attempt.canonical_wwwroot,
+        "attempt_id": attempt.attempt_id,
+        "completed_at": completed_at,
+    }
+    temporary = path.with_name(f".{COMPLETION_FILENAME}.{attempt.attempt_id}.tmp")
+    try:
+        if temporary.resolve(strict=False) != temporary:
+            raise _failure()
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(document, ensure_ascii=True, separators=(",", ":")))
+        os.replace(temporary, path)
+    except (OSError, UnicodeError, TypeError, ValueError):
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            raise _failure() from None
+        raise _failure() from None
+
+
+def _read_completion(
+    paths: AuthPaths, attempt: PendingBootstrapAttempt, now: int
+) -> BootstrapCompletion:
+    path = _completion_path(paths)
+    try:
+        with path.open("rb") as handle:
+            payload = handle.read(PENDING_ATTEMPT_MAX_BYTES + 1)
+    except (OSError, ValueError):
+        raise _failure() from None
+    if len(payload) > PENDING_ATTEMPT_MAX_BYTES:
+        raise _failure()
+    try:
+        document = json.loads(payload.decode("utf-8"), parse_constant=_reject_json_constant)
+    except (UnicodeDecodeError, TypeError, ValueError):
+        raise _failure() from None
+    if not isinstance(document, dict) or set(document) != {
+        "source_system",
+        "canonical_wwwroot",
+        "attempt_id",
+        "completed_at",
+    }:
+        raise _failure()
+    source_system = _safe_string(document["source_system"], 256)
+    canonical_wwwroot = _safe_string(document["canonical_wwwroot"], 2048)
+    attempt_id = _safe_string(document["attempt_id"], _ATTEMPT_ID_MAX_BYTES)
+    completed_at = document["completed_at"]
+    if (
+        isinstance(completed_at, bool)
+        or not isinstance(completed_at, int)
+        or source_system != attempt.source_system
+        or canonical_wwwroot != attempt.canonical_wwwroot
+        or attempt_id != attempt.attempt_id
+        or completed_at < attempt.created_at
+        or completed_at > attempt.expires_at
+        or now > attempt.expires_at
+    ):
+        raise _failure()
+    return BootstrapCompletion(source_system, canonical_wwwroot, attempt_id, completed_at)
+
+
+def wait_for_bootstrap_completion(
+    paths: AuthPaths,
+    attempt: PendingBootstrapAttempt,
+    *,
+    timeout_seconds: int,
+    clock: Callable[[], float] = time.time,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> BootstrapCompletion:
+    """Consume bounded, non-secret completion proof for exactly one attempt."""
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or timeout_seconds <= 0
+    ):
+        raise _failure()
+    try:
+        deadline = monotonic() + timeout_seconds
+    except (OSError, TypeError, ValueError):
+        raise _failure() from None
+    path = _completion_path(paths)
+    while True:
+        try:
+            current = int(clock())
+            remaining = deadline - monotonic()
+        except (OSError, TypeError, ValueError):
+            raise _failure() from None
+        if current > attempt.expires_at or remaining <= 0:
+            raise _failure()
+        if path.exists():
+            completion = _read_completion(paths, attempt, current)
+            try:
+                path.unlink()
+            except OSError:
+                raise _failure() from None
+            return completion
+        try:
+            sleeper(min(0.05, remaining))
+        except (OSError, TypeError, ValueError):
+            raise _failure() from None
 
 
 def _current_time(now: int | None) -> int:
@@ -298,6 +430,11 @@ def begin_bootstrap_attempt(
                 path.unlink()
             except OSError:
                 raise _failure() from None
+
+        try:
+            _completion_path(paths).unlink(missing_ok=True)
+        except OSError:
+            raise _failure() from None
 
         attempt = PendingBootstrapAttempt(
             source_system=config.source_system,
@@ -401,11 +538,13 @@ def receive_callback(
             write_api_token(paths, web_service_token)
         except CredentialWriteError:
             raise _failure() from None
+        _write_completion(paths, attempt, current)
     finally:
         _release_lock(lock)
 
 
-def _runtime_configuration() -> tuple[MoodleBootstrapConfig, AuthPaths]:
+def load_runtime_moodle_configuration() -> tuple[MoodleBootstrapConfig, MoodleSettings, AuthPaths]:
+    """Load the validated non-secret runtime configuration for one Moodle command."""
     values = _validated_configuration_values()
     source_system = values["AAOS_MOODLE_SOURCE_SYSTEM"]
     base_origin = values["AAOS_MOODLE_BASE_ORIGIN"]
@@ -426,7 +565,12 @@ def _runtime_configuration() -> tuple[MoodleBootstrapConfig, AuthPaths]:
         mode="api",
         auth_alias=auth_alias,
     )
-    return config, resolve_auth_paths(settings, data_root=data_root)
+    return config, settings, resolve_auth_paths(settings, data_root=data_root)
+
+
+def _runtime_configuration() -> tuple[MoodleBootstrapConfig, AuthPaths]:
+    config, _settings, paths = load_runtime_moodle_configuration()
+    return config, paths
 
 
 def main(argv: Sequence[str] | None = None) -> int:

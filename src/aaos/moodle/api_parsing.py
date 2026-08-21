@@ -18,7 +18,7 @@ class SafeSiteInfo:
     available_functions: tuple[str, ...]
 
 
-def parse_site_info(payload: bytes, expected_origin: str) -> SafeSiteInfo:
+def parse_site_info(payload: bytes, expected_canonical_wwwroot: str) -> SafeSiteInfo:
     try:
         document = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
@@ -42,7 +42,7 @@ def parse_site_info(payload: bytes, expected_origin: str) -> SafeSiteInfo:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
-        or normalized_siteurl != expected_origin.rstrip("/")
+        or normalized_siteurl != expected_canonical_wwwroot.rstrip("/")
     ):
         raise SiteInfoParseError("Moodle site-info response was invalid")
 

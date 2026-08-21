@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx2
 
@@ -12,12 +13,13 @@ from aaos.moodle.auth import CredentialReadError, MoodleCredentialReader
 from aaos.moodle.models import MoodleSettings
 
 SITE_INFO_OPERATION = "core_webservice_get_site_info"
-REST_ENDPOINT = "/webservice/rest/server.php"
+REST_ENDPOINT = "webservice/rest/server.php"
 MAX_SITE_INFO_RESPONSE_BYTES = 256 * 1024
 
 __all__ = [
     "MoodleApiError",
     "MoodleApiTransport",
+    "SingleUseSiteInfoProbeAuthorization",
     "SafeSiteInfo",
     "SiteInfoProbeAuthorization",
 ]
@@ -35,8 +37,21 @@ class SiteInfoProbeAuthorization(Protocol):
 
 
 @dataclass(slots=True)
+class SingleUseSiteInfoProbeAuthorization:
+    """The runner's non-transferable authority for exactly one site-info call."""
+
+    _used: bool = field(init=False, default=False, repr=False)
+
+    def consume(self) -> None:
+        if self._used:
+            raise MoodleApiError("Moodle site-info probe already used")
+        self._used = True
+
+
+@dataclass(slots=True)
 class MoodleApiTransport:
     settings: MoodleSettings
+    canonical_wwwroot: str
     transport: httpx2.AsyncBaseTransport
     credential_reader: MoodleCredentialReader
     authorization: SiteInfoProbeAuthorization
@@ -45,9 +60,29 @@ class MoodleApiTransport:
     _site_info_used: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
+        try:
+            parsed = urlsplit(self.canonical_wwwroot.rstrip("/"))
+            _ = parsed.port
+        except (AttributeError, TypeError, ValueError):
+            raise MoodleApiError("Moodle site-info configuration was invalid") from None
+        normalized_wwwroot = self.canonical_wwwroot.rstrip("/")
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or not normalized_wwwroot
+        ):
+            raise MoodleApiError("Moodle site-info configuration was invalid")
+        canonical_origin = f"{parsed.scheme}://{parsed.netloc}"
+        if canonical_origin != self.settings.base_origin:
+            raise MoodleApiError("Moodle site-info configuration was invalid")
+        self.canonical_wwwroot = normalized_wwwroot
         self._client = httpx2.AsyncClient(
             transport=self.transport,
-            base_url=self.settings.base_origin,
+            base_url=f"{self.canonical_wwwroot}/",
             timeout=10.0,
             follow_redirects=False,
             trust_env=False,
@@ -81,7 +116,7 @@ class MoodleApiTransport:
         if len(response.content) > MAX_SITE_INFO_RESPONSE_BYTES:
             raise MoodleApiError("Moodle site-info response was invalid") from None
         try:
-            return parse_site_info(response.content, self.settings.base_origin)
+            return parse_site_info(response.content, self.canonical_wwwroot)
         except SiteInfoParseError:
             raise MoodleApiError("Moodle site-info response was invalid") from None
 

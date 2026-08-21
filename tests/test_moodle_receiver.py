@@ -26,6 +26,7 @@ from aaos.moodle.receiver import (
     cancel_bootstrap_attempt,
     main,
     receive_callback,
+    wait_for_bootstrap_completion,
 )
 
 CONFIG = MoodleBootstrapConfig(
@@ -155,6 +156,97 @@ def test_valid_callback_persists_only_web_service_token_and_consumes_attempt(
 
     assert paths.api_token_path.read_text(encoding="utf-8") == "REST-TOKEN\n"
     assert not (paths.browser_state_dir / "pending_bootstrap.json").exists()
+
+
+def test_valid_callback_publishes_a_non_secret_completion_for_the_same_attempt(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+
+    receive_callback(CONFIG, paths, _callback(attempt.passport), now=1_001)
+
+    completion = paths.browser_state_dir / "bootstrap_completion.json"
+    assert completion.is_file()
+    document = json.loads(completion.read_text(encoding="utf-8"))
+    assert document == {
+        "source_system": CONFIG.source_system,
+        "canonical_wwwroot": CONFIG.canonical_wwwroot,
+        "attempt_id": attempt.attempt_id,
+        "completed_at": 1_001,
+    }
+    serialized = completion.read_text(encoding="utf-8")
+    assert "REST-TOKEN" not in serialized
+    assert attempt.passport not in serialized
+
+
+def test_completion_is_bound_to_the_exact_attempt_and_consumed(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    receive_callback(CONFIG, paths, _callback(attempt.passport), now=1_001)
+
+    completion = wait_for_bootstrap_completion(
+        paths,
+        attempt,
+        timeout_seconds=1,
+        clock=lambda: 1_001.0,
+        sleeper=lambda _: None,
+    )
+
+    assert completion.attempt_id == attempt.attempt_id
+    assert not (paths.browser_state_dir / "bootstrap_completion.json").exists()
+
+
+def test_mismatched_completion_fails_closed_without_reading_a_credential(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    paths.browser_state_dir.mkdir(parents=True, exist_ok=True)
+    (paths.browser_state_dir / "bootstrap_completion.json").write_text(
+        json.dumps(
+            {
+                "source_system": CONFIG.source_system,
+                "canonical_wwwroot": CONFIG.canonical_wwwroot,
+                "attempt_id": "different-attempt-id",
+                "completed_at": 1_001,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReceiverError):
+        wait_for_bootstrap_completion(
+            paths,
+            attempt,
+            timeout_seconds=1,
+            clock=lambda: 1_001.0,
+            sleeper=lambda _: None,
+        )
+
+
+def test_expired_completion_fails_closed(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    paths.browser_state_dir.mkdir(parents=True, exist_ok=True)
+    (paths.browser_state_dir / "bootstrap_completion.json").write_text(
+        json.dumps(
+            {
+                "source_system": CONFIG.source_system,
+                "canonical_wwwroot": CONFIG.canonical_wwwroot,
+                "attempt_id": attempt.attempt_id,
+                "completed_at": attempt.expires_at + 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReceiverError):
+        wait_for_bootstrap_completion(
+            paths,
+            attempt,
+            timeout_seconds=1,
+            clock=lambda: float(attempt.expires_at),
+            sleeper=lambda _: None,
+        )
 
 
 def test_replayed_callback_is_rejected_without_overwriting_token(tmp_path: Path) -> None:

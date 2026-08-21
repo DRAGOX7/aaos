@@ -31,7 +31,9 @@ def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int:
 
 
 def main() -> int:
-    """Expose the configured doctor command through the project entry point."""
+    """Expose the configured AAOS command through the project entry point."""
+    if sys.argv[1:] == ["moodle", "bootstrap"]:
+        return _run_configured_moodle_bootstrap()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -53,3 +55,10 @@ async def _run_configured_doctor_async() -> DoctorReport:
         close_model_gateway=gateway.aclose,
     )
     return await service.run()
+
+
+def _run_configured_moodle_bootstrap() -> int:
+    """Run the one human-controlled Moodle bootstrap and site-info gate."""
+    from aaos.moodle.live_runner import run_configured_moodle_bootstrap
+
+    return run_configured_moodle_bootstrap()

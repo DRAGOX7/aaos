@@ -261,3 +261,24 @@ def test_main_composes_one_transport_gateway_and_service_cleanup(
     assert created_gateways[0].transport is created_transports[0]
     assert services[0].kwargs["model_gateway"] is created_gateways[0]
     assert created_gateways[0].closed is True
+
+
+def test_main_dispatches_the_narrow_moodle_bootstrap_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from aaos import cli
+
+    calls = 0
+
+    def run_bootstrap() -> int:
+        nonlocal calls
+        calls += 1
+        print("SAFE BOOTSTRAP OUTPUT")
+        return 0
+
+    monkeypatch.setattr(cli, "_run_configured_moodle_bootstrap", run_bootstrap, raising=False)
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "bootstrap"])
+
+    assert cli.main() == 0
+    assert calls == 1
+    assert capsys.readouterr().out == "SAFE BOOTSTRAP OUTPUT\n"
