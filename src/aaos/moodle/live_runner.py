@@ -30,9 +30,11 @@ from aaos.moodle.receiver import (
     BootstrapCompletion,
     PendingBootstrapAttempt,
     ReceiverError,
+    ReceiverStatus,
     begin_bootstrap_attempt,
     cancel_bootstrap_attempt,
     load_runtime_moodle_configuration,
+    read_receiver_status,
     wait_for_bootstrap_completion,
 )
 from aaos.moodle.system_browser import SystemBrowserAuthHost, SystemBrowserLaunchError
@@ -137,6 +139,7 @@ class ConfirmedReturnDiagnosticReport:
     diagnostic: _Status
     system_browser: _Status
     callback_received: _Status
+    receiver_status: ReceiverStatus
 
     @property
     def exit_code(self) -> int:
@@ -214,6 +217,7 @@ def render_confirmed_return_diagnostic(report: ConfirmedReturnDiagnosticReport) 
             f"DIAGNOSTIC={report.diagnostic}",
             f"SYSTEM_BROWSER={report.system_browser}",
             f"CALLBACK_RECEIVED={report.callback_received}",
+            f"RECEIVER_STATUS={report.receiver_status}",
             f"FAILURE_STAGE={report.failure_stage}",
         )
     )
@@ -455,7 +459,9 @@ class MoodleConfirmedReturnDiagnosticRunner:
                 )
             except (OSError, SystemBrowserLaunchError, ValueError):
                 return _failed_confirmed_return_diagnostic(
-                    "SYSTEM_BROWSER_LAUNCH", system_browser="FAIL"
+                    "SYSTEM_BROWSER_LAUNCH",
+                    system_browser="FAIL",
+                    receiver_status=read_receiver_status(self._paths, attempt),
                 )
             try:
                 self._completion_waiter(
@@ -468,12 +474,14 @@ class MoodleConfirmedReturnDiagnosticRunner:
                     _receiver_failure_stage(error.failure_stage),
                     system_browser="PASS",
                     callback_received="FAIL",
+                    receiver_status=read_receiver_status(self._paths, attempt),
                 )
             return ConfirmedReturnDiagnosticReport(
                 failure_stage="NO_FAILURE",
                 diagnostic="PASS",
                 system_browser="PASS",
                 callback_received="PASS",
+                receiver_status=read_receiver_status(self._paths, attempt),
             )
         finally:
             try:
@@ -510,12 +518,14 @@ def _failed_confirmed_return_diagnostic(
     *,
     system_browser: _Status = "NOT_ATTEMPTED",
     callback_received: _Status = "NOT_ATTEMPTED",
+    receiver_status: ReceiverStatus = "UNAVAILABLE",
 ) -> ConfirmedReturnDiagnosticReport:
     return ConfirmedReturnDiagnosticReport(
         failure_stage=failure_stage,
         diagnostic="FAIL",
         system_browser=system_browser,
         callback_received=callback_received,
+        receiver_status=receiver_status,
     )
 
 

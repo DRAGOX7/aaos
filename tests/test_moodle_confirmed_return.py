@@ -78,7 +78,10 @@ def test_ordinary_system_browser_url_remains_without_confirmed() -> None:
 
 
 def test_confirmed_return_runner_stops_after_exact_receiver_completion(tmp_path: Path) -> None:
-    from aaos.moodle.live_runner import MoodleConfirmedReturnDiagnosticRunner
+    from aaos.moodle.live_runner import (
+        MoodleConfirmedReturnDiagnosticRunner,
+        render_confirmed_return_diagnostic,
+    )
 
     paths = _paths(tmp_path)
     urls: list[str] = []
@@ -99,8 +102,13 @@ def test_confirmed_return_runner_stops_after_exact_receiver_completion(tmp_path:
     assert report.diagnostic == "PASS"
     assert report.system_browser == "PASS"
     assert report.callback_received == "PASS"
+    assert report.receiver_status == "COMPLETED"
     assert report.failure_stage == "NO_FAILURE"
     assert report.exit_code == 0
+    rendered = render_confirmed_return_diagnostic(report)
+    assert "RECEIVER_STATUS=COMPLETED" in rendered
+    assert urls[0] not in rendered
+    assert "SYNTHETIC-WS-TOKEN" not in rendered
 
 
 def test_confirmed_return_receiver_failure_is_private_and_stops(tmp_path: Path) -> None:
@@ -131,8 +139,49 @@ def test_confirmed_return_receiver_failure_is_private_and_stops(tmp_path: Path) 
     assert report.diagnostic == "FAIL"
     assert report.system_browser == "PASS"
     assert report.callback_received == "FAIL"
+    assert report.receiver_status == "NOT_INVOKED"
     assert report.failure_stage == "RECEIVER_REJECTED"
     assert "PRIVATE CALLBACK URI TOKEN" not in rendered
+    assert "SYNTHETIC-WS-TOKEN" not in rendered
+
+
+def test_confirmed_return_reports_an_actual_receiver_rejection_without_callback_data(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.live_runner import (
+        MoodleConfirmedReturnDiagnosticRunner,
+        render_confirmed_return_diagnostic,
+    )
+
+    paths = _paths(tmp_path)
+
+    def launch(url: str) -> None:
+        passport = parse_qs(urlsplit(url).query)["passport"][0]
+        with pytest.raises(ReceiverError):
+            receive_callback(CONFIG, paths, _callback(f"wrong-{passport}"))
+
+    def rejected_completion(
+        paths: AuthPaths,
+        attempt: PendingBootstrapAttempt,
+        *,
+        timeout_seconds: int,
+    ) -> BootstrapCompletion:
+        del paths, attempt
+        assert timeout_seconds > 0
+        raise ReceiverError("private callback", failure_stage="CALLBACK_NOT_RECEIVED")
+
+    report = MoodleConfirmedReturnDiagnosticRunner(
+        config=CONFIG,
+        paths=paths,
+        auth_host=SystemBrowserAuthHost(launch),
+        completion_timeout_seconds=1,
+        completion_waiter=rejected_completion,
+    ).run()
+
+    rendered = render_confirmed_return_diagnostic(report)
+    assert report.receiver_status == "REJECTED"
+    assert "RECEIVER_STATUS=REJECTED" in rendered
+    assert "private callback" not in rendered
     assert "SYNTHETIC-WS-TOKEN" not in rendered
 
 
@@ -200,6 +249,7 @@ def test_confirmed_return_browser_failure_does_not_wait_for_callback(tmp_path: P
     assert report.diagnostic == "FAIL"
     assert report.system_browser == "FAIL"
     assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.receiver_status == "NOT_INVOKED"
     assert report.failure_stage == "SYSTEM_BROWSER_LAUNCH"
 
 
@@ -223,6 +273,7 @@ def test_configured_confirmed_return_diagnostic_never_constructs_site_info_or_we
                 diagnostic="FAIL",
                 system_browser="FAIL",
                 callback_received="NOT_ATTEMPTED",
+                receiver_status="NOT_INVOKED",
             )
 
     def must_not_construct(*_: object, **__: object) -> object:

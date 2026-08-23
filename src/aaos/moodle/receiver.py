@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, NoReturn, Sequence
+from typing import Callable, Literal, NoReturn, Sequence, cast
 from urllib.parse import urlsplit
 
 from aaos.moodle.auth import CredentialWriteError, write_api_token
@@ -33,6 +33,7 @@ PENDING_ATTEMPT_TTL_SECONDS = (
     + ATTEMPT_EXPIRY_SAFETY_SECONDS
 )
 COMPLETION_FILENAME = "bootstrap_completion.json"
+RECEIVER_STATUS_FILENAME = "receiver_status.json"
 _PASSPORT_MAX_BYTES = 512
 _ATTEMPT_ID_MAX_BYTES = 128
 _LOCK_FILENAME = ".pending_bootstrap.lock"
@@ -48,6 +49,7 @@ __all__ = [
     "COMPLETION_FILENAME",
     "PENDING_ATTEMPT_FILENAME",
     "PENDING_ATTEMPT_TTL_SECONDS",
+    "ReceiverStatus",
     "PendingBootstrapAttempt",
     "BootstrapCompletion",
     "ReceiverError",
@@ -55,11 +57,14 @@ __all__ = [
     "cancel_bootstrap_attempt",
     "main",
     "receive_callback",
+    "read_receiver_status",
     "wait_for_bootstrap_completion",
 ]
 
 
 ReceiverFailureStage = Literal["CALLBACK_NOT_RECEIVED", "RECEIVER_REJECTED"]
+ReceiverStatus = Literal["NOT_INVOKED", "INVOKED", "REJECTED", "COMPLETED", "UNAVAILABLE"]
+_PersistedReceiverStatus = Literal["NOT_INVOKED", "INVOKED", "REJECTED", "COMPLETED"]
 
 
 class ReceiverError(RuntimeError):
@@ -204,6 +209,17 @@ def _completion_path(paths: AuthPaths) -> Path:
     return path
 
 
+def _receiver_status_path(paths: AuthPaths) -> Path:
+    root = paths.browser_state_dir
+    path = root / RECEIVER_STATUS_FILENAME
+    try:
+        if path.resolve(strict=False) != path or path.resolve(strict=False).parent != root:
+            raise _failure()
+    except (OSError, RuntimeError, ValueError):
+        raise _failure() from None
+    return path
+
+
 def _acquire_lock(paths: AuthPaths) -> Path:
     lock = _lock_path(paths)
     try:
@@ -271,6 +287,64 @@ def _write_completion(
         except OSError:
             raise _failure() from None
         raise _failure() from None
+
+
+def _write_receiver_status(
+    paths: AuthPaths,
+    attempt: PendingBootstrapAttempt,
+    status: _PersistedReceiverStatus,
+    recorded_at: int,
+) -> None:
+    path = _receiver_status_path(paths)
+    document = {
+        "status": status,
+        "attempt_id": attempt.attempt_id,
+        "recorded_at": recorded_at,
+    }
+    temporary = path.with_name(f".{RECEIVER_STATUS_FILENAME}.{attempt.attempt_id}.tmp")
+    try:
+        if temporary.resolve(strict=False) != temporary:
+            raise _failure()
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(document, ensure_ascii=True, separators=(",", ":")))
+        os.replace(temporary, path)
+    except (OSError, UnicodeError, TypeError, ValueError):
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            raise _failure() from None
+        raise _failure() from None
+
+
+def read_receiver_status(paths: AuthPaths, attempt: PendingBootstrapAttempt) -> ReceiverStatus:
+    """Return only a fixed safe state bound to one in-memory bootstrap attempt."""
+    try:
+        path = _receiver_status_path(paths)
+        with path.open("rb") as handle:
+            payload = handle.read(PENDING_ATTEMPT_MAX_BYTES + 1)
+        if len(payload) > PENDING_ATTEMPT_MAX_BYTES:
+            return "UNAVAILABLE"
+        document = json.loads(payload.decode("utf-8"), parse_constant=_reject_json_constant)
+        if not isinstance(document, dict) or set(document) != {
+            "status",
+            "attempt_id",
+            "recorded_at",
+        }:
+            return "UNAVAILABLE"
+        status = document["status"]
+        attempt_id = _safe_string(document["attempt_id"], _ATTEMPT_ID_MAX_BYTES)
+        recorded_at = document["recorded_at"]
+        if (
+            status not in {"NOT_INVOKED", "INVOKED", "REJECTED", "COMPLETED"}
+            or attempt_id != attempt.attempt_id
+            or isinstance(recorded_at, bool)
+            or not isinstance(recorded_at, int)
+            or not attempt.created_at <= recorded_at <= attempt.expires_at
+        ):
+            return "UNAVAILABLE"
+        return cast(_PersistedReceiverStatus, status)
+    except (OSError, UnicodeError, TypeError, ValueError, ReceiverError):
+        return "UNAVAILABLE"
 
 
 def _read_completion(
@@ -477,10 +551,20 @@ def begin_bootstrap_attempt(
         with temporary.open("x", encoding="utf-8") as handle:
             handle.write(json.dumps(document, ensure_ascii=True, separators=(",", ":")))
         os.replace(temporary, path)
+        try:
+            _write_receiver_status(paths, attempt, "NOT_INVOKED", current)
+        except ReceiverError:
+            try:
+                path.unlink()
+            except OSError:
+                raise _failure() from None
+            raise
     except (OSError, UnicodeError, TypeError, ValueError):
         try:
             if "temporary" in locals():
                 temporary.unlink(missing_ok=True)
+            if "attempt" in locals():
+                path.unlink(missing_ok=True)
         except OSError:
             raise _failure() from None
         raise _failure() from None
@@ -538,9 +622,14 @@ def receive_callback(
     lock = _acquire_lock(paths)
     try:
         attempt = _read_attempt(path, config, current, allow_expired=False)
+        _write_receiver_status(paths, attempt, "INVOKED", current)
         try:
             web_service_token = _extract_web_service_token(config, attempt.passport, callback_uri)
         except (BootstrapError, TypeError, ValueError):
+            try:
+                _write_receiver_status(paths, attempt, "REJECTED", current)
+            except ReceiverError:
+                pass
             try:
                 path.unlink()
             except OSError:
@@ -558,6 +647,7 @@ def receive_callback(
         except CredentialWriteError:
             raise _failure() from None
         _write_completion(paths, attempt, current)
+        _write_receiver_status(paths, attempt, "COMPLETED", current)
     finally:
         _release_lock(lock)
 

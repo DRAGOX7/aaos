@@ -15,6 +15,7 @@ from typing import Any, BinaryIO, Callable, NoReturn, cast
 import pytest
 
 from aaos.moodle import receiver as receiver_module
+from aaos.moodle.auth import CredentialWriteError
 from aaos.moodle.bootstrap import (
     ATTEMPT_EXPIRY_SAFETY_SECONDS,
     CALLBACK_DELIVERY_GRACE_SECONDS,
@@ -33,6 +34,7 @@ from aaos.moodle.receiver import (
     begin_bootstrap_attempt,
     cancel_bootstrap_attempt,
     main,
+    read_receiver_status,
     receive_callback,
     wait_for_bootstrap_completion,
 )
@@ -212,6 +214,96 @@ def test_valid_callback_publishes_a_non_secret_completion_for_the_same_attempt(
     serialized = completion.read_text(encoding="utf-8")
     assert "REST-TOKEN" not in serialized
     assert attempt.passport not in serialized
+
+
+def test_valid_callback_persists_only_a_completed_receiver_status_for_its_attempt(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+
+    receive_callback(CONFIG, paths, _callback(attempt.passport), now=1_001)
+
+    status = read_receiver_status(paths, attempt)
+    serialized = (paths.browser_state_dir / "receiver_status.json").read_text(encoding="utf-8")
+    document = json.loads(serialized)
+    assert status == "COMPLETED"
+    assert set(document) == {"status", "attempt_id", "recorded_at"}
+    assert attempt.passport not in serialized
+    assert "REST-TOKEN" not in serialized
+    assert "aaos://" not in serialized
+
+
+def test_rejected_callback_persists_only_a_rejected_receiver_status_for_its_attempt(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+
+    with pytest.raises(ReceiverError):
+        receive_callback(CONFIG, paths, _callback("a-different-passport"), now=1_001)
+
+    assert read_receiver_status(paths, attempt) == "REJECTED"
+
+
+def test_receiver_records_invocation_before_credential_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+
+    def reject_credential_write(_: AuthPaths, __: str) -> None:
+        assert read_receiver_status(paths, attempt) == "INVOKED"
+        raise CredentialWriteError("credential unavailable")
+
+    monkeypatch.setattr(receiver_module, "write_api_token", reject_credential_write)
+
+    with pytest.raises(ReceiverError):
+        receive_callback(CONFIG, paths, _callback(attempt.passport), now=1_001)
+
+    assert read_receiver_status(paths, attempt) == "INVOKED"
+
+
+def test_receiver_status_stays_after_completion_and_pending_cleanup(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    receive_callback(CONFIG, paths, _callback(attempt.passport), now=1_001)
+
+    wait_for_bootstrap_completion(
+        paths,
+        attempt,
+        timeout_seconds=1,
+        clock=lambda: 1_001.0,
+        sleeper=lambda _: None,
+    )
+    cancel_bootstrap_attempt(paths, attempt.attempt_id)
+
+    assert read_receiver_status(paths, attempt) == "COMPLETED"
+
+
+def test_new_attempt_clears_the_previous_attempt_receiver_status(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    first = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    receive_callback(CONFIG, paths, _callback(first.passport), now=1_001)
+
+    second = begin_bootstrap_attempt(CONFIG, paths, now=1_002)
+
+    assert read_receiver_status(paths, second) == "NOT_INVOKED"
+
+
+def test_previous_attempt_status_cannot_be_interpreted_as_the_current_attempt(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    first = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    receive_callback(CONFIG, paths, _callback(first.passport), now=1_001)
+    status_path = paths.browser_state_dir / "receiver_status.json"
+    first_status = status_path.read_bytes()
+
+    second = begin_bootstrap_attempt(CONFIG, paths, now=1_002)
+    status_path.write_bytes(first_status)
+
+    assert read_receiver_status(paths, second) == "UNAVAILABLE"
 
 
 def test_completion_is_bound_to_the_exact_attempt_and_consumed(tmp_path: Path) -> None:
