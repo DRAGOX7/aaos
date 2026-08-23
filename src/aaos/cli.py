@@ -36,6 +36,8 @@ def main() -> int:
         return _run_configured_moodle_bootstrap()
     if sys.argv[1:] == ["moodle", "bootstrap", "--auth-host", "system"]:
         return _run_configured_moodle_bootstrap(auth_host="system")
+    if sys.argv[1:] == ["moodle", "diagnose-confirmed-return"]:
+        return _run_configured_moodle_confirmed_return_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -68,3 +70,10 @@ def _run_configured_moodle_bootstrap(*, auth_host: str = "webview2") -> int:
     if auth_host == "webview2":
         return run_configured_moodle_bootstrap(auth_host="webview2")
     return 2
+
+
+def _run_configured_moodle_confirmed_return_diagnostic() -> int:
+    """Run the separate, human-controlled confirmation-page diagnostic."""
+    from aaos.moodle.live_runner import run_configured_moodle_confirmed_return_diagnostic
+
+    return run_configured_moodle_confirmed_return_diagnostic()

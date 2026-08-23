@@ -6,7 +6,10 @@ import os
 import sys
 from collections.abc import Callable
 
-from aaos.moodle.embedded_auth import build_embedded_launch_url
+from aaos.moodle.embedded_auth import (
+    build_confirmed_return_launch_url,
+    build_embedded_launch_url,
+)
 
 
 class SystemBrowserLaunchError(RuntimeError):
@@ -25,6 +28,14 @@ class SystemBrowserAuthHost:
     def start(self, launch_url: str, passport: str) -> None:
         """Launch the fixed URL once through the user's default Windows browser."""
         fixed_url = build_embedded_launch_url(launch_url, passport)
+        self._open(fixed_url)
+
+    def start_confirmed_return(self, launch_url: str, passport: str) -> None:
+        """Launch the fixed diagnostic URL that asks Moodle to render its confirmation page."""
+        fixed_url = build_confirmed_return_launch_url(launch_url, passport)
+        self._open(fixed_url)
+
+    def _open(self, fixed_url: str) -> None:
         try:
             self._opener(fixed_url)
         except OSError:

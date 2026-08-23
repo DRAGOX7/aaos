@@ -304,3 +304,27 @@ def test_main_dispatches_the_explicit_system_browser_moodle_bootstrap_command(
 
     assert cli.main() == 0
     assert captured == {"auth_host": "system"}
+
+
+def test_main_dispatches_the_explicit_confirmed_return_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aaos import cli
+
+    calls = 0
+
+    def run_diagnostic() -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(
+        cli,
+        "_run_configured_moodle_confirmed_return_diagnostic",
+        run_diagnostic,
+        raising=False,
+    )
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-confirmed-return"])
+
+    assert cli.main() == 0
+    assert calls == 1

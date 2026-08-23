@@ -36,6 +36,16 @@ class WebView2Runtime(Protocol):
 
 def build_embedded_launch_url(launch_url: str, passport: str) -> str:
     """Build the fixed Moodle mobile launch URL from the returned launch URL."""
+    return _build_moodle_mobile_launch_url(launch_url, passport, confirmed=False)
+
+
+def build_confirmed_return_launch_url(launch_url: str, passport: str) -> str:
+    """Build the diagnostic-only Moodle launch URL with its fixed confirmation page."""
+    return _build_moodle_mobile_launch_url(launch_url, passport, confirmed=True)
+
+
+def _build_moodle_mobile_launch_url(launch_url: str, passport: str, *, confirmed: bool) -> str:
+    """Validate one fixed Moodle launch endpoint and build its module-owned query."""
     if (
         not isinstance(launch_url, str)
         or not isinstance(passport, str)
@@ -59,13 +69,10 @@ def build_embedded_launch_url(launch_url: str, passport: str) -> str:
         or parsed.fragment
     ):
         raise ValueError("embedded authentication launch is invalid")
-    return (
-        launch_url.rstrip("/")
-        + "?"
-        + urlencode(
-            {"service": _MOBILE_SERVICE, "passport": passport, "urlscheme": _CALLBACK_SCHEME}
-        )
-    )
+    query = {"service": _MOBILE_SERVICE, "passport": passport, "urlscheme": _CALLBACK_SCHEME}
+    if confirmed:
+        query["confirmed"] = "1"
+    return launch_url.rstrip("/") + "?" + urlencode(query)
 
 
 def is_allowed_external_scheme(scheme: str) -> bool:

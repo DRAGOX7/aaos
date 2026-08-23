@@ -129,6 +129,20 @@ class LiveBootstrapReport:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ConfirmedReturnDiagnosticReport:
+    """Only the fixed, non-sensitive result of one confirmed-return diagnostic."""
+
+    failure_stage: FailureStage
+    diagnostic: _Status
+    system_browser: _Status
+    callback_received: _Status
+
+    @property
+    def exit_code(self) -> int:
+        return 0 if self.diagnostic == "PASS" else 1
+
+
 def _relevant_functions(functions: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         function
@@ -191,6 +205,18 @@ def render_live_report(report: LiveBootstrapReport) -> str:
         )
     )
     return "\n".join(lines)
+
+
+def render_confirmed_return_diagnostic(report: ConfirmedReturnDiagnosticReport) -> str:
+    """Render only fixed diagnostic states; human browser observations stay outside AAOS."""
+    return "\n".join(
+        (
+            f"DIAGNOSTIC={report.diagnostic}",
+            f"SYSTEM_BROWSER={report.system_browser}",
+            f"CALLBACK_RECEIVED={report.callback_received}",
+            f"FAILURE_STAGE={report.failure_stage}",
+        )
+    )
 
 
 class MoodleLiveBootstrapRunner:
@@ -398,6 +424,64 @@ class MoodleSystemBrowserBootstrapRunner:
         )
 
 
+class MoodleConfirmedReturnDiagnosticRunner:
+    """Run one system-browser confirmation diagnostic and stop at receiver completion."""
+
+    def __init__(
+        self,
+        *,
+        config: MoodleBootstrapConfig,
+        paths: AuthPaths,
+        auth_host: SystemBrowserAuthHost,
+        completion_timeout_seconds: int,
+        completion_waiter: CompletionWaiter = wait_for_bootstrap_completion,
+    ) -> None:
+        self._config = config
+        self._paths = paths
+        self._auth_host = auth_host
+        self._completion_timeout_seconds = completion_timeout_seconds
+        self._completion_waiter = completion_waiter
+
+    def run(self) -> ConfirmedReturnDiagnosticReport:
+        try:
+            attempt = begin_bootstrap_attempt(self._config, self._paths)
+        except ReceiverError:
+            return _failed_confirmed_return_diagnostic("ATTEMPT_CREATION")
+        try:
+            try:
+                self._auth_host.start_confirmed_return(
+                    self._config.canonical_wwwroot + "/admin/tool/mobile/launch.php",
+                    attempt.passport,
+                )
+            except (OSError, SystemBrowserLaunchError, ValueError):
+                return _failed_confirmed_return_diagnostic(
+                    "SYSTEM_BROWSER_LAUNCH", system_browser="FAIL"
+                )
+            try:
+                self._completion_waiter(
+                    self._paths,
+                    attempt,
+                    timeout_seconds=self._completion_timeout_seconds,
+                )
+            except ReceiverError as error:
+                return _failed_confirmed_return_diagnostic(
+                    _receiver_failure_stage(error.failure_stage),
+                    system_browser="PASS",
+                    callback_received="FAIL",
+                )
+            return ConfirmedReturnDiagnosticReport(
+                failure_stage="NO_FAILURE",
+                diagnostic="PASS",
+                system_browser="PASS",
+                callback_received="PASS",
+            )
+        finally:
+            try:
+                cancel_bootstrap_attempt(self._paths, attempt.attempt_id)
+            except ReceiverError:
+                pass
+
+
 def _failed_report(
     *,
     failure_stage: FailureStage,
@@ -418,6 +502,20 @@ def _failed_report(
         site_info=site_info,
         auth_host=auth_host,
         system_browser=system_browser,
+    )
+
+
+def _failed_confirmed_return_diagnostic(
+    failure_stage: FailureStage,
+    *,
+    system_browser: _Status = "NOT_ATTEMPTED",
+    callback_received: _Status = "NOT_ATTEMPTED",
+) -> ConfirmedReturnDiagnosticReport:
+    return ConfirmedReturnDiagnosticReport(
+        failure_stage=failure_stage,
+        diagnostic="FAIL",
+        system_browser=system_browser,
+        callback_received=callback_received,
     )
 
 
@@ -482,4 +580,21 @@ def run_configured_moodle_bootstrap(
     except (ReceiverError, ValueError, OSError):
         report = _failed_report(failure_stage="PREREQUISITE")
     print(render_live_report(report))
+    return report.exit_code
+
+
+def run_configured_moodle_confirmed_return_diagnostic() -> int:
+    """Run the human-click diagnostic without reading a credential or probing Moodle APIs."""
+    try:
+        config, _settings, paths = load_runtime_moodle_configuration()
+        runner = MoodleConfirmedReturnDiagnosticRunner(
+            config=config,
+            paths=paths,
+            auth_host=SystemBrowserAuthHost(),
+            completion_timeout_seconds=SYSTEM_BROWSER_COMPLETION_WAIT_SECONDS,
+        )
+        report = runner.run()
+    except (ReceiverError, ValueError, OSError):
+        report = _failed_confirmed_return_diagnostic("PREREQUISITE")
+    print(render_confirmed_return_diagnostic(report))
     return report.exit_code
