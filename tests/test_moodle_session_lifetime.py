@@ -3,10 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 COURSE_INDEX = "https://moodle.example.edu/current/my/courses.php"
-COURSE_INDEX_MARKER = """
-<a data-moodle-course=\"true\" href=\"https://moodle.example.edu/current/course/view.php?id=42\">Synthetic</a>
-<nav data-pagination-pages=\"0\" data-pagination-exhausted=\"true\"></nav>
-"""
+AUTHENTICATED_MY_COURSES_PAGE = (
+    '<body id="page-my-index" class="page-mycourses pagelayout-mycourses"></body>'
+)
 
 
 class _FakePage:
@@ -54,7 +53,7 @@ def test_requested_course_index_before_authenticated_document_keeps_interaction_
         [
             (COURSE_INDEX, "<form action='/current/login/index.php'></form>"),
             ("https://moodle.example.edu/current/login/index.php", "<form></form>"),
-            (COURSE_INDEX, COURSE_INDEX_MARKER),
+            (COURSE_INDEX, AUTHENTICATED_MY_COURSES_PAGE),
         ],
         lambda: elapsed.__setitem__(0, elapsed[0] + 1.0),
     )
@@ -104,7 +103,7 @@ def test_transient_course_index_marker_followed_by_login_never_authenticates() -
     elapsed = [0.0]
     page = _FakePage(
         [
-            (COURSE_INDEX, COURSE_INDEX_MARKER),
+            (COURSE_INDEX, AUTHENTICATED_MY_COURSES_PAGE),
             ("https://moodle.example.edu/current/login/index.php", "<form></form>"),
         ],
         lambda: elapsed.__setitem__(0, elapsed[0] + 1.0),
@@ -122,8 +121,53 @@ def test_transient_course_index_marker_followed_by_login_never_authenticates() -
     )
 
 
-def test_course_index_marker_requires_course_and_pagination_structure() -> None:
-    from aaos.moodle.browser_parsing import has_course_index_marker
+def test_authenticated_my_courses_page_does_not_require_course_or_pagination_content() -> None:
+    from aaos.moodle.browser_parsing import has_authenticated_my_courses_page
 
-    assert has_course_index_marker(COURSE_INDEX_MARKER) is True
-    assert has_course_index_marker("<form action='/current/login/index.php'></form>") is False
+    assert has_authenticated_my_courses_page(AUTHENTICATED_MY_COURSES_PAGE) is True
+    assert (
+        has_authenticated_my_courses_page("<form action='/current/login/index.php'></form>")
+        is False
+    )
+
+
+def test_exact_course_index_with_login_document_is_not_authenticated() -> None:
+    from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+
+    elapsed = [0.0]
+    page = _FakePage(
+        [(COURSE_INDEX, "<body class='page-login-index'></body>")],
+        lambda: elapsed.__setitem__(0, elapsed[0] + 1.0),
+    )
+
+    assert (
+        wait_for_authenticated_course_index(
+            page,
+            course_index_url=COURSE_INDEX,
+            timeout_seconds=3,
+            monotonic=lambda: elapsed[0],
+            poll_milliseconds=1000,
+        )
+        is False
+    )
+
+
+def test_zero_course_authenticated_my_courses_page_is_authenticated() -> None:
+    from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+
+    elapsed = [0.0]
+    page = _FakePage(
+        [(COURSE_INDEX, AUTHENTICATED_MY_COURSES_PAGE)],
+        lambda: elapsed.__setitem__(0, elapsed[0] + 1.0),
+    )
+
+    assert (
+        wait_for_authenticated_course_index(
+            page,
+            course_index_url=COURSE_INDEX,
+            timeout_seconds=3,
+            monotonic=lambda: elapsed[0],
+            poll_milliseconds=1000,
+        )
+        is True
+    )

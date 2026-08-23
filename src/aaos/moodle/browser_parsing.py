@@ -27,12 +27,15 @@ class ParsedPage(Generic[Record]):
 class _Markup(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
+        self.body: dict[str, str] | None = None
         self.links: list[dict[str, str]] = []
         self.pagination: dict[str, str] | None = None
         self.in_announcement_forum = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key: value or "" for key, value in attrs}
+        if tag == "body":
+            self.body = values
         if tag == "section" and values.get("data-announcement-forum") == "true":
             self.in_announcement_forum = True
         if tag == "a":
@@ -59,14 +62,16 @@ def parse_course_index(html: str, *, expected_origin: str) -> ParsedPage[RawCour
     return ParsedPage(courses, _proof("COURSE_INDEX", markup, len(courses)))
 
 
-def has_course_index_marker(html: object) -> bool:
-    """Return whether sanitized markup has the fixed course-index structure."""
+def has_authenticated_my_courses_page(html: object) -> bool:
+    """Return whether markup has the stable Moodle My Courses page identity."""
     if not isinstance(html, str):
         return False
     markup = _parse(html)
-    return (
-        any(link.get("data-moodle-course") == "true" for link in markup.links)
-        and markup.pagination is not None
+    if markup.body is None:
+        return False
+    classes = frozenset(markup.body.get("class", "").split())
+    return "page-mycourses" in classes and not classes.intersection(
+        {"page-login-index", "page-login", "page-auth"}
     )
 
 

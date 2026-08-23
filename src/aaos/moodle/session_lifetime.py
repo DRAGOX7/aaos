@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Callable, Literal, Protocol, cast
 
-from aaos.moodle.browser_parsing import has_course_index_marker
+from aaos.moodle.browser_parsing import has_authenticated_my_courses_page
 
 SameContextSession = Literal["AUTHENTICATED", "NOT_AUTHENTICATED"]
 RelaunchedSession = Literal["AUTHENTICATED", "LOGIN_ROUTE", "OTHER_FAILURE"]
@@ -59,12 +59,12 @@ def wait_for_authenticated_course_index(
     """Wait for the fixed course route and its structural authenticated marker."""
     deadline = monotonic() + timeout_seconds
     while True:
-        if page.url == course_index_url and has_course_index_marker(page.content()):
+        if page.url == course_index_url and has_authenticated_my_courses_page(page.content()):
             remaining_seconds = deadline - monotonic()
             if remaining_seconds <= 0:
                 return False
             page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
-            if page.url == course_index_url and has_course_index_marker(page.content()):
+            if page.url == course_index_url and has_authenticated_my_courses_page(page.content()):
                 return True
         remaining_seconds = deadline - monotonic()
         if remaining_seconds <= 0:
