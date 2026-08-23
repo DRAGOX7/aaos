@@ -20,8 +20,10 @@ class NativeWebView2Runtime:
             raise ValueError("WebView2 helper path must be absolute")
         self._helper_path = helper_path
         self.cleanup_pass = True
+        self.pre_initialization_failure = False
 
     def run(self, launch_url: str, profile: Path, timeout_seconds: int) -> EmbeddedAuthResult:
+        self.pre_initialization_failure = False
         payload = json.dumps(
             {
                 "launchUrl": launch_url,
@@ -43,7 +45,9 @@ class NativeWebView2Runtime:
         except (OSError, subprocess.TimeoutExpired):
             self.cleanup_pass = False
             return "HOST_ERROR"
-        self.cleanup_pass = getattr(completed, "returncode", 0) == 0
+        returncode = getattr(completed, "returncode", 0)
+        self.cleanup_pass = returncode == 0
+        self.pre_initialization_failure = returncode == 2
         try:
             result = completed.stdout.decode("ascii").strip()
         except UnicodeDecodeError:

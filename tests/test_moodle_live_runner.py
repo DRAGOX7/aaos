@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import tempfile
 from pathlib import Path
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from aaos.moodle import live_runner
 from aaos.moodle.api import MoodleApiError, MoodleApiFailureStage
 from aaos.moodle.api_parsing import SafeSiteInfo
 from aaos.moodle.bootstrap import MoodleBootstrapConfig
 from aaos.moodle.embedded_auth import (
     EmbeddedAuthResult,
+    EphemeralProfile,
     WebView2EmbeddedAuthHost,
 )
 from aaos.moodle.live_runner import MoodleLiveBootstrapRunner, render_live_report
@@ -66,9 +69,16 @@ class CompletingRuntime:
 
 
 class StaticRuntime:
-    def __init__(self, result: EmbeddedAuthResult, *, cleanup_pass: bool = True) -> None:
+    def __init__(
+        self,
+        result: EmbeddedAuthResult,
+        *,
+        cleanup_pass: bool = True,
+        pre_initialization_failure: bool = False,
+    ) -> None:
         self.result = result
         self.cleanup_pass = cleanup_pass
+        self.pre_initialization_failure = pre_initialization_failure
         self.calls = 0
 
     def run(self, launch_url: str, profile: Path, timeout_seconds: int) -> EmbeddedAuthResult:
@@ -306,6 +316,47 @@ def test_runner_stops_before_site_info_when_host_cleanup_fails(tmp_path: Path) -
     assert report.token_persisted == "NOT_ATTEMPTED"
     assert report.webview2_cleanup == "FAIL"
     assert report.site_info == "NOT_ATTEMPTED"
+
+
+def test_runner_reports_preinitialization_helper_rejection_as_webview2_launch(
+    tmp_path: Path,
+) -> None:
+    runtime = StaticRuntime("HOST_ERROR", pre_initialization_failure=True)
+
+    def factory(_: object) -> FakeSiteInfoTransport:
+        raise AssertionError("site-info must not run after helper startup rejection")
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost(runtime),
+        site_info_transport_factory=factory,
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+
+    assert report.failure_stage == "WEBVIEW2_LAUNCH"
+    assert report.embedded_sso == "FAIL"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "PASS"
+    assert report.site_info == "NOT_ATTEMPTED"
+
+
+def test_configured_bootstrap_profiles_use_the_native_temp_root_contract() -> None:
+    profile_root = live_runner._configured_profile_root()
+
+    assert profile_root == Path(tempfile.gettempdir()).resolve()
+    first = EphemeralProfile.create(profile_root)
+    second = EphemeralProfile.create(profile_root)
+    try:
+        assert first.path.parent == profile_root
+        assert second.path.parent == profile_root
+        assert first.path != second.path
+    finally:
+        first.cleanup()
+        second.cleanup()
 
 
 def test_runner_fails_closed_on_site_info_failure_without_entity_fallback(tmp_path: Path) -> None:

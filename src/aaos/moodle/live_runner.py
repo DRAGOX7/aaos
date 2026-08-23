@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -305,6 +306,11 @@ def _default_site_info_transport_factory(
     return factory
 
 
+def _configured_profile_root() -> Path:
+    """Return the native helper's approved attempt-profile root."""
+    return Path(tempfile.gettempdir()).resolve()
+
+
 def run_configured_moodle_bootstrap() -> int:
     """Run the manually invoked Phase 2 gate; imports alone do nothing."""
     try:
@@ -326,7 +332,7 @@ def run_configured_moodle_bootstrap() -> int:
             site_info_transport_factory=_default_site_info_transport_factory(
                 settings, config.canonical_wwwroot, paths
             ),
-            profile_root=paths.browser_state_dir / "embedded_profiles",
+            profile_root=_configured_profile_root(),
             completion_timeout_seconds=config.timeout_seconds,
         )
         report = runner.run()

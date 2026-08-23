@@ -11,6 +11,7 @@ from urllib.parse import urlencode, urlsplit
 
 EmbeddedAuthResult = Literal["CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"]
 EmbeddedAuthFailureStage = Literal[
+    "WEBVIEW2_LAUNCH",
     "WEBVIEW2_HOST_ERROR",
     "WEBVIEW2_TIMEOUT",
     "WEBVIEW2_CLEANUP",
@@ -151,6 +152,9 @@ class WebView2EmbeddedAuthHost:
                 return "HOST_ERROR"
             if result in {"CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"}:
                 self.last_interaction_result = result
+            if getattr(self._runtime, "pre_initialization_failure", False):
+                self.last_failure_stage = "WEBVIEW2_LAUNCH"
+                return "HOST_ERROR"
             if not getattr(self._runtime, "cleanup_pass", True):
                 self.last_cleanup_pass = False
                 self.last_failure_stage = "WEBVIEW2_CLEANUP"
