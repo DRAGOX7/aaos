@@ -59,3 +59,16 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     assert calls[-1] == "context-close"
     with pytest.raises(BrowserPolicyError):
         navigator.open("RESOURCE_METADATA")
+
+
+def test_redirect_classifier_returns_only_fixed_structural_categories() -> None:
+    from aaos.moodle.browser_navigation import classify_redirect
+
+    origin = "https://moodle.example.edu"
+    assert classify_redirect(origin + "/current/login/index.php", origin) == "LOGIN_ROUTE"
+    assert classify_redirect(origin + "/current/my/index.php", origin) == "MOODLE_MY_ROUTE"
+    assert (
+        classify_redirect(origin + "/current/my/courses.php?redirect=1", origin)
+        == "COURSE_INDEX_VARIANT"
+    )
+    assert classify_redirect("https://login.microsoftonline.com/login", origin) == "SSO_EXTERNAL"

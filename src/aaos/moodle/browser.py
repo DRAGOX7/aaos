@@ -88,4 +88,6 @@ def run_configured_browser_course_smoke() -> int:
         return 0
     print("COURSE_DISCOVERY_FAILED")
     print(f"FAILURE_STAGE={result.code.removeprefix('browser_').upper()}")
+    if result.code == "browser_unexpected_redirect" and navigator.redirect_class is not None:
+        print(f"REDIRECT_CLASS={navigator.redirect_class}")
     return 1

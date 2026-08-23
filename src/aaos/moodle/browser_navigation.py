@@ -11,6 +11,15 @@ from aaos.moodle.browser_policy import build_browser_url, classify_browser_reque
 
 _NAVIGATION_TIMEOUT_MS = 30_000
 FailureStage = Literal["REQUEST_POLICY", "UNEXPECTED_REDIRECT", "NAVIGATION", "NONE"]
+RedirectClass = Literal[
+    "LOGIN_ROUTE",
+    "SSO_EXTERNAL",
+    "COURSE_INDEX_VARIANT",
+    "MOODLE_MY_ROUTE",
+    "OTHER_SAME_ORIGIN",
+    "OTHER_ORIGIN",
+    "INVALID",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,12 +76,18 @@ class PlaywrightRestrictedNavigator:
         self._base_origin = base_origin
         self._closed = False
         self._failure_stage: FailureStage = "NONE"
+        self._redirect_class: RedirectClass | None = None
         self._install_interception()
 
     @property
     def failure_stage(self) -> FailureStage:
         """Return only a fixed non-sensitive failure classification."""
         return self._failure_stage
+
+    @property
+    def redirect_class(self) -> RedirectClass | None:
+        """Return the safe class of an unexpected final navigation, if any."""
+        return self._redirect_class
 
     def _install_interception(self) -> None:
         self._context.route("**/*", self._handle_request)
@@ -106,6 +121,7 @@ class PlaywrightRestrictedNavigator:
             origin = f"{parsed.scheme}://{parsed.netloc}"
             if origin != self._base_origin or parsed.path != urlsplit(target).path or parsed.query:
                 self._failure_stage = "UNEXPECTED_REDIRECT"
+                self._redirect_class = classify_redirect(page.url, self._base_origin)
                 raise BrowserPolicyError()
             html = page.content()
             if not isinstance(html, str):
@@ -126,3 +142,29 @@ class PlaywrightRestrictedNavigator:
             self._context.close()
         except (OSError, ValueError, TypeError):
             raise BrowserPolicyError() from None
+
+
+def classify_redirect(url: object, base_origin: str) -> RedirectClass:
+    """Classify a final redirect structurally without returning its destination."""
+    if not isinstance(url, str):
+        return "INVALID"
+    try:
+        target = urlsplit(url)
+        base = urlsplit(base_origin)
+    except ValueError:
+        return "INVALID"
+    target_origin = f"{target.scheme}://{target.netloc}"
+    canonical_origin = f"{base.scheme}://{base.netloc}"
+    if target.scheme != "https" or not target.netloc:
+        return "INVALID"
+    if target_origin != canonical_origin:
+        if target.hostname == "login.microsoftonline.com":
+            return "SSO_EXTERNAL"
+        return "OTHER_ORIGIN"
+    if target.path.startswith("/current/login/") or target.path.startswith("/current/auth/"):
+        return "LOGIN_ROUTE"
+    if target.path == "/current/my/courses.php":
+        return "COURSE_INDEX_VARIANT"
+    if target.path.startswith("/current/my/"):
+        return "MOODLE_MY_ROUTE"
+    return "OTHER_SAME_ORIGIN"
