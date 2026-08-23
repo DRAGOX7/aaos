@@ -282,3 +282,25 @@ def test_main_dispatches_the_narrow_moodle_bootstrap_command(
     assert cli.main() == 0
     assert calls == 1
     assert capsys.readouterr().out == "SAFE BOOTSTRAP OUTPUT\n"
+
+
+def test_main_dispatches_the_explicit_system_browser_moodle_bootstrap_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aaos import cli
+
+    captured: dict[str, str] = {}
+
+    def run_bootstrap(*, auth_host: str) -> int:
+        captured["auth_host"] = auth_host
+        return 0
+
+    monkeypatch.setattr(cli, "_run_configured_moodle_bootstrap", run_bootstrap, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["aaos", "moodle", "bootstrap", "--auth-host", "system"],
+    )
+
+    assert cli.main() == 0
+    assert captured == {"auth_host": "system"}

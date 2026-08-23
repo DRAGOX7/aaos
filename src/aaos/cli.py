@@ -34,6 +34,8 @@ def main() -> int:
     """Expose the configured AAOS command through the project entry point."""
     if sys.argv[1:] == ["moodle", "bootstrap"]:
         return _run_configured_moodle_bootstrap()
+    if sys.argv[1:] == ["moodle", "bootstrap", "--auth-host", "system"]:
+        return _run_configured_moodle_bootstrap(auth_host="system")
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -57,8 +59,12 @@ async def _run_configured_doctor_async() -> DoctorReport:
     return await service.run()
 
 
-def _run_configured_moodle_bootstrap() -> int:
+def _run_configured_moodle_bootstrap(*, auth_host: str = "webview2") -> int:
     """Run the one human-controlled Moodle bootstrap and site-info gate."""
     from aaos.moodle.live_runner import run_configured_moodle_bootstrap
 
-    return run_configured_moodle_bootstrap()
+    if auth_host == "system":
+        return run_configured_moodle_bootstrap(auth_host="system")
+    if auth_host == "webview2":
+        return run_configured_moodle_bootstrap(auth_host="webview2")
+    return 2
