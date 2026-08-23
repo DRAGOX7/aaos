@@ -59,6 +59,17 @@ def parse_course_index(html: str, *, expected_origin: str) -> ParsedPage[RawCour
     return ParsedPage(courses, _proof("COURSE_INDEX", markup, len(courses)))
 
 
+def has_course_index_marker(html: object) -> bool:
+    """Return whether sanitized markup has the fixed course-index structure."""
+    if not isinstance(html, str):
+        return False
+    markup = _parse(html)
+    return (
+        any(link.get("data-moodle-course") == "true" for link in markup.links)
+        and markup.pagination is not None
+    )
+
+
 def parse_assignment_list(
     html: str, *, course_source_id: str, expected_origin: str
 ) -> ParsedPage[RawAssignment]:

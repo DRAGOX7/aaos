@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from time import monotonic
+from typing import Any, Callable, Literal, Protocol, cast
+
+from aaos.moodle.browser_parsing import has_course_index_marker
 
 SameContextSession = Literal["AUTHENTICATED", "NOT_AUTHENTICATED"]
 RelaunchedSession = Literal["AUTHENTICATED", "LOGIN_ROUTE", "OTHER_FAILURE"]
+
+
+class _CourseIndexPage(Protocol):
+    url: str
+
+    def content(self) -> str: ...
+
+    def wait_for_timeout(self, milliseconds: int) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +46,30 @@ def render_session_lifetime_report(report: SessionLifetimeReport) -> str:
             f"SESSION_LIFETIME_RESULT={report.result}",
         )
     )
+
+
+def wait_for_authenticated_course_index(
+    page: _CourseIndexPage,
+    *,
+    course_index_url: str,
+    timeout_seconds: int,
+    monotonic: Callable[[], float] = monotonic,
+    poll_milliseconds: int = 250,
+) -> bool:
+    """Wait for the fixed course route and its structural authenticated marker."""
+    deadline = monotonic() + timeout_seconds
+    while True:
+        if page.url == course_index_url and has_course_index_marker(page.content()):
+            remaining_seconds = deadline - monotonic()
+            if remaining_seconds <= 0:
+                return False
+            page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
+            if page.url == course_index_url and has_course_index_marker(page.content()):
+                return True
+        remaining_seconds = deadline - monotonic()
+        if remaining_seconds <= 0:
+            return False
+        page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
 
 
 def run_configured_session_lifetime_diagnostic() -> int:
@@ -70,10 +105,13 @@ def run_configured_session_lifetime_diagnostic() -> int:
                     wait_until="domcontentloaded",
                     timeout=600000,
                 )
-                page.wait_for_url(settings.base_origin + "/current/my/courses.php", timeout=600000)
                 same: SameContextSession = (
                     "AUTHENTICATED"
-                    if page.url == settings.base_origin + "/current/my/courses.php"
+                    if wait_for_authenticated_course_index(
+                        page,
+                        course_index_url=settings.base_origin + "/current/my/courses.php",
+                        timeout_seconds=600,
+                    )
                     else "NOT_AUTHENTICATED"
                 )
             finally:
