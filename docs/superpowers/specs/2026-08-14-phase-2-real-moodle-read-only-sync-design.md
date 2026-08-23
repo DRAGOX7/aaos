@@ -163,6 +163,28 @@ Windows URI-scheme registration for an AAOS-owned scheme is an explicit,
 human-controlled installation/setup action. AAOS runtime must not modify the
 Windows registry or take over another application's scheme.
 
+### Server-dependency checkpoint
+
+The tested Windows registration and receiver are healthy: a human-initiated
+Chrome `aaos://` link presents the external-app prompt and invokes the receiver.
+The corresponding delayed automatic navigation from a local page does not
+present the prompt or invoke the receiver. Therefore WebView2 remains a tested
+experimental host but is frozen for real JUST authentication, and explicit
+system-browser authentication is the selected live path.
+
+The system-browser path is currently blocked on two server facts that AAOS
+cannot establish or override client-side: `forcedurlscheme` must be blank so
+the requested `aaos` scheme is retained, and the JUST Microsoft SSO integration
+must preserve Moodle's original `wantsurl` back to `admin/tool/mobile/launch.php`.
+Neither fact is known from the accepted public configuration response.
+
+If JUST confirms both facts, the supported conditional workaround is a fixed
+`confirmed=1` mobile-launch parameter. Moodle then renders a user-visible
+launch-app link after the SSO return; the human explicitly clicks that link to
+dispatch `aaos://`. This is intentionally not implemented until confirmation.
+It does not authorize MSAL/direct Microsoft OAuth, browser scraping, token
+copy/paste, DOM/cookie/network interception, or a loopback callback.
+
 The proposed bootstrap contract for separate human approval is deliberately
 narrow:
 
