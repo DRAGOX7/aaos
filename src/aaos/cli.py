@@ -42,6 +42,8 @@ def main() -> int:
         return _run_configured_moodle_browser_auth()
     if sys.argv[1:] == ["moodle", "browser-smoke-courses"]:
         return _run_configured_moodle_browser_smoke_courses()
+    if sys.argv[1:] == ["moodle", "diagnose-session-lifetime"]:
+        return _run_moodle_session_lifetime_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -95,3 +97,9 @@ def _run_configured_moodle_browser_smoke_courses() -> int:
     from aaos.moodle.browser import run_configured_browser_course_smoke
 
     return run_configured_browser_course_smoke()
+
+
+def _run_moodle_session_lifetime_diagnostic() -> int:
+    from aaos.moodle.session_lifetime import run_configured_session_lifetime_diagnostic
+
+    return run_configured_session_lifetime_diagnostic()

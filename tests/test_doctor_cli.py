@@ -345,3 +345,11 @@ def test_main_dispatches_the_narrow_browser_auth_command(monkeypatch: pytest.Mon
 
     assert cli.main() == 0
     assert calls == 1
+
+
+def test_main_dispatches_session_lifetime_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aaos import cli
+
+    monkeypatch.setattr(cli, "_run_moodle_session_lifetime_diagnostic", lambda: 0, raising=False)
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-session-lifetime"])
+    assert cli.main() == 0
