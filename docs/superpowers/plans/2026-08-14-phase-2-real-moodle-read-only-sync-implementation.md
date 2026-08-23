@@ -196,6 +196,16 @@ selected.
 
 ## Task 4: Browser adapter (conditional on Task 2 API insufficiency and explicit Playwright approval)
 
+**Superseded for JUST:** The formerly conditional browser task is selected by
+the approved restricted-browser plan at
+`docs/superpowers/plans/2026-08-23-phase-2-restricted-moodle-browser-connector-implementation.md`.
+JUST mobile-token bootstrap is `SERVER_POLICY_BLOCKED` because the effective
+server return scheme is `moodlemobile://`, not `aaos://`. Do not add a token
+workaround, register the official scheme, or use the browser adapter to extract
+cookies/tokens. The successor plan governs a dedicated persistent `msedge`
+profile, separate human auth provisioning, fixed GET/HEAD collection routes,
+and the course-only first smoke.
+
 **Files:**
 - Create: `src/aaos/moodle/browser.py`
 - Create: `src/aaos/moodle/browser_parsing.py`

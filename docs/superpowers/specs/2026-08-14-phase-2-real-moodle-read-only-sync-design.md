@@ -172,11 +172,19 @@ present the prompt or invoke the receiver. Therefore WebView2 remains a tested
 experimental host but is frozen for real JUST authentication, and explicit
 system-browser authentication is the selected live path.
 
-The system-browser path is currently blocked on two server facts that AAOS
-cannot establish or override client-side: `forcedurlscheme` must be blank so
-the requested `aaos` scheme is retained, and the JUST Microsoft SSO integration
-must preserve Moodle's original `wantsurl` back to `admin/tool/mobile/launch.php`.
-Neither fact is known from the accepted public configuration response.
+JUST's mobile-token bootstrap is now `SERVER_POLICY_BLOCKED`: a completed
+human-confirmed launch returned an effective `moodlemobile://` link rather
+than the requested `aaos://` scheme. AAOS must not register, emulate, inspect,
+or take over Moodle's official scheme; it also must not copy a token, browser
+cookie, or browser session as a workaround. The API connector remains supported
+for Moodle deployments that expose an approved complete API capability.
+
+For JUST, the selected Phase 2 production path is instead a separately
+approved restricted browser source: a dedicated AAOS persistent Microsoft Edge
+profile, headed human JUST/Microsoft authentication, then a separate
+application-owned read-only collection context. WebView2 remains a tested
+experimental path, and the system-browser/mobile-token work remains
+compatibility evidence; neither is an automatic fallback.
 
 If JUST confirms both facts, the supported conditional workaround is a fixed
 `confirmed=1` mobile-launch parameter. Moodle then renders a user-visible
@@ -308,6 +316,15 @@ or browser-control API to callers or future agents. Synchronization never fills
 credentials, submits a form, clicks mutating controls, or navigates through
 actions with write intent.
 
+The browser adapter uses installed stable Microsoft Edge through Playwright's
+`msedge` channel and a dedicated persistent profile under the configured AAOS
+auth root. It never attaches to an ordinary Chrome/Edge profile, imports or
+exports cookies, attaches to an existing browser process, or writes a
+`storage_state.json` artifact. Human authentication provisioning is distinct
+from collection: the provisioner opens only the fixed Moodle entry and the
+human alone enters credentials/MFA; collection later reopens the same confined
+profile with its read-only request policy.
+
 The adapter allows only approved same-origin pages and validated static assets.
 It blocks non-GET/HEAD request methods where interception can reliably do so,
 treats any attempted non-GET/HEAD portal request as a typed failure, and
@@ -321,6 +338,21 @@ default. Parser functions receive only the DOM text/attributes needed for source
 records and remain separate from navigation where practical. A login page, an
 SSO/MFA redirect, a changed required page shape, an unexpected origin/redirect,
 or a missing page is a sanitized failure rather than a partial collection.
+
+The initial JUST collection page classes are the course index, course detail,
+per-course assignment list, and announcement-forum list; RemoteFile metadata
+is extracted only from approved course-page markup. Assignment detail, forum
+discussion, resource view, pluginfile, dashboard, messages, notifications,
+preferences, grading, enrollment, logout, and arbitrary AJAX paths are not
+permitted. Route/selector expansion requires sanitized fixture evidence and
+human approval. The first real browser smoke is course discovery only: it may
+not build a `CompleteSourceSnapshot`, normalize, or synchronize.
+
+Read-only does not mean a Moodle installation cannot record incidental access
+state. Loading My Courses can create a page-view event, course pages can create
+course-view events, and resource views may trigger completion; the adapter
+avoids the latter and accurately claims no write-intent action or unapproved
+request rather than perfect zero-state change.
 
 ## 9. Read-only enforcement
 
