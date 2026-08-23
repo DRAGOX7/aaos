@@ -16,7 +16,7 @@ from aaos.moodle.browser_models import (
 from aaos.moodle.models import AuthPaths, MoodleCapability, MoodleSettings, validate_capability
 
 BrowserProvisionCode: TypeAlias = Literal[
-    "BROWSER_AUTHENTICATED",
+    "BROWSER_AUTH_FLOW_COMPLETED",
     "BROWSER_AUTH_REQUIRED",
     "USER_CANCELLED",
     "SESSION_EXPIRED",
@@ -70,7 +70,7 @@ def run_configured_browser_auth() -> int:
     except (OSError, ValueError, TypeError):
         result = BrowserProvisionResult("BROWSER_PROVISIONING_FAILED")
     print(result.code)
-    return 0 if result.code == "BROWSER_AUTHENTICATED" else 1
+    return 0 if result.code == "BROWSER_AUTH_FLOW_COMPLETED" else 1
 
 
 class BrowserSessionProvisioner:
@@ -114,7 +114,7 @@ class BrowserSessionProvisioner:
                         timeout=_INTERACTION_TIMEOUT_MS,
                     )
                     result = self._result_for_final_url(page.url, settings.base_origin)
-                    if result.code == "BROWSER_AUTHENTICATED":
+                    if result.code == "BROWSER_AUTH_FLOW_COMPLETED":
                         self._write_binding_marker(profile.binding_path, settings)
                     return result
                 finally:
@@ -129,7 +129,7 @@ class BrowserSessionProvisioner:
         if not isinstance(url, str):
             return BrowserProvisionResult("BROWSER_PROVISIONING_FAILED")
         if url == origin + _COURSE_INDEX_PATH:
-            return BrowserProvisionResult("BROWSER_AUTHENTICATED")
+            return BrowserProvisionResult("BROWSER_AUTH_FLOW_COMPLETED")
         if url.startswith(origin + "/current/login/") or url.startswith(origin + "/current/auth/"):
             return BrowserProvisionResult("BROWSER_AUTH_REQUIRED")
         return BrowserProvisionResult("BROWSER_PROVISIONING_FAILED")

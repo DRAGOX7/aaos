@@ -38,7 +38,7 @@ def test_provisioner_uses_only_a_confined_headed_msedge_context(tmp_path: Path) 
         AuthPaths(tmp_path / "credential", tmp_path / "auth" / "fixture"), launch
     ).provision(settings=settings)
 
-    assert result.code == "BROWSER_AUTHENTICATED"
+    assert result.code == "BROWSER_AUTH_FLOW_COMPLETED"
     assert calls[0] == {
         "channel": "msedge",
         "headless": False,
