@@ -10,6 +10,11 @@ from typing import Literal, Protocol
 from urllib.parse import urlencode, urlsplit
 
 EmbeddedAuthResult = Literal["CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"]
+EmbeddedAuthFailureStage = Literal[
+    "WEBVIEW2_HOST_ERROR",
+    "WEBVIEW2_TIMEOUT",
+    "WEBVIEW2_CLEANUP",
+]
 _LAUNCH_PATH = "/current/admin/tool/mobile/launch.php"
 _MOBILE_SERVICE = "moodle_mobile_app"
 _CALLBACK_SCHEME = "aaos"
@@ -114,6 +119,9 @@ class WebView2EmbeddedAuthHost:
 
     def __init__(self, runtime: WebView2Runtime | None) -> None:
         self._runtime = runtime
+        self.last_interaction_result: EmbeddedAuthResult | None = None
+        self.last_cleanup_pass: bool | None = None
+        self.last_failure_stage: EmbeddedAuthFailureStage | None = None
 
     @classmethod
     def unavailable(cls) -> WebView2EmbeddedAuthHost:
@@ -122,6 +130,9 @@ class WebView2EmbeddedAuthHost:
     def start(
         self, launch_url: str, profile_root: Path, passport: str, timeout_seconds: int
     ) -> EmbeddedAuthResult:
+        self.last_interaction_result = None
+        self.last_cleanup_pass = None
+        self.last_failure_stage = None
         if self._runtime is None:
             raise WebView2RuntimeUnavailable()
         if (
@@ -136,14 +147,28 @@ class WebView2EmbeddedAuthHost:
             try:
                 result = self._runtime.run(fixed_url, profile.path, timeout_seconds)
             except Exception:
+                self.last_failure_stage = "WEBVIEW2_HOST_ERROR"
                 return "HOST_ERROR"
+            if result in {"CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"}:
+                self.last_interaction_result = result
             if not getattr(self._runtime, "cleanup_pass", True):
+                self.last_cleanup_pass = False
+                self.last_failure_stage = "WEBVIEW2_CLEANUP"
                 return "HOST_ERROR"
             if result not in {"CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"}:
+                self.last_failure_stage = "WEBVIEW2_HOST_ERROR"
                 return "HOST_ERROR"
+            if result == "TIMED_OUT":
+                self.last_failure_stage = "WEBVIEW2_TIMEOUT"
+            elif result == "HOST_ERROR":
+                self.last_failure_stage = "WEBVIEW2_HOST_ERROR"
             return result
         finally:
             try:
                 profile.cleanup()
+                if self.last_cleanup_pass is None:
+                    self.last_cleanup_pass = True
             except WebView2RuntimeUnavailable:
+                self.last_cleanup_pass = False
+                self.last_failure_stage = "WEBVIEW2_CLEANUP"
                 return "HOST_ERROR"

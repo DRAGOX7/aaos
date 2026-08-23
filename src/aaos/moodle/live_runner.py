@@ -31,7 +31,22 @@ from aaos.moodle.receiver import (
     wait_for_bootstrap_completion,
 )
 
-_Status = Literal["PASS", "FAIL"]
+_Status = Literal["NOT_ATTEMPTED", "PASS", "FAIL"]
+FailureStage = Literal[
+    "NO_FAILURE",
+    "PREREQUISITE",
+    "ATTEMPT_CREATION",
+    "WEBVIEW2_LAUNCH",
+    "WEBVIEW2_HOST_ERROR",
+    "WEBVIEW2_TIMEOUT",
+    "WEBVIEW2_CLEANUP",
+    "CALLBACK_NOT_RECEIVED",
+    "RECEIVER_REJECTED",
+    "CREDENTIAL_NOT_PERSISTED",
+    "SITE_INFO_AUTHORIZATION",
+    "SITE_INFO_REQUEST",
+    "SITE_INFO_PARSE",
+]
 _RELEVANT_FUNCTION_PREFIXES = (
     "core_course_",
     "mod_assign_",
@@ -68,6 +83,7 @@ class CompletionWaiter(Protocol):
 class LiveBootstrapReport:
     """Only the allowlisted public outcome of the bounded live operation."""
 
+    failure_stage: FailureStage
     embedded_sso: _Status
     callback_received: _Status
     token_persisted: _Status
@@ -103,9 +119,28 @@ def _relevant_functions(functions: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
+def _receiver_failure_stage(value: object) -> FailureStage:
+    if value == "CALLBACK_NOT_RECEIVED":
+        return "CALLBACK_NOT_RECEIVED"
+    if value == "RECEIVER_REJECTED":
+        return "RECEIVER_REJECTED"
+    return "RECEIVER_REJECTED"
+
+
+def _site_info_failure_stage(value: object) -> FailureStage:
+    if value == "CREDENTIAL_NOT_PERSISTED":
+        return "CREDENTIAL_NOT_PERSISTED"
+    if value == "SITE_INFO_AUTHORIZATION":
+        return "SITE_INFO_AUTHORIZATION"
+    if value == "SITE_INFO_PARSE":
+        return "SITE_INFO_PARSE"
+    return "SITE_INFO_REQUEST"
+
+
 def render_live_report(report: LiveBootstrapReport) -> str:
     """Render only the fixed status surface and safe parsed site-info fields."""
     lines = [
+        f"FAILURE_STAGE={report.failure_stage}",
         f"EMBEDDED_SSO={report.embedded_sso}",
         f"CALLBACK_RECEIVED={report.callback_received}",
         f"TOKEN_PERSISTED={report.token_persisted}",
@@ -151,32 +186,59 @@ class MoodleLiveBootstrapRunner:
         try:
             attempt = begin_bootstrap_attempt(self._config, self._paths)
         except ReceiverError:
-            return _failed_report()
+            return _failed_report(failure_stage="ATTEMPT_CREATION")
         try:
-            result = self._auth_host.start(
-                self._config.canonical_wwwroot + "/admin/tool/mobile/launch.php",
-                self._profile_root,
-                attempt.passport,
-                self._config.timeout_seconds,
-            )
+            try:
+                result = self._auth_host.start(
+                    self._config.canonical_wwwroot + "/admin/tool/mobile/launch.php",
+                    self._profile_root,
+                    attempt.passport,
+                    self._config.timeout_seconds,
+                )
+            except (OSError, ValueError, WebView2RuntimeUnavailable):
+                return _failed_report(failure_stage="WEBVIEW2_LAUNCH", embedded_sso="FAIL")
             if result != "CALLBACK_DISPATCHED":
-                return _failed_report()
+                return self._auth_failure_report(result)
             try:
                 self._completion_waiter(
                     self._paths,
                     attempt,
                     timeout_seconds=self._completion_timeout_seconds,
                 )
-            except ReceiverError:
-                return _failed_report(embedded_sso="PASS", webview2_cleanup="PASS")
+            except ReceiverError as error:
+                return _failed_report(
+                    failure_stage=_receiver_failure_stage(error.failure_stage),
+                    embedded_sso="PASS",
+                    callback_received="FAIL",
+                    webview2_cleanup="PASS",
+                )
             return asyncio.run(self._get_site_info())
-        except (ValueError, WebView2RuntimeUnavailable):
-            return _failed_report()
         finally:
             try:
                 cancel_bootstrap_attempt(self._paths, attempt.attempt_id)
             except ReceiverError:
                 pass
+
+    def _auth_failure_report(self, result: str) -> LiveBootstrapReport:
+        if result == "USER_CANCELLED":
+            failure_stage: FailureStage = "CALLBACK_NOT_RECEIVED"
+        else:
+            failure_stage = self._auth_host.last_failure_stage or "WEBVIEW2_HOST_ERROR"
+        embedded_sso: _Status = (
+            "PASS" if self._auth_host.last_interaction_result == "CALLBACK_DISPATCHED" else "FAIL"
+        )
+        webview2_cleanup: _Status = (
+            "PASS"
+            if self._auth_host.last_cleanup_pass is True
+            else "FAIL"
+            if self._auth_host.last_cleanup_pass is False
+            else "NOT_ATTEMPTED"
+        )
+        return _failed_report(
+            failure_stage=failure_stage,
+            embedded_sso=embedded_sso,
+            webview2_cleanup=webview2_cleanup,
+        )
 
     async def _get_site_info(self) -> LiveBootstrapReport:
         authorization = SingleUseSiteInfoProbeAuthorization()
@@ -184,17 +246,20 @@ class MoodleLiveBootstrapRunner:
         try:
             transport = self._site_info_transport_factory(authorization)
             site_info = await transport.get_site_info()
-        except MoodleApiError:
+        except MoodleApiError as error:
             return _failed_report(
+                failure_stage=_site_info_failure_stage(error.failure_stage),
                 embedded_sso="PASS",
                 callback_received="PASS",
                 token_persisted="PASS",
                 webview2_cleanup="PASS",
+                site_info="FAIL",
             )
         finally:
             if transport is not None:
                 await transport.aclose()
         return LiveBootstrapReport(
+            failure_stage="NO_FAILURE",
             embedded_sso="PASS",
             callback_received="PASS",
             token_persisted="PASS",
@@ -208,17 +273,20 @@ class MoodleLiveBootstrapRunner:
 
 def _failed_report(
     *,
-    embedded_sso: _Status = "FAIL",
-    callback_received: _Status = "FAIL",
-    token_persisted: _Status = "FAIL",
-    webview2_cleanup: _Status = "FAIL",
+    failure_stage: FailureStage,
+    embedded_sso: _Status = "NOT_ATTEMPTED",
+    callback_received: _Status = "NOT_ATTEMPTED",
+    token_persisted: _Status = "NOT_ATTEMPTED",
+    webview2_cleanup: _Status = "NOT_ATTEMPTED",
+    site_info: _Status = "NOT_ATTEMPTED",
 ) -> LiveBootstrapReport:
     return LiveBootstrapReport(
+        failure_stage=failure_stage,
         embedded_sso=embedded_sso,
         callback_received=callback_received,
         token_persisted=token_persisted,
         webview2_cleanup=webview2_cleanup,
-        site_info="FAIL",
+        site_info=site_info,
     )
 
 
@@ -263,6 +331,6 @@ def run_configured_moodle_bootstrap() -> int:
         )
         report = runner.run()
     except (ReceiverError, ValueError, OSError):
-        report = _failed_report()
+        report = _failed_report(failure_stage="PREREQUISITE")
     print(render_live_report(report))
     return report.exit_code

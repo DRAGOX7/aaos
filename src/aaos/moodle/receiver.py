@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, NoReturn, Sequence
+from typing import Callable, Literal, NoReturn, Sequence
 from urllib.parse import urlsplit
 
 from aaos.moodle.auth import CredentialWriteError, write_api_token
@@ -50,12 +50,19 @@ __all__ = [
 ]
 
 
+ReceiverFailureStage = Literal["CALLBACK_NOT_RECEIVED", "RECEIVER_REJECTED"]
+
+
 class ReceiverError(RuntimeError):
     """Raised for any fixed, redacted callback-receiver failure."""
 
+    def __init__(self, message: str, *, failure_stage: ReceiverFailureStage | None = None) -> None:
+        super().__init__(message)
+        self.failure_stage = failure_stage
 
-def _failure() -> ReceiverError:
-    return ReceiverError("Moodle callback receiver failed")
+
+def _failure(*, failure_stage: ReceiverFailureStage | None = None) -> ReceiverError:
+    return ReceiverError("Moodle callback receiver failed", failure_stage=failure_stage)
 
 
 def _configuration_unavailable() -> ReceiverError:
@@ -312,7 +319,7 @@ def wait_for_bootstrap_completion(
         or not isinstance(timeout_seconds, int)
         or timeout_seconds <= 0
     ):
-        raise _failure()
+        raise _failure(failure_stage="RECEIVER_REJECTED")
     try:
         deadline = monotonic() + timeout_seconds
     except (OSError, TypeError, ValueError):
@@ -325,13 +332,16 @@ def wait_for_bootstrap_completion(
         except (OSError, TypeError, ValueError):
             raise _failure() from None
         if current > attempt.expires_at or remaining <= 0:
-            raise _failure()
+            raise _failure(failure_stage="CALLBACK_NOT_RECEIVED")
         if path.exists():
-            completion = _read_completion(paths, attempt, current)
+            try:
+                completion = _read_completion(paths, attempt, current)
+            except ReceiverError:
+                raise _failure(failure_stage="RECEIVER_REJECTED") from None
             try:
                 path.unlink()
             except OSError:
-                raise _failure() from None
+                raise _failure(failure_stage="RECEIVER_REJECTED") from None
             return completion
         try:
             sleeper(min(0.05, remaining))

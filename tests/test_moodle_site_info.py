@@ -13,6 +13,7 @@ from aaos.moodle.api import (
     SingleUseSiteInfoProbeAuthorization,
     SiteInfoProbeAuthorization,
 )
+from aaos.moodle.auth import CredentialReadError
 from aaos.moodle.models import MoodleSettings
 
 SETTINGS = MoodleSettings(
@@ -46,6 +47,12 @@ class Reader:
     def read_api_token(self) -> str:
         self.calls += 1
         return self.token
+
+
+class UnavailableReader(Reader):
+    def read_api_token(self) -> str:
+        self.calls += 1
+        raise CredentialReadError("private credential failure")
 
 
 def _probe(
@@ -136,6 +143,16 @@ def test_site_info_rejects_cross_origin_wwwroot_before_reading_credential() -> N
     assert reader.calls == 0
 
 
+def test_site_info_maps_missing_credential_to_the_safe_persistence_stage() -> None:
+    reader = UnavailableReader()
+
+    with pytest.raises(MoodleApiError) as error:
+        _probe(lambda _: pytest.fail("site-info must not request without a credential"), reader)
+
+    assert error.value.failure_stage == "CREDENTIAL_NOT_PERSISTED"
+    assert "private credential failure" not in str(error.value)
+
+
 def test_site_info_preserves_any_validated_application_path() -> None:
     canonical_wwwroot = "https://elearn.just.edu.jo/academic/moodle"
     seen: list[httpx2.Request] = []
@@ -217,6 +234,7 @@ def test_site_info_authorization_cannot_be_reused_across_transports() -> None:
             with pytest.raises(MoodleApiError) as error:
                 await second.get_site_info()
             assert str(error.value) == "Moodle site-info probe already used"
+            assert error.value.failure_stage == "SITE_INFO_AUTHORIZATION"
         finally:
             await first.aclose()
             await second.aclose()
@@ -233,6 +251,7 @@ def test_site_info_rejects_malformed_payload_without_raw_body() -> None:
         _probe(handler)
 
     assert str(error.value) == "Moodle site-info response was invalid"
+    assert error.value.failure_stage == "SITE_INFO_PARSE"
     assert "SECRET-RAW-BODY" not in repr(error.value)
 
 
@@ -245,6 +264,7 @@ def test_site_info_rejects_redirects_and_http_failures_without_details(status: i
         _probe(handler)
 
     assert str(error.value) == "Moodle site-info request failed"
+    assert error.value.failure_stage == "SITE_INFO_REQUEST"
     assert "secret.example" not in repr(error.value)
 
 
@@ -256,4 +276,5 @@ def test_site_info_maps_transport_failure_to_fixed_error() -> None:
         _probe(handler)
 
     assert str(error.value) == "Moodle site-info request failed"
+    assert error.value.failure_stage == "SITE_INFO_REQUEST"
     assert "SECRET-TRANSPORT" not in repr(error.value)

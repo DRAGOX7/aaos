@@ -3,16 +3,27 @@ from __future__ import annotations
 import base64
 import hashlib
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from aaos.moodle.api import MoodleApiError
+from aaos.moodle.api import MoodleApiError, MoodleApiFailureStage
 from aaos.moodle.api_parsing import SafeSiteInfo
 from aaos.moodle.bootstrap import MoodleBootstrapConfig
-from aaos.moodle.embedded_auth import EmbeddedAuthResult, WebView2EmbeddedAuthHost
+from aaos.moodle.embedded_auth import (
+    EmbeddedAuthResult,
+    WebView2EmbeddedAuthHost,
+)
+from aaos.moodle.live_runner import MoodleLiveBootstrapRunner, render_live_report
 from aaos.moodle.models import AuthPaths, MoodleSettings
-from aaos.moodle.receiver import receive_callback
+from aaos.moodle.receiver import (
+    BootstrapCompletion,
+    PendingBootstrapAttempt,
+    ReceiverError,
+    ReceiverFailureStage,
+    receive_callback,
+)
 
 CONFIG = MoodleBootstrapConfig(
     source_system="moodle:just:summer-2026:bootstrap",
@@ -104,14 +115,21 @@ class FailingSiteInfoTransport:
         self.closed = True
 
 
+class StagedSiteInfoTransport:
+    def __init__(self, failure_stage: MoodleApiFailureStage) -> None:
+        self.failure_stage = failure_stage
+        self.closed = False
+
+    async def get_site_info(self) -> SafeSiteInfo:
+        raise MoodleApiError("fixed safe site-info failure", failure_stage=self.failure_stage)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def test_runner_completes_one_bound_attempt_and_renders_only_safe_site_info(
     tmp_path: Path,
 ) -> None:
-    try:
-        from aaos.moodle.live_runner import MoodleLiveBootstrapRunner, render_live_report
-    except ModuleNotFoundError:
-        pytest.fail("the approved Moodle live runner is absent")
-
     paths = _paths(tmp_path)
     runtime = CompletingRuntime(paths)
     transport: FakeSiteInfoTransport | None = None
@@ -139,6 +157,7 @@ def test_runner_completes_one_bound_attempt_and_renders_only_safe_site_info(
     assert transport.closed is True
     assert report.exit_code == 0
     assert rendered.splitlines() == [
+        "FAILURE_STAGE=NO_FAILURE",
         "EMBEDDED_SSO=PASS",
         "CALLBACK_RECEIVED=PASS",
         "TOKEN_PERSISTED=PASS",
@@ -196,9 +215,16 @@ def test_runner_does_not_read_credential_before_constructing_site_info_transport
     assert report.exit_code == 0
 
 
-@pytest.mark.parametrize("result", ["USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"])
-def test_runner_stops_before_callback_or_site_info_when_auth_host_fails(
-    tmp_path: Path, result: EmbeddedAuthResult
+@pytest.mark.parametrize(
+    ("result", "failure_stage"),
+    [
+        ("USER_CANCELLED", "CALLBACK_NOT_RECEIVED"),
+        ("TIMED_OUT", "WEBVIEW2_TIMEOUT"),
+        ("HOST_ERROR", "WEBVIEW2_HOST_ERROR"),
+    ],
+)
+def test_runner_reports_the_specific_auth_failure_without_starting_downstream_stages(
+    tmp_path: Path, result: EmbeddedAuthResult, failure_stage: str
 ) -> None:
     from aaos.moodle.live_runner import MoodleLiveBootstrapRunner
 
@@ -223,8 +249,11 @@ def test_runner_stops_before_callback_or_site_info_when_auth_host_fails(
     assert runtime.calls == 1
     assert factory_calls == 0
     assert report.exit_code == 1
-    assert report.callback_received == "FAIL"
-    assert report.site_info == "FAIL"
+    assert report.failure_stage == failure_stage
+    assert report.embedded_sso == "FAIL"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.site_info == "NOT_ATTEMPTED"
 
 
 def test_runner_fails_closed_when_callback_completion_is_absent(tmp_path: Path) -> None:
@@ -247,7 +276,10 @@ def test_runner_fails_closed_when_callback_completion_is_absent(tmp_path: Path) 
 
     assert report.embedded_sso == "PASS"
     assert report.callback_received == "FAIL"
-    assert report.site_info == "FAIL"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "PASS"
+    assert report.site_info == "NOT_ATTEMPTED"
+    assert report.failure_stage == "CALLBACK_NOT_RECEIVED"
 
 
 def test_runner_stops_before_site_info_when_host_cleanup_fails(tmp_path: Path) -> None:
@@ -268,8 +300,12 @@ def test_runner_stops_before_site_info_when_host_cleanup_fails(tmp_path: Path) -
         completion_timeout_seconds=1,
     ).run()
 
+    assert report.failure_stage == "WEBVIEW2_CLEANUP"
+    assert report.embedded_sso == "PASS"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.token_persisted == "NOT_ATTEMPTED"
     assert report.webview2_cleanup == "FAIL"
-    assert report.site_info == "FAIL"
+    assert report.site_info == "NOT_ATTEMPTED"
 
 
 def test_runner_fails_closed_on_site_info_failure_without_entity_fallback(tmp_path: Path) -> None:
@@ -299,3 +335,240 @@ def test_runner_fails_closed_on_site_info_failure_without_entity_fallback(tmp_pa
     assert transport.closed is True
     assert report.token_persisted == "PASS"
     assert report.site_info == "FAIL"
+    assert report.failure_stage == "SITE_INFO_REQUEST"
+
+
+def test_runner_reports_attempt_creation_failure_before_webview2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aaos.moodle.live_runner as live_runner
+
+    def reject_attempt(*_: object, **__: object) -> object:
+        raise ReceiverError("Moodle callback receiver failed")
+
+    monkeypatch.setattr(live_runner, "begin_bootstrap_attempt", reject_attempt)
+    report = live_runner.MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost(StaticRuntime("HOST_ERROR")),
+        site_info_transport_factory=lambda _: FakeSiteInfoTransport(object()),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+
+    assert report.failure_stage == "ATTEMPT_CREATION"
+    assert report.embedded_sso == "NOT_ATTEMPTED"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "NOT_ATTEMPTED"
+    assert report.site_info == "NOT_ATTEMPTED"
+
+
+def test_runner_reports_webview2_launch_failure_without_claiming_cleanup(tmp_path: Path) -> None:
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost.unavailable(),
+        site_info_transport_factory=lambda _: FakeSiteInfoTransport(object()),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+
+    assert report.failure_stage == "WEBVIEW2_LAUNCH"
+    assert report.embedded_sso == "FAIL"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "NOT_ATTEMPTED"
+    assert report.site_info == "NOT_ATTEMPTED"
+
+
+def test_runner_reports_profile_initialization_failure_as_webview2_launch(tmp_path: Path) -> None:
+    profile_root = tmp_path / "not-a-directory"
+    profile_root.write_text("not a directory", encoding="utf-8")
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost(StaticRuntime("HOST_ERROR")),
+        site_info_transport_factory=lambda _: FakeSiteInfoTransport(object()),
+        profile_root=profile_root,
+        completion_timeout_seconds=1,
+    ).run()
+
+    assert report.failure_stage == "WEBVIEW2_LAUNCH"
+    assert report.embedded_sso == "FAIL"
+    assert report.callback_received == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "NOT_ATTEMPTED"
+
+
+def test_runner_reports_receiver_rejection_after_webview2_completion(
+    tmp_path: Path,
+) -> None:
+    def reject_completion(
+        paths: AuthPaths,
+        attempt: PendingBootstrapAttempt,
+        *,
+        timeout_seconds: int,
+    ) -> BootstrapCompletion:
+        assert paths == _paths(tmp_path)
+        assert attempt.source_system == CONFIG.source_system
+        assert timeout_seconds == 1
+        raise ReceiverError("Moodle callback receiver failed", failure_stage="RECEIVER_REJECTED")
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost(StaticRuntime("CALLBACK_DISPATCHED")),
+        site_info_transport_factory=lambda _: FakeSiteInfoTransport(object()),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+        completion_waiter=reject_completion,
+    ).run()
+
+    assert report.failure_stage == "RECEIVER_REJECTED"
+    assert report.embedded_sso == "PASS"
+    assert report.callback_received == "FAIL"
+    assert report.token_persisted == "NOT_ATTEMPTED"
+    assert report.webview2_cleanup == "PASS"
+    assert report.site_info == "NOT_ATTEMPTED"
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "CREDENTIAL_NOT_PERSISTED",
+        "SITE_INFO_AUTHORIZATION",
+        "SITE_INFO_REQUEST",
+        "SITE_INFO_PARSE",
+    ],
+)
+def test_runner_reports_typed_site_info_failure_without_exposing_its_message(
+    tmp_path: Path, failure_stage: MoodleApiFailureStage
+) -> None:
+    paths = _paths(tmp_path)
+
+    def factory(_: object) -> StagedSiteInfoTransport:
+        return StagedSiteInfoTransport(failure_stage)
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=paths,
+        auth_host=WebView2EmbeddedAuthHost(CompletingRuntime(paths)),
+        site_info_transport_factory=factory,
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+    rendered = render_live_report(report)
+
+    assert report.failure_stage == failure_stage
+    assert report.embedded_sso == "PASS"
+    assert report.callback_received == "PASS"
+    assert report.token_persisted == "PASS"
+    assert report.webview2_cleanup == "PASS"
+    assert report.site_info == "FAIL"
+    assert "fixed safe site-info failure" not in rendered
+    assert "PRIVATE-REST-TOKEN" not in rendered
+
+
+def test_runner_normalizes_an_invalid_site_info_failure_stage_without_rendering_it(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    class InvalidStageTransport:
+        async def get_site_info(self) -> SafeSiteInfo:
+            raise MoodleApiError(
+                "PRIVATE SITE-INFO DETAIL",
+                failure_stage=cast(MoodleApiFailureStage, "PRIVATE_SITE_INFO_STAGE"),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=paths,
+        auth_host=WebView2EmbeddedAuthHost(CompletingRuntime(paths)),
+        site_info_transport_factory=lambda _: InvalidStageTransport(),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+    rendered = render_live_report(report)
+
+    assert report.failure_stage == "SITE_INFO_REQUEST"
+    assert "PRIVATE SITE-INFO DETAIL" not in rendered
+    assert "PRIVATE_SITE_INFO_STAGE" not in rendered
+
+
+def test_runner_normalizes_an_invalid_receiver_failure_stage_without_rendering_it(
+    tmp_path: Path,
+) -> None:
+    def reject_completion(
+        paths: AuthPaths,
+        attempt: PendingBootstrapAttempt,
+        *,
+        timeout_seconds: int,
+    ) -> BootstrapCompletion:
+        assert paths == _paths(tmp_path)
+        assert attempt.source_system == CONFIG.source_system
+        assert timeout_seconds == 1
+        raise ReceiverError(
+            "PRIVATE RECEIVER DETAIL",
+            failure_stage=cast(ReceiverFailureStage, "PRIVATE_RECEIVER_STAGE"),
+        )
+
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=_paths(tmp_path),
+        auth_host=WebView2EmbeddedAuthHost(StaticRuntime("CALLBACK_DISPATCHED")),
+        site_info_transport_factory=lambda _: FakeSiteInfoTransport(object()),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+        completion_waiter=reject_completion,
+    ).run()
+    rendered = render_live_report(report)
+
+    assert report.failure_stage == "RECEIVER_REJECTED"
+    assert "PRIVATE RECEIVER DETAIL" not in rendered
+    assert "PRIVATE_RECEIVER_STAGE" not in rendered
+
+
+def test_runner_reports_success_with_no_failure_stage(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    report = MoodleLiveBootstrapRunner(
+        config=CONFIG,
+        settings=SETTINGS,
+        paths=paths,
+        auth_host=WebView2EmbeddedAuthHost(CompletingRuntime(paths)),
+        site_info_transport_factory=lambda authorization: FakeSiteInfoTransport(authorization),
+        profile_root=tmp_path / "profiles",
+        completion_timeout_seconds=1,
+    ).run()
+
+    assert report.failure_stage == "NO_FAILURE"
+
+
+def test_configured_runner_reports_prerequisite_failure_without_exception_text(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aaos.moodle.live_runner as live_runner
+
+    def unavailable_configuration() -> object:
+        raise ReceiverError("PRIVATE CONFIGURATION DETAIL")
+
+    monkeypatch.setattr(live_runner, "load_runtime_moodle_configuration", unavailable_configuration)
+
+    assert live_runner.run_configured_moodle_bootstrap() == 1
+
+    rendered = capsys.readouterr().out
+    assert "FAILURE_STAGE=PREREQUISITE" in rendered
+    assert "PRIVATE CONFIGURATION DETAIL" not in rendered
+    assert "EMBEDDED_SSO=NOT_ATTEMPTED" in rendered
+    assert "SITE_INFO=NOT_ATTEMPTED" in rendered
