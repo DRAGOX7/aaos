@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aaos.moodle.bootstrap import MoodleBootstrapConfig
+from aaos.moodle.bootstrap import WEBVIEW2_INTERACTION_TIMEOUT_SECONDS, MoodleBootstrapConfig
 from aaos.moodle.models import MoodleSettings, resolve_auth_paths
 from aaos.moodle.receiver import (
     ReceiverError,
@@ -54,6 +54,17 @@ def test_process_values_are_used_when_user_values_are_absent(
 
     assert config.source_system == NAMES["AAOS_MOODLE_SOURCE_SYSTEM"]
     assert config.canonical_wwwroot == NAMES["AAOS_MOODLE_BASE_ORIGIN"]
+
+
+def test_runtime_configuration_uses_the_human_interaction_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_process(monkeypatch, NAMES)
+    monkeypatch.setattr("aaos.moodle.receiver._read_user_environment", lambda: {})
+
+    config, _ = _runtime_configuration()
+
+    assert config.timeout_seconds == WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
 
 
 def test_user_values_are_used_when_process_values_are_absent(

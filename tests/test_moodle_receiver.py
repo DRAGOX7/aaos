@@ -15,7 +15,15 @@ from typing import Any, BinaryIO, Callable, NoReturn, cast
 import pytest
 
 from aaos.moodle import receiver as receiver_module
-from aaos.moodle.bootstrap import MoodleBootstrapConfig
+from aaos.moodle.bootstrap import (
+    ATTEMPT_EXPIRY_SAFETY_SECONDS,
+    CALLBACK_DELIVERY_GRACE_SECONDS,
+    NATIVE_CLEANUP_ALLOWANCE_SECONDS,
+    WEBVIEW2_INTERACTION_TIMEOUT_SECONDS,
+    WEBVIEW2_SETUP_ALLOWANCE_SECONDS,
+    MoodleBootstrapConfig,
+    helper_process_timeout_seconds,
+)
 from aaos.moodle.models import AuthPaths, MoodleSettings, resolve_auth_paths
 from aaos.moodle.receiver import (
     PENDING_ATTEMPT_MAX_BYTES,
@@ -36,6 +44,32 @@ CONFIG = MoodleBootstrapConfig(
     callback_scheme="aaos",
     timeout_seconds=300,
 )
+
+
+def test_human_auth_timeout_policy_is_aligned_and_bounded() -> None:
+    assert WEBVIEW2_INTERACTION_TIMEOUT_SECONDS == 600
+    assert WEBVIEW2_SETUP_ALLOWANCE_SECONDS == 60
+    assert CALLBACK_DELIVERY_GRACE_SECONDS == 60
+    assert NATIVE_CLEANUP_ALLOWANCE_SECONDS == 5
+    assert ATTEMPT_EXPIRY_SAFETY_SECONDS == 10
+    assert PENDING_ATTEMPT_TTL_SECONDS > (
+        WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
+        + WEBVIEW2_SETUP_ALLOWANCE_SECONDS
+        + CALLBACK_DELIVERY_GRACE_SECONDS
+    )
+    assert PENDING_ATTEMPT_TTL_SECONDS == (
+        WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
+        + WEBVIEW2_SETUP_ALLOWANCE_SECONDS
+        + CALLBACK_DELIVERY_GRACE_SECONDS
+        + ATTEMPT_EXPIRY_SAFETY_SECONDS
+    )
+    assert PENDING_ATTEMPT_TTL_SECONDS == 730
+    assert helper_process_timeout_seconds(WEBVIEW2_INTERACTION_TIMEOUT_SECONDS) > (
+        WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
+        + WEBVIEW2_SETUP_ALLOWANCE_SECONDS
+        + NATIVE_CLEANUP_ALLOWANCE_SECONDS
+    )
+    assert helper_process_timeout_seconds(WEBVIEW2_INTERACTION_TIMEOUT_SECONDS) == 670
 
 
 def _paths(tmp_path: Path) -> AuthPaths:
@@ -195,6 +229,24 @@ def test_completion_is_bound_to_the_exact_attempt_and_consumed(tmp_path: Path) -
 
     assert completion.attempt_id == attempt.attempt_id
     assert not (paths.browser_state_dir / "bootstrap_completion.json").exists()
+
+
+def test_callback_wait_stops_at_attempt_expiry_before_its_nominal_deadline(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    attempt = begin_bootstrap_attempt(CONFIG, paths, now=1_000)
+    sleeper_calls: list[float] = []
+
+    with pytest.raises(ReceiverError):
+        wait_for_bootstrap_completion(
+            paths,
+            attempt,
+            timeout_seconds=CALLBACK_DELIVERY_GRACE_SECONDS,
+            clock=lambda: float(attempt.expires_at + 1),
+            monotonic=lambda: 0.0,
+            sleeper=sleeper_calls.append,
+        )
+
+    assert sleeper_calls == []
 
 
 def test_mismatched_completion_fails_closed_without_reading_a_credential(tmp_path: Path) -> None:

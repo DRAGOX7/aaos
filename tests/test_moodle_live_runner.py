@@ -12,7 +12,7 @@ import pytest
 from aaos.moodle import live_runner
 from aaos.moodle.api import MoodleApiError, MoodleApiFailureStage
 from aaos.moodle.api_parsing import SafeSiteInfo
-from aaos.moodle.bootstrap import MoodleBootstrapConfig
+from aaos.moodle.bootstrap import CALLBACK_DELIVERY_GRACE_SECONDS, MoodleBootstrapConfig
 from aaos.moodle.embedded_auth import (
     EmbeddedAuthResult,
     EphemeralProfile,
@@ -357,6 +357,29 @@ def test_configured_bootstrap_profiles_use_the_native_temp_root_contract() -> No
     finally:
         first.cleanup()
         second.cleanup()
+
+
+def test_configured_bootstrap_limits_callback_wait_to_delivery_grace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    class CapturingRunner:
+        def __init__(self, **kwargs: object) -> None:
+            captured["completion_timeout_seconds"] = kwargs["completion_timeout_seconds"]
+
+        def run(self) -> object:
+            return live_runner._failed_report(failure_stage="WEBVIEW2_LAUNCH")
+
+    monkeypatch.setattr(
+        live_runner,
+        "load_runtime_moodle_configuration",
+        lambda: (CONFIG, SETTINGS, _paths(tmp_path)),
+    )
+    monkeypatch.setattr(live_runner, "MoodleLiveBootstrapRunner", CapturingRunner)
+
+    assert live_runner.run_configured_moodle_bootstrap() == 1
+    assert captured["completion_timeout_seconds"] == CALLBACK_DELIVERY_GRACE_SECONDS
 
 
 def test_runner_fails_closed_on_site_info_failure_without_entity_fallback(tmp_path: Path) -> None:

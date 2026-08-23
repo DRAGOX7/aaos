@@ -15,6 +15,16 @@ from urllib.parse import unquote_to_bytes, urlencode, urlsplit
 from aaos.moodle.auth import CredentialWriteError, write_api_token
 from aaos.moodle.models import AuthPaths
 
+# The native interaction timer starts after WebView2 environment initialization.
+WEBVIEW2_INTERACTION_TIMEOUT_SECONDS = 600
+WEBVIEW2_SETUP_ALLOWANCE_SECONDS = 60
+# Dispatch through the registered OS URI handler is bounded separately from interaction.
+CALLBACK_DELIVERY_GRACE_SECONDS = 60
+# Must remain aligned with the native helper's BrowserProcessExited wait.
+NATIVE_CLEANUP_ALLOWANCE_SECONDS = 5
+HELPER_PROCESS_MARGIN_SECONDS = 5
+ATTEMPT_EXPIRY_SAFETY_SECONDS = 10
+
 MOBILE_LAUNCH_PATH = "/admin/tool/mobile/launch.php"
 MOBILE_SERVICE = "moodle_mobile_app"
 MAX_ENCODED_APP_TOKEN_BYTES = 8192
@@ -70,6 +80,22 @@ class MoodleBootstrapConfig:
         ):
             raise ValueError("Moodle bootstrap configuration is invalid")
         object.__setattr__(self, "canonical_wwwroot", self.canonical_wwwroot.rstrip("/"))
+
+
+def helper_process_timeout_seconds(interaction_timeout_seconds: int) -> int:
+    """Return the bounded native-host lifetime for one human interaction."""
+    if (
+        isinstance(interaction_timeout_seconds, bool)
+        or not isinstance(interaction_timeout_seconds, int)
+        or interaction_timeout_seconds <= 0
+    ):
+        raise ValueError("Moodle authentication bootstrap is invalid")
+    return (
+        interaction_timeout_seconds
+        + WEBVIEW2_SETUP_ALLOWANCE_SECONDS
+        + NATIVE_CLEANUP_ALLOWANCE_SECONDS
+        + HELPER_PROCESS_MARGIN_SECONDS
+    )
 
 
 def _failure() -> BootstrapError:

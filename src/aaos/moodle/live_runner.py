@@ -18,7 +18,7 @@ from aaos.moodle.api import (
 )
 from aaos.moodle.api_parsing import SafeSiteInfo
 from aaos.moodle.auth import FileMoodleCredentialReader
-from aaos.moodle.bootstrap import MoodleBootstrapConfig
+from aaos.moodle.bootstrap import CALLBACK_DELIVERY_GRACE_SECONDS, MoodleBootstrapConfig
 from aaos.moodle.embedded_auth import WebView2EmbeddedAuthHost, WebView2RuntimeUnavailable
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.native_webview2 import NativeWebView2Runtime
@@ -333,7 +333,7 @@ def run_configured_moodle_bootstrap() -> int:
                 settings, config.canonical_wwwroot, paths
             ),
             profile_root=_configured_profile_root(),
-            completion_timeout_seconds=config.timeout_seconds,
+            completion_timeout_seconds=CALLBACK_DELIVERY_GRACE_SECONDS,
         )
         report = runner.run()
     except (ReceiverError, ValueError, OSError):

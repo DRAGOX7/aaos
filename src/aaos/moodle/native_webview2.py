@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
+from aaos.moodle.bootstrap import helper_process_timeout_seconds
 from aaos.moodle.embedded_auth import EmbeddedAuthResult
 
 _ALLOWED_RESULTS = {"CALLBACK_DISPATCHED", "USER_CANCELLED", "TIMED_OUT", "HOST_ERROR"}
@@ -38,7 +39,7 @@ class NativeWebView2Runtime:
                 input=payload,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                timeout=timeout_seconds + 10,
+                timeout=helper_process_timeout_seconds(timeout_seconds),
                 check=False,
                 shell=False,
             )

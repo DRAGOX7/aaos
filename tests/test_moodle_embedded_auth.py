@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from aaos.moodle.bootstrap import (
+    WEBVIEW2_INTERACTION_TIMEOUT_SECONDS,
+    helper_process_timeout_seconds,
+)
 from aaos.moodle.embedded_auth import (
     EmbeddedAuthResult,
     EphemeralProfile,
@@ -125,6 +129,25 @@ def test_native_runtime_sends_sensitive_launch_data_only_on_stdin(
     assert helper.run(LAUNCH_URL + "?passport=secret", tmp_path, 30) == "CALLBACK_DISPATCHED"
     assert captured["args"] == [str(Path("C:/AAOS/AAOS.WebView2Host.exe"))]
     assert b"passport=secret" in captured["input"]  # type: ignore[operator]
+
+
+def test_native_runtime_timeout_covers_the_configured_human_interaction_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+    assert WEBVIEW2_INTERACTION_TIMEOUT_SECONDS == 600
+
+    def fake_run(_args: list[str], **kwargs: object) -> object:
+        captured["timeout"] = kwargs["timeout"]
+        return type("Completed", (), {"stdout": b"TIMED_OUT\n"})()
+
+    monkeypatch.setattr("aaos.moodle.native_webview2.subprocess.run", fake_run)
+    helper = NativeWebView2Runtime(Path("C:/AAOS/AAOS.WebView2Host.exe"))
+
+    assert helper.run(LAUNCH_URL, tmp_path, WEBVIEW2_INTERACTION_TIMEOUT_SECONDS) == "TIMED_OUT"
+    assert captured["timeout"] == helper_process_timeout_seconds(
+        WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
+    )
 
 
 def test_native_helper_tracks_browser_exit_before_profile_cleanup() -> None:

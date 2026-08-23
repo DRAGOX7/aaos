@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 
 from aaos.moodle.auth import CredentialWriteError, write_api_token
 from aaos.moodle.bootstrap import (
+    ATTEMPT_EXPIRY_SAFETY_SECONDS,
+    CALLBACK_DELIVERY_GRACE_SECONDS,
+    WEBVIEW2_INTERACTION_TIMEOUT_SECONDS,
+    WEBVIEW2_SETUP_ALLOWANCE_SECONDS,
     BootstrapError,
     MoodleBootstrapConfig,
     _extract_web_service_token,
@@ -22,7 +26,12 @@ from aaos.moodle.models import AuthPaths, MoodleSettings, resolve_auth_paths
 
 PENDING_ATTEMPT_FILENAME = "pending_bootstrap.json"
 PENDING_ATTEMPT_MAX_BYTES = 4096
-PENDING_ATTEMPT_TTL_SECONDS = 300
+PENDING_ATTEMPT_TTL_SECONDS = (
+    WEBVIEW2_SETUP_ALLOWANCE_SECONDS
+    + WEBVIEW2_INTERACTION_TIMEOUT_SECONDS
+    + CALLBACK_DELIVERY_GRACE_SECONDS
+    + ATTEMPT_EXPIRY_SAFETY_SECONDS
+)
 COMPLETION_FILENAME = "bootstrap_completion.json"
 _PASSPORT_MAX_BYTES = 512
 _ATTEMPT_ID_MAX_BYTES = 128
@@ -565,7 +574,7 @@ def load_runtime_moodle_configuration() -> tuple[MoodleBootstrapConfig, MoodleSe
         canonical_wwwroot=base_origin,
         callback_kind="registered_uri",
         callback_scheme="aaos",
-        timeout_seconds=PENDING_ATTEMPT_TTL_SECONDS,
+        timeout_seconds=WEBVIEW2_INTERACTION_TIMEOUT_SECONDS,
     )
     parsed = urlsplit(config.canonical_wwwroot)
     origin = f"{parsed.scheme}://{parsed.netloc}"
