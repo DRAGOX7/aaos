@@ -24,10 +24,14 @@ class MoodleBrowserSource:
     def discover_courses(self) -> CourseDiscoveryResult:
         try:
             document = self._navigator.open("COURSE_INDEX")
+        except BrowserPolicyError:
+            stage = getattr(self._navigator, "failure_stage", "NAVIGATION")
+            return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
+        try:
             parsed = parse_course_index(document.html, expected_origin=self._base_origin)
             return CourseDiscovery(parsed.records, is_complete=True)
         except BrowserPolicyError:
-            return SourceCollectionFailure(self._source_system, "browser_course_discovery_failed")
+            return SourceCollectionFailure(self._source_system, "browser_parser_schema")
 
     def collect_course_entities(self, course: RawCourse) -> EntityBundleResult:
         del course
@@ -83,4 +87,5 @@ def run_configured_browser_course_smoke() -> int:
         print(f"COURSE_DISCOVERY_COMPLETE count={len(result.courses)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
+    print(f"FAILURE_STAGE={result.code.removeprefix('browser_').upper()}")
     return 1

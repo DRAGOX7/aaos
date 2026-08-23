@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 from aaos.moodle.browser_models import BrowserPolicyError, BrowserRoute
 from aaos.moodle.browser_policy import build_browser_url, classify_browser_request
 
 _NAVIGATION_TIMEOUT_MS = 30_000
+FailureStage = Literal["REQUEST_POLICY", "UNEXPECTED_REDIRECT", "NAVIGATION", "NONE"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +66,13 @@ class PlaywrightRestrictedNavigator:
         self._context = context
         self._base_origin = base_origin
         self._closed = False
+        self._failure_stage: FailureStage = "NONE"
         self._install_interception()
+
+    @property
+    def failure_stage(self) -> FailureStage:
+        """Return only a fixed non-sensitive failure classification."""
+        return self._failure_stage
 
     def _install_interception(self) -> None:
         self._context.route("**/*", self._handle_request)
@@ -79,6 +86,7 @@ class PlaywrightRestrictedNavigator:
         ):
             route.continue_()
         else:
+            self._failure_stage = "REQUEST_POLICY"
             route.abort()
 
     @staticmethod
@@ -97,12 +105,15 @@ class PlaywrightRestrictedNavigator:
             parsed = urlsplit(page.url)
             origin = f"{parsed.scheme}://{parsed.netloc}"
             if origin != self._base_origin or parsed.path != urlsplit(target).path or parsed.query:
+                self._failure_stage = "UNEXPECTED_REDIRECT"
                 raise BrowserPolicyError()
             html = page.content()
             if not isinstance(html, str):
                 raise BrowserPolicyError()
             return BrowserDocument(route, origin, parsed.path, "text/html", html)
         except (OSError, TimeoutError, ValueError, TypeError):
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
             raise BrowserPolicyError() from None
         finally:
             page.close()

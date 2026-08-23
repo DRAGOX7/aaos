@@ -55,6 +55,7 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     assert calls.index("route") < calls.index("new-page")
     assert "page-popup" in calls
     assert "abort" in calls
+    assert navigator.failure_stage == "REQUEST_POLICY"
     assert calls[-1] == "context-close"
     with pytest.raises(BrowserPolicyError):
         navigator.open("RESOURCE_METADATA")
