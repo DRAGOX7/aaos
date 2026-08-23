@@ -328,3 +328,20 @@ def test_main_dispatches_the_explicit_confirmed_return_diagnostic(
 
     assert cli.main() == 0
     assert calls == 1
+
+
+def test_main_dispatches_the_narrow_browser_auth_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aaos import cli
+
+    calls = 0
+
+    def provision() -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(cli, "_run_configured_moodle_browser_auth", provision, raising=False)
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "browser-auth"])
+
+    assert cli.main() == 0
+    assert calls == 1

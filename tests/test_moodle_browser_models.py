@@ -80,3 +80,26 @@ def test_pagination_proof_requires_exhaustion_and_contiguous_pages() -> None:
         validate_pagination_proof(PaginationProof("COURSE_INDEX", (0, 2), True, None, 2))
     with pytest.raises(BrowserPolicyError):
         validate_pagination_proof(PaginationProof("COURSE_INDEX", (0,), False, None, 1))
+
+
+def test_profile_binding_is_exact_and_rejects_wrong_alias(tmp_path: Path) -> None:
+    from aaos.moodle.browser_models import (
+        BrowserPolicyError,
+        resolve_browser_profile_paths,
+        validate_browser_profile_binding,
+    )
+
+    paths = AuthPaths(tmp_path / "credentials" / "token", tmp_path / "auth" / "moodle" / "just")
+    profile = resolve_browser_profile_paths(paths, "https://moodle.example.edu")
+    profile.binding_path.parent.mkdir(parents=True)
+    profile.binding_path.write_text(
+        '{"version":1,"site":"https://moodle.example.edu/current","alias":"just"}', encoding="utf-8"
+    )
+
+    validate_browser_profile_binding(
+        profile, expected_origin="https://moodle.example.edu", expected_alias="just"
+    )
+    with pytest.raises(BrowserPolicyError):
+        validate_browser_profile_binding(
+            profile, expected_origin="https://moodle.example.edu", expected_alias="other"
+        )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from dataclasses import dataclass
@@ -122,6 +123,26 @@ def acquire_browser_profile_lock(paths: BrowserProfilePaths) -> BrowserProfileLe
             pass
         raise BrowserPolicyError() from None
     return BrowserProfileLease(paths.lock_path)
+
+
+def validate_browser_profile_binding(
+    paths: BrowserProfilePaths, *, expected_origin: str, expected_alias: str
+) -> None:
+    """Accept only the AAOS-owned non-secret binding marker for this exact profile."""
+    try:
+        _reject_reparse_ancestors(paths.binding_path.parent)
+        payload = paths.binding_path.read_bytes()
+        if len(payload) > 1024:
+            raise BrowserPolicyError()
+        document = json.loads(payload.decode("utf-8"))
+        if document != {
+            "version": 1,
+            "site": expected_origin + "/current",
+            "alias": expected_alias,
+        }:
+            raise BrowserPolicyError()
+    except (OSError, UnicodeError, TypeError, ValueError):
+        raise BrowserPolicyError() from None
 
 
 def validate_pagination_proof(proof: PaginationProof) -> None:

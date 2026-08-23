@@ -38,6 +38,10 @@ def main() -> int:
         return _run_configured_moodle_bootstrap(auth_host="system")
     if sys.argv[1:] == ["moodle", "diagnose-confirmed-return"]:
         return _run_configured_moodle_confirmed_return_diagnostic()
+    if sys.argv[1:] == ["moodle", "browser-auth"]:
+        return _run_configured_moodle_browser_auth()
+    if sys.argv[1:] == ["moodle", "browser-smoke-courses"]:
+        return _run_configured_moodle_browser_smoke_courses()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -77,3 +81,17 @@ def _run_configured_moodle_confirmed_return_diagnostic() -> int:
     from aaos.moodle.live_runner import run_configured_moodle_confirmed_return_diagnostic
 
     return run_configured_moodle_confirmed_return_diagnostic()
+
+
+def _run_configured_moodle_browser_auth() -> int:
+    """Reserve an explicit browser-only command; capability loading stays human-gated."""
+    from aaos.moodle.browser_auth import run_configured_browser_auth
+
+    return run_configured_browser_auth()
+
+
+def _run_configured_moodle_browser_smoke_courses() -> int:
+    """Run only the explicit, memory-only browser course-discovery smoke."""
+    from aaos.moodle.browser import run_configured_browser_course_smoke
+
+    return run_configured_browser_course_smoke()
