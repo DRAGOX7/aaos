@@ -3,20 +3,52 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from aaos.academic.source import RawCourse, SourceCollectionFailure
 from aaos.moodle.browser_models import (
     BrowserPolicyError,
+    BrowserProfileBusyError,
     acquire_browser_profile_lock,
     ensure_browser_profile_binding,
     resolve_browser_profile_paths,
 )
-from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator, RestrictedBrowserNavigator
+from aaos.moodle.browser_navigation import (
+    PlaywrightRestrictedNavigator,
+    RestrictedBrowserNavigator,
+)
 from aaos.moodle.browser_parsing import parse_course_index
 from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+
+BrowserSmokeFailureStage: TypeAlias = Literal[
+    "PROFILE",
+    "CONTEXT_LAUNCH",
+    "AUTH_REQUIRED",
+    "AUTH_PROOF",
+    "AUTH_TIMEOUT",
+    "AUTH_PAGE_CLEANUP",
+    "TRANSITION_PAGES_REMAIN",
+    "INTERCEPTION_INSTALL",
+    "COLLECTION_PAGE_CREATE",
+    "REQUEST_POLICY",
+    "UNEXPECTED_REDIRECT",
+    "NAVIGATION",
+    "PARSER_SCHEMA",
+    "COURSE_IDENTITY",
+    "PAGINATION",
+    "COMPLETENESS",
+    "CLEANUP",
+]
+
+
+class BrowserSmokeFailure(BrowserPolicyError):
+    """Carry one fixed, non-sensitive same-context smoke failure stage."""
+
+    def __init__(self, stage: BrowserSmokeFailureStage) -> None:
+        super().__init__()
+        self.stage = stage
 
 
 class MoodleBrowserSource:
@@ -55,15 +87,27 @@ def _close_auth_pages(context: object) -> None:
     """Remove every human-auth page before the restricted collection transition."""
     pages = getattr(context, "pages", None)
     if not isinstance(pages, list):
-        raise BrowserPolicyError()
+        raise BrowserSmokeFailure("AUTH_PAGE_CLEANUP")
     for page in tuple(pages):
         try:
             getattr(page, "close")()
         except (AttributeError, OSError, TypeError, ValueError):
-            raise BrowserPolicyError() from None
+            raise BrowserSmokeFailure("AUTH_PAGE_CLEANUP") from None
     remaining = getattr(context, "pages", None)
     if not isinstance(remaining, list) or remaining:
-        raise BrowserPolicyError()
+        raise BrowserSmokeFailure("TRANSITION_PAGES_REMAIN")
+
+
+def _collection_failure_stage(result: SourceCollectionFailure) -> BrowserSmokeFailureStage:
+    """Map existing typed source failures to fixed CLI-safe orchestration stages."""
+    stages: dict[str, BrowserSmokeFailureStage] = {
+        "browser_collection_page_create": "COLLECTION_PAGE_CREATE",
+        "browser_request_policy": "REQUEST_POLICY",
+        "browser_unexpected_redirect": "UNEXPECTED_REDIRECT",
+        "browser_navigation": "NAVIGATION",
+        "browser_parser_schema": "PARSER_SCHEMA",
+    }
+    return stages.get(result.code, "NAVIGATION")
 
 
 def _run_same_context_browser_course_smoke(
@@ -74,42 +118,75 @@ def _run_same_context_browser_course_smoke(
 ) -> CourseDiscoveryResult:
     """Authenticate and collect courses in one owned persistent browser lifetime."""
     if settings.mode != "browser":
-        raise BrowserPolicyError()
-    profile = resolve_browser_profile_paths(paths, settings.base_origin)
-    with acquire_browser_profile_lock(profile):
-        ensure_browser_profile_binding(
-            profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
-        )
-        context = launch_persistent_context(
-            channel="msedge",
-            headless=False,
-            user_data_dir=profile.profile_dir,
-            accept_downloads=False,
-            service_workers="block",
-        )
+        raise BrowserSmokeFailure("PROFILE")
+    try:
+        profile = resolve_browser_profile_paths(paths, settings.base_origin)
+        lease = acquire_browser_profile_lock(profile)
+    except (BrowserPolicyError, BrowserProfileBusyError, OSError, TypeError, ValueError):
+        raise BrowserSmokeFailure("PROFILE") from None
+    with lease:
         try:
-            auth_page = getattr(context, "new_page")()
-            auth_page.goto(
-                settings.base_origin + "/current/login/index.php",
-                wait_until="domcontentloaded",
-                timeout=600_000,
+            ensure_browser_profile_binding(
+                profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
             )
-            if not wait_for_authenticated_course_index(
-                auth_page,
-                course_index_url=settings.base_origin + "/current/my/courses.php",
-                timeout_seconds=600,
-            ):
-                raise BrowserPolicyError()
+        except (BrowserPolicyError, OSError, TypeError, ValueError):
+            raise BrowserSmokeFailure("PROFILE") from None
+        try:
+            context = launch_persistent_context(
+                channel="msedge",
+                headless=False,
+                user_data_dir=profile.profile_dir,
+                accept_downloads=False,
+                service_workers="block",
+            )
+        except (OSError, TimeoutError, TypeError, ValueError):
+            raise BrowserSmokeFailure("CONTEXT_LAUNCH") from None
+
+        operation_failed = False
+        try:
+            try:
+                auth_page = getattr(context, "new_page")()
+                auth_page.goto(
+                    settings.base_origin + "/current/login/index.php",
+                    wait_until="domcontentloaded",
+                    timeout=600_000,
+                )
+            except TimeoutError:
+                raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("AUTH_REQUIRED") from None
+            try:
+                authenticated = wait_for_authenticated_course_index(
+                    auth_page,
+                    course_index_url=settings.base_origin + "/current/my/courses.php",
+                    timeout_seconds=600,
+                )
+            except TimeoutError:
+                raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("AUTH_PROOF") from None
+            if not authenticated:
+                raise BrowserSmokeFailure("AUTH_PROOF")
             _close_auth_pages(context)
-            navigator = PlaywrightRestrictedNavigator(cast(Any, context), settings.base_origin)
-            return discover_courses_for_smoke(
+            try:
+                navigator = PlaywrightRestrictedNavigator(cast(Any, context), settings.base_origin)
+            except (BrowserPolicyError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
+            result = discover_courses_for_smoke(
                 MoodleBrowserSource(navigator, "moodle:just:browser-smoke", settings.base_origin)
             )
+            if isinstance(result, SourceCollectionFailure):
+                raise BrowserSmokeFailure(_collection_failure_stage(result))
+            return result
+        except BrowserSmokeFailure:
+            operation_failed = True
+            raise
         finally:
             try:
                 getattr(context, "close")()
             except (AttributeError, OSError, TypeError, ValueError):
-                raise BrowserPolicyError() from None
+                if not operation_failed:
+                    raise BrowserSmokeFailure("CLEANUP") from None
 
 
 def run_configured_browser_course_smoke() -> int:
@@ -124,12 +201,18 @@ def run_configured_browser_course_smoke() -> int:
             paths=paths,
             launch_persistent_context=launch_msedge_persistent_context,
         )
+    except BrowserSmokeFailure as failure:
+        print("COURSE_DISCOVERY_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
     except (BrowserPolicyError, OSError, TimeoutError, ValueError, TypeError):
         print("COURSE_DISCOVERY_FAILED")
+        print("FAILURE_STAGE=PROFILE")
         return 1
     if isinstance(result, CourseDiscovery):
         print("COURSE_DISCOVERY_PASS")
         print(f"COURSE_COUNT={len(result.courses)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
+    print("FAILURE_STAGE=NAVIGATION")
     return 1

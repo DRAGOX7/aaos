@@ -10,7 +10,13 @@ from aaos.moodle.browser_models import BrowserPolicyError, BrowserRoute
 from aaos.moodle.browser_policy import build_browser_url, classify_browser_request
 
 _NAVIGATION_TIMEOUT_MS = 30_000
-FailureStage = Literal["REQUEST_POLICY", "UNEXPECTED_REDIRECT", "NAVIGATION", "NONE"]
+FailureStage = Literal[
+    "COLLECTION_PAGE_CREATE",
+    "REQUEST_POLICY",
+    "UNEXPECTED_REDIRECT",
+    "NAVIGATION",
+    "NONE",
+]
 RedirectClass = Literal[
     "LOGIN_ROUTE",
     "SSO_EXTERNAL",
@@ -112,7 +118,11 @@ class PlaywrightRestrictedNavigator:
         if self._closed:
             raise BrowserPolicyError()
         target = build_browser_url(route, base_origin=self._base_origin, identifier=identifier)
-        page = self._context.new_page()
+        try:
+            page = self._context.new_page()
+        except (OSError, ValueError, TypeError):
+            self._failure_stage = "COLLECTION_PAGE_CREATE"
+            raise BrowserPolicyError() from None
         try:
             for event in ("popup", "download", "websocket", "filechooser"):
                 page.on(event, self._blocked_event)

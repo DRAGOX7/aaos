@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from aaos.academic.source import SourceCollectionFailure
-from aaos.moodle.browser_models import BrowserPolicyError
 from aaos.moodle.collection import CourseDiscovery
 from aaos.moodle.models import AuthPaths, MoodleSettings
 
@@ -130,17 +129,21 @@ def test_same_context_smoke_closes_auth_popups_before_installing_interception(
 
 
 def test_same_context_smoke_fails_closed_when_auth_page_survives_transition(tmp_path: Path) -> None:
-    from aaos.moodle.browser import _run_same_context_browser_course_smoke
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
 
     paths = _paths(tmp_path)
     lock_path = paths.browser_state_dir / ".playwright-edge-profile.lock"
     context = _Context(lock_path, auth_survivor=True)
 
-    with pytest.raises(BrowserPolicyError):
+    with pytest.raises(BrowserSmokeFailure) as failure:
         _run_same_context_browser_course_smoke(
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
+    assert failure.value.stage == "TRANSITION_PAGES_REMAIN"
     assert "interception" not in context.calls
     assert "collection-new" not in context.calls
     assert context.closed_with_lock is True
@@ -148,7 +151,10 @@ def test_same_context_smoke_fails_closed_when_auth_page_survives_transition(tmp_
 
 
 def test_same_context_smoke_does_not_collect_after_auth_timeout(tmp_path: Path) -> None:
-    from aaos.moodle.browser import _run_same_context_browser_course_smoke
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
 
     class _TimedOutPage(_Page):
         def wait_for_timeout(self, _milliseconds: int) -> None:
@@ -165,14 +171,226 @@ def test_same_context_smoke_does_not_collect_after_auth_timeout(tmp_path: Path) 
     lock_path = paths.browser_state_dir / ".playwright-edge-profile.lock"
     context = _TimedOutContext(lock_path)
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(BrowserSmokeFailure) as failure:
         _run_same_context_browser_course_smoke(
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
+    assert failure.value.stage == "AUTH_TIMEOUT"
     assert "interception" not in context.calls
     assert "collection-new" not in context.calls
     assert context.closed_with_lock is True
+
+
+def test_same_context_smoke_classifies_missing_authenticated_page_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aaos.moodle.browser as browser
+
+    paths = _paths(tmp_path)
+    context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    monkeypatch.setattr(browser, "wait_for_authenticated_course_index", lambda **_kwargs: False)
+    with pytest.raises(browser.BrowserSmokeFailure) as failure:
+        browser._run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "AUTH_PROOF"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_classifies_busy_profile_lock(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+    from aaos.moodle.browser_models import (
+        acquire_browser_profile_lock,
+        resolve_browser_profile_paths,
+    )
+
+    paths = _paths(tmp_path)
+    profile = resolve_browser_profile_paths(paths, _ORIGIN)
+    with acquire_browser_profile_lock(profile):
+        with pytest.raises(BrowserSmokeFailure) as failure:
+            _run_same_context_browser_course_smoke(
+                settings=_settings(),
+                paths=paths,
+                launch_persistent_context=lambda **_: _Context(profile.lock_path),
+            )
+
+    assert failure.value.stage == "PROFILE"
+
+
+def test_same_context_smoke_classifies_auth_page_cleanup_failure(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _ClosingPage(_Page):
+        def close(self) -> None:
+            raise OSError
+
+    class _ClosingContext(_Context):
+        def new_page(self) -> _Page:
+            page = _ClosingPage(self, "auth")
+            self.pages.append(page)
+            self.calls.append("auth-new")
+            return page
+
+    context = _ClosingContext(_paths(tmp_path).browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(),
+            paths=_paths(tmp_path),
+            launch_persistent_context=lambda **_: context,
+        )
+
+    assert failure.value.stage == "AUTH_PAGE_CLEANUP"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_classifies_interception_install_failure(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _InterceptionFailureContext(_Context):
+        def route(self, _pattern: str, _handler: object) -> None:
+            raise OSError
+
+    paths = _paths(tmp_path)
+    context = _InterceptionFailureContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "INTERCEPTION_INSTALL"
+
+
+def test_same_context_smoke_classifies_collection_page_creation_failure(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _CollectionCreationFailureContext(_Context):
+        def new_page(self) -> _Page:
+            if self.interception_installed:
+                raise OSError
+            return super().new_page()
+
+    paths = _paths(tmp_path)
+    context = _CollectionCreationFailureContext(
+        paths.browser_state_dir / ".playwright-edge-profile.lock"
+    )
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "COLLECTION_PAGE_CREATE"
+
+
+def test_same_context_smoke_classifies_parser_failure(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _MalformedCollectionPage(_Page):
+        def content(self) -> str:
+            if self._kind == "collection":
+                return "<html></html>"
+            return super().content()
+
+    class _MalformedCollectionContext(_Context):
+        def new_page(self) -> _Page:
+            kind = "collection" if self.interception_installed else "auth"
+            page = _MalformedCollectionPage(self, kind)
+            self.pages.append(page)
+            self.calls.append(f"{kind}-new")
+            return page
+
+    paths = _paths(tmp_path)
+    context = _MalformedCollectionContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "PARSER_SCHEMA"
+
+
+def test_same_context_smoke_classifies_cleanup_failure_after_collection(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _CleanupFailureContext(_Context):
+        def close(self) -> None:
+            super().close()
+            raise OSError
+
+    paths = _paths(tmp_path)
+    context = _CleanupFailureContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "CLEANUP"
+
+
+@pytest.mark.parametrize(
+    ("failure_code", "expected_stage"),
+    [
+        ("browser_request_policy", "REQUEST_POLICY"),
+        ("browser_unexpected_redirect", "UNEXPECTED_REDIRECT"),
+    ],
+)
+def test_same_context_smoke_preserves_restricted_navigation_failure_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
+    expected_stage: str,
+) -> None:
+    import aaos.moodle.browser as browser
+
+    class _FailingSource:
+        def __init__(self, *_args: object) -> None:
+            return None
+
+        def discover_courses(self) -> SourceCollectionFailure:
+            return SourceCollectionFailure("moodle:fixture:browser-smoke", failure_code)
+
+    monkeypatch.setattr(browser, "MoodleBrowserSource", _FailingSource)
+    paths = _paths(tmp_path)
+    context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(browser.BrowserSmokeFailure) as failure:
+        browser._run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == expected_stage
+
+
+def test_browser_smoke_cli_renders_only_fixed_failure_stage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aaos.moodle.browser as browser
+
+    def fail(**_kwargs: object) -> CourseDiscovery:
+        raise browser.BrowserSmokeFailure("AUTH_PROOF")
+
+    monkeypatch.setattr(browser, "_run_same_context_browser_course_smoke", fail)
+
+    assert browser.run_configured_browser_course_smoke() == 1
+    assert capsys.readouterr().out == "COURSE_DISCOVERY_FAILED\nFAILURE_STAGE=AUTH_PROOF\n"
 
 
 def test_same_context_smoke_returns_only_course_discovery_not_snapshot_or_entities(
