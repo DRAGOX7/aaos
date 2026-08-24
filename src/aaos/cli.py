@@ -50,6 +50,8 @@ def main() -> int:
         return _run_configured_course_index_loading_diagnostic()
     if sys.argv[1:] == ["moodle", "diagnose-static-assets"]:
         return _run_configured_static_asset_diagnostic()
+    if sys.argv[1:] == ["moodle", "diagnose-bootstrap-routes"]:
+        return _run_configured_moodle_bootstrap_route_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -129,3 +131,9 @@ def _run_configured_static_asset_diagnostic() -> int:
     from aaos.moodle.browser import run_configured_static_asset_diagnostic
 
     return run_configured_static_asset_diagnostic()
+
+
+def _run_configured_moodle_bootstrap_route_diagnostic() -> int:
+    from aaos.moodle.browser import run_configured_moodle_bootstrap_route_diagnostic
+
+    return run_configured_moodle_bootstrap_route_diagnostic()

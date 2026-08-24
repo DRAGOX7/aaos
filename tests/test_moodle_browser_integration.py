@@ -50,6 +50,7 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                     "<link rel='stylesheet' href='/current/theme/styles.php/42/boost/all.css'>"
                     "<script src='/current/lib/javascript.php/42/core.js'></script>"
                     "<script src='/current/lib/requirejs.php/42/core/main.min.js'></script>"
+                    "<script src='/current/lib/blocked-bootstrap.js'></script>"
                     "<link rel='stylesheet' href='/current/theme/unapproved.css'>"
                     f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
                     "Synthetic</a><nav data-pagination-pages='0' "
@@ -99,6 +100,7 @@ def test_real_msedge_parses_only_local_https_course_index(
             result = MoodleBrowserSource(
                 navigator, "moodle:just:browser-smoke", origin
             ).discover_courses()
+            request_summary = navigator.request_summary
         finally:
             navigator.close()
     assert isinstance(result, CourseDiscovery)
@@ -106,7 +108,12 @@ def test_real_msedge_parses_only_local_https_course_index(
     assert "/current/theme/styles.php/42/boost/all.css" in served_paths
     assert "/current/lib/javascript.php/42/core.js" in served_paths
     assert "/current/lib/requirejs.php/42/core/main.min.js" in served_paths
+    assert "/current/lib/blocked-bootstrap.js" not in served_paths
     assert "/current/theme/unapproved.css" not in served_paths
+    assert request_summary.bootstrap_route_counts == (
+        ("STATIC_LIB_FILE", 1),
+        ("STATIC_THEME_FILE", 1),
+    )
     assert certificate.exists() and private_key.exists()
 
 

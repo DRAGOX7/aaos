@@ -50,6 +50,20 @@ StaticAssetClass = Literal[
     "OTHER_MOODLE",
     "OTHER_ORIGIN",
 ]
+BootstrapRouteClass = Literal[
+    "STATIC_LIB_FILE",
+    "STATIC_AMD_BUILD_FILE",
+    "STATIC_THEME_FILE",
+    "THEME_IMAGE_HANDLER",
+    "CORE_PIX_ASSET",
+    "STATIC_PLUGIN_ASSET",
+    "MOODLE_HANDLER_OTHER",
+    "ACADEMIC_ROUTE",
+    "AJAX_SERVICE",
+    "PLUGINFILE",
+    "UNKNOWN_MOODLE_ROUTE",
+    "OTHER_ORIGIN",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +101,10 @@ class BrowserRequestSummary:
     blocked_post_moodle_ajax_service_count: int = 0
     allowed_static_request_count: int = 0
     static_counts: tuple[tuple[StaticAssetClass, int, int, int], ...] = ()
+    other_moodle_resource_counts: tuple[tuple[RequestResourceType, int], ...] = ()
+    other_moodle_method_counts: tuple[tuple[RequestMethodClass, int], ...] = ()
+    other_origin_resource_counts: tuple[tuple[RequestResourceType, int], ...] = ()
+    bootstrap_route_counts: tuple[tuple[BootstrapRouteClass, int], ...] = ()
 
 
 class _RequestObserver:
@@ -96,8 +114,18 @@ class _RequestObserver:
         self._blocked_post_moodle_ajax_service_count = 0
         self._allowed_static_request_count = 0
         self._static_counts: dict[StaticAssetClass, list[int]] = {}
+        self._other_moodle_resource_counts: dict[RequestResourceType, int] = {}
+        self._other_moodle_method_counts: dict[RequestMethodClass, int] = {}
+        self._other_origin_resource_counts: dict[RequestResourceType, int] = {}
+        self._bootstrap_route_counts: dict[BootstrapRouteClass, int] = {}
 
-    def record(self, observation: BrowserRequestObservation) -> None:
+    def record(
+        self,
+        observation: BrowserRequestObservation,
+        *,
+        url: object | None = None,
+        canonical_wwwroot: str | None = None,
+    ) -> None:
         if observation.origin == "MOODLE_SAME_ORIGIN" and observation.resource_type == "XHR_FETCH":
             self._same_origin_xhr_fetch_count += 1
         if observation.route == "MOODLE_AJAX_SERVICE":
@@ -110,6 +138,25 @@ class _RequestObserver:
             self._blocked_post_moodle_ajax_service_count += 1
         if observation.route == "STATIC_ASSET" and observation.policy_result == "ALLOWED":
             self._allowed_static_request_count += 1
+        if observation.origin == "OTHER_ORIGIN":
+            self._other_origin_resource_counts[observation.resource_type] = (
+                self._other_origin_resource_counts.get(observation.resource_type, 0) + 1
+            )
+        if (
+            observation.origin == "MOODLE_SAME_ORIGIN"
+            and observation.route == "OTHER_MOODLE_ROUTE"
+            and observation.policy_result == "BLOCKED"
+        ):
+            self._other_moodle_resource_counts[observation.resource_type] = (
+                self._other_moodle_resource_counts.get(observation.resource_type, 0) + 1
+            )
+            self._other_moodle_method_counts[observation.method] = (
+                self._other_moodle_method_counts.get(observation.method, 0) + 1
+            )
+            route_class = classify_bootstrap_route_request(url, canonical_wwwroot)
+            self._bootstrap_route_counts[route_class] = (
+                self._bootstrap_route_counts.get(route_class, 0) + 1
+            )
 
     def record_static(
         self, static_class: StaticAssetClass, policy_result: RequestPolicyResult
@@ -128,6 +175,10 @@ class _RequestObserver:
                 (key, values[0], values[1], values[2])
                 for key, values in sorted(self._static_counts.items())
             ),
+            other_moodle_resource_counts=tuple(sorted(self._other_moodle_resource_counts.items())),
+            other_moodle_method_counts=tuple(sorted(self._other_moodle_method_counts.items())),
+            other_origin_resource_counts=tuple(sorted(self._other_origin_resource_counts.items())),
+            bootstrap_route_counts=tuple(sorted(self._bootstrap_route_counts.items())),
         )
 
 
@@ -245,7 +296,11 @@ class PlaywrightRestrictedNavigator:
             base_origin=self._base_origin,
             canonical_wwwroot=self._canonical_wwwroot,
         )
-        self._request_observer.record(observation)
+        self._request_observer.record(
+            observation,
+            url=request.url,
+            canonical_wwwroot=self._canonical_wwwroot,
+        )
         self._request_observer.record_static(
             classify_static_asset_request(request.url, self._canonical_wwwroot),
             observation.policy_result,
@@ -489,6 +544,59 @@ def classify_static_asset_request(url: object, canonical_wwwroot: str) -> Static
     if path.endswith((".css", ".js", ".png", ".svg", ".jpg", ".webp")):
         return "OTHER_STATIC_SAME_ORIGIN"
     return "OTHER_MOODLE"
+
+
+def classify_bootstrap_route_request(
+    url: object, canonical_wwwroot: str | None
+) -> BootstrapRouteClass:
+    """Classify a blocked request structurally without retaining its address."""
+    if not isinstance(url, str) or not isinstance(canonical_wwwroot, str):
+        return "OTHER_ORIGIN"
+    try:
+        target = urlsplit(url)
+        base = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return "OTHER_ORIGIN"
+    if (
+        target.scheme != "https"
+        or base.scheme != "https"
+        or not target.netloc
+        or not base.netloc
+        or f"{target.scheme}://{target.netloc}" != f"{base.scheme}://{base.netloc}"
+    ):
+        return "OTHER_ORIGIN"
+    base_path = base.path.rstrip("/")
+    prefix = base_path + "/"
+    if not base_path or base.query or base.fragment or not target.path.startswith(prefix):
+        return "UNKNOWN_MOODLE_ROUTE"
+    path = target.path[len(base_path) :]
+    if path == "/pluginfile.php" or path.startswith("/pluginfile.php/"):
+        return "PLUGINFILE"
+    if path.startswith("/lib/ajax/"):
+        return "AJAX_SERVICE"
+    if path == "/theme/image.php" or path.startswith("/theme/image.php/"):
+        return "THEME_IMAGE_HANDLER"
+    if (
+        path.startswith("/mod/")
+        and "/pix/" in path
+        and path.endswith((".png", ".svg", ".jpg", ".webp"))
+    ):
+        return "STATIC_PLUGIN_ASSET"
+    if path.startswith(("/course/", "/mod/", "/my/", "/user/")):
+        return "ACADEMIC_ROUTE"
+    if path.endswith(".php") or ".php/" in path:
+        return "MOODLE_HANDLER_OTHER"
+    if path.startswith("/lib/amd/build/") and path.endswith(".js"):
+        return "STATIC_AMD_BUILD_FILE"
+    if path.startswith("/lib/") and path.endswith((".js", ".css", ".png", ".svg", ".jpg", ".webp")):
+        return "STATIC_LIB_FILE"
+    if path.startswith("/theme/") and path.endswith(
+        (".js", ".css", ".png", ".svg", ".jpg", ".webp")
+    ):
+        return "STATIC_THEME_FILE"
+    if path.startswith("/pix/") and path.endswith((".png", ".svg", ".jpg", ".webp")):
+        return "CORE_PIX_ASSET"
+    return "UNKNOWN_MOODLE_ROUTE"
 
 
 def classify_redirect(url: object, base_origin: str) -> RedirectClass:

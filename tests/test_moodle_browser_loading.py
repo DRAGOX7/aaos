@@ -177,3 +177,142 @@ def test_static_asset_classifier_uses_the_supplied_application_base_without_appr
         classify_static_asset_request(origin + "/moodle/admin/index.php", canonical_wwwroot)
         == "OTHER_MOODLE"
     )
+
+
+def test_bootstrap_route_classifier_distinguishes_fixed_static_files_from_handlers() -> None:
+    from aaos.moodle.browser_navigation import classify_bootstrap_route_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/lib/thirdpartylib.min.js", canonical_wwwroot
+        )
+        == "STATIC_LIB_FILE"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/lib/amd/build/core.min.js", canonical_wwwroot
+        )
+        == "STATIC_AMD_BUILD_FILE"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/lib/javascript.php?cache=private", canonical_wwwroot
+        )
+        == "MOODLE_HANDLER_OTHER"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/lib/unapproved.php/42/file.js", canonical_wwwroot
+        )
+        == "MOODLE_HANDLER_OTHER"
+    )
+
+
+def test_bootstrap_route_classifier_fails_closed_for_academic_ajax_pluginfile_and_other_origin() -> (
+    None
+):
+    from aaos.moodle.browser_navigation import classify_bootstrap_route_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/course/view.php?id=42", canonical_wwwroot
+        )
+        == "ACADEMIC_ROUTE"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/lib/ajax/service.php", canonical_wwwroot
+        )
+        == "AJAX_SERVICE"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            origin + "/current/pluginfile.php/1/file.pdf", canonical_wwwroot
+        )
+        == "PLUGINFILE"
+    )
+    assert (
+        classify_bootstrap_route_request(
+            "https://other.example.edu/current/lib/thirdpartylib.min.js", canonical_wwwroot
+        )
+        == "OTHER_ORIGIN"
+    )
+
+
+def test_request_summary_aggregates_only_blocked_other_moodle_requests_without_urls() -> None:
+    from aaos.moodle.browser_navigation import _RequestObserver, classify_request_observation
+
+    observer = _RequestObserver()
+    observer.record(
+        classify_request_observation(
+            "GET",
+            "https://moodle.example.edu/current/lib/thirdpartylib.min.js?secret=redacted",
+            "script",
+            base_origin="https://moodle.example.edu",
+            canonical_wwwroot="https://moodle.example.edu/current",
+        ),
+        url="https://moodle.example.edu/current/lib/thirdpartylib.min.js?secret=redacted",
+        canonical_wwwroot="https://moodle.example.edu/current",
+    )
+    observer.record(
+        classify_request_observation(
+            "POST",
+            "https://moodle.example.edu/current/lib/handler.php?sesskey=redacted",
+            "xhr",
+            base_origin="https://moodle.example.edu",
+            canonical_wwwroot="https://moodle.example.edu/current",
+        ),
+        url="https://moodle.example.edu/current/lib/handler.php?sesskey=redacted",
+        canonical_wwwroot="https://moodle.example.edu/current",
+    )
+
+    summary = observer.snapshot()
+
+    assert summary.other_moodle_resource_counts == (("SCRIPT", 1), ("XHR_FETCH", 1))
+    assert summary.other_moodle_method_counts == (("GET", 1), ("POST", 1))
+    assert summary.bootstrap_route_counts == (
+        ("MOODLE_HANDLER_OTHER", 1),
+        ("STATIC_LIB_FILE", 1),
+    )
+    assert "secret" not in repr(summary)
+    assert "sesskey" not in repr(summary)
+
+
+def test_bootstrap_route_rendering_uses_fixed_counts_without_request_data() -> None:
+    from aaos.moodle.browser import render_bootstrap_route_diagnostic
+    from aaos.moodle.browser_navigation import BrowserRequestSummary
+
+    rendered = render_bootstrap_route_diagnostic(
+        BrowserRequestSummary(
+            other_moodle_resource_counts=(("SCRIPT", 1),),
+            other_moodle_method_counts=(("GET", 1),),
+            other_origin_resource_counts=(("FONT", 1),),
+            bootstrap_route_counts=(("STATIC_LIB_FILE", 1),),
+        )
+    )
+
+    assert rendered.splitlines() == [
+        "MOODLE_BOOTSTRAP_ROUTE_DIAGNOSTIC",
+        "OTHER_MOODLE_SCRIPT=1",
+        "OTHER_MOODLE_STYLESHEET=0",
+        "OTHER_MOODLE_IMAGE=0",
+        "OTHER_MOODLE_FONT=0",
+        "OTHER_MOODLE_XHR_FETCH=0",
+        "OTHER_MOODLE_DOCUMENT=0",
+        "OTHER_MOODLE_OTHER=0",
+        "OTHER_MOODLE_GET=1",
+        "OTHER_MOODLE_HEAD=0",
+        "OTHER_MOODLE_POST=0",
+        "OTHER_MOODLE_OTHER_METHOD=0",
+        "OTHER_ORIGIN_FONT=1",
+        "STATIC_LIB_FILE_ATTEMPTED=1",
+        "BOOTSTRAP_ROUTE_STATUS=SPECIFIC_STATIC_DEPENDENCY_FOUND",
+    ]
+    assert "?" not in rendered
+    assert "http" not in rendered

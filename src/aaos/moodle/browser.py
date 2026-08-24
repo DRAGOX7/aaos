@@ -481,3 +481,81 @@ def run_configured_static_asset_diagnostic() -> int:
         + ("BLOCKED_REQUIRED_ASSETS" if blocked_any else "NO_REQUIRED_STATIC_BLOCK")
     )
     return 0
+
+
+def render_bootstrap_route_diagnostic(requests: BrowserRequestSummary) -> str:
+    """Render only fixed aggregate bootstrap-route observations."""
+    lines = ["MOODLE_BOOTSTRAP_ROUTE_DIAGNOSTIC"]
+    resource_counts = dict(requests.other_moodle_resource_counts)
+    for resource_type in (
+        "SCRIPT",
+        "STYLESHEET",
+        "IMAGE",
+        "FONT",
+        "XHR_FETCH",
+        "DOCUMENT",
+        "OTHER",
+    ):
+        lines.append(f"OTHER_MOODLE_{resource_type}={resource_counts.get(resource_type, 0)}")
+    method_counts = dict(requests.other_moodle_method_counts)
+    for method in ("GET", "HEAD", "POST"):
+        lines.append(f"OTHER_MOODLE_{method}={method_counts.get(method, 0)}")
+    lines.append(f"OTHER_MOODLE_OTHER_METHOD={method_counts.get('OTHER', 0)}")
+    lines.extend(
+        f"OTHER_ORIGIN_{resource_type}={count}"
+        for resource_type, count in requests.other_origin_resource_counts
+    )
+    lines.extend(
+        f"{route_class}_ATTEMPTED={count}" for route_class, count in requests.bootstrap_route_counts
+    )
+    static_classes = {
+        "STATIC_LIB_FILE",
+        "STATIC_AMD_BUILD_FILE",
+        "STATIC_THEME_FILE",
+        "THEME_IMAGE_HANDLER",
+        "CORE_PIX_ASSET",
+        "STATIC_PLUGIN_ASSET",
+    }
+    status = (
+        "SPECIFIC_STATIC_DEPENDENCY_FOUND"
+        if any(
+            route_class in static_classes for route_class, _count in requests.bootstrap_route_counts
+        )
+        else "AMBIGUOUS"
+        if requests.bootstrap_route_counts
+        else "NO_STATIC_DEPENDENCY_FOUND"
+    )
+    lines.append(f"BOOTSTRAP_ROUTE_STATUS={status}")
+    return "\n".join(lines)
+
+
+def run_configured_moodle_bootstrap_route_diagnostic() -> int:
+    """Report fixed structural classes for blocked Moodle bootstrap requests only."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
+        result = _run_same_context_browser_course_smoke(
+            settings=replace(
+                runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+            ),
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
+            course_index_loading_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("MOODLE_BOOTSTRAP_ROUTE_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    if not isinstance(result, CourseIndexLoadingResult):
+        print("MOODLE_BOOTSTRAP_ROUTE_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=NAVIGATION")
+        return 1
+    print(render_bootstrap_route_diagnostic(result.requests))
+    return 0
