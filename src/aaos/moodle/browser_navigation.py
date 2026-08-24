@@ -254,6 +254,23 @@ class PlaywrightRestrictedNavigator:
     def _blocked_event(*_args: object) -> None:
         raise BrowserPolicyError()
 
+    def _close_owned_page(self, page: _Page) -> None:
+        """Close a collection page without reclassifying an already-closed target."""
+        try:
+            page.close()
+        except PlaywrightError as error:
+            if type(error).__name__ != "TargetClosedError":
+                raise BrowserPolicyError() from None
+            try:
+                pages = self._context.pages
+            except PlaywrightError:
+                return
+            if isinstance(pages, list) and all(candidate is not page for candidate in pages):
+                return
+            raise BrowserPolicyError() from None
+        except (OSError, TypeError, ValueError):
+            raise BrowserPolicyError() from None
+
     def open(self, route: BrowserRoute, *, identifier: int | None = None) -> BrowserDocument:
         if self._closed:
             raise BrowserPolicyError()
@@ -283,7 +300,7 @@ class PlaywrightRestrictedNavigator:
                 self._failure_stage = "NAVIGATION"
             raise BrowserPolicyError() from None
         finally:
-            page.close()
+            self._close_owned_page(page)
 
     def observe_course_index_loading(self) -> tuple[str, str, str]:
         """Sample only bounded COURSE_INDEX markup while interception remains enforced."""
@@ -319,7 +336,7 @@ class PlaywrightRestrictedNavigator:
                 self._failure_stage = "NAVIGATION"
             raise BrowserPolicyError() from None
         finally:
-            page.close()
+            self._close_owned_page(page)
 
     def close(self) -> None:
         if self._closed:

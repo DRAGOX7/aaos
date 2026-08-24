@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import Error as PlaywrightError
 
 from aaos.academic.source import SourceCollectionFailure
@@ -561,6 +562,52 @@ def test_same_context_smoke_classifies_cleanup_failure_after_collection(tmp_path
     with pytest.raises(BrowserSmokeFailure) as failure:
         _run_same_context_browser_course_smoke(
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "CLEANUP"
+
+
+def test_same_context_smoke_keeps_result_when_context_already_closed_after_collection(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import _run_same_context_browser_course_smoke
+
+    class _AlreadyClosedContext(_Context):
+        def close(self) -> None:
+            self.pages.clear()
+            raise TargetClosedError("redacted")
+
+    paths = _paths(tmp_path)
+    result = _run_same_context_browser_course_smoke(
+        settings=_settings(),
+        paths=paths,
+        launch_persistent_context=lambda **_: _AlreadyClosedContext(
+            paths.browser_state_dir / ".playwright-edge-profile.lock"
+        ),
+    )
+
+    assert isinstance(result, CourseDiscovery)
+
+
+def test_same_context_smoke_keeps_generic_playwright_cleanup_failure(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _GenericPlaywrightFailureContext(_Context):
+        def close(self) -> None:
+            self.pages.clear()
+            raise PlaywrightError("redacted")
+
+    paths = _paths(tmp_path)
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(),
+            paths=paths,
+            launch_persistent_context=lambda **_: _GenericPlaywrightFailureContext(
+                paths.browser_state_dir / ".playwright-edge-profile.lock"
+            ),
         )
 
     assert failure.value.stage == "CLEANUP"

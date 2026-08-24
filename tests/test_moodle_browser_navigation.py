@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from playwright._impl._errors import TargetClosedError
 from playwright.sync_api import Error as PlaywrightError
 
 
@@ -68,6 +69,54 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     assert calls[-1] == "context-close"
     with pytest.raises(BrowserPolicyError):
         navigator.open("RESOURCE_METADATA")
+
+
+def test_navigator_keeps_document_when_owned_page_is_already_closed_during_cleanup() -> None:
+    """A completed read must survive only the benign closed-page cleanup case."""
+    from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
+
+    class Context:
+        def __init__(self) -> None:
+            self.pages: list[Any] = []
+
+        def route(self, _pattern: str, _handler: object) -> None:
+            return None
+
+        def new_page(self) -> Page:
+            page = Page(self)
+            self.pages.append(page)
+            return page
+
+        def close(self) -> None:
+            return None
+
+    class Page:
+        url = "https://moodle.example.edu/current/my/courses.php"
+
+        def __init__(self, context: Context) -> None:
+            self._context = context
+
+        def goto(self, _url: str, *, wait_until: str, timeout: int) -> None:
+            return None
+
+        def content(self) -> str:
+            return "<nav data-pagination-pages='0' data-pagination-exhausted='true'></nav>"
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def close(self) -> None:
+            self._context.pages.remove(self)
+            raise TargetClosedError("redacted")
+
+        def on(self, _event: str, _handler: object) -> None:
+            return None
+
+    navigator = PlaywrightRestrictedNavigator(Context(), "https://moodle.example.edu")
+
+    document = navigator.open("COURSE_INDEX")
+
+    assert document.route == "COURSE_INDEX"
 
 
 def test_redirect_classifier_returns_only_fixed_structural_categories() -> None:

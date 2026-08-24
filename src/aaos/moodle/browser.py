@@ -193,6 +193,24 @@ def _navigator_failure_stage(navigator: object) -> BrowserSmokeFailureStage:
     return stages.get(getattr(navigator, "failure_stage", "NONE"), "NAVIGATION")
 
 
+def _close_context_after_operation(context: object) -> None:
+    """Close the owned context, accepting only an already-closed Playwright target."""
+    try:
+        getattr(context, "close")()
+    except PlaywrightError as error:
+        if type(error).__name__ != "TargetClosedError":
+            raise BrowserSmokeFailure("CLEANUP") from None
+        try:
+            pages = getattr(context, "pages")
+        except PlaywrightError:
+            return
+        if isinstance(pages, list) and not pages:
+            return
+        raise BrowserSmokeFailure("CLEANUP") from None
+    except (AttributeError, OSError, TypeError, ValueError):
+        raise BrowserSmokeFailure("CLEANUP") from None
+
+
 def _run_same_context_browser_course_smoke(
     *,
     settings: MoodleSettings,
@@ -292,10 +310,10 @@ def _run_same_context_browser_course_smoke(
             raise
         finally:
             try:
-                getattr(context, "close")()
-            except (AttributeError, OSError, PlaywrightError, TypeError, ValueError):
+                _close_context_after_operation(context)
+            except BrowserSmokeFailure:
                 if not operation_failed:
-                    raise BrowserSmokeFailure("CLEANUP") from None
+                    raise
 
 
 def run_configured_browser_course_smoke() -> int:
