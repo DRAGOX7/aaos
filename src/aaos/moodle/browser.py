@@ -18,7 +18,9 @@ from aaos.moodle.browser_models import (
 )
 from aaos.moodle.browser_navigation import (
     BrowserRequestSummary,
+    MoodleHandlerClass,
     PlaywrightRestrictedNavigator,
+    RequestResourceType,
     RestrictedBrowserNavigator,
 )
 from aaos.moodle.browser_parsing import (
@@ -558,4 +560,87 @@ def run_configured_moodle_bootstrap_route_diagnostic() -> int:
         print("FAILURE_STAGE=NAVIGATION")
         return 1
     print(render_bootstrap_route_diagnostic(result.requests))
+    return 0
+
+
+def render_moodle_handler_diagnostic(requests: BrowserRequestSummary) -> str:
+    """Render fixed handler-family counts and static eligibility only."""
+    from aaos.moodle.browser_navigation import handler_static_eligibility
+
+    lines = ["MOODLE_HANDLER_DIAGNOSTIC"]
+    counts = {
+        (handler_class, resource_type): count
+        for handler_class, resource_type, count in requests.moodle_handler_resource_counts
+    }
+    handler_classes: tuple[MoodleHandlerClass, ...] = (
+        "MOODLE_YUI_COMBO_HANDLER",
+        "MOODLE_HANDLER_OTHER",
+    )
+    resource_types: tuple[RequestResourceType, ...] = (
+        "SCRIPT",
+        "STYLESHEET",
+        "FONT",
+        "IMAGE",
+        "OTHER",
+    )
+    for handler_class in handler_classes:
+        for resource_type in resource_types:
+            lines.append(
+                f"{handler_class}_{resource_type}={counts.get((handler_class, resource_type), 0)}"
+            )
+        lines.append(
+            f"{handler_class}_STATIC_ELIGIBILITY={handler_static_eligibility(handler_class)}"
+        )
+    validated_static_script_count = counts.get(("MOODLE_YUI_COMBO_HANDLER", "SCRIPT"), 0)
+    validated_static_stylesheet_count = counts.get(("MOODLE_YUI_COMBO_HANDLER", "STYLESHEET"), 0)
+    ambiguous_handler_count = sum(
+        count
+        for (handler_class, _resource_type), count in counts.items()
+        if handler_static_eligibility(handler_class) == "AMBIGUOUS"
+    )
+    lines.extend(
+        (
+            f"VALIDATED_STATIC_SCRIPT_DEPENDENCY_COUNT={validated_static_script_count}",
+            f"VALIDATED_STATIC_STYLESHEET_DEPENDENCY_COUNT={validated_static_stylesheet_count}",
+            f"AMBIGUOUS_HANDLER_COUNT={ambiguous_handler_count}",
+            "HANDLER_CLASSIFICATION_STATUS="
+            + (
+                "STATIC_DEPENDENCIES_IDENTIFIED"
+                if validated_static_script_count or validated_static_stylesheet_count
+                else "AMBIGUOUS"
+            ),
+        )
+    )
+    return "\n".join(lines)
+
+
+def run_configured_moodle_handler_diagnostic() -> int:
+    """Run the restricted observation and render only fixed handler classifications."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
+        result = _run_same_context_browser_course_smoke(
+            settings=replace(
+                runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+            ),
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
+            course_index_loading_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("MOODLE_HANDLER_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    if not isinstance(result, CourseIndexLoadingResult):
+        print("MOODLE_HANDLER_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=NAVIGATION")
+        return 1
+    print(render_moodle_handler_diagnostic(result.requests))
     return 0

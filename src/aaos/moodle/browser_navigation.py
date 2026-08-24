@@ -64,6 +64,8 @@ BootstrapRouteClass = Literal[
     "UNKNOWN_MOODLE_ROUTE",
     "OTHER_ORIGIN",
 ]
+MoodleHandlerClass = Literal["MOODLE_YUI_COMBO_HANDLER", "MOODLE_HANDLER_OTHER"]
+HandlerStaticEligibility = Literal["VALIDATED_STATIC", "AMBIGUOUS"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +107,9 @@ class BrowserRequestSummary:
     other_moodle_method_counts: tuple[tuple[RequestMethodClass, int], ...] = ()
     other_origin_resource_counts: tuple[tuple[RequestResourceType, int], ...] = ()
     bootstrap_route_counts: tuple[tuple[BootstrapRouteClass, int], ...] = ()
+    moodle_handler_resource_counts: tuple[
+        tuple[MoodleHandlerClass, RequestResourceType, int], ...
+    ] = ()
 
 
 class _RequestObserver:
@@ -118,6 +123,9 @@ class _RequestObserver:
         self._other_moodle_method_counts: dict[RequestMethodClass, int] = {}
         self._other_origin_resource_counts: dict[RequestResourceType, int] = {}
         self._bootstrap_route_counts: dict[BootstrapRouteClass, int] = {}
+        self._moodle_handler_resource_counts: dict[
+            tuple[MoodleHandlerClass, RequestResourceType], int
+        ] = {}
 
     def record(
         self,
@@ -157,6 +165,12 @@ class _RequestObserver:
             self._bootstrap_route_counts[route_class] = (
                 self._bootstrap_route_counts.get(route_class, 0) + 1
             )
+            if route_class == "MOODLE_HANDLER_OTHER":
+                handler_class = classify_moodle_handler_request(url, canonical_wwwroot)
+                key = (handler_class, observation.resource_type)
+                self._moodle_handler_resource_counts[key] = (
+                    self._moodle_handler_resource_counts.get(key, 0) + 1
+                )
 
     def record_static(
         self, static_class: StaticAssetClass, policy_result: RequestPolicyResult
@@ -179,6 +193,12 @@ class _RequestObserver:
             other_moodle_method_counts=tuple(sorted(self._other_moodle_method_counts.items())),
             other_origin_resource_counts=tuple(sorted(self._other_origin_resource_counts.items())),
             bootstrap_route_counts=tuple(sorted(self._bootstrap_route_counts.items())),
+            moodle_handler_resource_counts=tuple(
+                (handler_class, resource_type, count)
+                for (handler_class, resource_type), count in sorted(
+                    self._moodle_handler_resource_counts.items()
+                )
+            ),
         )
 
 
@@ -597,6 +617,40 @@ def classify_bootstrap_route_request(
     if path.startswith("/pix/") and path.endswith((".png", ".svg", ".jpg", ".webp")):
         return "CORE_PIX_ASSET"
     return "UNKNOWN_MOODLE_ROUTE"
+
+
+def classify_moodle_handler_request(
+    url: object, canonical_wwwroot: str | None
+) -> MoodleHandlerClass:
+    """Recognize only exact, public-Moodle infrastructure handlers."""
+    if not isinstance(url, str) or not isinstance(canonical_wwwroot, str):
+        return "MOODLE_HANDLER_OTHER"
+    try:
+        target = urlsplit(url)
+        base = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return "MOODLE_HANDLER_OTHER"
+    base_path = base.path.rstrip("/")
+    if (
+        target.scheme != "https"
+        or base.scheme != "https"
+        or not target.netloc
+        or not base.netloc
+        or f"{target.scheme}://{target.netloc}" != f"{base.scheme}://{base.netloc}"
+        or not base_path
+        or base.query
+        or base.fragment
+        or target.path != base_path + "/theme/yui_combo.php"
+    ):
+        return "MOODLE_HANDLER_OTHER"
+    return "MOODLE_YUI_COMBO_HANDLER"
+
+
+def handler_static_eligibility(handler_class: MoodleHandlerClass) -> HandlerStaticEligibility:
+    """Return source-verified eligibility without authorizing the request."""
+    if handler_class == "MOODLE_YUI_COMBO_HANDLER":
+        return "VALIDATED_STATIC"
+    return "AMBIGUOUS"
 
 
 def classify_redirect(url: object, base_origin: str) -> RedirectClass:

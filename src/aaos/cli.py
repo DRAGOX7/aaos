@@ -52,6 +52,8 @@ def main() -> int:
         return _run_configured_static_asset_diagnostic()
     if sys.argv[1:] == ["moodle", "diagnose-bootstrap-routes"]:
         return _run_configured_moodle_bootstrap_route_diagnostic()
+    if sys.argv[1:] == ["moodle", "diagnose-moodle-handlers"]:
+        return _run_configured_moodle_handler_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -137,3 +139,9 @@ def _run_configured_moodle_bootstrap_route_diagnostic() -> int:
     from aaos.moodle.browser import run_configured_moodle_bootstrap_route_diagnostic
 
     return run_configured_moodle_bootstrap_route_diagnostic()
+
+
+def _run_configured_moodle_handler_diagnostic() -> int:
+    from aaos.moodle.browser import run_configured_moodle_handler_diagnostic
+
+    return run_configured_moodle_handler_diagnostic()

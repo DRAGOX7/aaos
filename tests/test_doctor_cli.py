@@ -392,3 +392,12 @@ def test_main_dispatches_bootstrap_route_diagnostic(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-bootstrap-routes"])
 
     assert cli.main() == 0
+
+
+def test_main_dispatches_moodle_handler_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aaos import cli
+
+    monkeypatch.setattr(cli, "_run_configured_moodle_handler_diagnostic", lambda: 0, raising=False)
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-moodle-handlers"])
+
+    assert cli.main() == 0

@@ -316,3 +316,93 @@ def test_bootstrap_route_rendering_uses_fixed_counts_without_request_data() -> N
     ]
     assert "?" not in rendered
     assert "http" not in rendered
+
+
+def test_moodle_handler_classifier_recognizes_only_yui_combo_as_static_infrastructure() -> None:
+    from aaos.moodle.browser_navigation import (
+        classify_moodle_handler_request,
+        handler_static_eligibility,
+    )
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+
+    handler = classify_moodle_handler_request(
+        origin + "/current/theme/yui_combo.php?rollup=private", canonical_wwwroot
+    )
+
+    assert handler == "MOODLE_YUI_COMBO_HANDLER"
+    assert handler_static_eligibility(handler) == "VALIDATED_STATIC"
+    assert (
+        classify_moodle_handler_request(
+            origin + "/current/theme/font.php?private=redacted", canonical_wwwroot
+        )
+        == "MOODLE_HANDLER_OTHER"
+    )
+    assert handler_static_eligibility("MOODLE_HANDLER_OTHER") == "AMBIGUOUS"
+
+
+def test_handler_summary_correlates_resource_types_without_retaining_request_data() -> None:
+    from aaos.moodle.browser_navigation import _RequestObserver, classify_request_observation
+
+    observer = _RequestObserver()
+    for url, resource_type in (
+        ("https://moodle.example.edu/current/theme/yui_combo.php?secret=redacted", "script"),
+        ("https://moodle.example.edu/current/theme/font.php?secret=redacted", "font"),
+    ):
+        observer.record(
+            classify_request_observation(
+                "GET",
+                url,
+                resource_type,
+                base_origin="https://moodle.example.edu",
+                canonical_wwwroot="https://moodle.example.edu/current",
+            ),
+            url=url,
+            canonical_wwwroot="https://moodle.example.edu/current",
+        )
+
+    summary = observer.snapshot()
+
+    assert summary.moodle_handler_resource_counts == (
+        ("MOODLE_HANDLER_OTHER", "FONT", 1),
+        ("MOODLE_YUI_COMBO_HANDLER", "SCRIPT", 1),
+    )
+    assert "secret" not in repr(summary)
+
+
+def test_moodle_handler_rendering_exposes_fixed_counts_and_eligibility_only() -> None:
+    from aaos.moodle.browser import render_moodle_handler_diagnostic
+    from aaos.moodle.browser_navigation import BrowserRequestSummary
+
+    rendered = render_moodle_handler_diagnostic(
+        BrowserRequestSummary(
+            moodle_handler_resource_counts=(
+                ("MOODLE_HANDLER_OTHER", "FONT", 2),
+                ("MOODLE_YUI_COMBO_HANDLER", "SCRIPT", 2),
+                ("MOODLE_YUI_COMBO_HANDLER", "STYLESHEET", 1),
+            )
+        )
+    )
+
+    assert rendered.splitlines() == [
+        "MOODLE_HANDLER_DIAGNOSTIC",
+        "MOODLE_YUI_COMBO_HANDLER_SCRIPT=2",
+        "MOODLE_YUI_COMBO_HANDLER_STYLESHEET=1",
+        "MOODLE_YUI_COMBO_HANDLER_FONT=0",
+        "MOODLE_YUI_COMBO_HANDLER_IMAGE=0",
+        "MOODLE_YUI_COMBO_HANDLER_OTHER=0",
+        "MOODLE_YUI_COMBO_HANDLER_STATIC_ELIGIBILITY=VALIDATED_STATIC",
+        "MOODLE_HANDLER_OTHER_SCRIPT=0",
+        "MOODLE_HANDLER_OTHER_STYLESHEET=0",
+        "MOODLE_HANDLER_OTHER_FONT=2",
+        "MOODLE_HANDLER_OTHER_IMAGE=0",
+        "MOODLE_HANDLER_OTHER_OTHER=0",
+        "MOODLE_HANDLER_OTHER_STATIC_ELIGIBILITY=AMBIGUOUS",
+        "VALIDATED_STATIC_SCRIPT_DEPENDENCY_COUNT=2",
+        "VALIDATED_STATIC_STYLESHEET_DEPENDENCY_COUNT=1",
+        "AMBIGUOUS_HANDLER_COUNT=2",
+        "HANDLER_CLASSIFICATION_STATUS=STATIC_DEPENDENCIES_IDENTIFIED",
+    ]
+    assert "?" not in rendered
+    assert "http" not in rendered
