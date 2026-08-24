@@ -393,6 +393,60 @@ def test_browser_smoke_cli_renders_only_fixed_failure_stage(
     assert capsys.readouterr().out == "COURSE_DISCOVERY_FAILED\nFAILURE_STAGE=AUTH_PROOF\n"
 
 
+def test_browser_smoke_cli_derives_browser_mode_from_runtime_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aaos.moodle.browser as browser
+    import aaos.moodle.receiver as receiver
+
+    runtime_settings = MoodleSettings("moodle:fixture:bootstrap", _ORIGIN, "api", "fixture")
+    monkeypatch.setattr(
+        receiver,
+        "load_runtime_moodle_configuration",
+        lambda: (object(), runtime_settings, _paths(tmp_path)),
+    )
+    captured: list[MoodleSettings] = []
+
+    def run_smoke(**kwargs: object) -> CourseDiscovery:
+        settings = kwargs["settings"]
+        assert isinstance(settings, MoodleSettings)
+        captured.append(settings)
+        return CourseDiscovery((), is_complete=True)
+
+    monkeypatch.setattr(browser, "_run_same_context_browser_course_smoke", run_smoke)
+
+    assert browser.run_configured_browser_course_smoke() == 0
+    assert captured == [MoodleSettings("moodle:just:browser-smoke", _ORIGIN, "browser", "fixture")]
+
+
+def test_same_context_smoke_accepts_existing_profile_binding_used_by_session_diagnostic(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import _run_same_context_browser_course_smoke
+    from aaos.moodle.browser_models import (
+        ensure_browser_profile_binding,
+        resolve_browser_profile_paths,
+        validate_browser_profile_binding,
+    )
+
+    paths = _paths(tmp_path)
+    settings = _settings()
+    profile = resolve_browser_profile_paths(paths, settings.base_origin)
+    ensure_browser_profile_binding(
+        profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
+    )
+    validate_browser_profile_binding(
+        profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
+    )
+    context = _Context(profile.lock_path)
+
+    result = _run_same_context_browser_course_smoke(
+        settings=settings, paths=paths, launch_persistent_context=lambda **_: context
+    )
+
+    assert isinstance(result, CourseDiscovery)
+
+
 def test_same_context_smoke_returns_only_course_discovery_not_snapshot_or_entities(
     tmp_path: Path,
 ) -> None:

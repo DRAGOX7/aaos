@@ -191,11 +191,16 @@ def _run_same_context_browser_course_smoke(
 
 def run_configured_browser_course_smoke() -> int:
     """Run the separately invoked, memory-only COURSE_INDEX smoke and stop."""
+    from dataclasses import replace
+
     from aaos.moodle.browser_runtime import launch_msedge_persistent_context
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
     try:
-        _config, settings, paths = load_runtime_moodle_configuration()
+        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        settings = replace(
+            runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+        )
         result = _run_same_context_browser_course_smoke(
             settings=settings,
             paths=paths,
