@@ -76,3 +76,26 @@ def test_loading_diagnostic_never_invokes_course_parser(monkeypatch: pytest.Monk
     )
 
     assert diagnostic.render().endswith("DOM_CHANGED_AFTER_LOAD=NO")
+
+
+def test_static_asset_classifier_reports_fixed_classes_without_path_output() -> None:
+    from aaos.moodle.browser_navigation import classify_static_asset_request
+
+    origin = "https://moodle.example.edu"
+    assert (
+        classify_static_asset_request(origin + "/current/theme/styles.php?theme=boost", origin)
+        == "THEME_STYLES"
+    )
+    assert (
+        classify_static_asset_request(origin + "/current/lib/javascript.php", origin)
+        == "MOODLE_CORE_JS"
+    )
+    assert (
+        classify_static_asset_request(origin + "/current/lib/amd/build/core.min.js", origin)
+        == "MOODLE_AMD_JS"
+    )
+    assert (
+        classify_static_asset_request(origin + "/current/pluginfile.php/1/file.pdf", origin)
+        == "PLUGINFILE"
+    )
+    assert classify_static_asset_request(origin + "/current/my/index.php", origin) == "OTHER_MOODLE"

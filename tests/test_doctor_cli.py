@@ -373,3 +373,11 @@ def test_main_dispatches_course_index_loading_diagnostic(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-course-index-loading"])
     assert cli.main() == 0
+
+
+def test_main_dispatches_static_asset_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aaos import cli
+
+    monkeypatch.setattr(cli, "_run_configured_static_asset_diagnostic", lambda: 0, raising=False)
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-static-assets"])
+    assert cli.main() == 0

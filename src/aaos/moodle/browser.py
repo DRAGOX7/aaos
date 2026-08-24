@@ -404,3 +404,56 @@ def run_configured_course_index_loading_diagnostic() -> int:
     print("DIAGNOSTIC_FAILED")
     print("FAILURE_STAGE=NAVIGATION")
     return 1
+
+
+def run_configured_static_asset_diagnostic() -> int:
+    """Run one restricted loading observation and render only static aggregate counts."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        result = _run_same_context_browser_course_smoke(
+            settings=replace(
+                runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+            ),
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            course_index_loading_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("STATIC_ASSET_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    if not isinstance(result, CourseIndexLoadingResult):
+        print("STATIC_ASSET_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=NAVIGATION")
+        return 1
+    print("STATIC_ASSET_DIAGNOSTIC")
+    for route_class, attempted, allowed, blocked in result.requests.static_counts:
+        print(f"{route_class}_ATTEMPTED={attempted}")
+        print(f"{route_class}_ALLOWED={allowed}")
+        print(f"{route_class}_BLOCKED={blocked}")
+    required_static_classes = {
+        "THEME_STYLES",
+        "MOODLE_CORE_JS",
+        "MOODLE_AMD_JS",
+        "THEME_JS",
+        "THEME_IMAGE",
+        "CORE_IMAGE",
+        "FONT",
+        "OTHER_STATIC_SAME_ORIGIN",
+    }
+    blocked_any = any(
+        route_class in required_static_classes and blocked
+        for route_class, _attempted, _allowed, blocked in result.requests.static_counts
+    )
+    print(
+        "STATIC_BOOTSTRAP_STATUS="
+        + ("BLOCKED_REQUIRED_ASSETS" if blocked_any else "NO_REQUIRED_STATIC_BLOCK")
+    )
+    return 0

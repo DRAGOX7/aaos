@@ -37,6 +37,19 @@ RequestResourceType = Literal[
     "DOCUMENT", "SCRIPT", "STYLESHEET", "XHR_FETCH", "IMAGE", "FONT", "OTHER"
 ]
 RequestPolicyResult = Literal["ALLOWED", "BLOCKED"]
+StaticAssetClass = Literal[
+    "THEME_STYLES",
+    "MOODLE_CORE_JS",
+    "MOODLE_AMD_JS",
+    "THEME_JS",
+    "THEME_IMAGE",
+    "CORE_IMAGE",
+    "FONT",
+    "OTHER_STATIC_SAME_ORIGIN",
+    "PLUGINFILE",
+    "OTHER_MOODLE",
+    "OTHER_ORIGIN",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +86,7 @@ class BrowserRequestSummary:
     moodle_ajax_service_count: int = 0
     blocked_post_moodle_ajax_service_count: int = 0
     allowed_static_request_count: int = 0
+    static_counts: tuple[tuple[StaticAssetClass, int, int, int], ...] = ()
 
 
 class _RequestObserver:
@@ -81,6 +95,7 @@ class _RequestObserver:
         self._moodle_ajax_service_count = 0
         self._blocked_post_moodle_ajax_service_count = 0
         self._allowed_static_request_count = 0
+        self._static_counts: dict[StaticAssetClass, list[int]] = {}
 
     def record(self, observation: BrowserRequestObservation) -> None:
         if observation.origin == "MOODLE_SAME_ORIGIN" and observation.resource_type == "XHR_FETCH":
@@ -96,12 +111,23 @@ class _RequestObserver:
         if observation.route == "STATIC_ASSET" and observation.policy_result == "ALLOWED":
             self._allowed_static_request_count += 1
 
+    def record_static(
+        self, static_class: StaticAssetClass, policy_result: RequestPolicyResult
+    ) -> None:
+        counts = self._static_counts.setdefault(static_class, [0, 0, 0])
+        counts[0] += 1
+        counts[1 if policy_result == "ALLOWED" else 2] += 1
+
     def snapshot(self) -> BrowserRequestSummary:
         return BrowserRequestSummary(
             same_origin_xhr_fetch_count=self._same_origin_xhr_fetch_count,
             moodle_ajax_service_count=self._moodle_ajax_service_count,
             blocked_post_moodle_ajax_service_count=self._blocked_post_moodle_ajax_service_count,
             allowed_static_request_count=self._allowed_static_request_count,
+            static_counts=tuple(
+                (key, values[0], values[1], values[2])
+                for key, values in sorted(self._static_counts.items())
+            ),
         )
 
 
@@ -206,10 +232,12 @@ class PlaywrightRestrictedNavigator:
         self._transition_sentinel = None
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
-        self._request_observer.record(
-            classify_request_observation(
-                request.method, request.url, request.resource_type, base_origin=self._base_origin
-            )
+        observation = classify_request_observation(
+            request.method, request.url, request.resource_type, base_origin=self._base_origin
+        )
+        self._request_observer.record(observation)
+        self._request_observer.record_static(
+            classify_static_asset_request(request.url, self._base_origin), observation.policy_result
         )
         if (
             classify_browser_request(
@@ -356,6 +384,39 @@ def classify_request_observation(
         resource_type=resource_class,
         policy_result=policy_result,
     )
+
+
+def classify_static_asset_request(url: object, base_origin: str) -> StaticAssetClass:
+    """Classify only fixed Moodle infrastructure route families without approving them."""
+    if not isinstance(url, str):
+        return "OTHER_ORIGIN"
+    try:
+        target = urlsplit(url)
+        base = urlsplit(base_origin)
+    except ValueError:
+        return "OTHER_ORIGIN"
+    if f"{target.scheme}://{target.netloc}" != f"{base.scheme}://{base.netloc}":
+        return "OTHER_ORIGIN"
+    path = target.path
+    if path == "/current/theme/styles.php":
+        return "THEME_STYLES"
+    if path == "/current/lib/javascript.php":
+        return "MOODLE_CORE_JS"
+    if path.startswith("/current/lib/amd/") and path.endswith(".js"):
+        return "MOODLE_AMD_JS"
+    if path.startswith("/current/theme/") and path.endswith(".js"):
+        return "THEME_JS"
+    if path.startswith("/current/theme/") and path.endswith((".png", ".svg", ".jpg", ".webp")):
+        return "THEME_IMAGE"
+    if path.startswith("/current/pix/"):
+        return "CORE_IMAGE"
+    if path.endswith((".woff", ".woff2", ".ttf")):
+        return "FONT"
+    if path.startswith("/current/pluginfile.php"):
+        return "PLUGINFILE"
+    if path.endswith((".css", ".js", ".png", ".svg", ".jpg", ".webp")):
+        return "OTHER_STATIC_SAME_ORIGIN"
+    return "OTHER_MOODLE"
 
 
 def classify_redirect(url: object, base_origin: str) -> RedirectClass:
