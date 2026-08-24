@@ -401,3 +401,14 @@ def test_main_dispatches_moodle_handler_diagnostic(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-moodle-handlers"])
 
     assert cli.main() == 0
+
+
+def test_main_dispatches_final_bootstrap_script_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aaos import cli
+
+    monkeypatch.setattr(
+        cli, "_run_configured_final_bootstrap_script_diagnostic", lambda: 0, raising=False
+    )
+    monkeypatch.setattr(sys, "argv", ["aaos", "moodle", "diagnose-final-bootstrap-script"])
+
+    assert cli.main() == 0

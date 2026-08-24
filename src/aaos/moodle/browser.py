@@ -614,6 +614,23 @@ def render_moodle_handler_diagnostic(requests: BrowserRequestSummary) -> str:
     return "\n".join(lines)
 
 
+def render_final_bootstrap_script_diagnostic(requests: BrowserRequestSummary) -> str:
+    """Render the only unresolved Moodle-handler script without request details."""
+    ambiguous_script_count = sum(
+        count
+        for handler_class, resource_type, count in requests.moodle_handler_resource_counts
+        if handler_class == "MOODLE_HANDLER_OTHER" and resource_type == "SCRIPT"
+    )
+    return "\n".join(
+        (
+            "FINAL_BOOTSTRAP_SCRIPT_DIAGNOSTIC",
+            f"AMBIGUOUS_SCRIPT_COUNT={ambiguous_script_count}",
+            "SCRIPT_HANDLER_CLASS=MOODLE_HANDLER_OTHER",
+            "STATIC_ELIGIBILITY=AMBIGUOUS",
+        )
+    )
+
+
 def run_configured_moodle_handler_diagnostic() -> int:
     """Run the restricted observation and render only fixed handler classifications."""
     from dataclasses import replace
@@ -643,4 +660,36 @@ def run_configured_moodle_handler_diagnostic() -> int:
         print("FAILURE_STAGE=NAVIGATION")
         return 1
     print(render_moodle_handler_diagnostic(result.requests))
+    return 0
+
+
+def run_configured_final_bootstrap_script_diagnostic() -> int:
+    """Observe only the unresolved Moodle-handler script with fixed safe output."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
+        result = _run_same_context_browser_course_smoke(
+            settings=replace(
+                runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+            ),
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
+            course_index_loading_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("FINAL_BOOTSTRAP_SCRIPT_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    if not isinstance(result, CourseIndexLoadingResult):
+        print("FINAL_BOOTSTRAP_SCRIPT_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=NAVIGATION")
+        return 1
+    print(render_final_bootstrap_script_diagnostic(result.requests))
     return 0

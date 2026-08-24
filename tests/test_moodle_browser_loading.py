@@ -403,3 +403,46 @@ def test_moodle_handler_rendering_exposes_fixed_counts_and_eligibility_only() ->
     ]
     assert "?" not in rendered
     assert "http" not in rendered
+
+
+def test_final_bootstrap_script_diagnostic_reports_only_the_unresolved_handler_script() -> None:
+    from aaos.moodle.browser import render_final_bootstrap_script_diagnostic
+    from aaos.moodle.browser_navigation import BrowserRequestSummary
+
+    rendered = render_final_bootstrap_script_diagnostic(
+        BrowserRequestSummary(
+            moodle_handler_resource_counts=(
+                ("MOODLE_HANDLER_OTHER", "FONT", 2),
+                ("MOODLE_HANDLER_OTHER", "SCRIPT", 1),
+                ("MOODLE_YUI_COMBO_HANDLER", "SCRIPT", 1),
+            )
+        )
+    )
+
+    assert rendered.splitlines() == [
+        "FINAL_BOOTSTRAP_SCRIPT_DIAGNOSTIC",
+        "AMBIGUOUS_SCRIPT_COUNT=1",
+        "SCRIPT_HANDLER_CLASS=MOODLE_HANDLER_OTHER",
+        "STATIC_ELIGIBILITY=AMBIGUOUS",
+    ]
+    assert "?" not in rendered
+    assert "http" not in rendered
+    assert "FONT" not in rendered
+
+
+def test_final_bootstrap_script_diagnostic_does_not_promote_unexpected_handler_counts() -> None:
+    from aaos.moodle.browser import render_final_bootstrap_script_diagnostic
+    from aaos.moodle.browser_navigation import BrowserRequestSummary
+
+    rendered = render_final_bootstrap_script_diagnostic(
+        BrowserRequestSummary(
+            moodle_handler_resource_counts=(("MOODLE_HANDLER_OTHER", "SCRIPT", 2),)
+        )
+    )
+
+    assert rendered.splitlines() == [
+        "FINAL_BOOTSTRAP_SCRIPT_DIAGNOSTIC",
+        "AMBIGUOUS_SCRIPT_COUNT=2",
+        "SCRIPT_HANDLER_CLASS=MOODLE_HANDLER_OTHER",
+        "STATIC_ELIGIBILITY=AMBIGUOUS",
+    ]
