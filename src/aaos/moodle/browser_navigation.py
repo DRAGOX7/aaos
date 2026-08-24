@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
+
 from aaos.moodle.browser_models import BrowserPolicyError, BrowserRoute
 from aaos.moodle.browser_policy import build_browser_url, classify_browser_request
 
@@ -120,7 +122,7 @@ class PlaywrightRestrictedNavigator:
         target = build_browser_url(route, base_origin=self._base_origin, identifier=identifier)
         try:
             page = self._context.new_page()
-        except (OSError, ValueError, TypeError):
+        except (OSError, PlaywrightError, ValueError, TypeError):
             self._failure_stage = "COLLECTION_PAGE_CREATE"
             raise BrowserPolicyError() from None
         try:

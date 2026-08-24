@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal, TypeAlias, cast
 
+from playwright.sync_api import Error as PlaywrightError
+
 from aaos.academic.source import RawCourse, SourceCollectionFailure
 from aaos.moodle.browser_models import (
     BrowserPolicyError,
@@ -184,7 +186,7 @@ def _run_same_context_browser_course_smoke(
         finally:
             try:
                 getattr(context, "close")()
-            except (AttributeError, OSError, TypeError, ValueError):
+            except (AttributeError, OSError, PlaywrightError, TypeError, ValueError):
                 if not operation_failed:
                     raise BrowserSmokeFailure("CLEANUP") from None
 

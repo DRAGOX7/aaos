@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 
 def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_requests() -> None:
@@ -72,3 +75,25 @@ def test_redirect_classifier_returns_only_fixed_structural_categories() -> None:
         == "COURSE_INDEX_VARIANT"
     )
     assert classify_redirect("https://login.microsoftonline.com/login", origin) == "SSO_EXTERNAL"
+
+
+def test_navigator_classifies_playwright_collection_page_creation_failure() -> None:
+    from aaos.moodle.browser_models import BrowserPolicyError
+    from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
+
+    class Context:
+        def route(self, _pattern: str, _handler: object) -> None:
+            return None
+
+        def new_page(self) -> Any:
+            raise PlaywrightError("redacted")
+
+        def close(self) -> None:
+            return None
+
+    navigator = PlaywrightRestrictedNavigator(Context(), "https://moodle.example.edu")
+
+    with pytest.raises(BrowserPolicyError):
+        navigator.open("COURSE_INDEX")
+
+    assert navigator.failure_stage == "COLLECTION_PAGE_CREATE"

@@ -8,6 +8,7 @@ from typing import Any, Iterator, cast
 
 import pytest
 import trustme
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 from aaos.moodle.browser import MoodleBrowserSource
@@ -96,3 +97,29 @@ def test_production_modules_do_not_import_test_tls_or_disable_tls_validation() -
     )
     assert "trustme" not in production
     assert "ignore_https_errors" not in production
+
+
+def test_real_msedge_zero_page_context_rejects_fresh_page(tmp_path: Path) -> None:
+    """Record the local headed persistent-context lifecycle contradiction safely."""
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            str(tmp_path / "zero-page-profile"),
+            channel="msedge",
+            headless=False,
+            accept_downloads=False,
+            service_workers="block",
+        )
+        try:
+            pages = list(context.pages)
+            if not pages:
+                pages = [context.new_page()]
+            for page in pages:
+                page.close()
+            assert context.pages == []
+            with pytest.raises(PlaywrightError):
+                context.new_page()
+        finally:
+            try:
+                context.close()
+            except PlaywrightError:
+                pass

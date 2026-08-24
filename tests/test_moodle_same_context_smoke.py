@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from aaos.academic.source import SourceCollectionFailure
 from aaos.moodle.collection import CourseDiscovery
@@ -287,6 +288,34 @@ def test_same_context_smoke_classifies_collection_page_creation_failure(tmp_path
     context = _CollectionCreationFailureContext(
         paths.browser_state_dir / ".playwright-edge-profile.lock"
     )
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "COLLECTION_PAGE_CREATE"
+
+
+def test_same_context_smoke_preserves_collection_page_failure_when_context_is_closed(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _ClosedContext(_Context):
+        def new_page(self) -> _Page:
+            if self.interception_installed:
+                raise PlaywrightError("redacted")
+            return super().new_page()
+
+        def close(self) -> None:
+            super().close()
+            raise PlaywrightError("redacted")
+
+    paths = _paths(tmp_path)
+    context = _ClosedContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
     with pytest.raises(BrowserSmokeFailure) as failure:
         _run_same_context_browser_course_smoke(
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
