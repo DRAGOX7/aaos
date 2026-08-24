@@ -58,12 +58,7 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                     "<script src='/current/theme/yui_combo.php?fixture=private'></script>"
                     "<link rel='stylesheet' href='/current/theme/yui_combo.php?fixture=private'>"
                     "<link rel='stylesheet' href='/current/theme/unapproved.css'>"
-                    "<script>window.require=function(_deps, ready){ready({call:function(requests){"
-                    "return [fetch('/current/lib/ajax/service.php?sesskey=opaque&"
-                    "info=core_course_get_enrolled_courses_by_timeline_classification&"
-                    "nosessionupdate=true',{method:'POST',headers:{'Content-Type':'application/json'},"
-                    "body:JSON.stringify(requests.map(function(item,index){return Object.assign({index:index},item)}))}).then(function(r){return r.json()})."
-                    "then(function(items){return items[0].data})]}})}</script>"
+                    "<script>window.M={cfg:{sesskey:'fixture-session-key'}};</script>"
                     f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
                     "Synthetic</a><nav data-pagination-pages='0' "
                     "data-pagination-exhausted='true'></nav>"
@@ -77,6 +72,8 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
 
         def do_POST(self) -> None:  # noqa: N802
             served_paths.add(self.path.split("?", maxsplit=1)[0])
+            if "X-AAOS-Request-Provenance" in self.headers:
+                served_paths.add("AAOS_PROVENANCE_HEADER_RECEIVED")
             if not self.path.startswith("/current/lib/ajax/service.php?"):
                 self.send_response(404)
                 self.end_headers()
@@ -195,6 +192,7 @@ def test_real_msedge_executes_only_the_fixed_session_bound_ajax_bridge(
             context.close()
     assert result == tuple(range(1, 102))
     assert "/current/lib/ajax/service.php" in served_paths
+    assert "AAOS_PROVENANCE_HEADER_RECEIVED" not in served_paths
 
 
 def test_real_msedge_transition_sentinel_keeps_context_usable(tmp_path: Path) -> None:

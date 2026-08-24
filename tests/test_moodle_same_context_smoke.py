@@ -59,25 +59,23 @@ class _Page:
         assert self._kind == "collection"
         assert "core_course_get_enrolled_courses_by_timeline_classification" in expression
         offset = arg["offset"] if isinstance(arg, dict) else None
-        body = (
-            '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
-            '"args":{"classification":"allincludinghidden","limit":100,"offset":'
-            + str(offset)
-            + ',"requiredfields":["id"]}}]'
-        )
+        assert isinstance(arg, dict)
+        assert set(arg) == {"offset", "canonicalWwwroot", "provenanceNonce"}
+        assert arg["canonicalWwwroot"] == "https://moodle.example.edu/current"
+        assert isinstance(arg["provenanceNonce"], str)
+        self._context.provenance_nonces.append(arg["provenanceNonce"])
+        if self._context.bridge_failure is not None:
+            return {"bridge_failure": self._context.bridge_failure}
+        if self._context.inject_unrelated_ajax_race:
+            self._context.request_handler(
+                _Route(self._context),
+                _Request("unrelated-provenance"),
+            )
         self._context.request_handler(
-            SimpleNamespace(continue_=lambda: None, abort=lambda: None),
-            SimpleNamespace(
-                method="POST",
-                url=(
-                    "https://moodle.example.edu/current/lib/ajax/service.php?"
-                    "sesskey=opaque&info=core_course_get_enrolled_courses_by_timeline_classification&"
-                    "nosessionupdate=true"
-                ),
-                resource_type="xhr",
-                post_data=body,
-            ),
+            _Route(self._context),
+            _Request(arg["provenanceNonce"]),
         )
+        self._context.ajax_request_count += 1
         response_handler = self._handlers.get("response")
         if callable(response_handler):
             response_handler(
@@ -86,9 +84,9 @@ class _Page:
                     url="https://moodle.example.edu/current/lib/ajax/service.php",
                 )
             )
-        if arg == {"offset": 0}:
+        if offset == 0:
             return {"course_ids": [42], "next_offset": 1}
-        assert arg == {"offset": 1}
+        assert offset == 1
         return {"course_ids": [], "next_offset": 1}
 
     def close(self) -> None:
@@ -105,6 +103,12 @@ class _Context:
         self.calls: list[str] = []
         self.interception_installed = False
         self.ajax_response_status = 200
+        self.bridge_failure: str | None = None
+        self.ajax_request_count = 0
+        self.provenance_nonces: list[str] = []
+        self.inject_unrelated_ajax_race = False
+        self.aborted_requests = 0
+        self.forwarded_headers: list[dict[str, str]] = []
         self.request_handler: Callable[[object, object], None] = lambda *_args: None
         self.closed_with_lock = False
 
@@ -133,6 +137,27 @@ class _Context:
         self.closed_with_lock = self._lock_path.exists()
         self.calls.append("context-close")
         self.pages.clear()
+
+
+class _Route:
+    def __init__(self, context: _Context) -> None:
+        self._context = context
+
+    def abort(self) -> None:
+        self._context.aborted_requests += 1
+
+    def continue_(self, *, headers: dict[str, str] | None = None) -> None:
+        self._context.forwarded_headers.append(headers or {})
+
+
+class _Request:
+    method = "POST"
+    url = "https://moodle.example.edu/current/lib/ajax/service.php"
+    resource_type = "xhr"
+    post_data = None
+
+    def __init__(self, provenance_nonce: object) -> None:
+        self.headers = {"x-aaos-request-provenance": provenance_nonce}
 
 
 def _settings() -> MoodleSettings:
@@ -168,6 +193,8 @@ def test_same_context_smoke_authenticates_then_collects_after_page_transition(
     assert context.closed_with_lock is True
     assert context.calls[-1] == "context-close"
     assert lock_path.exists() is False
+    assert len(context.provenance_nonces) == 2
+    assert len(set(context.provenance_nonces)) == 2
 
 
 def test_same_context_smoke_fails_closed_on_ajax_redirect(tmp_path: Path) -> None:
@@ -184,6 +211,45 @@ def test_same_context_smoke_fails_closed_on_ajax_redirect(tmp_path: Path) -> Non
 
     assert failure.value.stage == "SESSION_READ"
     assert "collection-response" in context.calls
+
+
+def test_same_context_smoke_rejects_racing_ajax_without_consuming_bridge_permit(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import _run_same_context_browser_course_smoke
+
+    paths = _paths(tmp_path)
+    context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    context.inject_unrelated_ajax_race = True
+
+    result = _run_same_context_browser_course_smoke(
+        settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+    )
+
+    assert isinstance(result, SessionCourseReadResult)
+    assert result.course_ids == (42,)
+    assert context.aborted_requests == 2
+    assert len(context.forwarded_headers) == 2
+    assert all("x-aaos-request-provenance" not in headers for headers in context.forwarded_headers)
+
+
+def test_same_context_smoke_fails_closed_when_browser_session_key_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import BrowserSmokeFailure, _run_same_context_browser_course_smoke
+
+    paths = _paths(tmp_path)
+    context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    context.bridge_failure = "SESSION_KEY_UNAVAILABLE"
+
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "SESSION_READ"
+    assert "collection-evaluate" in context.calls
+    assert context.ajax_request_count == 0
 
 
 def test_same_context_smoke_closes_auth_popups_before_installing_interception(

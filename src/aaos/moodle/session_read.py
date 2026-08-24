@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
+import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
@@ -15,19 +18,58 @@ _MAX_COURSES = 10_000
 _MAX_RESPONSE_BYTES = 16_384
 _OPERATION_NAME = "core_course_get_enrolled_courses_by_timeline_classification"
 _AJAX_TIMEOUT_MS = 15_000
-_FIXED_BRIDGE_SCRIPT = """async ({offset}) => new Promise((resolve) => {
-require(['core/ajax'], function(Ajax) {
-  if (!Ajax || typeof Ajax.call !== 'function') { resolve({bridge_failure: 'MODULE_LOAD_FAILED'}); return; }
-  Ajax.call([{methodname: 'core_course_get_enrolled_courses_by_timeline_classification', args: {
-    classification: 'allincludinghidden', limit: 100, offset: offset, requiredfields: ['id']
-  }}], true, true, true, 15000)[0].then(function(data) {
-    if (!data || !Array.isArray(data.courses) || !Number.isInteger(data.nextoffset)) { resolve({bridge_failure: 'MALFORMED'}); return; }
-    const ids = [];
-    for (const course of data.courses) { if (!course || !Number.isInteger(course.id)) { resolve({bridge_failure: 'MALFORMED'}); return; } ids.push(course.id); }
-    resolve({course_ids: ids, next_offset: data.nextoffset});
-  }, function() { resolve({bridge_failure: 'MOODLE_ERROR'}); });
-}, function() { resolve({bridge_failure: 'MODULE_LOAD_FAILED'}); });
-})"""
+_PROVENANCE_HEADER = "X-AAOS-Request-Provenance"
+_FIXED_BRIDGE_SCRIPT = """async ({offset, canonicalWwwroot, provenanceNonce}) => {
+const config = globalThis.M && globalThis.M.cfg;
+const sesskey = config && typeof config.sesskey === 'string' ? config.sesskey : null;
+if (!sesskey) { return {bridge_failure: 'SESSION_KEY_UNAVAILABLE'}; }
+let endpoint;
+try { endpoint = new URL('lib/ajax/service.php', canonicalWwwroot + '/'); }
+catch (_error) { return {bridge_failure: 'TRANSPORT_FAILED'}; }
+const query = new URLSearchParams({
+  sesskey: sesskey,
+  info: 'core_course_get_enrolled_courses_by_timeline_classification',
+  nosessionupdate: 'true'
+});
+let response;
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 15000);
+try {
+  response = await fetch(endpoint.toString() + '?' + query.toString(), {
+    method: 'POST', credentials: 'same-origin', redirect: 'error',
+    signal: controller.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-AAOS-Request-Provenance': provenanceNonce
+    },
+    body: JSON.stringify([{index: 0, methodname: 'core_course_get_enrolled_courses_by_timeline_classification', args: {
+      classification: 'allincludinghidden', limit: 100, offset: offset, requiredfields: ['id']
+    }}])
+  });
+} catch (_error) { return {bridge_failure: 'TRANSPORT_FAILED'}; }
+finally { clearTimeout(timeoutId); }
+if (!response.ok) { return {bridge_failure: 'MOODLE_ERROR'}; }
+let payload;
+try { payload = await response.json(); }
+catch (_error) { return {bridge_failure: 'MALFORMED'}; }
+if (!Array.isArray(payload) || payload.length !== 1 || !payload[0] || typeof payload[0] !== 'object') {
+  return {bridge_failure: 'MALFORMED'};
+}
+const item = payload[0];
+if (item.error === true || item.exception) { return {bridge_failure: 'MOODLE_ERROR'}; }
+const data = item.data;
+if (!data || !Array.isArray(data.courses) || !Number.isInteger(data.nextoffset)) {
+  return {bridge_failure: 'MALFORMED'};
+}
+const ids = [];
+for (const course of data.courses) {
+  if (!course || !Number.isInteger(course.id) || course.id <= 0) {
+    return {bridge_failure: 'MALFORMED'};
+  }
+  ids.push(course.id);
+}
+return {course_ids: ids, next_offset: data.nextoffset};
+}"""
 
 
 class SessionReadPolicyError(RuntimeError):
@@ -98,7 +140,7 @@ def authorize_session_read_operation(operation: object) -> None:
 class _OneShotMoodleAjaxPermit:
     """Authorize exactly one fixed Moodle AJAX request for one validated offset."""
 
-    def __init__(self, canonical_wwwroot: str) -> None:
+    def __init__(self, canonical_wwwroot: str, provenance_nonce: str) -> None:
         parsed = urlsplit(canonical_wwwroot)
         if (
             parsed.scheme != "https"
@@ -108,9 +150,11 @@ class _OneShotMoodleAjaxPermit:
             or parsed.fragment
             or parsed.username
             or parsed.password
+            or not provenance_nonce
         ):
             raise SessionReadPolicyError()
         self._canonical_wwwroot = canonical_wwwroot.rstrip("/")
+        self._provenance_nonce: str | None = provenance_nonce
         self._expected_offset: int | None = None
 
     def arm(self, offset: int) -> None:
@@ -118,12 +162,18 @@ class _OneShotMoodleAjaxPermit:
             raise SessionReadPolicyError()
         self._expected_offset = offset
 
-    def consume(self, method: object, url: object) -> None:
-        if self._expected_offset is None:
+    def consume(self, method: object, url: object, headers: object) -> dict[str, str]:
+        nonce = self._provenance_nonce
+        if self._expected_offset is None or nonce is None:
             raise SessionReadPolicyError()
         if method != "POST" or not _is_canonical_ajax_endpoint(url, self._canonical_wwwroot):
             raise SessionReadPolicyError()
+        received_nonce, forwarded_headers = _extract_and_strip_provenance_header(headers)
+        if received_nonce is None or not hmac.compare_digest(received_nonce, nonce):
+            raise SessionReadPolicyError()
         self._expected_offset = None
+        self._provenance_nonce = None
+        return forwarded_headers
 
     @property
     def consumed(self) -> bool:
@@ -134,7 +184,7 @@ class _OneShotMoodleAjaxPermit:
 class _Route(Protocol):
     def abort(self) -> None: ...
 
-    def continue_(self) -> None: ...
+    def continue_(self, *, headers: dict[str, str] | None = None) -> None: ...
 
 
 class _Request(Protocol):
@@ -142,6 +192,7 @@ class _Request(Protocol):
     url: str
     resource_type: str
     post_data: str | None
+    headers: dict[str, str]
 
 
 class _Response(Protocol):
@@ -245,7 +296,8 @@ class _SessionBoundMoodleCourseRead:
                 raise SessionReadPolicyError()
 
             def fetch(offset: int) -> object:
-                permit = _OneShotMoodleAjaxPermit(self._canonical_wwwroot)
+                provenance_nonce = secrets.token_urlsafe(32)
+                permit = _OneShotMoodleAjaxPermit(self._canonical_wwwroot, provenance_nonce)
                 permit.arm(offset)
                 self._permit = permit
                 self._diagnostic = replace(
@@ -255,7 +307,14 @@ class _SessionBoundMoodleCourseRead:
                     ajax_response_stage="TRANSPORT_FAILED",
                 )
                 try:
-                    result = page.evaluate(_FIXED_BRIDGE_SCRIPT, {"offset": offset})
+                    result = page.evaluate(
+                        _FIXED_BRIDGE_SCRIPT,
+                        {
+                            "offset": offset,
+                            "canonicalWwwroot": self._canonical_wwwroot,
+                            "provenanceNonce": provenance_nonce,
+                        },
+                    )
                 except TimeoutError:
                     self._diagnostic = replace(
                         self._diagnostic, bridge_stage="TIMEOUT", root_cause="TIMEOUT"
@@ -266,25 +325,32 @@ class _SessionBoundMoodleCourseRead:
                 if self._policy_failed:
                     raise SessionReadPolicyError()
                 if isinstance(result, dict) and result.get("bridge_failure") in {
-                    "MODULE_LOAD_FAILED",
                     "MALFORMED",
                     "MOODLE_ERROR",
+                    "SESSION_KEY_UNAVAILABLE",
+                    "TRANSPORT_FAILED",
                 }:
                     if self._diagnostic.ajax_permit_stage == "REQUEST_REJECTED":
                         raise SessionReadPolicyError()
                     failure = result["bridge_failure"]
-                    if failure == "MODULE_LOAD_FAILED":
+                    if failure == "SESSION_KEY_UNAVAILABLE":
                         self._diagnostic = replace(
                             self._diagnostic,
-                            bridge_stage="MODULE_LOAD_FAILED",
+                            bridge_stage="SESSION_KEY_UNAVAILABLE",
                             ajax_response_stage="NOT_REACHED",
-                            root_cause="MODULE_LOAD_FAILED",
+                            root_cause="SESSION_KEY_UNAVAILABLE",
                         )
                     elif failure == "MOODLE_ERROR":
                         self._diagnostic = replace(
                             self._diagnostic,
                             ajax_response_stage="MOODLE_ERROR",
                             root_cause="MOODLE_ERROR",
+                        )
+                    elif failure == "TRANSPORT_FAILED":
+                        self._diagnostic = replace(
+                            self._diagnostic,
+                            ajax_response_stage="TRANSPORT_FAILED",
+                            root_cause="TRANSPORT_FAILED",
                         )
                     else:
                         self._diagnostic = replace(
@@ -316,6 +382,7 @@ class _SessionBoundMoodleCourseRead:
         except BrowserPolicyError:
             raise SessionReadPolicyError() from None
         finally:
+            self._permit = None
             if page is not None:
                 try:
                     page.close()
@@ -332,18 +399,18 @@ class _SessionBoundMoodleCourseRead:
             try:
                 if permit is None:
                     raise SessionReadPolicyError()
-                permit.consume(request.method, request.url)
-                self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
-                route.continue_()
-                return
-            except SessionReadPolicyError:
-                rejection = _safe_ajax_rejection_reason(
+                forwarded_headers = permit.consume(
                     request.method,
                     request.url,
-                    self._canonical_wwwroot,
-                    permit,
+                    getattr(request, "headers", None),
                 )
-                self._reject_request(route, request, rejection)
+                self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
+                route.continue_(headers=forwarded_headers)
+                return
+            except SessionReadPolicyError:
+                # An unrelated same-origin request may race the private bridge.
+                # Reject it without consuming or invalidating the active permit.
+                route.abort()
                 return
         self._apply_general_policy(route, request)
 
@@ -361,29 +428,6 @@ class _SessionBoundMoodleCourseRead:
                 root_cause="OTHER_POLICY_REJECTION",
             )
             self._policy_failed = True
-
-    def _reject_request(self, route: _Route, request: _Request, rejection: str) -> None:
-        from aaos.moodle.browser_policy import classify_browser_request
-
-        decision = classify_browser_request(
-            request.method,
-            request.url,
-            base_origin=self._base_origin,
-            canonical_wwwroot=self._canonical_wwwroot,
-            resource_type=request.resource_type,
-            has_body=getattr(request, "post_data", None) is not None,
-        )
-        if decision.code != "ALLOW":
-            self._diagnostic = replace(
-                self._diagnostic,
-                ajax_permit_stage="REQUEST_REJECTED",
-                ajax_permit_rejection_reason=rejection,
-                root_cause=rejection,
-            )
-            self._policy_failed = True
-            route.abort()
-            return
-        route.continue_()
 
     def _apply_general_policy(self, route: _Route, request: _Request) -> None:
         from aaos.moodle.browser_policy import classify_browser_request
@@ -469,29 +513,22 @@ def _is_canonical_ajax_endpoint(url: object, canonical_wwwroot: str) -> bool:
     )
 
 
-def _safe_ajax_rejection_reason(
-    method: object,
-    url: object,
-    canonical_wwwroot: str,
-    permit: _OneShotMoodleAjaxPermit | None,
-) -> str:
-    """Classify a rejected request structurally without returning inspected values."""
-    if permit is None or permit.consumed:
-        return "PERMIT_ALREADY_CONSUMED"
-    if method != "POST":
-        return "WRONG_METHOD"
-    if not isinstance(url, str):
-        return "OTHER_POLICY_REJECTION"
-    try:
-        target = urlsplit(url)
-        base = urlsplit(canonical_wwwroot)
-    except ValueError:
-        return "OTHER_POLICY_REJECTION"
-    if target.scheme != base.scheme or target.netloc != base.netloc:
-        return "WRONG_ORIGIN"
-    if target.path != base.path.rstrip("/") + "/lib/ajax/service.php":
-        return "WRONG_PATH"
-    return "OTHER_POLICY_REJECTION"
+def _extract_and_strip_provenance_header(headers: object) -> tuple[str | None, dict[str, str]]:
+    """Return one matching nonce and a forwarding map with that header removed."""
+    if not isinstance(headers, Mapping):
+        raise SessionReadPolicyError()
+    nonce_values: list[str] = []
+    forwarded: dict[str, str] = {}
+    for key, value in headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise SessionReadPolicyError()
+        if key.casefold() == _PROVENANCE_HEADER.casefold():
+            nonce_values.append(value)
+        else:
+            forwarded[key] = value
+    if len(nonce_values) != 1:
+        return None, forwarded
+    return nonce_values[0], forwarded
 
 
 def _validate_reduced_response(response: object) -> tuple[tuple[int, ...], int]:

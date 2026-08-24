@@ -52,28 +52,77 @@ def test_only_the_canonical_operation_specification_is_accepted() -> None:
         )
 
 
+def test_fixed_bridge_uses_direct_fetch_without_moodle_core_ajax() -> None:
+    from aaos.moodle.session_read import _FIXED_BRIDGE_SCRIPT
+
+    assert "fetch(" in _FIXED_BRIDGE_SCRIPT
+    assert "core/ajax" not in _FIXED_BRIDGE_SCRIPT
+    assert "require([" not in _FIXED_BRIDGE_SCRIPT
+    assert "AbortController" in _FIXED_BRIDGE_SCRIPT
+    assert "15000" in _FIXED_BRIDGE_SCRIPT
+    assert "course_ids" in _FIXED_BRIDGE_SCRIPT
+    assert "next_offset" in _FIXED_BRIDGE_SCRIPT
+
+
 def test_ajax_permit_accepts_only_one_canonical_post_request() -> None:
     from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
-    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    nonce = "test-provenance-nonce-a"
+    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", nonce)
     permit.arm(0)
     request_url = (
         "https://moodle.example.edu/current/lib/ajax/service.php?"
         "sesskey=private&info=core_course_get_enrolled_courses_by_timeline_classification&"
         "nosessionupdate=true"
     )
-    permit.consume("POST", request_url)
+    permit.consume("POST", request_url, {"x-aaos-request-provenance": nonce})
     with pytest.raises(SessionReadPolicyError):
-        permit.consume("POST", request_url)
+        permit.consume("POST", request_url, {"x-aaos-request-provenance": nonce})
 
 
 def test_ajax_permit_does_not_authorize_wrong_origin_path_or_method() -> None:
     from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
-    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    permit = _OneShotMoodleAjaxPermit(
+        "https://moodle.example.edu/current", "test-provenance-nonce-b"
+    )
     permit.arm(0)
     with pytest.raises(SessionReadPolicyError):
-        permit.consume("GET", "https://moodle.example.edu/current/lib/ajax/service.php")
+        permit.consume(
+            "GET",
+            "https://moodle.example.edu/current/lib/ajax/service.php",
+            {"x-aaos-request-provenance": "test-provenance-nonce-b"},
+        )
+
+
+def test_ajax_permit_rejects_missing_and_wrong_nonce_without_consuming() -> None:
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
+
+    nonce = "test-provenance-nonce-c"
+    url = "https://moodle.example.edu/current/lib/ajax/service.php"
+    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", nonce)
+    permit.arm(0)
+
+    with pytest.raises(SessionReadPolicyError):
+        permit.consume("POST", url, {})
+    with pytest.raises(SessionReadPolicyError):
+        permit.consume("POST", url, {"x-aaos-request-provenance": "wrong"})
+
+    permit.consume("POST", url, {"X-AAOS-Request-Provenance": nonce})
+    assert permit.consumed is True
+
+
+def test_ajax_permit_nonce_is_ephemeral_and_never_rendered() -> None:
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
+
+    nonce = "test-provenance-never-render"
+    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", nonce)
+    permit.arm(0)
+
+    assert nonce not in repr(permit)
+    with pytest.raises(SessionReadPolicyError) as failure:
+        permit.consume("POST", "https://moodle.example.edu/current/lib/ajax/service.php", {})
+    assert nonce not in str(failure.value)
 
 
 def test_reduced_response_schema_and_pagination_are_strict_and_bounded() -> None:
@@ -118,10 +167,11 @@ def test_permit_rejects_wrong_origin_and_path_without_inspecting_wire_format() -
         "https://moodle.example.edu/currentevil/lib/ajax/service.php",
     )
     for url in bad_requests:
-        permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+        nonce = "test-provenance-bad-target"
+        permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", nonce)
         permit.arm(0)
         with pytest.raises(SessionReadPolicyError):
-            permit.consume("POST", url)
+            permit.consume("POST", url, {"x-aaos-request-provenance": nonce})
 
 
 def test_consumed_permit_remains_one_shot_while_a_fresh_permit_accepts_next_offset() -> None:
@@ -133,17 +183,21 @@ def test_consumed_permit_remains_one_shot_while_a_fresh_permit_accepts_next_offs
         "nosessionupdate=true"
     )
 
-    first = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    first_nonce = "test-provenance-first"
+    second_nonce = "test-provenance-second"
+    first = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", first_nonce)
     first.arm(0)
-    first.consume("POST", url)
+    first.consume("POST", url, {"x-aaos-request-provenance": first_nonce})
     with pytest.raises(SessionReadPolicyError):
-        first.consume("POST", url)
+        first.consume("POST", url, {"x-aaos-request-provenance": first_nonce})
 
-    second = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    second = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current", second_nonce)
     second.arm(100)
-    second.consume("POST", url)
     with pytest.raises(SessionReadPolicyError):
-        second.consume("POST", url)
+        second.consume("POST", url, {"x-aaos-request-provenance": first_nonce})
+    second.consume("POST", url, {"x-aaos-request-provenance": second_nonce})
+    with pytest.raises(SessionReadPolicyError):
+        second.consume("POST", url, {"x-aaos-request-provenance": second_nonce})
 
 
 def test_pagination_rejects_duplicate_across_pages_and_requires_empty_terminal_page() -> None:
