@@ -39,6 +39,8 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
             calls.append(f"page-{event}")
 
     class Context:
+        pages: list[Any] = []
+
         def route(self, _pattern: str, handler: object) -> None:
             calls.append("route")
             handler(Route(), Request())  # type: ignore[operator]
@@ -82,6 +84,8 @@ def test_navigator_classifies_playwright_collection_page_creation_failure() -> N
     from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
 
     class Context:
+        pages: list[Any] = []
+
         def route(self, _pattern: str, _handler: object) -> None:
             return None
 

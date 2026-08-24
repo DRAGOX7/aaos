@@ -24,7 +24,7 @@ class _Page:
         self._context = context
         self._kind = kind
         self._survive_close = survive_close
-        self.url = _COURSE_INDEX
+        self.url = "about:blank" if kind == "sentinel" else _COURSE_INDEX
 
     def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
         self._context.calls.append(f"{self._kind}-goto")
@@ -37,6 +37,8 @@ class _Page:
             assert timeout == 30_000
 
     def content(self) -> str:
+        self._context.calls.append(f"{self._kind}-content")
+        assert self._kind != "sentinel"
         return _AUTHENTICATED_PAGE if self._kind == "auth" else _COURSE_PAGE
 
     def wait_for_timeout(self, _milliseconds: int) -> None:
@@ -61,7 +63,12 @@ class _Context:
         self.closed_with_lock = False
 
     def new_page(self) -> _Page:
-        kind = "collection" if self.interception_installed else "auth"
+        if self.interception_installed:
+            kind = "collection"
+        elif any(page._kind == "auth" for page in self.pages):
+            kind = "sentinel"
+        else:
+            kind = "auth"
         page = _Page(self, kind, survive_close=kind == "auth" and self._auth_survivor)
         self.pages.append(page)
         self.calls.append(f"{kind}-new")
@@ -69,7 +76,9 @@ class _Context:
 
     def route(self, pattern: str, _handler: object) -> None:
         assert pattern == "**/*"
-        assert self.pages == []
+        assert len(self.pages) == 1
+        assert self.pages[0]._kind == "sentinel"
+        assert self.pages[0].url == "about:blank"
         self.interception_installed = True
         self.calls.append("interception")
 
@@ -102,8 +111,13 @@ def test_same_context_smoke_authenticates_then_collects_after_page_transition(
 
     assert isinstance(result, CourseDiscovery)
     assert tuple(course.source_id for course in result.courses) == ("42",)
+    assert context.calls.index("sentinel-new") < context.calls.index("auth-close")
     assert context.calls.index("auth-close") < context.calls.index("interception")
     assert context.calls.index("interception") < context.calls.index("collection-new")
+    assert context.calls.index("collection-new") < context.calls.index("sentinel-close")
+    assert context.calls.index("sentinel-close") < context.calls.index("collection-goto")
+    assert "sentinel-goto" not in context.calls
+    assert "sentinel-content" not in context.calls
     assert context.closed_with_lock is True
     assert context.calls[-1] == "context-close"
     assert lock_path.exists() is False
@@ -127,6 +141,176 @@ def test_same_context_smoke_closes_auth_popups_before_installing_interception(
     assert isinstance(result, CourseDiscovery)
     assert "auth-popup-close" in context.calls
     assert context.calls.index("auth-popup-close") < context.calls.index("interception")
+
+
+def test_same_context_smoke_rejects_unexpected_page_created_with_sentinel(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _ExtraPageContext(_Context):
+        def new_page(self) -> _Page:
+            page = super().new_page()
+            if page._kind == "sentinel":
+                self.pages.append(_Page(self, "unexpected"))
+            return page
+
+    paths = _paths(tmp_path)
+    context = _ExtraPageContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "TRANSITION_PAGES_REMAIN"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_rejects_sentinel_url_mutation_before_interception(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _MutatedSentinelContext(_Context):
+        def new_page(self) -> _Page:
+            page = super().new_page()
+            if page._kind == "sentinel":
+                page.url = "https://moodle.example.edu/current/my/courses.php"
+            return page
+
+    paths = _paths(tmp_path)
+    context = _MutatedSentinelContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "TRANSITION_PAGES_REMAIN"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_rejects_sentinel_url_mutation_before_collection_navigation(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _LateMutatedSentinelContext(_Context):
+        def new_page(self) -> _Page:
+            page = super().new_page()
+            if page._kind == "collection":
+                sentinel = next(item for item in self.pages if item._kind == "sentinel")
+                sentinel.url = "https://moodle.example.edu/current/my/courses.php"
+            return page
+
+    paths = _paths(tmp_path)
+    context = _LateMutatedSentinelContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "NAVIGATION"
+    assert "collection-goto" not in context.calls
+
+
+def test_same_context_smoke_rejects_sentinel_replacement_before_interception(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _ReplacingAuthPage(_Page):
+        def close(self) -> None:
+            self._context.calls.append("auth-close")
+            self._context.pages.remove(self)
+            self._context.pages[:] = [_Page(self._context, "sentinel")]
+
+    class _ReplacementContext(_Context):
+        def new_page(self) -> _Page:
+            if not any(page._kind == "auth" for page in self.pages):
+                page = _ReplacingAuthPage(self, "auth")
+                self.pages.append(page)
+                self.calls.append("auth-new")
+                return page
+            return super().new_page()
+
+    paths = _paths(tmp_path)
+    context = _ReplacementContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "TRANSITION_PAGES_REMAIN"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_fails_closed_when_sentinel_creation_fails(tmp_path: Path) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _SentinelCreationFailureContext(_Context):
+        def new_page(self) -> _Page:
+            if any(page._kind == "auth" for page in self.pages) and not self.interception_installed:
+                raise OSError
+            return super().new_page()
+
+    paths = _paths(tmp_path)
+    context = _SentinelCreationFailureContext(
+        paths.browser_state_dir / ".playwright-edge-profile.lock"
+    )
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "AUTH_PAGE_CLEANUP"
+    assert "interception" not in context.calls
+
+
+def test_same_context_smoke_rejects_sentinel_close_failure_before_navigation(
+    tmp_path: Path,
+) -> None:
+    from aaos.moodle.browser import (
+        BrowserSmokeFailure,
+        _run_same_context_browser_course_smoke,
+    )
+
+    class _ClosingFailureSentinel(_Page):
+        def close(self) -> None:
+            if self._kind == "sentinel":
+                raise OSError
+            super().close()
+
+    class _ClosingFailureContext(_Context):
+        def new_page(self) -> _Page:
+            if not self.interception_installed and any(page._kind == "auth" for page in self.pages):
+                page = _ClosingFailureSentinel(self, "sentinel")
+                self.pages.append(page)
+                self.calls.append("sentinel-new")
+                return page
+            return super().new_page()
+
+    paths = _paths(tmp_path)
+    context = _ClosingFailureContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "NAVIGATION"
+    assert "collection-goto" not in context.calls
 
 
 def test_same_context_smoke_fails_closed_when_auth_page_survives_transition(tmp_path: Path) -> None:
@@ -235,10 +419,12 @@ def test_same_context_smoke_classifies_auth_page_cleanup_failure(tmp_path: Path)
 
     class _ClosingContext(_Context):
         def new_page(self) -> _Page:
-            page = _ClosingPage(self, "auth")
-            self.pages.append(page)
-            self.calls.append("auth-new")
-            return page
+            if not any(page._kind == "auth" for page in self.pages):
+                page = _ClosingPage(self, "auth")
+                self.pages.append(page)
+                self.calls.append("auth-new")
+                return page
+            return super().new_page()
 
     context = _ClosingContext(_paths(tmp_path).browser_state_dir / ".playwright-edge-profile.lock")
     with pytest.raises(BrowserSmokeFailure) as failure:
@@ -338,7 +524,12 @@ def test_same_context_smoke_classifies_parser_failure(tmp_path: Path) -> None:
 
     class _MalformedCollectionContext(_Context):
         def new_page(self) -> _Page:
-            kind = "collection" if self.interception_installed else "auth"
+            if self.interception_installed:
+                kind = "collection"
+            elif any(page._kind == "auth" for page in self.pages):
+                kind = "sentinel"
+            else:
+                kind = "auth"
             page = _MalformedCollectionPage(self, kind)
             self.pages.append(page)
             self.calls.append(f"{kind}-new")

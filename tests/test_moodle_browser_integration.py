@@ -99,8 +99,8 @@ def test_production_modules_do_not_import_test_tls_or_disable_tls_validation() -
     assert "ignore_https_errors" not in production
 
 
-def test_real_msedge_zero_page_context_rejects_fresh_page(tmp_path: Path) -> None:
-    """Record the local headed persistent-context lifecycle contradiction safely."""
+def test_real_msedge_transition_sentinel_keeps_context_usable(tmp_path: Path) -> None:
+    """Prove the approved headed persistent-context sentinel handoff locally."""
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(tmp_path / "zero-page-profile"),
@@ -110,14 +110,20 @@ def test_real_msedge_zero_page_context_rejects_fresh_page(tmp_path: Path) -> Non
             service_workers="block",
         )
         try:
-            pages = list(context.pages)
-            if not pages:
-                pages = [context.new_page()]
-            for page in pages:
-                page.close()
+            auth_page = context.pages[0] if context.pages else context.new_page()
+            sentinel = context.new_page()
+            assert sentinel.url == "about:blank"
+            auth_page.close()
+            assert len(context.pages) == 1
+            assert context.pages[0] is sentinel
+            collection_page = context.new_page()
+            assert collection_page.url == "about:blank"
+            sentinel.close()
+            assert len(context.pages) == 1
+            assert context.pages[0] is collection_page
+            collection_page.close()
             assert context.pages == []
-            with pytest.raises(PlaywrightError):
-                context.new_page()
+            context.close()
         finally:
             try:
                 context.close()

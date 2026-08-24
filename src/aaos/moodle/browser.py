@@ -85,18 +85,45 @@ def discover_courses_for_smoke(source: MoodleBrowserSource) -> CourseDiscoveryRe
     return source.discover_courses()
 
 
-def _close_auth_pages(context: object) -> None:
-    """Remove every human-auth page before the restricted collection transition."""
+def _same_pages(actual: object, expected: tuple[object, ...]) -> bool:
+    """Compare browser page collections by identity without exposing their contents."""
+    return (
+        isinstance(actual, list)
+        and len(actual) == len(expected)
+        and all(sum(page is candidate for page in actual) == 1 for candidate in expected)
+    )
+
+
+def _create_transition_sentinel(context: object) -> tuple[tuple[object, ...], object]:
+    """Create one inert AAOS-owned page before closing the final auth page."""
     pages = getattr(context, "pages", None)
-    if not isinstance(pages, list):
+    if not isinstance(pages, list) or not pages:
         raise BrowserSmokeFailure("AUTH_PAGE_CLEANUP")
-    for page in tuple(pages):
+    auth_pages = tuple(pages)
+    try:
+        sentinel = getattr(context, "new_page")()
+    except (AttributeError, OSError, PlaywrightError, TypeError, ValueError):
+        raise BrowserSmokeFailure("AUTH_PAGE_CLEANUP") from None
+    if (
+        any(sentinel is page for page in auth_pages)
+        or getattr(sentinel, "url", None) != "about:blank"
+        or not _same_pages(getattr(context, "pages", None), (*auth_pages, sentinel))
+    ):
+        raise BrowserSmokeFailure("TRANSITION_PAGES_REMAIN")
+    return auth_pages, sentinel
+
+
+def _close_auth_pages(context: object, auth_pages: tuple[object, ...], sentinel: object) -> None:
+    """Remove every human-auth page while retaining only the inert sentinel."""
+    for page in auth_pages:
         try:
             getattr(page, "close")()
-        except (AttributeError, OSError, TypeError, ValueError):
+        except (AttributeError, OSError, PlaywrightError, TypeError, ValueError):
             raise BrowserSmokeFailure("AUTH_PAGE_CLEANUP") from None
-    remaining = getattr(context, "pages", None)
-    if not isinstance(remaining, list) or remaining:
+    if (
+        not _same_pages(getattr(context, "pages", None), (sentinel,))
+        or getattr(sentinel, "url", None) != "about:blank"
+    ):
         raise BrowserSmokeFailure("TRANSITION_PAGES_REMAIN")
 
 
@@ -169,9 +196,14 @@ def _run_same_context_browser_course_smoke(
                 raise BrowserSmokeFailure("AUTH_PROOF") from None
             if not authenticated:
                 raise BrowserSmokeFailure("AUTH_PROOF")
-            _close_auth_pages(context)
+            auth_pages, sentinel = _create_transition_sentinel(context)
+            _close_auth_pages(context, auth_pages, sentinel)
             try:
-                navigator = PlaywrightRestrictedNavigator(cast(Any, context), settings.base_origin)
+                navigator = PlaywrightRestrictedNavigator(
+                    cast(Any, context),
+                    settings.base_origin,
+                    transition_sentinel=cast(Any, sentinel),
+                )
             except (BrowserPolicyError, OSError, TypeError, ValueError):
                 raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
             result = discover_courses_for_smoke(

@@ -69,6 +69,8 @@ class _Page(Protocol):
 
 
 class _Context(Protocol):
+    pages: list[_Page]
+
     def route(self, pattern: str, handler: object) -> None: ...
 
     def new_page(self) -> _Page: ...
@@ -79,9 +81,12 @@ class _Context(Protocol):
 class PlaywrightRestrictedNavigator:
     """Expose only fixed route navigation, never raw browser primitives."""
 
-    def __init__(self, context: _Context, base_origin: str) -> None:
+    def __init__(
+        self, context: _Context, base_origin: str, *, transition_sentinel: _Page | None = None
+    ) -> None:
         self._context = context
         self._base_origin = base_origin
+        self._transition_sentinel = transition_sentinel
         self._closed = False
         self._failure_stage: FailureStage = "NONE"
         self._redirect_class: RedirectClass | None = None
@@ -99,6 +104,31 @@ class PlaywrightRestrictedNavigator:
 
     def _install_interception(self) -> None:
         self._context.route("**/*", self._handle_request)
+
+    @staticmethod
+    def _same_pages(actual: object, expected: tuple[_Page, ...]) -> bool:
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(sum(page is candidate for page in actual) == 1 for candidate in expected)
+        )
+
+    def _complete_transition(self, collection_page: _Page) -> None:
+        sentinel = self._transition_sentinel
+        if sentinel is None:
+            return
+        if (
+            not self._same_pages(self._context.pages, (sentinel, collection_page))
+            or sentinel.url != "about:blank"
+        ):
+            raise BrowserPolicyError()
+        try:
+            sentinel.close()
+        except (OSError, PlaywrightError, TypeError, ValueError):
+            raise BrowserPolicyError() from None
+        if not self._same_pages(self._context.pages, (collection_page,)):
+            raise BrowserPolicyError()
+        self._transition_sentinel = None
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
         if (
@@ -128,6 +158,7 @@ class PlaywrightRestrictedNavigator:
         try:
             for event in ("popup", "download", "websocket", "filechooser"):
                 page.on(event, self._blocked_event)
+            self._complete_transition(page)
             page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS)
             parsed = urlsplit(page.url)
             origin = f"{parsed.scheme}://{parsed.netloc}"
