@@ -322,50 +322,81 @@ class _SessionBoundMoodleCourseRead:
                     pass
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
+        permit = self._permit
+        if _is_canonical_ajax_endpoint(request.url, self._canonical_wwwroot):
+            try:
+                if permit is None:
+                    raise SessionReadPolicyError()
+                permit.consume(
+                    request.method,
+                    request.url,
+                    request.resource_type,
+                    getattr(request, "post_data", None),
+                )
+                self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
+                route.continue_()
+                return
+            except SessionReadPolicyError:
+                rejection = _safe_ajax_rejection_reason(
+                    request.method,
+                    request.url,
+                    request.resource_type,
+                    getattr(request, "post_data", None),
+                    self._canonical_wwwroot,
+                    permit,
+                )
+                self._reject_request(route, request, rejection)
+                return
+        self._apply_general_policy(route, request)
+
+    def _reject_request(self, route: _Route, request: _Request, rejection: str) -> None:
         from aaos.moodle.browser_policy import classify_browser_request
 
-        permit = self._permit
-        try:
-            if permit is None:
-                raise SessionReadPolicyError()
-            permit.consume(
-                request.method,
-                request.url,
-                request.resource_type,
-                getattr(request, "post_data", None),
+        decision = classify_browser_request(
+            request.method,
+            request.url,
+            base_origin=self._base_origin,
+            canonical_wwwroot=self._canonical_wwwroot,
+            resource_type=request.resource_type,
+            has_body=getattr(request, "post_data", None) is not None,
+        )
+        if decision.code != "ALLOW":
+            self._diagnostic = replace(
+                self._diagnostic,
+                ajax_permit_stage="REQUEST_REJECTED",
+                ajax_permit_rejection_reason=rejection,
+                root_cause=rejection,
             )
-            self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
-        except SessionReadPolicyError:
-            rejection = _safe_ajax_rejection_reason(
-                request.method,
-                request.url,
-                request.resource_type,
-                getattr(request, "post_data", None),
-                self._canonical_wwwroot,
-                permit,
-            )
-            decision = classify_browser_request(
-                request.method,
-                request.url,
-                base_origin=self._base_origin,
-                canonical_wwwroot=self._canonical_wwwroot,
-                resource_type=request.resource_type,
-                has_body=getattr(request, "post_data", None) is not None,
-            )
-            if decision.code != "ALLOW":
-                # Static bootstrap resources remain independently fail-closed; a blocked
-                # optional resource must not turn the approved document navigation into
-                # a generic AJAX authorization failure.  Network-capable requests do.
-                if request.method != "GET" or request.resource_type in {"xhr", "fetch"}:
-                    self._diagnostic = replace(
-                        self._diagnostic,
-                        ajax_permit_stage="REQUEST_REJECTED",
-                        ajax_permit_rejection_reason=rejection,
-                        root_cause=rejection,
-                    )
-                    self._policy_failed = True
-                route.abort()
-                return
+            self._policy_failed = True
+            route.abort()
+            return
+        route.continue_()
+
+    def _apply_general_policy(self, route: _Route, request: _Request) -> None:
+        from aaos.moodle.browser_policy import classify_browser_request
+
+        decision = classify_browser_request(
+            request.method,
+            request.url,
+            base_origin=self._base_origin,
+            canonical_wwwroot=self._canonical_wwwroot,
+            resource_type=request.resource_type,
+            has_body=getattr(request, "post_data", None) is not None,
+        )
+        if decision.code != "ALLOW":
+            # Static bootstrap resources remain independently fail-closed; a blocked
+            # optional resource must not turn the approved document navigation into
+            # a generic AJAX authorization failure.  Network-capable requests do.
+            if request.method != "GET" or request.resource_type in {"xhr", "fetch"}:
+                self._diagnostic = replace(
+                    self._diagnostic,
+                    ajax_permit_stage="REQUEST_REJECTED",
+                    ajax_permit_rejection_reason="OTHER_POLICY_REJECTION",
+                    root_cause="OTHER_POLICY_REJECTION",
+                )
+                self._policy_failed = True
+            route.abort()
+            return
         route.continue_()
 
     @staticmethod
@@ -432,6 +463,22 @@ def _is_exact_ajax_target(url: object, canonical_wwwroot: str) -> bool:
         and f"info={_OPERATION_NAME}" in parts
         and "nosessionupdate=true" in parts
         and len(sesskey_parts) == 1
+    )
+
+
+def _is_canonical_ajax_endpoint(url: object, canonical_wwwroot: str) -> bool:
+    """Limit permit evaluation to the one canonical Moodle AJAX endpoint."""
+    if not isinstance(url, str):
+        return False
+    try:
+        target = urlsplit(url)
+        base = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return False
+    return (
+        target.scheme == base.scheme
+        and target.netloc == base.netloc
+        and target.path == base.path.rstrip("/") + "/lib/ajax/service.php"
     )
 
 

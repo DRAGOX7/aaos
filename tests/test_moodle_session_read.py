@@ -160,6 +160,36 @@ def test_permit_rejects_wrong_origin_path_method_and_batched_body() -> None:
             permit.consume(method, url, "xhr", candidate)
 
 
+def test_consumed_permit_remains_one_shot_while_a_fresh_permit_accepts_next_offset() -> None:
+    from aaos.moodle.session_read import OneShotMoodleAjaxPermit, SessionReadPolicyError
+
+    url = (
+        "https://moodle.example.edu/current/lib/ajax/service.php?"
+        "sesskey=opaque&info=core_course_get_enrolled_courses_by_timeline_classification&"
+        "nosessionupdate=true"
+    )
+
+    def body(offset: int) -> str:
+        return (
+            '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
+            '"args":{"classification":"allincludinghidden","limit":100,"offset":'
+            + str(offset)
+            + ',"requiredfields":["id"]}}]'
+        )
+
+    first = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    first.arm(0)
+    first.consume("POST", url, "xhr", body(0))
+    with pytest.raises(SessionReadPolicyError):
+        first.consume("POST", url, "xhr", body(0))
+
+    second = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    second.arm(100)
+    second.consume("POST", url, "xhr", body(100))
+    with pytest.raises(SessionReadPolicyError):
+        second.consume("POST", url, "xhr", body(100))
+
+
 def test_pagination_rejects_duplicate_across_pages_and_requires_empty_terminal_page() -> None:
     from aaos.moodle.session_read import SessionReadPolicyError, collect_course_ids
 

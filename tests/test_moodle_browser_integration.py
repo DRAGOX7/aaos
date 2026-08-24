@@ -84,8 +84,20 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
             offset = request[0]["args"]["offset"]
-            courses = [{"id": 42, "fullname": "never crosses bridge"}] if offset == 0 else []
-            payload = json.dumps([{"data": {"courses": courses, "nextoffset": 1}}]).encode("utf-8")
+            if offset == 0:
+                courses = [
+                    {"id": value, "fullname": "never crosses bridge"} for value in range(1, 101)
+                ]
+                next_offset = 100
+            elif offset == 100:
+                courses = [{"id": 101, "fullname": "never crosses bridge"}]
+                next_offset = 101
+            else:
+                courses = []
+                next_offset = 101
+            payload = json.dumps(
+                [{"data": {"courses": courses, "nextoffset": next_offset}}]
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
@@ -181,7 +193,7 @@ def test_real_msedge_executes_only_the_fixed_session_bound_ajax_bridge(
             ).discover_enrolled_course_ids()
         finally:
             context.close()
-    assert result == (42,)
+    assert result == tuple(range(1, 102))
     assert "/current/lib/ajax/service.php" in served_paths
 
 
