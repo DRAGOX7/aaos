@@ -639,6 +639,55 @@ def test_browser_smoke_cli_derives_browser_mode_from_runtime_configuration(
     assert captured == [MoodleSettings("moodle:just:browser-smoke", _ORIGIN, "browser", "fixture")]
 
 
+def test_course_index_structure_diagnostic_uses_same_browser_smoke_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import aaos.moodle.browser as browser
+    import aaos.moodle.receiver as receiver
+    from aaos.moodle.browser_parsing import CourseIndexStructureDiagnostic
+
+    runtime_settings = MoodleSettings("moodle:fixture:bootstrap", _ORIGIN, "api", "fixture")
+    monkeypatch.setattr(
+        receiver,
+        "load_runtime_moodle_configuration",
+        lambda: (object(), runtime_settings, _paths(tmp_path)),
+    )
+    captured: list[object] = []
+
+    def run_diagnostic(**kwargs: object) -> CourseIndexStructureDiagnostic:
+        captured.append(kwargs["course_index_diagnostic"])
+        return CourseIndexStructureDiagnostic(
+            page_identity="MY_COURSES",
+            course_container_count=0,
+            candidate_course_link_count=0,
+            numeric_course_id_link_count=0,
+            course_data_attribute_count=0,
+            pagination_container_count=0,
+            next_page_link_count=0,
+            empty_state_marker=True,
+            known_fixture_schema_match=False,
+            course_link_shape="NONE",
+        )
+
+    monkeypatch.setattr(browser, "_run_same_context_browser_course_smoke", run_diagnostic)
+
+    assert browser.run_configured_course_index_structure_diagnostic() == 0
+    assert captured == [True]
+    assert capsys.readouterr().out.splitlines() == [
+        "COURSE_INDEX_STRUCTURE_DIAGNOSTIC",
+        "PAGE_IDENTITY=MY_COURSES",
+        "COURSE_CONTAINER_COUNT=0",
+        "CANDIDATE_COURSE_LINK_COUNT=0",
+        "NUMERIC_COURSE_ID_LINK_COUNT=0",
+        "COURSE_DATA_ATTRIBUTE_COUNT=0",
+        "PAGINATION_CONTAINER_COUNT=0",
+        "NEXT_PAGE_LINK_COUNT=0",
+        "EMPTY_STATE_MARKER=YES",
+        "KNOWN_FIXTURE_SCHEMA_MATCH=NO",
+        "COURSE_LINK_SHAPE=NONE",
+    ]
+
+
 def test_same_context_smoke_accepts_existing_profile_binding_used_by_session_diagnostic(
     tmp_path: Path,
 ) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeAlias, TypeVar
 from urllib.parse import parse_qs, urlsplit
 
 from aaos.academic.source import RawAnnouncement, RawAssignment, RawCourse, RawRemoteFile
@@ -16,6 +16,7 @@ from aaos.moodle.browser_models import (
 )
 
 Record = TypeVar("Record")
+CourseLinkShape: TypeAlias = Literal["COURSE_VIEW_ID_QUERY", "OTHER_SAME_ORIGIN", "MIXED", "NONE"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,16 +25,52 @@ class ParsedPage(Generic[Record]):
     proof: PaginationProof
 
 
+@dataclass(frozen=True, slots=True)
+class CourseIndexStructureDiagnostic:
+    """Fixed, non-content evidence about one COURSE_INDEX document."""
+
+    page_identity: Literal["MY_COURSES", "OTHER"]
+    course_container_count: int
+    candidate_course_link_count: int
+    numeric_course_id_link_count: int
+    course_data_attribute_count: int
+    pagination_container_count: int
+    next_page_link_count: int
+    empty_state_marker: bool
+    known_fixture_schema_match: bool
+    course_link_shape: CourseLinkShape
+
+    def render(self) -> str:
+        """Render only safe structural labels and counts."""
+        return "\n".join(
+            (
+                "COURSE_INDEX_STRUCTURE_DIAGNOSTIC",
+                f"PAGE_IDENTITY={self.page_identity}",
+                f"COURSE_CONTAINER_COUNT={self.course_container_count}",
+                f"CANDIDATE_COURSE_LINK_COUNT={self.candidate_course_link_count}",
+                f"NUMERIC_COURSE_ID_LINK_COUNT={self.numeric_course_id_link_count}",
+                f"COURSE_DATA_ATTRIBUTE_COUNT={self.course_data_attribute_count}",
+                f"PAGINATION_CONTAINER_COUNT={self.pagination_container_count}",
+                f"NEXT_PAGE_LINK_COUNT={self.next_page_link_count}",
+                f"EMPTY_STATE_MARKER={'YES' if self.empty_state_marker else 'NO'}",
+                f"KNOWN_FIXTURE_SCHEMA_MATCH={'YES' if self.known_fixture_schema_match else 'NO'}",
+                f"COURSE_LINK_SHAPE={self.course_link_shape}",
+            )
+        )
+
+
 class _Markup(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.body: dict[str, str] | None = None
         self.links: list[dict[str, str]] = []
+        self.elements: list[tuple[str, dict[str, str]]] = []
         self.pagination: dict[str, str] | None = None
         self.in_announcement_forum = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key: value or "" for key, value in attrs}
+        self.elements.append((tag, values))
         if tag == "body":
             self.body = values
         if tag == "section" and values.get("data-announcement-forum") == "true":
@@ -60,6 +97,60 @@ def parse_course_index(html: str, *, expected_origin: str) -> ParsedPage[RawCour
     )
     _unique((course.source_id for course in courses))
     return ParsedPage(courses, _proof("COURSE_INDEX", markup, len(courses)))
+
+
+def diagnose_course_index_structure(
+    html: str, *, expected_origin: str
+) -> CourseIndexStructureDiagnostic:
+    """Summarize course-index shape without exposing document content or identities."""
+    markup = _parse(html)
+    candidate_links = tuple(
+        link for link in markup.links if _is_course_view_link(link, expected_origin)
+    )
+    numeric_links = tuple(
+        link for link in candidate_links if _has_numeric_course_id(link, expected_origin)
+    )
+    try:
+        parse_course_index(html, expected_origin=expected_origin)
+    except BrowserPolicyError:
+        known_fixture_schema_match = False
+    else:
+        known_fixture_schema_match = True
+    return CourseIndexStructureDiagnostic(
+        page_identity=("MY_COURSES" if has_authenticated_my_courses_page(html) else "OTHER"),
+        course_container_count=sum(
+            1 for _tag, values in markup.elements if values.get("data-moodle-course") == "true"
+        ),
+        candidate_course_link_count=len(candidate_links),
+        numeric_course_id_link_count=len(numeric_links),
+        course_data_attribute_count=sum(
+            1
+            for _tag, values in markup.elements
+            if "data-course-id" in values or "data-courseid" in values
+        ),
+        pagination_container_count=sum(
+            1
+            for tag, values in markup.elements
+            if tag == "nav"
+            and (
+                "data-pagination-pages" in values
+                or "pagination" in frozenset(values.get("class", "").split())
+            )
+        ),
+        next_page_link_count=sum(
+            1 for link in markup.links if "next" in frozenset(link.get("rel", "").split())
+        ),
+        empty_state_marker=any(
+            any(
+                token in {"empty", "empty-state", "nocourses", "no-courses"}
+                for token in values.get("class", "").split()
+            )
+            or values.get("data-region") in {"no-courses", "empty-state"}
+            for _tag, values in markup.elements
+        ),
+        known_fixture_schema_match=known_fixture_schema_match,
+        course_link_shape=_course_link_shape(candidate_links, numeric_links),
+    )
 
 
 def has_authenticated_my_courses_page(html: object) -> bool:
@@ -158,6 +249,40 @@ def _identifier(link: dict[str, str], expected_path: str, key: str, expected_ori
     if value <= 0:
         raise BrowserPolicyError()
     return str(value)
+
+
+def _is_course_view_link(link: dict[str, str], expected_origin: str) -> bool:
+    href = link.get("href")
+    if not href:
+        return False
+    try:
+        parsed = urlsplit(href)
+    except ValueError:
+        return False
+    return (
+        f"{parsed.scheme}://{parsed.netloc}" == expected_origin
+        and parsed.path == "/current/course/view.php"
+    )
+
+
+def _has_numeric_course_id(link: dict[str, str], expected_origin: str) -> bool:
+    try:
+        _identifier(link, "/current/course/view.php", "id", expected_origin)
+    except BrowserPolicyError:
+        return False
+    return True
+
+
+def _course_link_shape(
+    candidate_links: tuple[dict[str, str], ...], numeric_links: tuple[dict[str, str], ...]
+) -> CourseLinkShape:
+    if not candidate_links:
+        return "NONE"
+    if len(candidate_links) == len(numeric_links):
+        return "COURSE_VIEW_ID_QUERY"
+    if numeric_links:
+        return "MIXED"
+    return "OTHER_SAME_ORIGIN"
 
 
 def _proof(route: str, markup: _Markup, count: int) -> PaginationProof:

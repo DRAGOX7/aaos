@@ -29,6 +29,30 @@ def test_course_parser_rejects_title_only_or_incomplete_markup() -> None:
         )
 
 
+def test_course_index_structure_diagnostic_reports_only_fixed_non_content_facts() -> None:
+    from aaos.moodle.browser_parsing import diagnose_course_index_structure
+
+    diagnostic = diagnose_course_index_structure(
+        COURSES, expected_origin="https://moodle.example.edu"
+    )
+
+    assert diagnostic.render().splitlines() == [
+        "COURSE_INDEX_STRUCTURE_DIAGNOSTIC",
+        "PAGE_IDENTITY=OTHER",
+        "COURSE_CONTAINER_COUNT=2",
+        "CANDIDATE_COURSE_LINK_COUNT=2",
+        "NUMERIC_COURSE_ID_LINK_COUNT=2",
+        "COURSE_DATA_ATTRIBUTE_COUNT=0",
+        "PAGINATION_CONTAINER_COUNT=1",
+        "NEXT_PAGE_LINK_COUNT=0",
+        "EMPTY_STATE_MARKER=NO",
+        "KNOWN_FIXTURE_SCHEMA_MATCH=YES",
+        "COURSE_LINK_SHAPE=COURSE_VIEW_ID_QUERY",
+    ]
+    assert "Synthetic" not in diagnostic.render()
+    assert "42" not in diagnostic.render()
+
+
 def test_assignment_announcement_and_resource_ids_are_typed() -> None:
     from aaos.moodle.browser_parsing import (
         parse_announcement_list,

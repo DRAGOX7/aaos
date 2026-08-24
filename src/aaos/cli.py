@@ -44,6 +44,8 @@ def main() -> int:
         return _run_configured_moodle_browser_smoke_courses()
     if sys.argv[1:] == ["moodle", "diagnose-session-lifetime"]:
         return _run_moodle_session_lifetime_diagnostic()
+    if sys.argv[1:] == ["moodle", "diagnose-course-index-structure"]:
+        return _run_configured_course_index_structure_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -103,3 +105,10 @@ def _run_moodle_session_lifetime_diagnostic() -> int:
     from aaos.moodle.session_lifetime import run_configured_session_lifetime_diagnostic
 
     return run_configured_session_lifetime_diagnostic()
+
+
+def _run_configured_course_index_structure_diagnostic() -> int:
+    """Run one explicit, content-free COURSE_INDEX structure diagnostic."""
+    from aaos.moodle.browser import run_configured_course_index_structure_diagnostic
+
+    return run_configured_course_index_structure_diagnostic()

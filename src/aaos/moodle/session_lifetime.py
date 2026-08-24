@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Callable, Literal, Protocol, cast
 
+from playwright.sync_api import Error as PlaywrightError
+
 from aaos.moodle.browser_parsing import has_authenticated_my_courses_page
 
 SameContextSession = Literal["AUTHENTICATED", "NOT_AUTHENTICATED"]
@@ -58,18 +60,23 @@ def wait_for_authenticated_course_index(
 ) -> bool:
     """Wait for the fixed course route and its structural authenticated marker."""
     deadline = monotonic() + timeout_seconds
-    while True:
-        if page.url == course_index_url and has_authenticated_my_courses_page(page.content()):
+    try:
+        while True:
+            if page.url == course_index_url and has_authenticated_my_courses_page(page.content()):
+                remaining_seconds = deadline - monotonic()
+                if remaining_seconds <= 0:
+                    return False
+                page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
+                if page.url == course_index_url and has_authenticated_my_courses_page(
+                    page.content()
+                ):
+                    return True
             remaining_seconds = deadline - monotonic()
             if remaining_seconds <= 0:
                 return False
             page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
-            if page.url == course_index_url and has_authenticated_my_courses_page(page.content()):
-                return True
-        remaining_seconds = deadline - monotonic()
-        if remaining_seconds <= 0:
-            return False
-        page.wait_for_timeout(min(poll_milliseconds, max(1, int(remaining_seconds * 1000))))
+    except PlaywrightError:
+        return False
 
 
 def run_configured_session_lifetime_diagnostic() -> int:

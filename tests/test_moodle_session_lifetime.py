@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from playwright.sync_api import Error as PlaywrightError
+
 COURSE_INDEX = "https://moodle.example.edu/current/my/courses.php"
 AUTHENTICATED_MY_COURSES_PAGE = (
     '<body id="page-my-index" class="page-mycourses pagelayout-mycourses"></body>'
@@ -160,7 +162,6 @@ def test_zero_course_authenticated_my_courses_page_is_authenticated() -> None:
         [(COURSE_INDEX, AUTHENTICATED_MY_COURSES_PAGE)],
         lambda: elapsed.__setitem__(0, elapsed[0] + 1.0),
     )
-
     assert (
         wait_for_authenticated_course_index(
             page,
@@ -170,4 +171,26 @@ def test_zero_course_authenticated_my_courses_page_is_authenticated() -> None:
             poll_milliseconds=1000,
         )
         is True
+    )
+
+
+def test_closed_target_during_authentication_proof_returns_not_authenticated() -> None:
+    from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+
+    class _ClosedTargetPage:
+        url = COURSE_INDEX
+
+        def content(self) -> str:
+            raise PlaywrightError("redacted")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            raise AssertionError("closed target must not wait again")
+
+    assert (
+        wait_for_authenticated_course_index(
+            _ClosedTargetPage(),
+            course_index_url=COURSE_INDEX,
+            timeout_seconds=3,
+        )
+        is False
     )

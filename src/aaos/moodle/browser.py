@@ -19,7 +19,11 @@ from aaos.moodle.browser_navigation import (
     PlaywrightRestrictedNavigator,
     RestrictedBrowserNavigator,
 )
-from aaos.moodle.browser_parsing import parse_course_index
+from aaos.moodle.browser_parsing import (
+    CourseIndexStructureDiagnostic,
+    diagnose_course_index_structure,
+    parse_course_index,
+)
 from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
@@ -43,6 +47,7 @@ BrowserSmokeFailureStage: TypeAlias = Literal[
     "COMPLETENESS",
     "CLEANUP",
 ]
+BrowserCourseIndexResult: TypeAlias = CourseDiscoveryResult | CourseIndexStructureDiagnostic
 
 
 class BrowserSmokeFailure(BrowserPolicyError):
@@ -139,12 +144,24 @@ def _collection_failure_stage(result: SourceCollectionFailure) -> BrowserSmokeFa
     return stages.get(result.code, "NAVIGATION")
 
 
+def _navigator_failure_stage(navigator: object) -> BrowserSmokeFailureStage:
+    """Map the navigator's already-sanitized status to CLI-safe orchestration output."""
+    stages: dict[str, BrowserSmokeFailureStage] = {
+        "COLLECTION_PAGE_CREATE": "COLLECTION_PAGE_CREATE",
+        "REQUEST_POLICY": "REQUEST_POLICY",
+        "UNEXPECTED_REDIRECT": "UNEXPECTED_REDIRECT",
+        "NAVIGATION": "NAVIGATION",
+    }
+    return stages.get(getattr(navigator, "failure_stage", "NONE"), "NAVIGATION")
+
+
 def _run_same_context_browser_course_smoke(
     *,
     settings: MoodleSettings,
     paths: AuthPaths,
     launch_persistent_context: Callable[..., object],
-) -> CourseDiscoveryResult:
+    course_index_diagnostic: bool = False,
+) -> BrowserCourseIndexResult:
     """Authenticate and collect courses in one owned persistent browser lifetime."""
     if settings.mode != "browser":
         raise BrowserSmokeFailure("PROFILE")
@@ -206,6 +223,14 @@ def _run_same_context_browser_course_smoke(
                 )
             except (BrowserPolicyError, OSError, TypeError, ValueError):
                 raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
+            if course_index_diagnostic:
+                try:
+                    document = navigator.open("COURSE_INDEX")
+                    return diagnose_course_index_structure(
+                        document.html, expected_origin=settings.base_origin
+                    )
+                except BrowserPolicyError:
+                    raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
             result = discover_courses_for_smoke(
                 MoodleBrowserSource(navigator, "moodle:just:browser-smoke", settings.base_origin)
             )
@@ -253,5 +278,42 @@ def run_configured_browser_course_smoke() -> int:
         print(f"COURSE_COUNT={len(result.courses)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
+    print("FAILURE_STAGE=NAVIGATION")
+    return 1
+
+
+def run_configured_course_index_structure_diagnostic() -> int:
+    """Run one explicit, content-free COURSE_INDEX structure diagnostic and stop."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        settings = replace(
+            runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+        )
+        result = _run_same_context_browser_course_smoke(
+            settings=settings,
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            course_index_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("COURSE_INDEX_STRUCTURE_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    except (BrowserPolicyError, OSError, TimeoutError, ValueError, TypeError):
+        print("COURSE_INDEX_STRUCTURE_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=PROFILE")
+        return 1
+    if isinstance(result, CourseIndexStructureDiagnostic):
+        print(result.render())
+        return 0
+    print("COURSE_INDEX_STRUCTURE_DIAGNOSTIC")
+    print("DIAGNOSTIC_FAILED")
     print("FAILURE_STAGE=NAVIGATION")
     return 1
