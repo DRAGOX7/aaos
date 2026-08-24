@@ -47,6 +47,7 @@ class SessionReadDiagnostic:
     collection_page: str
     bridge_stage: str
     ajax_permit_stage: str
+    ajax_permit_rejection_reason: str
     ajax_response_stage: str
     pagination_stage: str
     root_cause: str
@@ -62,6 +63,7 @@ def render_session_read_diagnostic(diagnostic: SessionReadDiagnostic) -> str:
             f"COLLECTION_PAGE={diagnostic.collection_page}",
             f"BRIDGE_STAGE={diagnostic.bridge_stage}",
             f"AJAX_PERMIT_STAGE={diagnostic.ajax_permit_stage}",
+            f"AJAX_PERMIT_REJECTION_REASON={diagnostic.ajax_permit_rejection_reason}",
             f"AJAX_RESPONSE_STAGE={diagnostic.ajax_response_stage}",
             f"PAGINATION_STAGE={diagnostic.pagination_stage}",
             f"SESSION_READ_ROOT_CAUSE={diagnostic.root_cause}",
@@ -190,6 +192,7 @@ class _SessionBoundMoodleCourseRead:
             collection_page="NOT_REACHED",
             bridge_stage="NOT_REACHED",
             ajax_permit_stage="NOT_REACHED",
+            ajax_permit_rejection_reason="NOT_APPLICABLE",
             ajax_response_stage="NOT_REACHED",
             pagination_stage="NOT_REACHED",
             root_cause="NOT_REACHED",
@@ -265,6 +268,8 @@ class _SessionBoundMoodleCourseRead:
                     "MALFORMED",
                     "MOODLE_ERROR",
                 }:
+                    if self._diagnostic.ajax_permit_stage == "REQUEST_REJECTED":
+                        raise SessionReadPolicyError()
                     failure = result["bridge_failure"]
                     if failure == "MODULE_LOAD_FAILED":
                         self._diagnostic = replace(
@@ -355,6 +360,7 @@ class _SessionBoundMoodleCourseRead:
                     self._diagnostic = replace(
                         self._diagnostic,
                         ajax_permit_stage="REQUEST_REJECTED",
+                        ajax_permit_rejection_reason=rejection,
                         root_cause=rejection,
                     )
                     self._policy_failed = True
