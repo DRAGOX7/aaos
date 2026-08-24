@@ -3,6 +3,35 @@ from __future__ import annotations
 import pytest
 
 
+def test_session_read_diagnostic_renders_only_fixed_non_secret_values() -> None:
+    from aaos.moodle.session_read import SessionReadDiagnostic, render_session_read_diagnostic
+
+    diagnostic = SessionReadDiagnostic(
+        authenticated_page="PASS",
+        sentinel_transition="PASS",
+        collection_page="PASS",
+        bridge_stage="PASS",
+        ajax_permit_stage="REQUEST_ALLOWED",
+        ajax_response_stage="REDUCED_SCHEMA_PASS",
+        pagination_stage="EMPTY_TERMINAL_PAGE",
+        root_cause="NO_FAILURE",
+    )
+
+    assert render_session_read_diagnostic(diagnostic) == "\n".join(
+        (
+            "SESSION_READ_DIAGNOSTIC",
+            "AUTHENTICATED_PAGE=PASS",
+            "SENTINEL_TRANSITION=PASS",
+            "COLLECTION_PAGE=PASS",
+            "BRIDGE_STAGE=PASS",
+            "AJAX_PERMIT_STAGE=REQUEST_ALLOWED",
+            "AJAX_RESPONSE_STAGE=REDUCED_SCHEMA_PASS",
+            "PAGINATION_STAGE=EMPTY_TERMINAL_PAGE",
+            "SESSION_READ_ROOT_CAUSE=NO_FAILURE",
+        )
+    )
+
+
 def test_only_the_canonical_operation_specification_is_accepted() -> None:
     from aaos.moodle.session_read import (
         _ENROLLED_COURSES_OPERATION,

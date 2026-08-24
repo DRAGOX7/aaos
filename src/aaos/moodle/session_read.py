@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
@@ -16,17 +16,18 @@ _MAX_REQUEST_BYTES = 4_096
 _MAX_RESPONSE_BYTES = 16_384
 _OPERATION_NAME = "core_course_get_enrolled_courses_by_timeline_classification"
 _AJAX_TIMEOUT_MS = 15_000
-_FIXED_BRIDGE_SCRIPT = """async ({offset}) => new Promise((resolve, reject) => {
+_FIXED_BRIDGE_SCRIPT = """async ({offset}) => new Promise((resolve) => {
 require(['core/ajax'], function(Ajax) {
+  if (!Ajax || typeof Ajax.call !== 'function') { resolve({bridge_failure: 'MODULE_LOAD_FAILED'}); return; }
   Ajax.call([{methodname: 'core_course_get_enrolled_courses_by_timeline_classification', args: {
     classification: 'allincludinghidden', limit: 100, offset: offset, requiredfields: ['id']
   }}], true, true, true, 15000)[0].then(function(data) {
-    if (!data || !Array.isArray(data.courses) || !Number.isInteger(data.nextoffset)) { reject(new Error('invalid')); return; }
+    if (!data || !Array.isArray(data.courses) || !Number.isInteger(data.nextoffset)) { resolve({bridge_failure: 'MALFORMED'}); return; }
     const ids = [];
-    for (const course of data.courses) { if (!course || !Number.isInteger(course.id)) { reject(new Error('invalid')); return; } ids.push(course.id); }
+    for (const course of data.courses) { if (!course || !Number.isInteger(course.id)) { resolve({bridge_failure: 'MALFORMED'}); return; } ids.push(course.id); }
     resolve({course_ids: ids, next_offset: data.nextoffset});
-  }, function() { reject(new Error('failed')); });
-}, function() { reject(new Error('unavailable')); });
+  }, function() { resolve({bridge_failure: 'MOODLE_ERROR'}); });
+}, function() { resolve({bridge_failure: 'MODULE_LOAD_FAILED'}); });
 })"""
 
 
@@ -35,6 +36,37 @@ class SessionReadPolicyError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("session-bound Moodle read unavailable")
+
+
+@dataclass(frozen=True, slots=True)
+class SessionReadDiagnostic:
+    """Fixed, non-secret state observed at existing session-read boundaries."""
+
+    authenticated_page: str
+    sentinel_transition: str
+    collection_page: str
+    bridge_stage: str
+    ajax_permit_stage: str
+    ajax_response_stage: str
+    pagination_stage: str
+    root_cause: str
+
+
+def render_session_read_diagnostic(diagnostic: SessionReadDiagnostic) -> str:
+    """Render only application-owned diagnostic enums, never runtime values."""
+    return "\n".join(
+        (
+            "SESSION_READ_DIAGNOSTIC",
+            f"AUTHENTICATED_PAGE={diagnostic.authenticated_page}",
+            f"SENTINEL_TRANSITION={diagnostic.sentinel_transition}",
+            f"COLLECTION_PAGE={diagnostic.collection_page}",
+            f"BRIDGE_STAGE={diagnostic.bridge_stage}",
+            f"AJAX_PERMIT_STAGE={diagnostic.ajax_permit_stage}",
+            f"AJAX_RESPONSE_STAGE={diagnostic.ajax_response_stage}",
+            f"PAGINATION_STAGE={diagnostic.pagination_stage}",
+            f"SESSION_READ_ROOT_CAUSE={diagnostic.root_cause}",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +184,46 @@ class _SessionBoundMoodleCourseRead:
         self._sentinel: _Page | None = sentinel
         self._permit: OneShotMoodleAjaxPermit | None = None
         self._policy_failed = False
+        self._diagnostic = SessionReadDiagnostic(
+            authenticated_page="PASS",
+            sentinel_transition="NOT_REACHED",
+            collection_page="NOT_REACHED",
+            bridge_stage="NOT_REACHED",
+            ajax_permit_stage="NOT_REACHED",
+            ajax_response_stage="NOT_REACHED",
+            pagination_stage="NOT_REACHED",
+            root_cause="NOT_REACHED",
+        )
         context.route("**/*", self._handle_request)
+
+    @property
+    def diagnostic(self) -> SessionReadDiagnostic:
+        """Return fixed diagnostic classifications only."""
+        return self._diagnostic
+
+    def diagnose_enrolled_course_ids(self) -> SessionReadDiagnostic:
+        """Exercise the production read once while returning only safe classifications."""
+        try:
+            self.discover_enrolled_course_ids()
+        except SessionReadPolicyError:
+            if self._diagnostic.root_cause == "NOT_REACHED":
+                if self._diagnostic.ajax_response_stage == "REDUCED_SCHEMA_PASS":
+                    self._diagnostic = replace(
+                        self._diagnostic,
+                        pagination_stage="PAGINATION_VALIDATION_FAILED",
+                        root_cause="PAGINATION_VALIDATION_FAILED",
+                    )
+                else:
+                    self._diagnostic = replace(
+                        self._diagnostic, root_cause="BRIDGE_EXECUTION_FAILED"
+                    )
+        else:
+            self._diagnostic = replace(
+                self._diagnostic,
+                pagination_stage="PASS",
+                root_cause="NO_FAILURE",
+            )
+        return self._diagnostic
 
     def discover_enrolled_course_ids(self) -> tuple[int, ...]:
         """Return only a bounded, complete traversal of numeric Moodle course IDs."""
@@ -161,6 +232,7 @@ class _SessionBoundMoodleCourseRead:
         page: _Page | None = None
         try:
             page = self._context.new_page()
+            self._diagnostic = replace(self._diagnostic, collection_page="PASS")
             for event in ("popup", "download", "websocket", "filechooser"):
                 page.on(event, self._blocked_event)
             self._complete_transition(page)
@@ -173,13 +245,66 @@ class _SessionBoundMoodleCourseRead:
                 permit = OneShotMoodleAjaxPermit(self._canonical_wwwroot)
                 permit.arm(offset)
                 self._permit = permit
-                result = page.evaluate(_FIXED_BRIDGE_SCRIPT, {"offset": offset})
-                if self._policy_failed or not permit.consumed:
+                self._diagnostic = replace(
+                    self._diagnostic,
+                    bridge_stage="BRIDGE_EXECUTION_FAILED",
+                    ajax_permit_stage="REQUEST_NOT_OBSERVED",
+                    ajax_response_stage="TRANSPORT_FAILED",
+                )
+                try:
+                    result = page.evaluate(_FIXED_BRIDGE_SCRIPT, {"offset": offset})
+                except TimeoutError:
+                    self._diagnostic = replace(
+                        self._diagnostic, bridge_stage="TIMEOUT", root_cause="TIMEOUT"
+                    )
+                    raise SessionReadPolicyError() from None
+                except (OSError, PlaywrightError, TypeError, ValueError):
+                    raise SessionReadPolicyError() from None
+                if isinstance(result, dict) and result.get("bridge_failure") in {
+                    "MODULE_LOAD_FAILED",
+                    "MALFORMED",
+                    "MOODLE_ERROR",
+                }:
+                    failure = result["bridge_failure"]
+                    if failure == "MODULE_LOAD_FAILED":
+                        self._diagnostic = replace(
+                            self._diagnostic,
+                            bridge_stage="MODULE_LOAD_FAILED",
+                            ajax_response_stage="NOT_REACHED",
+                            root_cause="MODULE_LOAD_FAILED",
+                        )
+                    elif failure == "MOODLE_ERROR":
+                        self._diagnostic = replace(
+                            self._diagnostic,
+                            ajax_response_stage="MOODLE_ERROR",
+                            root_cause="MOODLE_ERROR",
+                        )
+                    else:
+                        self._diagnostic = replace(
+                            self._diagnostic,
+                            ajax_response_stage="MALFORMED",
+                            root_cause="MALFORMED_RESPONSE",
+                        )
                     raise SessionReadPolicyError()
+                if self._policy_failed or not permit.consumed:
+                    if not permit.consumed:
+                        self._diagnostic = replace(
+                            self._diagnostic,
+                            ajax_permit_stage="REQUEST_NOT_OBSERVED",
+                            root_cause="AJAX_REQUEST_NOT_OBSERVED",
+                        )
+                    raise SessionReadPolicyError()
+                self._diagnostic = replace(
+                    self._diagnostic,
+                    bridge_stage="PASS",
+                    ajax_response_stage="REDUCED_SCHEMA_PASS",
+                )
                 return result
 
             return collect_course_ids(fetch)
         except (AttributeError, OSError, PlaywrightError, TimeoutError, TypeError, ValueError):
+            if self._diagnostic.root_cause == "NOT_REACHED":
+                self._diagnostic = replace(self._diagnostic, root_cause="BRIDGE_EXECUTION_FAILED")
             raise SessionReadPolicyError() from None
         except BrowserPolicyError:
             raise SessionReadPolicyError() from None
@@ -204,7 +329,16 @@ class _SessionBoundMoodleCourseRead:
                 request.resource_type,
                 getattr(request, "post_data", None),
             )
+            self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
         except SessionReadPolicyError:
+            rejection = _safe_ajax_rejection_reason(
+                request.method,
+                request.url,
+                request.resource_type,
+                getattr(request, "post_data", None),
+                self._canonical_wwwroot,
+                permit,
+            )
             decision = classify_browser_request(
                 request.method,
                 request.url,
@@ -218,6 +352,11 @@ class _SessionBoundMoodleCourseRead:
                 # optional resource must not turn the approved document navigation into
                 # a generic AJAX authorization failure.  Network-capable requests do.
                 if request.method != "GET" or request.resource_type in {"xhr", "fetch"}:
+                    self._diagnostic = replace(
+                        self._diagnostic,
+                        ajax_permit_stage="REQUEST_REJECTED",
+                        root_cause=rejection,
+                    )
                     self._policy_failed = True
                 route.abort()
                 return
@@ -239,6 +378,7 @@ class _SessionBoundMoodleCourseRead:
         if self._context.pages != [page]:
             raise SessionReadPolicyError()
         self._sentinel = None
+        self._diagnostic = replace(self._diagnostic, sentinel_transition="PASS")
 
 
 def collect_course_ids(fetch_page: Callable[[int], object]) -> tuple[int, ...]:
@@ -313,6 +453,50 @@ def _is_exact_operation_body(body: object, offset: int) -> bool:
             }
         ]
     )
+
+
+def _safe_ajax_rejection_reason(
+    method: object,
+    url: object,
+    resource_type: object,
+    body: object,
+    canonical_wwwroot: str,
+    permit: OneShotMoodleAjaxPermit | None,
+) -> str:
+    """Classify a rejected request structurally without returning inspected values."""
+    if permit is None or permit.consumed:
+        return "PERMIT_ALREADY_CONSUMED"
+    if method != "POST" or resource_type not in {"xhr", "fetch"}:
+        return "WRONG_METHOD"
+    if not isinstance(url, str):
+        return "OTHER_POLICY_REJECTION"
+    try:
+        target = urlsplit(url)
+        base = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return "OTHER_POLICY_REJECTION"
+    if target.scheme != base.scheme or target.netloc != base.netloc:
+        return "WRONG_ORIGIN"
+    if target.path != base.path.rstrip("/") + "/lib/ajax/service.php":
+        return "WRONG_PATH"
+    if not _is_exact_ajax_target(url, canonical_wwwroot):
+        return "WRONG_QUERY_STRUCTURE"
+    if not isinstance(body, str):
+        return "OTHER_POLICY_REJECTION"
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return "OTHER_POLICY_REJECTION"
+    if not isinstance(payload, list) or len(payload) != 1:
+        return "WRONG_OPERATION_COUNT"
+    operation = payload[0]
+    if not isinstance(operation, dict):
+        return "OTHER_POLICY_REJECTION"
+    if operation.get("index") != 0:
+        return "WRONG_OPERATION_INDEX"
+    if operation.get("methodname") != _OPERATION_NAME:
+        return "WRONG_OPERATION_NAME"
+    return "WRONG_ARGUMENT_STRUCTURE"
 
 
 def _validate_reduced_response(response: object) -> tuple[tuple[int, ...], int]:
