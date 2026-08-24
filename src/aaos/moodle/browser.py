@@ -216,6 +216,7 @@ def _run_same_context_browser_course_smoke(
     settings: MoodleSettings,
     paths: AuthPaths,
     launch_persistent_context: Callable[..., object],
+    canonical_wwwroot: str | None = None,
     course_index_diagnostic: bool = False,
     course_index_loading_diagnostic: bool = False,
 ) -> BrowserCourseIndexResult:
@@ -276,6 +277,7 @@ def _run_same_context_browser_course_smoke(
                 navigator = PlaywrightRestrictedNavigator(
                     cast(Any, context),
                     settings.base_origin,
+                    canonical_wwwroot=canonical_wwwroot,
                     transition_sentinel=cast(Any, sentinel),
                 )
             except (BrowserPolicyError, OSError, TypeError, ValueError):
@@ -324,7 +326,7 @@ def run_configured_browser_course_smoke() -> int:
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
     try:
-        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
         settings = replace(
             runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
         )
@@ -332,6 +334,7 @@ def run_configured_browser_course_smoke() -> int:
             settings=settings,
             paths=paths,
             launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
         )
     except BrowserSmokeFailure as failure:
         print("COURSE_DISCOVERY_FAILED")
@@ -358,7 +361,7 @@ def run_configured_course_index_structure_diagnostic() -> int:
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
     try:
-        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
         settings = replace(
             runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
         )
@@ -366,6 +369,7 @@ def run_configured_course_index_structure_diagnostic() -> int:
             settings=settings,
             paths=paths,
             launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
             course_index_diagnostic=True,
         )
     except BrowserSmokeFailure as failure:
@@ -395,7 +399,7 @@ def run_configured_course_index_loading_diagnostic() -> int:
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
     try:
-        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
         settings = replace(
             runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
         )
@@ -403,6 +407,7 @@ def run_configured_course_index_loading_diagnostic() -> int:
             settings=settings,
             paths=paths,
             launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
             course_index_loading_diagnostic=True,
         )
     except BrowserSmokeFailure as failure:
@@ -432,13 +437,14 @@ def run_configured_static_asset_diagnostic() -> int:
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
     try:
-        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        config, runtime_settings, paths = load_runtime_moodle_configuration()
         result = _run_same_context_browser_course_smoke(
             settings=replace(
                 runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
             ),
             paths=paths,
             launch_persistent_context=launch_msedge_persistent_context,
+            canonical_wwwroot=config.canonical_wwwroot,
             course_index_loading_diagnostic=True,
         )
     except BrowserSmokeFailure as failure:

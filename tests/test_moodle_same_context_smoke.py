@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from playwright._impl._errors import TargetClosedError
@@ -670,7 +671,11 @@ def test_browser_smoke_cli_derives_browser_mode_from_runtime_configuration(
     monkeypatch.setattr(
         receiver,
         "load_runtime_moodle_configuration",
-        lambda: (object(), runtime_settings, _paths(tmp_path)),
+        lambda: (
+            SimpleNamespace(canonical_wwwroot=_ORIGIN + "/current"),
+            runtime_settings,
+            _paths(tmp_path),
+        ),
     )
     captured: list[MoodleSettings] = []
 
@@ -697,7 +702,11 @@ def test_course_index_structure_diagnostic_uses_same_browser_smoke_runtime(
     monkeypatch.setattr(
         receiver,
         "load_runtime_moodle_configuration",
-        lambda: (object(), runtime_settings, _paths(tmp_path)),
+        lambda: (
+            SimpleNamespace(canonical_wwwroot=_ORIGIN + "/current"),
+            runtime_settings,
+            _paths(tmp_path),
+        ),
     )
     captured: list[object] = []
 

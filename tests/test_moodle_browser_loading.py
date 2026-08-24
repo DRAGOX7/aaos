@@ -82,20 +82,98 @@ def test_static_asset_classifier_reports_fixed_classes_without_path_output() -> 
     from aaos.moodle.browser_navigation import classify_static_asset_request
 
     origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
     assert (
-        classify_static_asset_request(origin + "/current/theme/styles.php?theme=boost", origin)
+        classify_static_asset_request(
+            origin + "/current/theme/styles.php?theme=boost", canonical_wwwroot
+        )
         == "THEME_STYLES"
     )
     assert (
-        classify_static_asset_request(origin + "/current/lib/javascript.php", origin)
+        classify_static_asset_request(origin + "/current/lib/javascript.php", canonical_wwwroot)
         == "MOODLE_CORE_JS"
     )
     assert (
-        classify_static_asset_request(origin + "/current/lib/amd/build/core.min.js", origin)
+        classify_static_asset_request(
+            origin + "/current/lib/amd/build/core.min.js", canonical_wwwroot
+        )
         == "MOODLE_AMD_JS"
     )
     assert (
-        classify_static_asset_request(origin + "/current/pluginfile.php/1/file.pdf", origin)
+        classify_static_asset_request(
+            origin + "/current/pluginfile.php/1/file.pdf", canonical_wwwroot
+        )
         == "PLUGINFILE"
     )
-    assert classify_static_asset_request(origin + "/current/my/index.php", origin) == "OTHER_MOODLE"
+    assert (
+        classify_static_asset_request(origin + "/current/my/index.php", canonical_wwwroot)
+        == "OTHER_MOODLE"
+    )
+
+
+def test_static_asset_classifier_normalizes_only_the_exact_canonical_moodle_base_path() -> None:
+    from aaos.moodle.browser_navigation import classify_static_asset_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+
+    assert (
+        classify_static_asset_request(
+            origin + "/current/theme/styles.php/42/boost/all.css", canonical_wwwroot
+        )
+        == "THEME_STYLES"
+    )
+    assert (
+        classify_static_asset_request(
+            origin + "/current/lib/javascript.php/42/core.js", canonical_wwwroot
+        )
+        == "MOODLE_CORE_JS"
+    )
+    assert (
+        classify_static_asset_request(
+            origin + "/current/lib/requirejs.php/42/core/main.min.js", canonical_wwwroot
+        )
+        == "MOODLE_AMD_JS"
+    )
+    assert (
+        classify_static_asset_request(origin + "/currentevil/theme/styles.php", canonical_wwwroot)
+        == "OTHER_MOODLE"
+    )
+    assert (
+        classify_static_asset_request(origin + "/foo/current/theme/styles.php", canonical_wwwroot)
+        == "OTHER_MOODLE"
+    )
+    assert (
+        classify_static_asset_request(
+            "https://other.example.edu/current/theme/styles.php", canonical_wwwroot
+        )
+        == "OTHER_ORIGIN"
+    )
+
+
+def test_static_asset_classifier_uses_the_supplied_application_base_without_approving_routes() -> (
+    None
+):
+    from aaos.moodle.browser_navigation import classify_static_asset_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/moodle"
+
+    assert (
+        classify_static_asset_request(origin + "/moodle/theme/styles.php", canonical_wwwroot)
+        == "THEME_STYLES"
+    )
+    assert (
+        classify_static_asset_request(
+            origin + "/moodle/pluginfile.php/1/file.pdf", canonical_wwwroot
+        )
+        == "PLUGINFILE"
+    )
+    assert (
+        classify_static_asset_request(origin + "/moodle/lib/ajax/service.php", canonical_wwwroot)
+        == "OTHER_MOODLE"
+    )
+    assert (
+        classify_static_asset_request(origin + "/moodle/admin/index.php", canonical_wwwroot)
+        == "OTHER_MOODLE"
+    )

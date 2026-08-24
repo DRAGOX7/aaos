@@ -177,10 +177,16 @@ class PlaywrightRestrictedNavigator:
     """Expose only fixed route navigation, never raw browser primitives."""
 
     def __init__(
-        self, context: _Context, base_origin: str, *, transition_sentinel: _Page | None = None
+        self,
+        context: _Context,
+        base_origin: str,
+        *,
+        canonical_wwwroot: str | None = None,
+        transition_sentinel: _Page | None = None,
     ) -> None:
         self._context = context
         self._base_origin = base_origin
+        self._canonical_wwwroot = canonical_wwwroot or base_origin + "/current"
         self._transition_sentinel = transition_sentinel
         self._closed = False
         self._failure_stage: FailureStage = "NONE"
@@ -237,7 +243,8 @@ class PlaywrightRestrictedNavigator:
         )
         self._request_observer.record(observation)
         self._request_observer.record_static(
-            classify_static_asset_request(request.url, self._base_origin), observation.policy_result
+            classify_static_asset_request(request.url, self._canonical_wwwroot),
+            observation.policy_result,
         )
         if (
             classify_browser_request(
@@ -403,33 +410,52 @@ def classify_request_observation(
     )
 
 
-def classify_static_asset_request(url: object, base_origin: str) -> StaticAssetClass:
+def classify_static_asset_request(url: object, canonical_wwwroot: str) -> StaticAssetClass:
     """Classify only fixed Moodle infrastructure route families without approving them."""
     if not isinstance(url, str):
         return "OTHER_ORIGIN"
     try:
         target = urlsplit(url)
-        base = urlsplit(base_origin)
+        base = urlsplit(canonical_wwwroot)
     except ValueError:
         return "OTHER_ORIGIN"
     if f"{target.scheme}://{target.netloc}" != f"{base.scheme}://{base.netloc}":
         return "OTHER_ORIGIN"
-    path = target.path
-    if path == "/current/theme/styles.php":
+    base_path = base.path.rstrip("/")
+    if (
+        base.scheme != "https"
+        or not base.netloc
+        or not base_path
+        or base.query
+        or base.fragment
+        or base.username
+        or base.password
+    ):
+        return "OTHER_MOODLE"
+    prefix = base_path + "/"
+    if not target.path.startswith(prefix):
+        return "OTHER_MOODLE"
+    path = target.path[len(base_path) :]
+    if path == "/theme/styles.php" or path.startswith("/theme/styles.php/"):
         return "THEME_STYLES"
-    if path == "/current/lib/javascript.php":
+    if path == "/lib/javascript.php" or path.startswith("/lib/javascript.php/"):
         return "MOODLE_CORE_JS"
-    if path.startswith("/current/lib/amd/") and path.endswith(".js"):
+    if (
+        path == "/lib/requirejs.php"
+        or path.startswith("/lib/requirejs.php/")
+        or path.startswith("/lib/amd/")
+        and path.endswith(".js")
+    ):
         return "MOODLE_AMD_JS"
-    if path.startswith("/current/theme/") and path.endswith(".js"):
+    if path.startswith("/theme/") and path.endswith(".js"):
         return "THEME_JS"
-    if path.startswith("/current/theme/") and path.endswith((".png", ".svg", ".jpg", ".webp")):
+    if path.startswith("/theme/") and path.endswith((".png", ".svg", ".jpg", ".webp")):
         return "THEME_IMAGE"
-    if path.startswith("/current/pix/"):
+    if path.startswith("/pix/"):
         return "CORE_IMAGE"
-    if path.endswith((".woff", ".woff2", ".ttf")):
+    if path.startswith("/theme/") and path.endswith((".woff", ".woff2", ".ttf")):
         return "FONT"
-    if path.startswith("/current/pluginfile.php"):
+    if path == "/pluginfile.php" or path.startswith("/pluginfile.php/"):
         return "PLUGINFILE"
     if path.endswith((".css", ".js", ".png", ".svg", ".jpg", ".webp")):
         return "OTHER_STATIC_SAME_ORIGIN"
