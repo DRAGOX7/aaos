@@ -341,8 +341,14 @@ class PlaywrightRestrictedNavigator:
         if allowed:
             route.continue_()
         else:
-            self._failure_stage = "REQUEST_POLICY"
-            if _is_moodle_ajax_post(request.method, request.url, self._canonical_wwwroot):
+            if _is_frontend_course_ajax_attempt(
+                request.method,
+                request.url,
+                request.resource_type,
+                getattr(request, "post_data", None),
+                self._canonical_wwwroot,
+            ):
+                self._failure_stage = "REQUEST_POLICY"
                 self._blocked_frontend_course_ajax = True
             route.abort()
 
@@ -562,6 +568,43 @@ def is_approved_frontend_course_ajax_request(
     ):
         return False
     return True
+
+
+def _is_frontend_course_ajax_attempt(
+    method: object,
+    url: object,
+    resource_type: object,
+    post_data: object,
+    canonical_wwwroot: str,
+) -> bool:
+    """Identify only a blocked attempt at the approved frontend course operation.
+
+    Unrelated Moodle AJAX is expected background traffic: it remains blocked,
+    but must not make course discovery fail before Moodle can issue the proven
+    course-data request.
+    """
+    if (
+        method != "POST"
+        or resource_type not in {"xhr", "fetch"}
+        or not isinstance(url, str)
+        or not isinstance(post_data, str)
+        or len(post_data.encode("utf-8")) > _MAX_FRONTEND_AJAX_BODY_BYTES
+    ):
+        return False
+    if not _is_moodle_ajax_post(method, url, canonical_wwwroot):
+        return False
+    try:
+        payload = json.loads(post_data)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, list)
+        and any(
+            isinstance(operation, dict)
+            and operation.get("methodname") == _FRONTEND_COURSE_AJAX_METHOD
+            for operation in payload
+        )
+    )
 
 
 def _is_moodle_ajax_post(method: object, url: object, canonical_wwwroot: str) -> bool:

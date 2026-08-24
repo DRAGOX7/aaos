@@ -55,6 +55,14 @@ class _Page:
             return
         assert url == _COURSE_INDEX
         assert timeout == 30_000
+        if self._context.unrelated_ajax_method is not None:
+            unrelated_route = _Route()
+            self._context.request_handler(
+                unrelated_route, _Request(self._context.unrelated_ajax_method)
+            )
+            self._context.calls.append(
+                "unrelated-ajax-" + ("allowed" if unrelated_route.allowed else "blocked")
+            )
         route = _Route()
         self._context.request_handler(route, _Request(self._context.ajax_method))
         self._course_dom_ready = route.allowed
@@ -87,6 +95,7 @@ class _Context:
         self.request_handler: Any = lambda *_args: None
         self.interception_installed = False
         self.ajax_method = _METHOD
+        self.unrelated_ajax_method: str | None = None
         self.closed_with_lock = False
 
     def new_page(self) -> _Page:
@@ -144,23 +153,23 @@ def test_same_context_smoke_uses_moodle_frontend_dom_after_sentinel_transition(
     assert context.calls[-1] == "context-close"
 
 
-def test_same_context_smoke_rejects_unapproved_frontend_post_before_dom_population(
+def test_same_context_smoke_blocks_unrelated_ajax_without_failing_course_discovery(
     tmp_path: Path,
 ) -> None:
-    from aaos.moodle.browser import BrowserSmokeFailure, _run_same_context_browser_course_smoke
+    from aaos.moodle.browser import _run_same_context_browser_course_smoke
 
     paths = _paths(tmp_path)
     context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
-    context.ajax_method = "core_user_update"
+    context.unrelated_ajax_method = "core_user_update"
 
-    with pytest.raises(BrowserSmokeFailure) as failure:
-        _run_same_context_browser_course_smoke(
-            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
-        )
+    result = _run_same_context_browser_course_smoke(
+        settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+    )
 
-    assert failure.value.stage == "REQUEST_POLICY"
+    assert isinstance(result, CourseDiscovery)
+    assert tuple(course.source_id for course in result.courses) == ("42",)
+    assert "unrelated-ajax-blocked" in context.calls
     assert context.closed_with_lock is True
-
 
 def test_same_context_smoke_closes_context_before_releasing_profile_lock_on_failure(
     tmp_path: Path,

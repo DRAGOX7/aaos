@@ -108,21 +108,34 @@ def test_frontend_empty_state_does_not_accept_text_or_script_content(markup: str
     assert not _is_frontend_course_index_settled(markup, _ORIGIN)
 
 
+def test_frontend_dom_parser_deduplicates_repeated_course_links() -> None:
+    from aaos.moodle.browser_parsing import parse_frontend_course_index
+
+    courses = parse_frontend_course_index(
+        '<a href="/current/course/view.php?id=42">redacted</a>'
+        '<a href="/current/course/view.php?id=42">redacted</a>',
+        expected_origin="https://moodle.example.edu",
+    )
+
+    assert tuple(course.source_id for course in courses) == ("42",)
+
+
 @pytest.mark.parametrize(
     "markup",
     (
-        '<a href="/current/course/view.php?id=42">redacted</a>'
-        '<a href="/current/course/view.php?id=42">redacted</a>',
         '<a href="/current/course/view.php?id=zero">redacted</a>',
         '<a href="/current/course/view.php?id=42&other=redacted">redacted</a>',
     ),
 )
-def test_frontend_dom_parser_rejects_duplicate_or_invalid_course_identity(markup: str) -> None:
+def test_frontend_dom_parser_rejects_invalid_course_identity(markup: str) -> None:
     from aaos.moodle.browser_models import BrowserPolicyError
     from aaos.moodle.browser_parsing import parse_frontend_course_index
 
     with pytest.raises(BrowserPolicyError):
-        parse_frontend_course_index(markup, expected_origin=_ORIGIN)
+        parse_frontend_course_index(
+            markup,
+            expected_origin="https://moodle.example.edu",
+        )
 
 
 @pytest.mark.parametrize("course_id", ("\u00b2", "9" * 11))

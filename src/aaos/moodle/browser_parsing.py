@@ -124,16 +124,18 @@ def parse_course_index(html: str, *, expected_origin: str) -> ParsedPage[RawCour
 
 
 def parse_frontend_course_index(html: object, *, expected_origin: str) -> tuple[RawCourse, ...]:
-    """Extract only stable IDs from the live-proven Moodle course-link DOM shape."""
+    """Extract unique stable course IDs from Moodle's rendered course-link DOM."""
     markup = _parse(html)
     identifiers: list[str] = []
+    seen: set[str] = set()
     for link in markup.links:
         identifier = _frontend_course_identifier(link, expected_origin)
-        if identifier is not None:
-            identifiers.append(identifier)
-    _unique(identifiers)
-    if len(identifiers) > 10_000:
-        raise BrowserPolicyError()
+        if identifier is None or identifier in seen:
+            continue
+        seen.add(identifier)
+        identifiers.append(identifier)
+        if len(identifiers) > 10_000:
+            raise BrowserPolicyError()
     return tuple(RawCourse(source_id=identifier, title="") for identifier in identifiers)
 
 
