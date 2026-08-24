@@ -33,6 +33,11 @@ from aaos.moodle.browser_parsing import (
 from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+from aaos.moodle.session_read import (
+    SessionCourseReadResult,
+    SessionReadPolicyError,
+    _SessionBoundMoodleCourseRead,
+)
 
 BrowserSmokeFailureStage: TypeAlias = Literal[
     "PROFILE",
@@ -51,6 +56,7 @@ BrowserSmokeFailureStage: TypeAlias = Literal[
     "COURSE_IDENTITY",
     "PAGINATION",
     "COMPLETENESS",
+    "SESSION_READ",
     "CLEANUP",
 ]
 
@@ -86,7 +92,10 @@ class CourseIndexLoadingResult:
 
 
 BrowserCourseIndexResult: TypeAlias = (
-    CourseDiscoveryResult | CourseIndexStructureDiagnostic | CourseIndexLoadingResult
+    SessionCourseReadResult
+    | CourseDiscoveryResult
+    | CourseIndexStructureDiagnostic
+    | CourseIndexLoadingResult
 )
 
 
@@ -275,16 +284,16 @@ def _run_same_context_browser_course_smoke(
                 raise BrowserSmokeFailure("AUTH_PROOF")
             auth_pages, sentinel = _create_transition_sentinel(context)
             _close_auth_pages(context, auth_pages, sentinel)
-            try:
-                navigator = PlaywrightRestrictedNavigator(
-                    cast(Any, context),
-                    settings.base_origin,
-                    canonical_wwwroot=canonical_wwwroot,
-                    transition_sentinel=cast(Any, sentinel),
-                )
-            except (BrowserPolicyError, OSError, TypeError, ValueError):
-                raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
             if course_index_diagnostic:
+                try:
+                    navigator = PlaywrightRestrictedNavigator(
+                        cast(Any, context),
+                        settings.base_origin,
+                        canonical_wwwroot=canonical_wwwroot,
+                        transition_sentinel=cast(Any, sentinel),
+                    )
+                except (BrowserPolicyError, OSError, TypeError, ValueError):
+                    raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
                 try:
                     document = navigator.open("COURSE_INDEX")
                     return diagnose_course_index_structure(
@@ -293,6 +302,15 @@ def _run_same_context_browser_course_smoke(
                 except BrowserPolicyError:
                     raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
             if course_index_loading_diagnostic:
+                try:
+                    navigator = PlaywrightRestrictedNavigator(
+                        cast(Any, context),
+                        settings.base_origin,
+                        canonical_wwwroot=canonical_wwwroot,
+                        transition_sentinel=cast(Any, sentinel),
+                    )
+                except (BrowserPolicyError, OSError, TypeError, ValueError):
+                    raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
                 try:
                     samples = navigator.observe_course_index_loading()
                     return CourseIndexLoadingResult(
@@ -303,12 +321,23 @@ def _run_same_context_browser_course_smoke(
                     )
                 except BrowserPolicyError:
                     raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
-            result = discover_courses_for_smoke(
-                MoodleBrowserSource(navigator, "moodle:just:browser-smoke", settings.base_origin)
-            )
-            if isinstance(result, SourceCollectionFailure):
-                raise BrowserSmokeFailure(_collection_failure_stage(result))
-            return result
+            try:
+                result = _SessionBoundMoodleCourseRead(
+                    cast(Any, context),
+                    base_origin=settings.base_origin,
+                    canonical_wwwroot=canonical_wwwroot or settings.base_origin + "/current",
+                    sentinel=cast(Any, sentinel),
+                ).discover_enrolled_course_ids()
+            except (
+                BrowserPolicyError,
+                SessionReadPolicyError,
+                OSError,
+                TimeoutError,
+                TypeError,
+                ValueError,
+            ):
+                raise BrowserSmokeFailure("SESSION_READ") from None
+            return SessionCourseReadResult(result)
         except BrowserSmokeFailure:
             operation_failed = True
             raise
@@ -346,9 +375,9 @@ def run_configured_browser_course_smoke() -> int:
         print("COURSE_DISCOVERY_FAILED")
         print("FAILURE_STAGE=PROFILE")
         return 1
-    if isinstance(result, CourseDiscovery):
+    if isinstance(result, SessionCourseReadResult):
         print("COURSE_DISCOVERY_PASS")
-        print(f"COURSE_COUNT={len(result.courses)}")
+        print(f"COURSE_COUNT={len(result.course_ids)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
     print("FAILURE_STAGE=NAVIGATION")

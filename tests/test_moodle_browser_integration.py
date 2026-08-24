@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +15,7 @@ from playwright.sync_api import sync_playwright
 from aaos.moodle.browser import MoodleBrowserSource
 from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
 from aaos.moodle.collection import CourseDiscovery
+from aaos.moodle.session_read import _SessionBoundMoodleCourseRead
 
 
 @pytest.fixture
@@ -29,7 +31,6 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            server = cast(Any, self.server)
             served_paths.add(self.path)
             if self.path == "/current/theme/styles.php/42/boost/all.css":
                 payload = b"body { color: black; }"
@@ -57,6 +58,12 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                     "<script src='/current/theme/yui_combo.php?fixture=private'></script>"
                     "<link rel='stylesheet' href='/current/theme/yui_combo.php?fixture=private'>"
                     "<link rel='stylesheet' href='/current/theme/unapproved.css'>"
+                    "<script>window.require=function(_deps, ready){ready({call:function(requests){"
+                    "return [fetch('/current/lib/ajax/service.php?sesskey=opaque&"
+                    "info=core_course_get_enrolled_courses_by_timeline_classification&"
+                    "nosessionupdate=true',{method:'POST',headers:{'Content-Type':'application/json'},"
+                    "body:JSON.stringify(requests.map(function(item,index){return Object.assign({index:index},item)}))}).then(function(r){return r.json()})."
+                    "then(function(items){return items[0].data})]}})}</script>"
                     f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
                     "Synthetic</a><nav data-pagination-pages='0' "
                     "data-pagination-exhausted='true'></nav>"
@@ -64,6 +71,23 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                 content_type = "text/html"
             self.send_response(200)
             self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self) -> None:  # noqa: N802
+            served_paths.add(self.path.split("?", maxsplit=1)[0])
+            if not self.path.startswith("/current/lib/ajax/service.php?"):
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            request = json.loads(self.rfile.read(length))
+            offset = request[0]["args"]["offset"]
+            courses = [{"id": 42, "fullname": "never crosses bridge"}] if offset == 0 else []
+            payload = json.dumps([{"data": {"courses": courses, "nextoffset": 1}}]).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -132,6 +156,33 @@ def test_production_modules_do_not_import_test_tls_or_disable_tls_validation() -
     )
     assert "trustme" not in production
     assert "ignore_https_errors" not in production
+
+
+def test_real_msedge_executes_only_the_fixed_session_bound_ajax_bridge(
+    local_moodle_https: tuple[str, Path, Path, set[str]], tmp_path: Path
+) -> None:
+    origin, _certificate, _private_key, served_paths = local_moodle_https
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            str(tmp_path / "session-read-profile"),
+            channel="msedge",
+            headless=True,
+            accept_downloads=False,
+            service_workers="block",
+            ignore_https_errors=True,
+        )
+        sentinel = context.pages[0] if context.pages else context.new_page()
+        try:
+            result = _SessionBoundMoodleCourseRead(
+                cast(Any, context),
+                base_origin=origin,
+                canonical_wwwroot=origin + "/current",
+                sentinel=cast(Any, sentinel),
+            ).discover_enrolled_course_ids()
+        finally:
+            context.close()
+    assert result == (42,)
+    assert "/current/lib/ajax/service.php" in served_paths
 
 
 def test_real_msedge_transition_sentinel_keeps_context_usable(tmp_path: Path) -> None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from playwright._impl._errors import TargetClosedError
@@ -10,6 +12,7 @@ from playwright.sync_api import Error as PlaywrightError
 from aaos.academic.source import SourceCollectionFailure
 from aaos.moodle.collection import CourseDiscovery
 from aaos.moodle.models import AuthPaths, MoodleSettings
+from aaos.moodle.session_read import SessionCourseReadResult
 
 _ORIGIN = "https://moodle.example.edu"
 _COURSE_INDEX = _ORIGIN + "/current/my/courses.php"
@@ -49,6 +52,35 @@ class _Page:
     def on(self, event: str, _handler: object) -> None:
         self._context.calls.append(f"{self._kind}-{event}")
 
+    def evaluate(self, expression: str, arg: object) -> object:
+        self._context.calls.append(f"{self._kind}-evaluate")
+        assert self._kind == "collection"
+        assert "core_course_get_enrolled_courses_by_timeline_classification" in expression
+        offset = arg["offset"] if isinstance(arg, dict) else None
+        body = (
+            '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
+            '"args":{"classification":"allincludinghidden","limit":100,"offset":'
+            + str(offset)
+            + ',"requiredfields":["id"]}}]'
+        )
+        self._context.request_handler(
+            SimpleNamespace(continue_=lambda: None, abort=lambda: None),
+            SimpleNamespace(
+                method="POST",
+                url=(
+                    "https://moodle.example.edu/current/lib/ajax/service.php?"
+                    "sesskey=opaque&info=core_course_get_enrolled_courses_by_timeline_classification&"
+                    "nosessionupdate=true"
+                ),
+                resource_type="xhr",
+                post_data=body,
+            ),
+        )
+        if arg == {"offset": 0}:
+            return {"course_ids": [42], "next_offset": 1}
+        assert arg == {"offset": 1}
+        return {"course_ids": [], "next_offset": 1}
+
     def close(self) -> None:
         self._context.calls.append(f"{self._kind}-close")
         if not self._survive_close:
@@ -62,6 +94,7 @@ class _Context:
         self.pages: list[_Page] = []
         self.calls: list[str] = []
         self.interception_installed = False
+        self.request_handler: Callable[[object, object], None] = lambda *_args: None
         self.closed_with_lock = False
 
     def new_page(self) -> _Page:
@@ -82,6 +115,7 @@ class _Context:
         assert self.pages[0]._kind == "sentinel"
         assert self.pages[0].url == "about:blank"
         self.interception_installed = True
+        self.request_handler = cast(Callable[[object, object], None], _handler)
         self.calls.append("interception")
 
     def close(self) -> None:
@@ -111,8 +145,8 @@ def test_same_context_smoke_authenticates_then_collects_after_page_transition(
         settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
     )
 
-    assert isinstance(result, CourseDiscovery)
-    assert tuple(course.source_id for course in result.courses) == ("42",)
+    assert isinstance(result, SessionCourseReadResult)
+    assert result.course_ids == (42,)
     assert context.calls.index("sentinel-new") < context.calls.index("auth-close")
     assert context.calls.index("auth-close") < context.calls.index("interception")
     assert context.calls.index("interception") < context.calls.index("collection-new")
@@ -140,16 +174,13 @@ def test_same_context_smoke_closes_auth_popups_before_installing_interception(
         settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
     )
 
-    assert isinstance(result, CourseDiscovery)
+    assert isinstance(result, SessionCourseReadResult)
     assert "auth-popup-close" in context.calls
     assert context.calls.index("auth-popup-close") < context.calls.index("interception")
 
 
 def test_same_context_smoke_rejects_unexpected_page_created_with_sentinel(tmp_path: Path) -> None:
-    from aaos.moodle.browser import (
-        BrowserSmokeFailure,
-        _run_same_context_browser_course_smoke,
-    )
+    from aaos.moodle.browser import BrowserSmokeFailure, _run_same_context_browser_course_smoke
 
     class _ExtraPageContext(_Context):
         def new_page(self) -> _Page:
@@ -218,7 +249,7 @@ def test_same_context_smoke_rejects_sentinel_url_mutation_before_collection_navi
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
-    assert failure.value.stage == "NAVIGATION"
+    assert failure.value.stage == "SESSION_READ"
     assert "collection-goto" not in context.calls
 
 
@@ -311,7 +342,7 @@ def test_same_context_smoke_rejects_sentinel_close_failure_before_navigation(
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
-    assert failure.value.stage == "NAVIGATION"
+    assert failure.value.stage == "SESSION_READ"
     assert "collection-goto" not in context.calls
 
 
@@ -457,7 +488,7 @@ def test_same_context_smoke_classifies_interception_install_failure(tmp_path: Pa
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
-    assert failure.value.stage == "INTERCEPTION_INSTALL"
+    assert failure.value.stage == "SESSION_READ"
 
 
 def test_same_context_smoke_classifies_collection_page_creation_failure(tmp_path: Path) -> None:
@@ -481,7 +512,7 @@ def test_same_context_smoke_classifies_collection_page_creation_failure(tmp_path
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
-    assert failure.value.stage == "COLLECTION_PAGE_CREATE"
+    assert failure.value.stage == "SESSION_READ"
 
 
 def test_same_context_smoke_preserves_collection_page_failure_when_context_is_closed(
@@ -509,12 +540,11 @@ def test_same_context_smoke_preserves_collection_page_failure_when_context_is_cl
             settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
         )
 
-    assert failure.value.stage == "COLLECTION_PAGE_CREATE"
+    assert failure.value.stage in {"SESSION_READ", "CLEANUP"}
 
 
-def test_same_context_smoke_classifies_parser_failure(tmp_path: Path) -> None:
+def test_same_context_smoke_does_not_use_ui_parser_for_production_read(tmp_path: Path) -> None:
     from aaos.moodle.browser import (
-        BrowserSmokeFailure,
         _run_same_context_browser_course_smoke,
     )
 
@@ -539,12 +569,10 @@ def test_same_context_smoke_classifies_parser_failure(tmp_path: Path) -> None:
 
     paths = _paths(tmp_path)
     context = _MalformedCollectionContext(paths.browser_state_dir / ".playwright-edge-profile.lock")
-    with pytest.raises(BrowserSmokeFailure) as failure:
-        _run_same_context_browser_course_smoke(
-            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
-        )
-
-    assert failure.value.stage == "PARSER_SCHEMA"
+    result = _run_same_context_browser_course_smoke(
+        settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+    )
+    assert isinstance(result, SessionCourseReadResult)
 
 
 def test_same_context_smoke_classifies_cleanup_failure_after_collection(tmp_path: Path) -> None:
@@ -587,7 +615,7 @@ def test_same_context_smoke_keeps_result_when_context_already_closed_after_colle
         ),
     )
 
-    assert isinstance(result, CourseDiscovery)
+    assert isinstance(result, SessionCourseReadResult)
 
 
 def test_same_context_smoke_keeps_generic_playwright_cleanup_failure(tmp_path: Path) -> None:
@@ -614,18 +642,9 @@ def test_same_context_smoke_keeps_generic_playwright_cleanup_failure(tmp_path: P
     assert failure.value.stage == "CLEANUP"
 
 
-@pytest.mark.parametrize(
-    ("failure_code", "expected_stage"),
-    [
-        ("browser_request_policy", "REQUEST_POLICY"),
-        ("browser_unexpected_redirect", "UNEXPECTED_REDIRECT"),
-    ],
-)
-def test_same_context_smoke_preserves_restricted_navigation_failure_stage(
+def test_same_context_smoke_does_not_instantiate_ui_source_for_production_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    failure_code: str,
-    expected_stage: str,
 ) -> None:
     import aaos.moodle.browser as browser
 
@@ -634,17 +653,15 @@ def test_same_context_smoke_preserves_restricted_navigation_failure_stage(
             return None
 
         def discover_courses(self) -> SourceCollectionFailure:
-            return SourceCollectionFailure("moodle:fixture:browser-smoke", failure_code)
+            raise AssertionError("UI source must not be used")
 
     monkeypatch.setattr(browser, "MoodleBrowserSource", _FailingSource)
     paths = _paths(tmp_path)
     context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
-    with pytest.raises(browser.BrowserSmokeFailure) as failure:
-        browser._run_same_context_browser_course_smoke(
-            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
-        )
-
-    assert failure.value.stage == expected_stage
+    result = browser._run_same_context_browser_course_smoke(
+        settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+    )
+    assert isinstance(result, SessionCourseReadResult)
 
 
 def test_browser_smoke_cli_renders_only_fixed_failure_stage(
@@ -679,11 +696,11 @@ def test_browser_smoke_cli_derives_browser_mode_from_runtime_configuration(
     )
     captured: list[MoodleSettings] = []
 
-    def run_smoke(**kwargs: object) -> CourseDiscovery:
+    def run_smoke(**kwargs: object) -> SessionCourseReadResult:
         settings = kwargs["settings"]
         assert isinstance(settings, MoodleSettings)
         captured.append(settings)
-        return CourseDiscovery((), is_complete=True)
+        return SessionCourseReadResult(())
 
     monkeypatch.setattr(browser, "_run_same_context_browser_course_smoke", run_smoke)
 
@@ -769,7 +786,7 @@ def test_same_context_smoke_accepts_existing_profile_binding_used_by_session_dia
         settings=settings, paths=paths, launch_persistent_context=lambda **_: context
     )
 
-    assert isinstance(result, CourseDiscovery)
+    assert isinstance(result, SessionCourseReadResult)
 
 
 def test_same_context_smoke_returns_only_course_discovery_not_snapshot_or_entities(
@@ -785,5 +802,5 @@ def test_same_context_smoke_returns_only_course_discovery_not_snapshot_or_entiti
         settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
     )
 
-    assert isinstance(result, CourseDiscovery)
+    assert isinstance(result, SessionCourseReadResult)
     assert not isinstance(result, SourceCollectionFailure)
