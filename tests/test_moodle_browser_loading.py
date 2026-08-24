@@ -342,7 +342,7 @@ def test_moodle_handler_classifier_recognizes_only_yui_combo_as_static_infrastru
     assert handler_static_eligibility("MOODLE_HANDLER_OTHER") == "AMBIGUOUS"
 
 
-def test_handler_summary_correlates_resource_types_without_retaining_request_data() -> None:
+def test_handler_summary_keeps_only_blocked_handler_resource_types_without_request_data() -> None:
     from aaos.moodle.browser_navigation import _RequestObserver, classify_request_observation
 
     observer = _RequestObserver()
@@ -364,10 +364,7 @@ def test_handler_summary_correlates_resource_types_without_retaining_request_dat
 
     summary = observer.snapshot()
 
-    assert summary.moodle_handler_resource_counts == (
-        ("MOODLE_HANDLER_OTHER", "FONT", 1),
-        ("MOODLE_YUI_COMBO_HANDLER", "SCRIPT", 1),
-    )
+    assert summary.moodle_handler_resource_counts == (("MOODLE_HANDLER_OTHER", "FONT", 1),)
     assert "secret" not in repr(summary)
 
 

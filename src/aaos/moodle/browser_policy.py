@@ -37,9 +37,10 @@ def classify_browser_request(
     base_origin: str,
     canonical_wwwroot: str | None = None,
     resource_type: str | None = None,
+    has_body: bool = False,
 ) -> BrowserRequestDecision:
     """Allow only the COURSE_INDEX document and fixed Moodle bootstrap assets."""
-    if method not in {"GET", "HEAD"}:
+    if method not in {"GET", "HEAD"} or has_body:
         return BrowserRequestDecision("BLOCK")
     try:
         origin = _validate_origin(base_origin)
@@ -119,8 +120,10 @@ def _is_approved_asset(
         return False
     relative_path = path[len(base_path) :]
     if resource_type == "stylesheet":
-        return relative_path == "/theme/styles.php" or relative_path.startswith(
-            "/theme/styles.php/"
+        return (
+            relative_path == "/theme/styles.php"
+            or relative_path.startswith("/theme/styles.php/")
+            or relative_path == "/theme/yui_combo.php"
         )
     if resource_type == "script":
         return (
@@ -130,5 +133,6 @@ def _is_approved_asset(
             or relative_path.startswith("/lib/requirejs.php/")
             or relative_path.startswith("/lib/amd/")
             and relative_path.endswith(".js")
+            or relative_path == "/theme/yui_combo.php"
         )
     return False

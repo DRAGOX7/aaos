@@ -132,6 +132,59 @@ def test_request_policy_allows_only_proven_canonical_static_bootstrap_routes() -
         )
 
 
+def test_yui_combo_policy_allows_only_static_get_or_head_without_a_body() -> None:
+    from aaos.moodle.browser_policy import classify_browser_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+    yui_url = origin + "/current/theme/yui_combo.php?rollup=private"
+
+    for method in ("GET", "HEAD"):
+        for resource_type in ("script", "stylesheet"):
+            assert (
+                classify_browser_request(
+                    method,
+                    yui_url,
+                    base_origin=origin,
+                    canonical_wwwroot=canonical_wwwroot,
+                    resource_type=resource_type,
+                ).code
+                == "ALLOW"
+            )
+    for method, url, resource_type in (
+        ("POST", yui_url, "script"),
+        ("GET", yui_url, "font"),
+        ("GET", yui_url, "image"),
+        ("GET", "https://other.example.edu/current/theme/yui_combo.php", "script"),
+        ("GET", origin + "/currentevil/theme/yui_combo.php", "script"),
+        ("GET", origin + "/current/theme/other.php", "script"),
+        ("GET", origin + "/current/pluginfile.php/1/file.pdf", "script"),
+        ("GET", origin + "/current/lib/ajax/service.php", "script"),
+        ("GET", origin + "/current/course/view.php?id=42", "document"),
+    ):
+        assert (
+            classify_browser_request(
+                method,
+                url,
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type=resource_type,
+            ).code
+            == "BLOCK"
+        )
+    assert (
+        classify_browser_request(
+            "GET",
+            yui_url,
+            base_origin=origin,
+            canonical_wwwroot=canonical_wwwroot,
+            resource_type="script",
+            has_body=True,
+        ).code
+        == "BLOCK"
+    )
+
+
 def test_route_builder_accepts_only_approved_numeric_identifiers() -> None:
     from aaos.moodle.browser_models import BrowserPolicyError
     from aaos.moodle.browser_policy import build_browser_url

@@ -218,6 +218,7 @@ class _Request(Protocol):
     method: str
     url: str
     resource_type: str
+    post_data: str | None
 
 
 class _Page(Protocol):
@@ -315,6 +316,7 @@ class PlaywrightRestrictedNavigator:
             request.resource_type,
             base_origin=self._base_origin,
             canonical_wwwroot=self._canonical_wwwroot,
+            has_body=getattr(request, "post_data", None) is not None,
         )
         self._request_observer.record(
             observation,
@@ -332,6 +334,7 @@ class PlaywrightRestrictedNavigator:
                 base_origin=self._base_origin,
                 canonical_wwwroot=self._canonical_wwwroot,
                 resource_type=request.resource_type,
+                has_body=getattr(request, "post_data", None) is not None,
             ).code
             == "ALLOW"
         ):
@@ -445,6 +448,7 @@ def classify_request_observation(
     *,
     base_origin: str,
     canonical_wwwroot: str | None = None,
+    has_body: bool = False,
 ) -> BrowserRequestObservation:
     """Classify an intercepted request without retaining raw request data."""
     method_class: RequestMethodClass = method if method in {"GET", "HEAD", "POST"} else "OTHER"
@@ -486,6 +490,7 @@ def classify_request_observation(
             base_origin=base_origin,
             canonical_wwwroot=canonical_wwwroot,
             resource_type=resource_type if isinstance(resource_type, str) else None,
+            has_body=has_body,
         ).code
         == "ALLOW"
     ):
@@ -501,6 +506,7 @@ def classify_request_observation(
             base_origin=base_origin,
             canonical_wwwroot=canonical_wwwroot,
             resource_type=resource_type if isinstance(resource_type, str) else None,
+            has_body=has_body,
         ).code
         == "ALLOW"
         else "BLOCKED"
