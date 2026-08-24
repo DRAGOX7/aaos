@@ -17,10 +17,11 @@ from aaos.moodle.collection import CourseDiscovery
 
 
 @pytest.fixture
-def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path]]:
+def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[str]]]:
     """Serve only synthetic Moodle-shaped HTML on loopback HTTPS."""
     certificate = tmp_path / "fixture-cert.pem"
     private_key = tmp_path / "fixture-key.pem"
+    served_paths: set[str] = set()
     authority = trustme.CA()
     leaf = authority.issue_cert("localhost", "127.0.0.1")
     leaf.cert_chain_pems[0].write_to_path(certificate)
@@ -28,19 +29,31 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path]]:
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            if self.path != "/current/my/courses.php":
+            server = cast(Any, self.server)
+            served_paths.add(self.path)
+            if self.path == "/current/theme/styles.php/42/boost/all.css":
+                payload = b"body { color: black; }"
+                content_type = "text/css"
+            elif self.path == "/current/lib/javascript.php/42/core.js":
+                payload = b"window.aaosFixture = true;"
+                content_type = "application/javascript"
+            elif self.path != "/current/my/courses.php":
                 self.send_response(404)
                 self.end_headers()
                 return
-            server = cast(Any, self.server)
-            origin = f"https://127.0.0.1:{server.server_port}"
-            payload = (
-                f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
-                "Synthetic</a><nav data-pagination-pages='0' "
-                "data-pagination-exhausted='true'></nav>"
-            ).encode()
+            else:
+                origin = f"https://127.0.0.1:{server.server_port}"
+                payload = (
+                    "<link rel='stylesheet' href='/current/theme/styles.php/42/boost/all.css'>"
+                    "<script src='/current/lib/javascript.php/42/core.js'></script>"
+                    "<link rel='stylesheet' href='/current/theme/unapproved.css'>"
+                    f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
+                    "Synthetic</a><nav data-pagination-pages='0' "
+                    "data-pagination-exhausted='true'></nav>"
+                ).encode()
+                content_type = "text/html"
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -55,7 +68,7 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path]]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"https://127.0.0.1:{server.server_port}", certificate, private_key
+        yield f"https://127.0.0.1:{server.server_port}", certificate, private_key, served_paths
     finally:
         server.shutdown()
         thread.join()
@@ -65,9 +78,9 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path]]:
 
 
 def test_real_msedge_parses_only_local_https_course_index(
-    local_moodle_https: tuple[str, Path, Path], tmp_path: Path
+    local_moodle_https: tuple[str, Path, Path, set[str]], tmp_path: Path
 ) -> None:
-    origin, certificate, private_key = local_moodle_https
+    origin, certificate, private_key, served_paths = local_moodle_https
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(tmp_path / "edge-profile"),
@@ -86,6 +99,9 @@ def test_real_msedge_parses_only_local_https_course_index(
             navigator.close()
     assert isinstance(result, CourseDiscovery)
     assert tuple(course.source_id for course in result.courses) == ("42",)
+    assert "/current/theme/styles.php/42/boost/all.css" in served_paths
+    assert "/current/lib/javascript.php/42/core.js" in served_paths
+    assert "/current/theme/unapproved.css" not in served_paths
     assert certificate.exists() and private_key.exists()
 
 

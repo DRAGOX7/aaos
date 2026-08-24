@@ -239,7 +239,11 @@ class PlaywrightRestrictedNavigator:
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
         observation = classify_request_observation(
-            request.method, request.url, request.resource_type, base_origin=self._base_origin
+            request.method,
+            request.url,
+            request.resource_type,
+            base_origin=self._base_origin,
+            canonical_wwwroot=self._canonical_wwwroot,
         )
         self._request_observer.record(observation)
         self._request_observer.record_static(
@@ -248,7 +252,11 @@ class PlaywrightRestrictedNavigator:
         )
         if (
             classify_browser_request(
-                request.method, request.url, base_origin=self._base_origin
+                request.method,
+                request.url,
+                base_origin=self._base_origin,
+                canonical_wwwroot=self._canonical_wwwroot,
+                resource_type=request.resource_type,
             ).code
             == "ALLOW"
         ):
@@ -356,7 +364,12 @@ class PlaywrightRestrictedNavigator:
 
 
 def classify_request_observation(
-    method: object, url: object, resource_type: object, *, base_origin: str
+    method: object,
+    url: object,
+    resource_type: object,
+    *,
+    base_origin: str,
+    canonical_wwwroot: str | None = None,
 ) -> BrowserRequestObservation:
     """Classify an intercepted request without retaining raw request data."""
     method_class: RequestMethodClass = method if method in {"GET", "HEAD", "POST"} else "OTHER"
@@ -391,14 +404,30 @@ def classify_request_observation(
         route_class = "COURSE_INDEX"
     elif parsed.path in {"/current/lib/ajax/service.php", "/current/lib/ajax/service-nologin.php"}:
         route_class = "MOODLE_AJAX_SERVICE"
-    elif classify_browser_request("GET", safe_url, base_origin=base_origin).code == "ALLOW":
+    elif (
+        classify_browser_request(
+            "GET",
+            safe_url,
+            base_origin=base_origin,
+            canonical_wwwroot=canonical_wwwroot,
+            resource_type=resource_type if isinstance(resource_type, str) else None,
+        ).code
+        == "ALLOW"
+    ):
         route_class = "STATIC_ASSET"
     else:
         route_class = "OTHER_MOODLE_ROUTE"
     policy_result: RequestPolicyResult = (
         "ALLOWED"
         if isinstance(method, str)
-        and classify_browser_request(method, safe_url, base_origin=base_origin).code == "ALLOW"
+        and classify_browser_request(
+            method,
+            safe_url,
+            base_origin=base_origin,
+            canonical_wwwroot=canonical_wwwroot,
+            resource_type=resource_type if isinstance(resource_type, str) else None,
+        ).code
+        == "ALLOW"
         else "BLOCKED"
     )
     return BrowserRequestObservation(

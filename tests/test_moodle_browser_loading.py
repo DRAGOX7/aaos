@@ -53,7 +53,7 @@ def test_request_observation_classifies_allowed_static_get() -> None:
 
     observation = classify_request_observation(
         "GET",
-        "https://moodle.example.edu/current/theme/styles.css",
+        "https://moodle.example.edu/current/theme/styles.php/42/boost/all.css?theme=boost",
         "stylesheet",
         base_origin="https://moodle.example.edu",
     )

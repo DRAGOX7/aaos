@@ -30,8 +30,15 @@ def build_browser_url(
     raise BrowserPolicyError()
 
 
-def classify_browser_request(method: str, url: str, *, base_origin: str) -> BrowserRequestDecision:
-    """Allow only fixed same-origin document routes and static GET/HEAD assets."""
+def classify_browser_request(
+    method: str,
+    url: str,
+    *,
+    base_origin: str,
+    canonical_wwwroot: str | None = None,
+    resource_type: str | None = None,
+) -> BrowserRequestDecision:
+    """Allow only the COURSE_INDEX document and fixed Moodle bootstrap assets."""
     if method not in {"GET", "HEAD"}:
         return BrowserRequestDecision("BLOCK")
     try:
@@ -48,7 +55,13 @@ def classify_browser_request(method: str, url: str, *, base_origin: str) -> Brow
         return BrowserRequestDecision("BLOCK")
     if _is_approved_document(parsed.path, parse_qs(parsed.query, keep_blank_values=True)):
         return BrowserRequestDecision("ALLOW")
-    if _is_approved_asset(parsed.path, parsed.query):
+    if _is_approved_asset(
+        parsed.path,
+        parsed.query,
+        resource_type=resource_type,
+        canonical_wwwroot=canonical_wwwroot or origin + "/current",
+        expected_origin=origin,
+    ):
         return BrowserRequestDecision("ALLOW")
     return BrowserRequestDecision("BLOCK")
 
@@ -73,25 +86,44 @@ def _positive_identifier(value: int | None) -> bool:
 
 
 def _is_approved_document(path: str, query: dict[str, list[str]]) -> bool:
-    if path == "/current/my/courses.php":
-        return not query
-    return (
-        path
-        in {
-            "/current/course/view.php",
-            "/current/mod/assign/index.php",
-            "/current/mod/forum/view.php",
-        }
-        and set(query) == {"id"}
-        and len(query["id"]) == 1
-        and query["id"][0].isdigit()
-        and int(query["id"][0]) > 0
-    )
+    return path == "/current/my/courses.php" and not query
 
 
-def _is_approved_asset(path: str, query: str) -> bool:
-    return (
-        not query
-        and path.startswith("/current/theme/")
-        and path.endswith((".css", ".js", ".png", ".svg", ".woff2"))
-    )
+def _is_approved_asset(
+    path: str,
+    query: str,
+    *,
+    resource_type: str | None,
+    canonical_wwwroot: str,
+    expected_origin: str,
+) -> bool:
+    """Admit only two proven static families below the validated Moodle wwwroot."""
+    del query
+    try:
+        canonical = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return False
+    canonical_origin = f"{canonical.scheme}://{canonical.netloc}"
+    base_path = canonical.path.rstrip("/")
+    if (
+        canonical_origin != expected_origin
+        or not base_path
+        or canonical.query
+        or canonical.fragment
+        or canonical.username
+        or canonical.password
+    ):
+        return False
+    prefix = base_path + "/"
+    if not path.startswith(prefix):
+        return False
+    relative_path = path[len(base_path) :]
+    if resource_type == "stylesheet":
+        return relative_path == "/theme/styles.php" or relative_path.startswith(
+            "/theme/styles.php/"
+        )
+    if resource_type == "script":
+        return relative_path == "/lib/javascript.php" or relative_path.startswith(
+            "/lib/javascript.php/"
+        )
+    return False

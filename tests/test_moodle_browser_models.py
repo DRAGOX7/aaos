@@ -55,6 +55,60 @@ def test_request_policy_blocks_post_and_unlisted_ajax() -> None:
     )
 
 
+def test_request_policy_allows_only_proven_canonical_static_bootstrap_routes() -> None:
+    from aaos.moodle.browser_policy import classify_browser_request
+
+    origin = "https://moodle.example.edu"
+    canonical_wwwroot = origin + "/current"
+
+    for method in ("GET", "HEAD"):
+        assert (
+            classify_browser_request(
+                method,
+                origin + "/current/theme/styles.php/42/boost/all.css?theme=boost",
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type="stylesheet",
+            ).code
+            == "ALLOW"
+        )
+        assert (
+            classify_browser_request(
+                method,
+                origin + "/current/lib/javascript.php/42/core.js?rev=42",
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type="script",
+            ).code
+            == "ALLOW"
+        )
+
+    rejected = (
+        ("POST", origin + "/current/theme/styles.php/42/boost/all.css", "stylesheet"),
+        ("POST", origin + "/current/lib/javascript.php/42/core.js", "script"),
+        ("GET", "https://other.example.edu/current/theme/styles.php", "stylesheet"),
+        ("GET", origin + "/currentevil/theme/styles.php", "stylesheet"),
+        ("GET", origin + "/current/pluginfile.php/1/file.pdf", "stylesheet"),
+        ("GET", origin + "/current/lib/ajax/service.php", "script"),
+        ("GET", origin + "/current/admin/index.php", "script"),
+        ("GET", origin + "/current/theme/unapproved.css", "stylesheet"),
+        ("GET", origin + "/current/course/view.php?id=42", "document"),
+        ("GET", origin + "/current/mod/assign/index.php?id=42", "document"),
+        ("GET", origin + "/current/lib/requirejs.php/42/core/main.min.js", "script"),
+    )
+    for method, url, resource_type in rejected:
+        assert (
+            classify_browser_request(
+                method,
+                url,
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type=resource_type,
+            ).code
+            == "BLOCK"
+        )
+
+
 def test_route_builder_accepts_only_approved_numeric_identifiers() -> None:
     from aaos.moodle.browser_models import BrowserPolicyError
     from aaos.moodle.browser_policy import build_browser_url
