@@ -145,6 +145,38 @@ def validate_browser_profile_binding(
         raise BrowserPolicyError() from None
 
 
+def ensure_browser_profile_binding(
+    paths: BrowserProfilePaths, *, expected_origin: str, expected_alias: str
+) -> None:
+    """Create or validate the exact non-secret binding for an owned profile."""
+    _reject_reparse_ancestors(paths.binding_path.parent)
+    try:
+        exists = paths.binding_path.exists()
+    except OSError:
+        raise BrowserPolicyError() from None
+    if exists:
+        validate_browser_profile_binding(
+            paths, expected_origin=expected_origin, expected_alias=expected_alias
+        )
+        return
+    payload = json.dumps(
+        {"version": 1, "site": expected_origin + "/current", "alias": expected_alias},
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    try:
+        paths.binding_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(paths.binding_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(payload)
+    except FileExistsError:
+        validate_browser_profile_binding(
+            paths, expected_origin=expected_origin, expected_alias=expected_alias
+        )
+    except OSError:
+        raise BrowserPolicyError() from None
+
+
 def validate_pagination_proof(proof: PaginationProof) -> None:
     """Reject pagination evidence that cannot prove bounded exhaustion."""
     pages = proof.visited_page_numbers

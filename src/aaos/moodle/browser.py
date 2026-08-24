@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, cast
 
 from aaos.academic.source import RawCourse, SourceCollectionFailure
-from aaos.moodle.browser_models import BrowserPolicyError
-from aaos.moodle.browser_navigation import RestrictedBrowserNavigator
+from aaos.moodle.browser_models import (
+    BrowserPolicyError,
+    acquire_browser_profile_lock,
+    ensure_browser_profile_binding,
+    resolve_browser_profile_paths,
+)
+from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator, RestrictedBrowserNavigator
 from aaos.moodle.browser_parsing import parse_course_index
 from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
+from aaos.moodle.models import AuthPaths, MoodleSettings
+from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
 
 
 class MoodleBrowserSource:
@@ -43,51 +51,85 @@ def discover_courses_for_smoke(source: MoodleBrowserSource) -> CourseDiscoveryRe
     return source.discover_courses()
 
 
+def _close_auth_pages(context: object) -> None:
+    """Remove every human-auth page before the restricted collection transition."""
+    pages = getattr(context, "pages", None)
+    if not isinstance(pages, list):
+        raise BrowserPolicyError()
+    for page in tuple(pages):
+        try:
+            getattr(page, "close")()
+        except (AttributeError, OSError, TypeError, ValueError):
+            raise BrowserPolicyError() from None
+    remaining = getattr(context, "pages", None)
+    if not isinstance(remaining, list) or remaining:
+        raise BrowserPolicyError()
+
+
+def _run_same_context_browser_course_smoke(
+    *,
+    settings: MoodleSettings,
+    paths: AuthPaths,
+    launch_persistent_context: Callable[..., object],
+) -> CourseDiscoveryResult:
+    """Authenticate and collect courses in one owned persistent browser lifetime."""
+    if settings.mode != "browser":
+        raise BrowserPolicyError()
+    profile = resolve_browser_profile_paths(paths, settings.base_origin)
+    with acquire_browser_profile_lock(profile):
+        ensure_browser_profile_binding(
+            profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
+        )
+        context = launch_persistent_context(
+            channel="msedge",
+            headless=False,
+            user_data_dir=profile.profile_dir,
+            accept_downloads=False,
+            service_workers="block",
+        )
+        try:
+            auth_page = getattr(context, "new_page")()
+            auth_page.goto(
+                settings.base_origin + "/current/login/index.php",
+                wait_until="domcontentloaded",
+                timeout=600_000,
+            )
+            if not wait_for_authenticated_course_index(
+                auth_page,
+                course_index_url=settings.base_origin + "/current/my/courses.php",
+                timeout_seconds=600,
+            ):
+                raise BrowserPolicyError()
+            _close_auth_pages(context)
+            navigator = PlaywrightRestrictedNavigator(cast(Any, context), settings.base_origin)
+            return discover_courses_for_smoke(
+                MoodleBrowserSource(navigator, "moodle:just:browser-smoke", settings.base_origin)
+            )
+        finally:
+            try:
+                getattr(context, "close")()
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise BrowserPolicyError() from None
+
+
 def run_configured_browser_course_smoke() -> int:
     """Run the separately invoked, memory-only COURSE_INDEX smoke and stop."""
-    from aaos.moodle.browser_models import (
-        acquire_browser_profile_lock,
-        resolve_browser_profile_paths,
-        validate_browser_profile_binding,
-    )
-    from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
     from aaos.moodle.browser_runtime import launch_msedge_persistent_context
     from aaos.moodle.receiver import load_runtime_moodle_configuration
 
-    navigator: PlaywrightRestrictedNavigator | None = None
     try:
         _config, settings, paths = load_runtime_moodle_configuration()
-        profile = resolve_browser_profile_paths(paths, settings.base_origin)
-        with acquire_browser_profile_lock(profile):
-            validate_browser_profile_binding(
-                profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
-            )
-            context = launch_msedge_persistent_context(
-                channel="msedge",
-                headless=False,
-                user_data_dir=profile.profile_dir,
-                accept_downloads=False,
-                service_workers="block",
-            )
-            navigator = PlaywrightRestrictedNavigator(cast(Any, context), settings.base_origin)
-            result = discover_courses_for_smoke(
-                MoodleBrowserSource(navigator, "moodle:just:browser-smoke", settings.base_origin)
-            )
-    except (BrowserPolicyError, OSError, ValueError, TypeError):
+        result = _run_same_context_browser_course_smoke(
+            settings=settings,
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+        )
+    except (BrowserPolicyError, OSError, TimeoutError, ValueError, TypeError):
         print("COURSE_DISCOVERY_FAILED")
         return 1
-    finally:
-        if navigator is not None:
-            try:
-                navigator.close()
-            except BrowserPolicyError:
-                print("COURSE_DISCOVERY_FAILED")
-                return 1
     if isinstance(result, CourseDiscovery):
-        print(f"COURSE_DISCOVERY_COMPLETE count={len(result.courses)}")
+        print("COURSE_DISCOVERY_PASS")
+        print(f"COURSE_COUNT={len(result.courses)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
-    print(f"FAILURE_STAGE={result.code.removeprefix('browser_').upper()}")
-    if result.code == "browser_unexpected_redirect" and navigator.redirect_class is not None:
-        print(f"REDIRECT_CLASS={navigator.redirect_class}")
     return 1
