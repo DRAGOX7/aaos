@@ -30,6 +30,7 @@ class _Page:
         self._kind = kind
         self._survive_close = survive_close
         self.url = "about:blank" if kind == "sentinel" else _COURSE_INDEX
+        self._handlers: dict[str, object] = {}
 
     def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
         self._context.calls.append(f"{self._kind}-goto")
@@ -49,7 +50,8 @@ class _Page:
     def wait_for_timeout(self, _milliseconds: int) -> None:
         self._context.calls.append(f"{self._kind}-settle")
 
-    def on(self, event: str, _handler: object) -> None:
+    def on(self, event: str, handler: object) -> None:
+        self._handlers[event] = handler
         self._context.calls.append(f"{self._kind}-{event}")
 
     def evaluate(self, expression: str, arg: object) -> object:
@@ -76,6 +78,14 @@ class _Page:
                 post_data=body,
             ),
         )
+        response_handler = self._handlers.get("response")
+        if callable(response_handler):
+            response_handler(
+                SimpleNamespace(
+                    status=self._context.ajax_response_status,
+                    url="https://moodle.example.edu/current/lib/ajax/service.php",
+                )
+            )
         if arg == {"offset": 0}:
             return {"course_ids": [42], "next_offset": 1}
         assert arg == {"offset": 1}
@@ -94,6 +104,7 @@ class _Context:
         self.pages: list[_Page] = []
         self.calls: list[str] = []
         self.interception_installed = False
+        self.ajax_response_status = 200
         self.request_handler: Callable[[object, object], None] = lambda *_args: None
         self.closed_with_lock = False
 
@@ -157,6 +168,22 @@ def test_same_context_smoke_authenticates_then_collects_after_page_transition(
     assert context.closed_with_lock is True
     assert context.calls[-1] == "context-close"
     assert lock_path.exists() is False
+
+
+def test_same_context_smoke_fails_closed_on_ajax_redirect(tmp_path: Path) -> None:
+    from aaos.moodle.browser import BrowserSmokeFailure, _run_same_context_browser_course_smoke
+
+    paths = _paths(tmp_path)
+    context = _Context(paths.browser_state_dir / ".playwright-edge-profile.lock")
+    context.ajax_response_status = 302
+
+    with pytest.raises(BrowserSmokeFailure) as failure:
+        _run_same_context_browser_course_smoke(
+            settings=_settings(), paths=paths, launch_persistent_context=lambda **_: context
+        )
+
+    assert failure.value.stage == "SESSION_READ"
+    assert "collection-response" in context.calls
 
 
 def test_same_context_smoke_closes_auth_popups_before_installing_interception(

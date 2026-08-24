@@ -52,41 +52,28 @@ def test_only_the_canonical_operation_specification_is_accepted() -> None:
         )
 
 
-def test_ajax_permit_accepts_only_one_exact_typed_request() -> None:
-    from aaos.moodle.session_read import OneShotMoodleAjaxPermit, SessionReadPolicyError
+def test_ajax_permit_accepts_only_one_canonical_post_request() -> None:
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
-    permit = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
     permit.arm(0)
     request_url = (
         "https://moodle.example.edu/current/lib/ajax/service.php?"
         "sesskey=private&info=core_course_get_enrolled_courses_by_timeline_classification&"
         "nosessionupdate=true"
     )
-    request_body = (
-        '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
-        '"args":{"classification":"allincludinghidden","limit":100,"offset":0,'
-        '"requiredfields":["id"]}}]'
-    )
-
-    permit.consume("POST", request_url, "xhr", request_body)
+    permit.consume("POST", request_url)
     with pytest.raises(SessionReadPolicyError):
-        permit.consume("POST", request_url, "xhr", request_body)
+        permit.consume("POST", request_url)
 
 
-def test_ajax_permit_rejects_mutated_or_batched_operations_without_exposing_session_data() -> None:
-    from aaos.moodle.session_read import OneShotMoodleAjaxPermit, SessionReadPolicyError
+def test_ajax_permit_does_not_authorize_wrong_origin_path_or_method() -> None:
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
-    permit = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
     permit.arm(0)
     with pytest.raises(SessionReadPolicyError):
-        permit.consume(
-            "POST",
-            "https://moodle.example.edu/current/lib/ajax/service.php?sesskey=private&"
-            "info=core_course_get_enrolled_courses_by_timeline_classification&nosessionupdate=true",
-            "xhr",
-            '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
-            '"args":{"classification":"all","limit":100,"offset":0,"requiredfields":["id"]}}]',
-        )
+        permit.consume("GET", "https://moodle.example.edu/current/lib/ajax/service.php")
 
 
 def test_reduced_response_schema_and_pagination_are_strict_and_bounded() -> None:
@@ -123,45 +110,22 @@ def test_reduced_response_rejects_malformed_or_incomplete_pages(response: object
         collect_course_ids(lambda _offset: response)
 
 
-def test_permit_rejects_wrong_origin_path_method_and_batched_body() -> None:
-    from aaos.moodle.session_read import OneShotMoodleAjaxPermit, SessionReadPolicyError
+def test_permit_rejects_wrong_origin_and_path_without_inspecting_wire_format() -> None:
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
-    body = (
-        '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
-        '"args":{"classification":"allincludinghidden","limit":100,"offset":0,'
-        '"requiredfields":["id"]}}]'
-    )
     bad_requests = (
-        (
-            "POST",
-            "https://other.example/current/lib/ajax/service.php?sesskey=x&info=core_course_get_enrolled_courses_by_timeline_classification&nosessionupdate=true",
-            body,
-        ),
-        (
-            "POST",
-            "https://moodle.example.edu/currentevil/lib/ajax/service.php?sesskey=x&info=core_course_get_enrolled_courses_by_timeline_classification&nosessionupdate=true",
-            body,
-        ),
-        (
-            "GET",
-            "https://moodle.example.edu/current/lib/ajax/service.php?sesskey=x&info=core_course_get_enrolled_courses_by_timeline_classification&nosessionupdate=true",
-            body,
-        ),
-        (
-            "POST",
-            "https://moodle.example.edu/current/lib/ajax/service.php?sesskey=x&info=core_course_get_enrolled_courses_by_timeline_classification&nosessionupdate=true",
-            "[" + body[1:-1] + ",{}]",
-        ),
+        "https://other.example/current/lib/ajax/service.php",
+        "https://moodle.example.edu/currentevil/lib/ajax/service.php",
     )
-    for method, url, candidate in bad_requests:
-        permit = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    for url in bad_requests:
+        permit = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
         permit.arm(0)
         with pytest.raises(SessionReadPolicyError):
-            permit.consume(method, url, "xhr", candidate)
+            permit.consume("POST", url)
 
 
 def test_consumed_permit_remains_one_shot_while_a_fresh_permit_accepts_next_offset() -> None:
-    from aaos.moodle.session_read import OneShotMoodleAjaxPermit, SessionReadPolicyError
+    from aaos.moodle.session_read import SessionReadPolicyError, _OneShotMoodleAjaxPermit
 
     url = (
         "https://moodle.example.edu/current/lib/ajax/service.php?"
@@ -169,25 +133,17 @@ def test_consumed_permit_remains_one_shot_while_a_fresh_permit_accepts_next_offs
         "nosessionupdate=true"
     )
 
-    def body(offset: int) -> str:
-        return (
-            '[{"index":0,"methodname":"core_course_get_enrolled_courses_by_timeline_classification",'
-            '"args":{"classification":"allincludinghidden","limit":100,"offset":'
-            + str(offset)
-            + ',"requiredfields":["id"]}}]'
-        )
-
-    first = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    first = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
     first.arm(0)
-    first.consume("POST", url, "xhr", body(0))
+    first.consume("POST", url)
     with pytest.raises(SessionReadPolicyError):
-        first.consume("POST", url, "xhr", body(0))
+        first.consume("POST", url)
 
-    second = OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
+    second = _OneShotMoodleAjaxPermit("https://moodle.example.edu/current")
     second.arm(100)
-    second.consume("POST", url, "xhr", body(100))
+    second.consume("POST", url)
     with pytest.raises(SessionReadPolicyError):
-        second.consume("POST", url, "xhr", body(100))
+        second.consume("POST", url)
 
 
 def test_pagination_rejects_duplicate_across_pages_and_requires_empty_terminal_page() -> None:

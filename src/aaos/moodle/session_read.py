@@ -12,7 +12,6 @@ from playwright.sync_api import Error as PlaywrightError
 _PAGE_SIZE = 100
 _MAX_PAGES = 100
 _MAX_COURSES = 10_000
-_MAX_REQUEST_BYTES = 4_096
 _MAX_RESPONSE_BYTES = 16_384
 _OPERATION_NAME = "core_course_get_enrolled_courses_by_timeline_classification"
 _AJAX_TIMEOUT_MS = 15_000
@@ -96,7 +95,7 @@ def authorize_session_read_operation(operation: object) -> None:
         raise SessionReadPolicyError()
 
 
-class OneShotMoodleAjaxPermit:
+class _OneShotMoodleAjaxPermit:
     """Authorize exactly one fixed Moodle AJAX request for one validated offset."""
 
     def __init__(self, canonical_wwwroot: str) -> None:
@@ -119,15 +118,10 @@ class OneShotMoodleAjaxPermit:
             raise SessionReadPolicyError()
         self._expected_offset = offset
 
-    def consume(self, method: object, url: object, resource_type: object, body: object) -> None:
-        offset = self._expected_offset
-        if offset is None:
+    def consume(self, method: object, url: object) -> None:
+        if self._expected_offset is None:
             raise SessionReadPolicyError()
-        if not _is_exact_ajax_target(url, self._canonical_wwwroot):
-            raise SessionReadPolicyError()
-        if method != "POST" or resource_type not in {"xhr", "fetch"}:
-            raise SessionReadPolicyError()
-        if not _is_exact_operation_body(body, offset):
+        if method != "POST" or not _is_canonical_ajax_endpoint(url, self._canonical_wwwroot):
             raise SessionReadPolicyError()
         self._expected_offset = None
 
@@ -148,6 +142,11 @@ class _Request(Protocol):
     url: str
     resource_type: str
     post_data: str | None
+
+
+class _Response(Protocol):
+    url: str
+    status: int
 
 
 class _Page(Protocol):
@@ -184,7 +183,7 @@ class _SessionBoundMoodleCourseRead:
         self._base_origin = base_origin
         self._canonical_wwwroot = canonical_wwwroot.rstrip("/")
         self._sentinel: _Page | None = sentinel
-        self._permit: OneShotMoodleAjaxPermit | None = None
+        self._permit: _OneShotMoodleAjaxPermit | None = None
         self._policy_failed = False
         self._diagnostic = SessionReadDiagnostic(
             authenticated_page="PASS",
@@ -238,6 +237,7 @@ class _SessionBoundMoodleCourseRead:
             self._diagnostic = replace(self._diagnostic, collection_page="PASS")
             for event in ("popup", "download", "websocket", "filechooser"):
                 page.on(event, self._blocked_event)
+            page.on("response", self._handle_response)
             self._complete_transition(page)
             target = self._canonical_wwwroot + "/my/courses.php"
             page.goto(target, wait_until="domcontentloaded", timeout=30_000)
@@ -245,7 +245,7 @@ class _SessionBoundMoodleCourseRead:
                 raise SessionReadPolicyError()
 
             def fetch(offset: int) -> object:
-                permit = OneShotMoodleAjaxPermit(self._canonical_wwwroot)
+                permit = _OneShotMoodleAjaxPermit(self._canonical_wwwroot)
                 permit.arm(offset)
                 self._permit = permit
                 self._diagnostic = replace(
@@ -263,6 +263,8 @@ class _SessionBoundMoodleCourseRead:
                     raise SessionReadPolicyError() from None
                 except (OSError, PlaywrightError, TypeError, ValueError):
                     raise SessionReadPolicyError() from None
+                if self._policy_failed:
+                    raise SessionReadPolicyError()
                 if isinstance(result, dict) and result.get("bridge_failure") in {
                     "MODULE_LOAD_FAILED",
                     "MALFORMED",
@@ -322,17 +324,15 @@ class _SessionBoundMoodleCourseRead:
                     pass
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
+        if self._policy_failed:
+            route.abort()
+            return
         permit = self._permit
         if _is_canonical_ajax_endpoint(request.url, self._canonical_wwwroot):
             try:
                 if permit is None:
                     raise SessionReadPolicyError()
-                permit.consume(
-                    request.method,
-                    request.url,
-                    request.resource_type,
-                    getattr(request, "post_data", None),
-                )
+                permit.consume(request.method, request.url)
                 self._diagnostic = replace(self._diagnostic, ajax_permit_stage="REQUEST_ALLOWED")
                 route.continue_()
                 return
@@ -340,14 +340,27 @@ class _SessionBoundMoodleCourseRead:
                 rejection = _safe_ajax_rejection_reason(
                     request.method,
                     request.url,
-                    request.resource_type,
-                    getattr(request, "post_data", None),
                     self._canonical_wwwroot,
                     permit,
                 )
                 self._reject_request(route, request, rejection)
                 return
         self._apply_general_policy(route, request)
+
+    def _handle_response(self, response: _Response) -> None:
+        """Fail closed when the one permitted AJAX request receives a redirect."""
+        status = getattr(response, "status", None)
+        if (
+            type(status) is int
+            and 300 <= status < 400
+            and _is_canonical_ajax_endpoint(getattr(response, "url", None), self._canonical_wwwroot)
+        ):
+            self._diagnostic = replace(
+                self._diagnostic,
+                ajax_response_stage="TRANSPORT_FAILED",
+                root_cause="OTHER_POLICY_REJECTION",
+            )
+            self._policy_failed = True
 
     def _reject_request(self, route: _Route, request: _Request, rejection: str) -> None:
         from aaos.moodle.browser_policy import classify_browser_request
@@ -437,35 +450,6 @@ def collect_course_ids(fetch_page: Callable[[int], object]) -> tuple[int, ...]:
     raise SessionReadPolicyError()
 
 
-def _is_exact_ajax_target(url: object, canonical_wwwroot: str) -> bool:
-    if not isinstance(url, str):
-        return False
-    try:
-        target = urlsplit(url)
-        base = urlsplit(canonical_wwwroot)
-    except ValueError:
-        return False
-    if (
-        target.scheme != base.scheme
-        or target.netloc != base.netloc
-        or target.fragment
-        or target.username
-        or target.password
-        or target.path != base.path.rstrip("/") + "/lib/ajax/service.php"
-    ):
-        return False
-    parts = target.query.split("&")
-    sesskey_parts = [
-        part for part in parts if part.startswith("sesskey=") and len(part) > len("sesskey=")
-    ]
-    return (
-        len(parts) == 3
-        and f"info={_OPERATION_NAME}" in parts
-        and "nosessionupdate=true" in parts
-        and len(sesskey_parts) == 1
-    )
-
-
 def _is_canonical_ajax_endpoint(url: object, canonical_wwwroot: str) -> bool:
     """Limit permit evaluation to the one canonical Moodle AJAX endpoint."""
     if not isinstance(url, str):
@@ -479,47 +463,22 @@ def _is_canonical_ajax_endpoint(url: object, canonical_wwwroot: str) -> bool:
         target.scheme == base.scheme
         and target.netloc == base.netloc
         and target.path == base.path.rstrip("/") + "/lib/ajax/service.php"
-    )
-
-
-def _is_exact_operation_body(body: object, offset: int) -> bool:
-    if not isinstance(body, str) or len(body.encode("utf-8")) > _MAX_REQUEST_BYTES:
-        return False
-    try:
-        payload = json.loads(body)
-    except (TypeError, ValueError):
-        return False
-    if not isinstance(payload, list):
-        return False
-    return bool(
-        payload
-        == [
-            {
-                "index": 0,
-                "methodname": _OPERATION_NAME,
-                "args": {
-                    "classification": "allincludinghidden",
-                    "limit": _PAGE_SIZE,
-                    "offset": offset,
-                    "requiredfields": ["id"],
-                },
-            }
-        ]
+        and not target.fragment
+        and not target.username
+        and not target.password
     )
 
 
 def _safe_ajax_rejection_reason(
     method: object,
     url: object,
-    resource_type: object,
-    body: object,
     canonical_wwwroot: str,
-    permit: OneShotMoodleAjaxPermit | None,
+    permit: _OneShotMoodleAjaxPermit | None,
 ) -> str:
     """Classify a rejected request structurally without returning inspected values."""
     if permit is None or permit.consumed:
         return "PERMIT_ALREADY_CONSUMED"
-    if method != "POST" or resource_type not in {"xhr", "fetch"}:
+    if method != "POST":
         return "WRONG_METHOD"
     if not isinstance(url, str):
         return "OTHER_POLICY_REJECTION"
@@ -532,24 +491,7 @@ def _safe_ajax_rejection_reason(
         return "WRONG_ORIGIN"
     if target.path != base.path.rstrip("/") + "/lib/ajax/service.php":
         return "WRONG_PATH"
-    if not _is_exact_ajax_target(url, canonical_wwwroot):
-        return "WRONG_QUERY_STRUCTURE"
-    if not isinstance(body, str):
-        return "OTHER_POLICY_REJECTION"
-    try:
-        payload = json.loads(body)
-    except (TypeError, ValueError):
-        return "OTHER_POLICY_REJECTION"
-    if not isinstance(payload, list) or len(payload) != 1:
-        return "WRONG_OPERATION_COUNT"
-    operation = payload[0]
-    if not isinstance(operation, dict):
-        return "OTHER_POLICY_REJECTION"
-    if operation.get("index") != 0:
-        return "WRONG_OPERATION_INDEX"
-    if operation.get("methodname") != _OPERATION_NAME:
-        return "WRONG_OPERATION_NAME"
-    return "WRONG_ARGUMENT_STRUCTURE"
+    return "OTHER_POLICY_REJECTION"
 
 
 def _validate_reduced_response(response: object) -> tuple[tuple[int, ...], int]:
