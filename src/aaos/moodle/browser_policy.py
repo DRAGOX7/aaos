@@ -97,7 +97,7 @@ def _is_approved_asset(
     canonical_wwwroot: str,
     expected_origin: str,
 ) -> bool:
-    """Admit only two proven static families below the validated Moodle wwwroot."""
+    """Admit only proven static families below the validated Moodle wwwroot."""
     del query
     try:
         canonical = urlsplit(canonical_wwwroot)
@@ -123,7 +123,12 @@ def _is_approved_asset(
             "/theme/styles.php/"
         )
     if resource_type == "script":
-        return relative_path == "/lib/javascript.php" or relative_path.startswith(
-            "/lib/javascript.php/"
+        return (
+            relative_path == "/lib/javascript.php"
+            or relative_path.startswith("/lib/javascript.php/")
+            or relative_path == "/lib/requirejs.php"
+            or relative_path.startswith("/lib/requirejs.php/")
+            or relative_path.startswith("/lib/amd/")
+            and relative_path.endswith(".js")
         )
     return False

@@ -82,19 +82,42 @@ def test_request_policy_allows_only_proven_canonical_static_bootstrap_routes() -
             ).code
             == "ALLOW"
         )
+        assert (
+            classify_browser_request(
+                method,
+                origin + "/current/lib/requirejs.php/42/core/main.min.js?rev=42",
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type="script",
+            ).code
+            == "ALLOW"
+        )
+        assert (
+            classify_browser_request(
+                method,
+                origin + "/current/lib/amd/build/core.min.js?rev=42",
+                base_origin=origin,
+                canonical_wwwroot=canonical_wwwroot,
+                resource_type="script",
+            ).code
+            == "ALLOW"
+        )
 
     rejected = (
         ("POST", origin + "/current/theme/styles.php/42/boost/all.css", "stylesheet"),
         ("POST", origin + "/current/lib/javascript.php/42/core.js", "script"),
+        ("POST", origin + "/current/lib/requirejs.php/42/core/main.min.js", "script"),
         ("GET", "https://other.example.edu/current/theme/styles.php", "stylesheet"),
         ("GET", origin + "/currentevil/theme/styles.php", "stylesheet"),
+        ("GET", origin + "/currentevil/lib/requirejs.php/42/core/main.min.js", "script"),
         ("GET", origin + "/current/pluginfile.php/1/file.pdf", "stylesheet"),
         ("GET", origin + "/current/lib/ajax/service.php", "script"),
         ("GET", origin + "/current/admin/index.php", "script"),
         ("GET", origin + "/current/theme/unapproved.css", "stylesheet"),
+        ("GET", origin + "/current/theme/fonts/approved.woff2", "font"),
         ("GET", origin + "/current/course/view.php?id=42", "document"),
         ("GET", origin + "/current/mod/assign/index.php?id=42", "document"),
-        ("GET", origin + "/current/lib/requirejs.php/42/core/main.min.js", "script"),
+        ("GET", origin + "/current/lib/other.php/42/core.js", "script"),
     )
     for method, url, resource_type in rejected:
         assert (

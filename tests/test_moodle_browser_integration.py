@@ -37,6 +37,9 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
             elif self.path == "/current/lib/javascript.php/42/core.js":
                 payload = b"window.aaosFixture = true;"
                 content_type = "application/javascript"
+            elif self.path == "/current/lib/requirejs.php/42/core/main.min.js":
+                payload = b"window.aaosRequireFixture = true;"
+                content_type = "application/javascript"
             elif self.path != "/current/my/courses.php":
                 self.send_response(404)
                 self.end_headers()
@@ -46,6 +49,7 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                 payload = (
                     "<link rel='stylesheet' href='/current/theme/styles.php/42/boost/all.css'>"
                     "<script src='/current/lib/javascript.php/42/core.js'></script>"
+                    "<script src='/current/lib/requirejs.php/42/core/main.min.js'></script>"
                     "<link rel='stylesheet' href='/current/theme/unapproved.css'>"
                     f"<a data-moodle-course='true' href='{origin}/current/course/view.php?id=42'>"
                     "Synthetic</a><nav data-pagination-pages='0' "
@@ -101,6 +105,7 @@ def test_real_msedge_parses_only_local_https_course_index(
     assert tuple(course.source_id for course in result.courses) == ("42",)
     assert "/current/theme/styles.php/42/boost/all.css" in served_paths
     assert "/current/lib/javascript.php/42/core.js" in served_paths
+    assert "/current/lib/requirejs.php/42/core/main.min.js" in served_paths
     assert "/current/theme/unapproved.css" not in served_paths
     assert certificate.exists() and private_key.exists()
 
