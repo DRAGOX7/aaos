@@ -123,6 +123,20 @@ def parse_course_index(html: str, *, expected_origin: str) -> ParsedPage[RawCour
     return ParsedPage(courses, _proof("COURSE_INDEX", markup, len(courses)))
 
 
+def parse_frontend_course_index(html: object, *, expected_origin: str) -> tuple[RawCourse, ...]:
+    """Extract only stable IDs from the live-proven Moodle course-link DOM shape."""
+    markup = _parse(html)
+    identifiers: list[str] = []
+    for link in markup.links:
+        identifier = _frontend_course_identifier(link, expected_origin)
+        if identifier is not None:
+            identifiers.append(identifier)
+    _unique(identifiers)
+    if len(identifiers) > 10_000:
+        raise BrowserPolicyError()
+    return tuple(RawCourse(source_id=identifier, title="") for identifier in identifiers)
+
+
 def diagnose_course_index_structure(
     html: str, *, expected_origin: str
 ) -> CourseIndexStructureDiagnostic:
@@ -197,6 +211,14 @@ def has_authenticated_my_courses_page(html: object) -> bool:
     )
 
 
+def has_frontend_empty_course_state(html: object) -> bool:
+    """Recognize only Moodle's explicit no-courses element, never text content."""
+    if not isinstance(html, str) or not has_authenticated_my_courses_page(html):
+        return False
+    markup = _parse(html)
+    return any(values.get("data-region") == "no-courses" for _tag, values in markup.elements)
+
+
 def parse_assignment_list(
     html: str, *, course_source_id: str, expected_origin: str
 ) -> ParsedPage[RawAssignment]:
@@ -249,7 +271,7 @@ def parse_resource_metadata(
     return resources
 
 
-def _parse(html: str) -> _Markup:
+def _parse(html: object) -> _Markup:
     if not isinstance(html, str):
         raise BrowserPolicyError()
     markup = _Markup()
@@ -273,13 +295,45 @@ def _identifier(link: dict[str, str], expected_path: str, key: str, expected_ori
         parsed.fragment
         or set(query) != {key}
         or len(query[key]) != 1
-        or not query[key][0].isdigit()
+        or not _is_bounded_ascii_positive_decimal(query[key][0])
     ):
         raise BrowserPolicyError()
     value = int(query[key][0])
     if value <= 0:
         raise BrowserPolicyError()
     return str(value)
+
+
+def _is_bounded_ascii_positive_decimal(value: str) -> bool:
+    """Accept stable numeric Moodle IDs without Unicode or unbounded integer input."""
+    return 1 <= len(value) <= 10 and value.isascii() and value.isdecimal() and value != "0"
+
+
+def _frontend_course_identifier(link: dict[str, str], expected_origin: str) -> str | None:
+    """Accept only the canonical course URL shape emitted by the live Moodle page."""
+    href = link.get("href")
+    if not href:
+        return None
+    try:
+        parsed = urlsplit(href)
+    except ValueError:
+        return None
+    if parsed.scheme or parsed.netloc:
+        if f"{parsed.scheme}://{parsed.netloc}" != expected_origin:
+            return None
+    elif not parsed.path.startswith("/"):
+        return None
+    if parsed.path != "/current/course/view.php":
+        return None
+    try:
+        return _identifier(
+            {"href": expected_origin + href if not parsed.scheme else href},
+            "/current/course/view.php",
+            "id",
+            expected_origin,
+        )
+    except BrowserPolicyError:
+        raise BrowserPolicyError() from None
 
 
 def _is_course_view_link(link: dict[str, str], expected_origin: str) -> bool:

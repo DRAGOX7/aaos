@@ -28,18 +28,11 @@ from aaos.moodle.browser_parsing import (
     CourseIndexStructureDiagnostic,
     diagnose_course_index_loading,
     diagnose_course_index_structure,
-    parse_course_index,
+    parse_frontend_course_index,
 )
 from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
-from aaos.moodle.session_read import (
-    SessionCourseReadResult,
-    SessionReadDiagnostic,
-    SessionReadPolicyError,
-    _SessionBoundMoodleCourseRead,
-    render_session_read_diagnostic,
-)
 
 BrowserSmokeFailureStage: TypeAlias = Literal[
     "PROFILE",
@@ -58,7 +51,6 @@ BrowserSmokeFailureStage: TypeAlias = Literal[
     "COURSE_IDENTITY",
     "PAGINATION",
     "COMPLETENESS",
-    "SESSION_READ",
     "CLEANUP",
 ]
 
@@ -94,11 +86,7 @@ class CourseIndexLoadingResult:
 
 
 BrowserCourseIndexResult: TypeAlias = (
-    SessionCourseReadResult
-    | CourseDiscoveryResult
-    | CourseIndexStructureDiagnostic
-    | CourseIndexLoadingResult
-    | SessionReadDiagnostic
+    CourseDiscoveryResult | CourseIndexStructureDiagnostic | CourseIndexLoadingResult
 )
 
 
@@ -122,13 +110,13 @@ class MoodleBrowserSource:
 
     def discover_courses(self) -> CourseDiscoveryResult:
         try:
-            document = self._navigator.open("COURSE_INDEX")
+            document = self._navigator.open_frontend_course_index()
         except BrowserPolicyError:
             stage = getattr(self._navigator, "failure_stage", "NAVIGATION")
             return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
         try:
-            parsed = parse_course_index(document.html, expected_origin=self._base_origin)
-            return CourseDiscovery(parsed.records, is_complete=True)
+            courses = parse_frontend_course_index(document.html, expected_origin=self._base_origin)
+            return CourseDiscovery(courses, is_complete=True)
         except BrowserPolicyError:
             return SourceCollectionFailure(self._source_system, "browser_parser_schema")
 
@@ -233,7 +221,6 @@ def _run_same_context_browser_course_smoke(
     canonical_wwwroot: str | None = None,
     course_index_diagnostic: bool = False,
     course_index_loading_diagnostic: bool = False,
-    session_read_diagnostic: bool = False,
 ) -> BrowserCourseIndexResult:
     """Authenticate and collect courses in one owned persistent browser lifetime."""
     if settings.mode != "browser":
@@ -299,7 +286,7 @@ def _run_same_context_browser_course_smoke(
                 except (BrowserPolicyError, OSError, TypeError, ValueError):
                     raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
                 try:
-                    document = navigator.open("COURSE_INDEX")
+                    document = navigator.open_course_index_document()
                     return diagnose_course_index_structure(
                         document.html, expected_origin=settings.base_origin
                     )
@@ -326,25 +313,20 @@ def _run_same_context_browser_course_smoke(
                 except BrowserPolicyError:
                     raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
             try:
-                session_read = _SessionBoundMoodleCourseRead(
+                navigator = PlaywrightRestrictedNavigator(
                     cast(Any, context),
-                    base_origin=settings.base_origin,
-                    canonical_wwwroot=canonical_wwwroot or settings.base_origin + "/current",
-                    sentinel=cast(Any, sentinel),
+                    settings.base_origin,
+                    canonical_wwwroot=canonical_wwwroot,
+                    transition_sentinel=cast(Any, sentinel),
                 )
-                if session_read_diagnostic:
-                    return session_read.diagnose_enrolled_course_ids()
-                result = session_read.discover_enrolled_course_ids()
-            except (
-                BrowserPolicyError,
-                SessionReadPolicyError,
-                OSError,
-                TimeoutError,
-                TypeError,
-                ValueError,
-            ):
-                raise BrowserSmokeFailure("SESSION_READ") from None
-            return SessionCourseReadResult(result)
+            except (BrowserPolicyError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
+            result = discover_courses_for_smoke(
+                MoodleBrowserSource(navigator, settings.source_system, settings.base_origin)
+            )
+            if isinstance(result, SourceCollectionFailure):
+                raise BrowserSmokeFailure(_collection_failure_stage(result))
+            return result
         except BrowserSmokeFailure:
             operation_failed = True
             raise
@@ -382,71 +364,13 @@ def run_configured_browser_course_smoke() -> int:
         print("COURSE_DISCOVERY_FAILED")
         print("FAILURE_STAGE=PROFILE")
         return 1
-    if isinstance(result, SessionCourseReadResult):
+    if isinstance(result, CourseDiscovery):
         print("COURSE_DISCOVERY_PASS")
-        print(f"COURSE_COUNT={len(result.course_ids)}")
+        print(f"COURSE_COUNT={len(result.courses)}")
         return 0
     print("COURSE_DISCOVERY_FAILED")
     print("FAILURE_STAGE=NAVIGATION")
     return 1
-
-
-def run_configured_session_read_diagnostic() -> int:
-    """Run one explicit fixed-enum diagnostic over the production session-read path."""
-    from dataclasses import replace
-
-    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
-    from aaos.moodle.receiver import load_runtime_moodle_configuration
-
-    try:
-        config, runtime_settings, paths = load_runtime_moodle_configuration()
-        result = _run_same_context_browser_course_smoke(
-            settings=replace(
-                runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
-            ),
-            paths=paths,
-            launch_persistent_context=launch_msedge_persistent_context,
-            canonical_wwwroot=config.canonical_wwwroot,
-            session_read_diagnostic=True,
-        )
-    except BrowserSmokeFailure:
-        result = SessionReadDiagnostic(
-            authenticated_page="FAIL",
-            sentinel_transition="NOT_REACHED",
-            collection_page="NOT_REACHED",
-            bridge_stage="NOT_REACHED",
-            ajax_permit_stage="NOT_REACHED",
-            ajax_permit_rejection_reason="NOT_APPLICABLE",
-            ajax_response_stage="NOT_REACHED",
-            pagination_stage="NOT_REACHED",
-            root_cause="AUTH_OR_TRANSITION_FAILURE",
-        )
-    except (BrowserPolicyError, OSError, TimeoutError, ValueError, TypeError):
-        result = SessionReadDiagnostic(
-            authenticated_page="FAIL",
-            sentinel_transition="NOT_REACHED",
-            collection_page="NOT_REACHED",
-            bridge_stage="NOT_REACHED",
-            ajax_permit_stage="NOT_REACHED",
-            ajax_permit_rejection_reason="NOT_APPLICABLE",
-            ajax_response_stage="NOT_REACHED",
-            pagination_stage="NOT_REACHED",
-            root_cause="AUTH_OR_TRANSITION_FAILURE",
-        )
-    if not isinstance(result, SessionReadDiagnostic):
-        result = SessionReadDiagnostic(
-            authenticated_page="FAIL",
-            sentinel_transition="NOT_REACHED",
-            collection_page="NOT_REACHED",
-            bridge_stage="NOT_REACHED",
-            ajax_permit_stage="NOT_REACHED",
-            ajax_permit_rejection_reason="NOT_APPLICABLE",
-            ajax_response_stage="NOT_REACHED",
-            pagination_stage="NOT_REACHED",
-            root_cause="AUTH_OR_TRANSITION_FAILURE",
-        )
-    print(render_session_read_diagnostic(result))
-    return 0 if result.root_cause == "NO_FAILURE" else 1
 
 
 def run_configured_course_index_structure_diagnostic() -> int:

@@ -8,7 +8,6 @@ from playwright.sync_api import Error as PlaywrightError
 
 
 def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_requests() -> None:
-    from aaos.moodle.browser_models import BrowserPolicyError
     from aaos.moodle.browser_navigation import PlaywrightRestrictedNavigator
 
     calls: list[str] = []
@@ -58,7 +57,7 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
             calls.append("context-close")
 
     navigator = PlaywrightRestrictedNavigator(Context(), "https://moodle.example.edu")
-    document = navigator.open("COURSE_INDEX")
+    document = navigator.open_course_index_document()
     navigator.close()
 
     assert document.route == "COURSE_INDEX"
@@ -67,8 +66,6 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     assert "abort" in calls
     assert navigator.failure_stage == "REQUEST_POLICY"
     assert calls[-1] == "context-close"
-    with pytest.raises(BrowserPolicyError):
-        navigator.open("RESOURCE_METADATA")
 
 
 def test_navigator_keeps_document_when_owned_page_is_already_closed_during_cleanup() -> None:
@@ -114,7 +111,7 @@ def test_navigator_keeps_document_when_owned_page_is_already_closed_during_clean
 
     navigator = PlaywrightRestrictedNavigator(Context(), "https://moodle.example.edu")
 
-    document = navigator.open("COURSE_INDEX")
+    document = navigator.open_course_index_document()
 
     assert document.route == "COURSE_INDEX"
 
@@ -151,6 +148,6 @@ def test_navigator_classifies_playwright_collection_page_creation_failure() -> N
     navigator = PlaywrightRestrictedNavigator(Context(), "https://moodle.example.edu")
 
     with pytest.raises(BrowserPolicyError):
-        navigator.open("COURSE_INDEX")
+        navigator.open_course_index_document()
 
     assert navigator.failure_stage == "COLLECTION_PAGE_CREATE"

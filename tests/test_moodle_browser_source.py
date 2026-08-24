@@ -9,15 +9,20 @@ def test_course_only_source_discovers_courses_and_blocks_entity_collection() -> 
     from aaos.moodle.browser_navigation import BrowserDocument
 
     class Navigator:
-        def open(self, route: str, *, identifier: int | None = None) -> BrowserDocument:
-            assert route == "COURSE_INDEX"
-            assert identifier is None
+        def open_course_index_document(self) -> BrowserDocument:
+            raise AssertionError("diagnostic route must not be used")
+
+        def open(self, _route: str, *, identifier: int | None = None) -> BrowserDocument:
+            del identifier
+            raise AssertionError("legacy static DOM route must not be used")
+
+        def open_frontend_course_index(self) -> BrowserDocument:
             return BrowserDocument(
                 "COURSE_INDEX",
                 "https://moodle.example.edu",
                 "/current/my/courses.php",
                 "text/html",
-                "<a data-moodle-course='true' href='https://moodle.example.edu/current/course/view.php?id=42'>Synthetic</a><nav data-pagination-pages='0' data-pagination-exhausted='true'></nav>",
+                "<a href='/current/course/view.php?id=42'>Synthetic</a>",
             )
 
         def close(self) -> None:

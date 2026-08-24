@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from time import monotonic
 from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -12,6 +14,10 @@ from aaos.moodle.browser_models import BrowserPolicyError, BrowserRoute
 from aaos.moodle.browser_policy import build_browser_url, classify_browser_request
 
 _NAVIGATION_TIMEOUT_MS = 30_000
+_FRONTEND_SETTLE_TIMEOUT_SECONDS = 15
+_FRONTEND_SETTLE_POLL_MILLISECONDS = 250
+_FRONTEND_COURSE_AJAX_METHOD = "core_course_get_enrolled_courses_by_timeline_classification"
+_MAX_FRONTEND_AJAX_BODY_BYTES = 16_384
 FailureStage = Literal[
     "COLLECTION_PAGE_CREATE",
     "REQUEST_POLICY",
@@ -203,7 +209,9 @@ class _RequestObserver:
 
 
 class RestrictedBrowserNavigator(Protocol):
-    def open(self, route: BrowserRoute, *, identifier: int | None = None) -> BrowserDocument: ...
+    def open_course_index_document(self) -> BrowserDocument: ...
+
+    def open_frontend_course_index(self) -> BrowserDocument: ...
 
     def close(self) -> None: ...
 
@@ -263,6 +271,7 @@ class PlaywrightRestrictedNavigator:
         self._closed = False
         self._failure_stage: FailureStage = "NONE"
         self._redirect_class: RedirectClass | None = None
+        self._blocked_frontend_course_ajax = False
         self._request_observer = _RequestObserver()
         self._install_interception()
 
@@ -310,6 +319,7 @@ class PlaywrightRestrictedNavigator:
         self._transition_sentinel = None
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
+        allowed = self._request_is_allowed(request)
         observation = classify_request_observation(
             request.method,
             request.url,
@@ -317,6 +327,7 @@ class PlaywrightRestrictedNavigator:
             base_origin=self._base_origin,
             canonical_wwwroot=self._canonical_wwwroot,
             has_body=getattr(request, "post_data", None) is not None,
+            policy_result="ALLOWED" if allowed else "BLOCKED",
         )
         self._request_observer.record(
             observation,
@@ -327,6 +338,16 @@ class PlaywrightRestrictedNavigator:
             classify_static_asset_request(request.url, self._canonical_wwwroot),
             observation.policy_result,
         )
+        if allowed:
+            route.continue_()
+        else:
+            self._failure_stage = "REQUEST_POLICY"
+            if _is_moodle_ajax_post(request.method, request.url, self._canonical_wwwroot):
+                self._blocked_frontend_course_ajax = True
+            route.abort()
+
+    def _request_is_allowed(self, request: _Request) -> bool:
+        """Permit static reads plus one live-proven Moodle frontend operation."""
         if (
             classify_browser_request(
                 request.method,
@@ -338,10 +359,15 @@ class PlaywrightRestrictedNavigator:
             ).code
             == "ALLOW"
         ):
-            route.continue_()
-        else:
-            self._failure_stage = "REQUEST_POLICY"
-            route.abort()
+            return True
+        return is_approved_frontend_course_ajax_request(
+            request.method,
+            request.url,
+            request.resource_type,
+            getattr(request, "post_data", None),
+            base_origin=self._base_origin,
+            canonical_wwwroot=self._canonical_wwwroot,
+        )
 
     @staticmethod
     def _blocked_event(*_args: object) -> None:
@@ -364,10 +390,11 @@ class PlaywrightRestrictedNavigator:
         except (OSError, TypeError, ValueError):
             raise BrowserPolicyError() from None
 
-    def open(self, route: BrowserRoute, *, identifier: int | None = None) -> BrowserDocument:
+    def open_course_index_document(self) -> BrowserDocument:
+        """Read only the fixed COURSE_INDEX document for diagnostics."""
         if self._closed:
             raise BrowserPolicyError()
-        target = build_browser_url(route, base_origin=self._base_origin, identifier=identifier)
+        target = build_browser_url("COURSE_INDEX", base_origin=self._base_origin)
         try:
             page = self._context.new_page()
         except (OSError, PlaywrightError, ValueError, TypeError):
@@ -387,7 +414,47 @@ class PlaywrightRestrictedNavigator:
             html = page.content()
             if not isinstance(html, str):
                 raise BrowserPolicyError()
-            return BrowserDocument(route, origin, parsed.path, "text/html", html)
+            return BrowserDocument("COURSE_INDEX", origin, parsed.path, "text/html", html)
+        except (OSError, TimeoutError, ValueError, TypeError):
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
+            raise BrowserPolicyError() from None
+        finally:
+            self._close_owned_page(page)
+
+    def open_frontend_course_index(self) -> BrowserDocument:
+        """Wait only for the normal Moodle page lifecycle, then return its bounded DOM."""
+        if self._closed:
+            raise BrowserPolicyError()
+        target = build_browser_url("COURSE_INDEX", base_origin=self._base_origin)
+        try:
+            page = self._context.new_page()
+        except (OSError, PlaywrightError, ValueError, TypeError):
+            self._failure_stage = "COLLECTION_PAGE_CREATE"
+            raise BrowserPolicyError() from None
+        try:
+            for event in ("popup", "download", "websocket", "filechooser"):
+                page.on(event, self._blocked_event)
+            self._complete_transition(page)
+            page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS)
+            parsed = urlsplit(page.url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if origin != self._base_origin or parsed.path != urlsplit(target).path or parsed.query:
+                self._failure_stage = "UNEXPECTED_REDIRECT"
+                self._redirect_class = classify_redirect(page.url, self._base_origin)
+                raise BrowserPolicyError()
+            deadline = monotonic() + _FRONTEND_SETTLE_TIMEOUT_SECONDS
+            html = ""
+            while monotonic() < deadline:
+                html = page.content()
+                if _is_frontend_course_index_settled(html, self._base_origin):
+                    return BrowserDocument("COURSE_INDEX", origin, parsed.path, "text/html", html)
+                if self._blocked_frontend_course_ajax:
+                    raise BrowserPolicyError()
+                page.wait_for_timeout(_FRONTEND_SETTLE_POLL_MILLISECONDS)
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
+            raise BrowserPolicyError()
         except (OSError, TimeoutError, ValueError, TypeError):
             if self._failure_stage == "NONE":
                 self._failure_stage = "NAVIGATION"
@@ -441,6 +508,88 @@ class PlaywrightRestrictedNavigator:
             raise BrowserPolicyError() from None
 
 
+def is_approved_frontend_course_ajax_request(
+    method: object,
+    url: object,
+    resource_type: object,
+    post_data: object,
+    *,
+    base_origin: str,
+    canonical_wwwroot: str,
+) -> bool:
+    """Recognize the one Moodle-owned read operation proven by the live page.
+
+    The operation's argument and query serialization remains Moodle-owned. This
+    function reads only enough JSON structure to prove one operation and its
+    method identity; it neither reads nor retains argument values.
+    """
+    if (
+        method != "POST"
+        or resource_type not in {"xhr", "fetch"}
+        or not isinstance(url, str)
+        or not isinstance(post_data, str)
+        or len(post_data.encode("utf-8")) > _MAX_FRONTEND_AJAX_BODY_BYTES
+    ):
+        return False
+    try:
+        target = urlsplit(url)
+        canonical = urlsplit(canonical_wwwroot)
+        payload = json.loads(post_data)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    canonical_origin = f"{canonical.scheme}://{canonical.netloc}"
+    target_origin = f"{target.scheme}://{target.netloc}"
+    base_path = canonical.path.rstrip("/")
+    if (
+        canonical.scheme != "https"
+        or not canonical.netloc
+        or canonical.query
+        or canonical.fragment
+        or canonical.username
+        or canonical.password
+        or target.scheme != "https"
+        or not target.netloc
+        or target.fragment
+        or target.username
+        or target.password
+        or canonical_origin != base_origin
+        or target_origin != base_origin
+        or target.path != base_path + "/lib/ajax/service.php"
+        or not isinstance(payload, list)
+        or len(payload) != 1
+        or not isinstance(payload[0], dict)
+        or payload[0].get("methodname") != _FRONTEND_COURSE_AJAX_METHOD
+    ):
+        return False
+    return True
+
+
+def _is_moodle_ajax_post(method: object, url: object, canonical_wwwroot: str) -> bool:
+    if method != "POST" or not isinstance(url, str):
+        return False
+    try:
+        target = urlsplit(url)
+        canonical = urlsplit(canonical_wwwroot)
+    except ValueError:
+        return False
+    return target.path == canonical.path.rstrip("/") + "/lib/ajax/service.php"
+
+
+def _is_frontend_course_index_settled(html: object, expected_origin: str) -> bool:
+    """Recognize a canonical course link or Moodle's explicit empty-course state."""
+    from aaos.moodle.browser_parsing import (
+        has_frontend_empty_course_state,
+        parse_frontend_course_index,
+    )
+
+    try:
+        if parse_frontend_course_index(html, expected_origin=expected_origin):
+            return True
+        return has_frontend_empty_course_state(html)
+    except BrowserPolicyError:
+        return False
+
+
 def classify_request_observation(
     method: object,
     url: object,
@@ -449,6 +598,7 @@ def classify_request_observation(
     base_origin: str,
     canonical_wwwroot: str | None = None,
     has_body: bool = False,
+    policy_result: RequestPolicyResult | None = None,
 ) -> BrowserRequestObservation:
     """Classify an intercepted request without retaining raw request data."""
     method_class: RequestMethodClass = method if method in {"GET", "HEAD", "POST"} else "OTHER"
@@ -497,7 +647,7 @@ def classify_request_observation(
         route_class = "STATIC_ASSET"
     else:
         route_class = "OTHER_MOODLE_ROUTE"
-    policy_result: RequestPolicyResult = (
+    resolved_policy_result: RequestPolicyResult = policy_result or (
         "ALLOWED"
         if isinstance(method, str)
         and classify_browser_request(
@@ -516,7 +666,7 @@ def classify_request_observation(
         origin=origin_class,
         route=route_class,
         resource_type=resource_class,
-        policy_result=policy_result,
+        policy_result=resolved_policy_result,
     )
 
 

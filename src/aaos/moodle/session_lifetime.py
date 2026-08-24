@@ -136,7 +136,7 @@ def run_configured_session_lifetime_diagnostic() -> int:
             )
             navigator = PlaywrightRestrictedNavigator(cast(Any, second), settings.base_origin)
             try:
-                navigator.open("COURSE_INDEX")
+                navigator.open_course_index_document()
                 relaunched: RelaunchedSession = "AUTHENTICATED"
             except BrowserPolicyError:
                 relaunched = (
