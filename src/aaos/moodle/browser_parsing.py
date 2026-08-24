@@ -59,6 +59,30 @@ class CourseIndexStructureDiagnostic:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CourseIndexLoadingDiagnostic:
+    """Fixed, non-content evidence about bounded COURSE_INDEX settling."""
+
+    initial: CourseIndexStructureDiagnostic
+    settled: CourseIndexStructureDiagnostic
+
+    def render(self) -> str:
+        """Render only fixed labels and aggregate structural counts."""
+        return "\n".join(
+            (
+                "COURSE_INDEX_LOADING_DIAGNOSTIC",
+                f"PAGE_IDENTITY={self.settled.page_identity}",
+                f"INITIAL_COURSE_LINK_COUNT={self.initial.candidate_course_link_count}",
+                f"SETTLED_COURSE_LINK_COUNT={self.settled.candidate_course_link_count}",
+                f"INITIAL_NUMERIC_ID_COUNT={self.initial.numeric_course_id_link_count}",
+                f"SETTLED_NUMERIC_ID_COUNT={self.settled.numeric_course_id_link_count}",
+                f"INITIAL_EMPTY_MARKER={'YES' if self.initial.empty_state_marker else 'NO'}",
+                f"SETTLED_EMPTY_MARKER={'YES' if self.settled.empty_state_marker else 'NO'}",
+                f"DOM_CHANGED_AFTER_LOAD={'YES' if self.initial != self.settled else 'NO'}",
+            )
+        )
+
+
 class _Markup(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -107,15 +131,11 @@ def diagnose_course_index_structure(
     candidate_links = tuple(
         link for link in markup.links if _is_course_view_link(link, expected_origin)
     )
+
     numeric_links = tuple(
         link for link in candidate_links if _has_numeric_course_id(link, expected_origin)
     )
-    try:
-        parse_course_index(html, expected_origin=expected_origin)
-    except BrowserPolicyError:
-        known_fixture_schema_match = False
-    else:
-        known_fixture_schema_match = True
+    known_fixture_schema_match = _matches_known_course_index_schema(markup, expected_origin)
     return CourseIndexStructureDiagnostic(
         page_identity=("MY_COURSES" if has_authenticated_my_courses_page(html) else "OTHER"),
         course_container_count=sum(
@@ -151,6 +171,17 @@ def diagnose_course_index_structure(
         known_fixture_schema_match=known_fixture_schema_match,
         course_link_shape=_course_link_shape(candidate_links, numeric_links),
     )
+
+
+def diagnose_course_index_loading(
+    samples: tuple[str, str, str], *, expected_origin: str
+) -> CourseIndexLoadingDiagnostic:
+    """Compare bounded, in-memory structural samples without exposing document content."""
+    initial, _intermediate, settled = (
+        diagnose_course_index_structure(sample, expected_origin=expected_origin)
+        for sample in samples
+    )
+    return CourseIndexLoadingDiagnostic(initial=initial, settled=settled)
 
 
 def has_authenticated_my_courses_page(html: object) -> bool:
@@ -283,6 +314,21 @@ def _course_link_shape(
     if numeric_links:
         return "MIXED"
     return "OTHER_SAME_ORIGIN"
+
+
+def _matches_known_course_index_schema(markup: _Markup, expected_origin: str) -> bool:
+    """Check the existing parser contract without creating course records."""
+    try:
+        identifiers = tuple(
+            _identifier(link, "/current/course/view.php", "id", expected_origin)
+            for link in markup.links
+            if link.get("data-moodle-course") == "true"
+        )
+        _unique(identifiers)
+        _proof("COURSE_INDEX", markup, len(identifiers))
+    except BrowserPolicyError:
+        return False
+    return True
 
 
 def _proof(route: str, markup: _Markup, count: int) -> PaginationProof:

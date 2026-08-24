@@ -15,6 +15,7 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     class Request:
         method = "POST"
         url = "https://moodle.example.edu/current/lib/ajax/service.php"
+        resource_type = "xhr"
 
     class Route:
         def abort(self) -> None:
@@ -31,6 +32,9 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
 
         def content(self) -> str:
             return "<nav data-pagination-pages='0' data-pagination-exhausted='true'></nav>"
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
 
         def close(self) -> None:
             calls.append("page-close")

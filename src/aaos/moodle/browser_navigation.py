@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
@@ -28,6 +28,15 @@ RedirectClass = Literal[
     "OTHER_ORIGIN",
     "INVALID",
 ]
+RequestMethodClass = Literal["GET", "HEAD", "POST", "OTHER"]
+RequestOriginClass = Literal["MOODLE_SAME_ORIGIN", "OTHER_ORIGIN"]
+RequestRouteClass = Literal[
+    "COURSE_INDEX", "STATIC_ASSET", "MOODLE_AJAX_SERVICE", "OTHER_MOODLE_ROUTE", "UNKNOWN"
+]
+RequestResourceType = Literal[
+    "DOCUMENT", "SCRIPT", "STYLESHEET", "XHR_FETCH", "IMAGE", "FONT", "OTHER"
+]
+RequestPolicyResult = Literal["ALLOWED", "BLOCKED"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +46,63 @@ class BrowserDocument:
     final_path: str
     content_type: str
     html: str
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserRequestObservation:
+    """One safe, structural request classification with no URL or payload retention."""
+
+    method: RequestMethodClass
+    origin: RequestOriginClass
+    route: RequestRouteClass
+    resource_type: RequestResourceType
+    policy_result: RequestPolicyResult
+
+    def render(self) -> str:
+        """Render only fixed safe classification values."""
+        return "|".join(
+            (self.method, self.origin, self.route, self.resource_type, self.policy_result)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserRequestSummary:
+    """Aggregate safe request evidence; it never retains request content."""
+
+    same_origin_xhr_fetch_count: int = 0
+    moodle_ajax_service_count: int = 0
+    blocked_post_moodle_ajax_service_count: int = 0
+    allowed_static_request_count: int = 0
+
+
+class _RequestObserver:
+    def __init__(self) -> None:
+        self._same_origin_xhr_fetch_count = 0
+        self._moodle_ajax_service_count = 0
+        self._blocked_post_moodle_ajax_service_count = 0
+        self._allowed_static_request_count = 0
+
+    def record(self, observation: BrowserRequestObservation) -> None:
+        if observation.origin == "MOODLE_SAME_ORIGIN" and observation.resource_type == "XHR_FETCH":
+            self._same_origin_xhr_fetch_count += 1
+        if observation.route == "MOODLE_AJAX_SERVICE":
+            self._moodle_ajax_service_count += 1
+        if (
+            observation.method == "POST"
+            and observation.route == "MOODLE_AJAX_SERVICE"
+            and observation.policy_result == "BLOCKED"
+        ):
+            self._blocked_post_moodle_ajax_service_count += 1
+        if observation.route == "STATIC_ASSET" and observation.policy_result == "ALLOWED":
+            self._allowed_static_request_count += 1
+
+    def snapshot(self) -> BrowserRequestSummary:
+        return BrowserRequestSummary(
+            same_origin_xhr_fetch_count=self._same_origin_xhr_fetch_count,
+            moodle_ajax_service_count=self._moodle_ajax_service_count,
+            blocked_post_moodle_ajax_service_count=self._blocked_post_moodle_ajax_service_count,
+            allowed_static_request_count=self._allowed_static_request_count,
+        )
 
 
 class RestrictedBrowserNavigator(Protocol):
@@ -54,6 +120,7 @@ class _Route(Protocol):
 class _Request(Protocol):
     method: str
     url: str
+    resource_type: str
 
 
 class _Page(Protocol):
@@ -62,6 +129,8 @@ class _Page(Protocol):
     def goto(self, url: str, *, wait_until: str, timeout: int) -> object: ...
 
     def content(self) -> str: ...
+
+    def wait_for_timeout(self, milliseconds: int) -> None: ...
 
     def close(self) -> None: ...
 
@@ -90,6 +159,7 @@ class PlaywrightRestrictedNavigator:
         self._closed = False
         self._failure_stage: FailureStage = "NONE"
         self._redirect_class: RedirectClass | None = None
+        self._request_observer = _RequestObserver()
         self._install_interception()
 
     @property
@@ -101,6 +171,11 @@ class PlaywrightRestrictedNavigator:
     def redirect_class(self) -> RedirectClass | None:
         """Return the safe class of an unexpected final navigation, if any."""
         return self._redirect_class
+
+    @property
+    def request_summary(self) -> BrowserRequestSummary:
+        """Return fixed aggregate request facts without request data."""
+        return self._request_observer.snapshot()
 
     def _install_interception(self) -> None:
         self._context.route("**/*", self._handle_request)
@@ -131,6 +206,11 @@ class PlaywrightRestrictedNavigator:
         self._transition_sentinel = None
 
     def _handle_request(self, route: _Route, request: _Request) -> None:
+        self._request_observer.record(
+            classify_request_observation(
+                request.method, request.url, request.resource_type, base_origin=self._base_origin
+            )
+        )
         if (
             classify_browser_request(
                 request.method, request.url, base_origin=self._base_origin
@@ -177,6 +257,42 @@ class PlaywrightRestrictedNavigator:
         finally:
             page.close()
 
+    def observe_course_index_loading(self) -> tuple[str, str, str]:
+        """Sample only bounded COURSE_INDEX markup while interception remains enforced."""
+        if self._closed:
+            raise BrowserPolicyError()
+        target = build_browser_url("COURSE_INDEX", base_origin=self._base_origin)
+        try:
+            page = self._context.new_page()
+        except (OSError, PlaywrightError, ValueError, TypeError):
+            self._failure_stage = "COLLECTION_PAGE_CREATE"
+            raise BrowserPolicyError() from None
+        try:
+            for event in ("popup", "download", "websocket", "filechooser"):
+                page.on(event, self._blocked_event)
+            self._complete_transition(page)
+            page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS)
+            parsed = urlsplit(page.url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if origin != self._base_origin or parsed.path != urlsplit(target).path or parsed.query:
+                self._failure_stage = "UNEXPECTED_REDIRECT"
+                self._redirect_class = classify_redirect(page.url, self._base_origin)
+                raise BrowserPolicyError()
+            initial = page.content()
+            page.wait_for_timeout(500)
+            intermediate = page.content()
+            page.wait_for_timeout(500)
+            settled = page.content()
+            if not all(isinstance(sample, str) for sample in (initial, intermediate, settled)):
+                raise BrowserPolicyError()
+            return initial, intermediate, settled
+        except (OSError, TimeoutError, ValueError, TypeError):
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
+            raise BrowserPolicyError() from None
+        finally:
+            page.close()
+
     def close(self) -> None:
         if self._closed:
             return
@@ -185,6 +301,61 @@ class PlaywrightRestrictedNavigator:
             self._context.close()
         except (OSError, ValueError, TypeError):
             raise BrowserPolicyError() from None
+
+
+def classify_request_observation(
+    method: object, url: object, resource_type: object, *, base_origin: str
+) -> BrowserRequestObservation:
+    """Classify an intercepted request without retaining raw request data."""
+    method_class: RequestMethodClass = method if method in {"GET", "HEAD", "POST"} else "OTHER"
+    resource_class = cast(
+        RequestResourceType,
+        {
+            "document": "DOCUMENT",
+            "script": "SCRIPT",
+            "stylesheet": "STYLESHEET",
+            "xhr": "XHR_FETCH",
+            "fetch": "XHR_FETCH",
+            "image": "IMAGE",
+            "font": "FONT",
+        }.get(resource_type if isinstance(resource_type, str) else "", "OTHER"),
+    )
+    safe_url = url if isinstance(url, str) else ""
+    try:
+        parsed = urlsplit(url) if isinstance(url, str) else None
+        base = urlsplit(base_origin)
+    except ValueError:
+        parsed = None
+        base = None
+    same_origin = (
+        parsed is not None
+        and base is not None
+        and f"{parsed.scheme}://{parsed.netloc}" == f"{base.scheme}://{base.netloc}"
+    )
+    origin_class: RequestOriginClass = "MOODLE_SAME_ORIGIN" if same_origin else "OTHER_ORIGIN"
+    if not same_origin or parsed is None:
+        route_class: RequestRouteClass = "UNKNOWN"
+    elif parsed.path == "/current/my/courses.php":
+        route_class = "COURSE_INDEX"
+    elif parsed.path in {"/current/lib/ajax/service.php", "/current/lib/ajax/service-nologin.php"}:
+        route_class = "MOODLE_AJAX_SERVICE"
+    elif classify_browser_request("GET", safe_url, base_origin=base_origin).code == "ALLOW":
+        route_class = "STATIC_ASSET"
+    else:
+        route_class = "OTHER_MOODLE_ROUTE"
+    policy_result: RequestPolicyResult = (
+        "ALLOWED"
+        if isinstance(method, str)
+        and classify_browser_request(method, safe_url, base_origin=base_origin).code == "ALLOW"
+        else "BLOCKED"
+    )
+    return BrowserRequestObservation(
+        method=method_class,
+        origin=origin_class,
+        route=route_class,
+        resource_type=resource_class,
+        policy_result=policy_result,
+    )
 
 
 def classify_redirect(url: object, base_origin: str) -> RedirectClass:

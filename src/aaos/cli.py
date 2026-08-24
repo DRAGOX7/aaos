@@ -46,6 +46,8 @@ def main() -> int:
         return _run_moodle_session_lifetime_diagnostic()
     if sys.argv[1:] == ["moodle", "diagnose-course-index-structure"]:
         return _run_configured_course_index_structure_diagnostic()
+    if sys.argv[1:] == ["moodle", "diagnose-course-index-loading"]:
+        return _run_configured_course_index_loading_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
 
 
@@ -112,3 +114,10 @@ def _run_configured_course_index_structure_diagnostic() -> int:
     from aaos.moodle.browser import run_configured_course_index_structure_diagnostic
 
     return run_configured_course_index_structure_diagnostic()
+
+
+def _run_configured_course_index_loading_diagnostic() -> int:
+    """Run one explicit, privacy-safe COURSE_INDEX loading diagnostic."""
+    from aaos.moodle.browser import run_configured_course_index_loading_diagnostic
+
+    return run_configured_course_index_loading_diagnostic()

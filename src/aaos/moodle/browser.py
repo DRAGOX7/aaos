@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias, cast
 
 from playwright.sync_api import Error as PlaywrightError
@@ -16,11 +17,14 @@ from aaos.moodle.browser_models import (
     resolve_browser_profile_paths,
 )
 from aaos.moodle.browser_navigation import (
+    BrowserRequestSummary,
     PlaywrightRestrictedNavigator,
     RestrictedBrowserNavigator,
 )
 from aaos.moodle.browser_parsing import (
+    CourseIndexLoadingDiagnostic,
     CourseIndexStructureDiagnostic,
+    diagnose_course_index_loading,
     diagnose_course_index_structure,
     parse_course_index,
 )
@@ -47,7 +51,41 @@ BrowserSmokeFailureStage: TypeAlias = Literal[
     "COMPLETENESS",
     "CLEANUP",
 ]
-BrowserCourseIndexResult: TypeAlias = CourseDiscoveryResult | CourseIndexStructureDiagnostic
+
+
+@dataclass(frozen=True, slots=True)
+class CourseIndexLoadingResult:
+    """Non-content loading evidence from one restricted COURSE_INDEX observation."""
+
+    diagnostic: CourseIndexLoadingDiagnostic
+    requests: BrowserRequestSummary
+
+    def render(self) -> str:
+        lines = [
+            self.diagnostic.render(),
+            f"SAME_ORIGIN_XHR_FETCH_COUNT={self.requests.same_origin_xhr_fetch_count}",
+            f"MOODLE_AJAX_SERVICE_REQUEST_COUNT={self.requests.moodle_ajax_service_count}",
+            f"BLOCKED_POST_MOODLE_AJAX_SERVICE_COUNT={self.requests.blocked_post_moodle_ajax_service_count}",
+            f"ALLOWED_STATIC_REQUEST_COUNT={self.requests.allowed_static_request_count}",
+        ]
+        if self.requests.blocked_post_moodle_ajax_service_count:
+            lines.extend(
+                (
+                    "COURSE_DYNAMIC_DATA=POLICY_CONTRADICTION",
+                    "REQUEST_METHOD=POST",
+                    "REQUEST_CLASS=MOODLE_AJAX_SERVICE",
+                )
+            )
+        elif self.diagnostic.initial != self.diagnostic.settled:
+            lines.append("COURSE_DYNAMIC_DATA=ASYNC_RENDER_CONFIRMED")
+        else:
+            lines.append("COURSE_DYNAMIC_DATA=UNKNOWN_RENDERING")
+        return "\n".join(lines)
+
+
+BrowserCourseIndexResult: TypeAlias = (
+    CourseDiscoveryResult | CourseIndexStructureDiagnostic | CourseIndexLoadingResult
+)
 
 
 class BrowserSmokeFailure(BrowserPolicyError):
@@ -161,6 +199,7 @@ def _run_same_context_browser_course_smoke(
     paths: AuthPaths,
     launch_persistent_context: Callable[..., object],
     course_index_diagnostic: bool = False,
+    course_index_loading_diagnostic: bool = False,
 ) -> BrowserCourseIndexResult:
     """Authenticate and collect courses in one owned persistent browser lifetime."""
     if settings.mode != "browser":
@@ -228,6 +267,17 @@ def _run_same_context_browser_course_smoke(
                     document = navigator.open("COURSE_INDEX")
                     return diagnose_course_index_structure(
                         document.html, expected_origin=settings.base_origin
+                    )
+                except BrowserPolicyError:
+                    raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
+            if course_index_loading_diagnostic:
+                try:
+                    samples = navigator.observe_course_index_loading()
+                    return CourseIndexLoadingResult(
+                        diagnostic=diagnose_course_index_loading(
+                            samples, expected_origin=settings.base_origin
+                        ),
+                        requests=navigator.request_summary,
                     )
                 except BrowserPolicyError:
                     raise BrowserSmokeFailure(_navigator_failure_stage(navigator)) from None
@@ -314,6 +364,43 @@ def run_configured_course_index_structure_diagnostic() -> int:
         print(result.render())
         return 0
     print("COURSE_INDEX_STRUCTURE_DIAGNOSTIC")
+    print("DIAGNOSTIC_FAILED")
+    print("FAILURE_STAGE=NAVIGATION")
+    return 1
+
+
+def run_configured_course_index_loading_diagnostic() -> int:
+    """Run one explicit bounded loading observation and stop before parsing courses."""
+    from dataclasses import replace
+
+    from aaos.moodle.browser_runtime import launch_msedge_persistent_context
+    from aaos.moodle.receiver import load_runtime_moodle_configuration
+
+    try:
+        _config, runtime_settings, paths = load_runtime_moodle_configuration()
+        settings = replace(
+            runtime_settings, source_system="moodle:just:browser-smoke", mode="browser"
+        )
+        result = _run_same_context_browser_course_smoke(
+            settings=settings,
+            paths=paths,
+            launch_persistent_context=launch_msedge_persistent_context,
+            course_index_loading_diagnostic=True,
+        )
+    except BrowserSmokeFailure as failure:
+        print("COURSE_INDEX_LOADING_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print(f"FAILURE_STAGE={failure.stage}")
+        return 1
+    except (BrowserPolicyError, OSError, TimeoutError, ValueError, TypeError):
+        print("COURSE_INDEX_LOADING_DIAGNOSTIC")
+        print("DIAGNOSTIC_FAILED")
+        print("FAILURE_STAGE=PROFILE")
+        return 1
+    if isinstance(result, CourseIndexLoadingResult):
+        print(result.render())
+        return 0
+    print("COURSE_INDEX_LOADING_DIAGNOSTIC")
     print("DIAGNOSTIC_FAILED")
     print("FAILURE_STAGE=NAVIGATION")
     return 1
