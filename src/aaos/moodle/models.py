@@ -11,7 +11,7 @@ MoodleMode: TypeAlias = Literal["api", "browser"]
 EntityType: TypeAlias = Literal["course", "assignment", "announcement", "remote_file_metadata"]
 ApiOperation: TypeAlias = Literal["courses", "assignments", "announcements", "remote_files"]
 BrowserRoute: TypeAlias = Literal[
-    "course_index", "course_detail", "assignment_list", "announcement_list", "resource_metadata"
+    "course_index", "course_detail", "announcement_list", "resource_metadata"
 ]
 PaginationStrategy: TypeAlias = Literal["offset_total", "cursor_exhaustion", "page_link_exhaustion"]
 IdentityStrategy: TypeAlias = Literal["provider_id", "parent_scoped_provider_id"]
@@ -21,7 +21,7 @@ RedirectPolicy: TypeAlias = Literal["disabled", "approved_same_origin"]
 _ENTITY_TYPES = frozenset({"course", "assignment", "announcement", "remote_file_metadata"})
 _API_OPERATIONS = frozenset({"courses", "assignments", "announcements", "remote_files"})
 _BROWSER_ROUTES = frozenset(
-    {"course_index", "course_detail", "assignment_list", "announcement_list", "resource_metadata"}
+    {"course_index", "course_detail", "announcement_list", "resource_metadata"}
 )
 _PAGINATION_STRATEGIES = frozenset({"offset_total", "cursor_exhaustion", "page_link_exhaustion"})
 _IDENTITY_STRATEGIES = frozenset({"provider_id", "parent_scoped_provider_id"})

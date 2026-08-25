@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Generic, Literal, TypeAlias, TypeVar
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from aaos.academic.source import RawAnnouncement, RawAssignment, RawCourse, RawRemoteFile
 from aaos.moodle.browser_models import (
@@ -81,6 +83,67 @@ class CourseIndexLoadingDiagnostic:
                 f"DOM_CHANGED_AFTER_LOAD={'YES' if self.initial != self.settled else 'NO'}",
             )
         )
+
+
+_ANNOUNCEMENT_LABELS = (
+    "announcement",
+    "announcements",
+    "news forum",
+    "news",
+    "الإعلانات",
+    "اعلانات",
+    "الإعلان",
+    "الاعلانات",
+    "الأخبار",
+    "الاخبار",
+    "منتدى الأخبار",
+    "منتدى الاخبار",
+)
+_MAX_LIVE_ENTITY_LINKS = 10_000
+
+
+@dataclass(frozen=True, slots=True)
+class FrontendCourseEntities:
+    announcement_forum_ids: tuple[str, ...]
+    remote_files: tuple[RawRemoteFile, ...]
+
+
+class _LiveEntityMarkup(HTMLParser):
+    """Capture only anchor labels and page H1 text needed by proven entity shapes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[tuple[dict[str, str], str]] = []
+        self.h1_texts: list[str] = []
+        self._anchor_attrs: dict[str, str] | None = None
+        self._anchor_parts: list[str] = []
+        self._in_h1 = False
+        self._h1_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key: value or "" for key, value in attrs}
+        if tag == "a" and self._anchor_attrs is None:
+            self._anchor_attrs = values
+            self._anchor_parts = []
+        if tag == "h1" and not self._in_h1:
+            self._in_h1 = True
+            self._h1_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._anchor_attrs is not None:
+            self._anchor_parts.append(data)
+        if self._in_h1:
+            self._h1_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._anchor_attrs is not None:
+            self.links.append((self._anchor_attrs, " ".join(self._anchor_parts)))
+            self._anchor_attrs = None
+            self._anchor_parts = []
+        if tag == "h1" and self._in_h1:
+            self.h1_texts.append(" ".join(self._h1_parts))
+            self._in_h1 = False
+            self._h1_parts = []
 
 
 class _Markup(HTMLParser):
@@ -221,6 +284,132 @@ def has_frontend_empty_course_state(html: object) -> bool:
     return any(values.get("data-region") == "no-courses" for _tag, values in markup.elements)
 
 
+def parse_frontend_course_entities(
+    html: str, *, course_source_id: str, expected_origin: str
+) -> FrontendCourseEntities:
+    """Read only announcement-forum and Moodle-resource links proven on course pages."""
+    markup = _parse_live_entities(html)
+    forum_ids: list[str] = []
+    forum_seen: set[str] = set()
+    remote_files: list[RawRemoteFile] = []
+    resource_seen: set[str] = set()
+
+    for attrs, text in markup.links:
+        resource_id = _live_identifier(
+            attrs, "/current/mod/resource/view.php", "id", expected_origin
+        )
+        if resource_id is not None and resource_id not in resource_seen:
+            resource_seen.add(resource_id)
+            remote_files.append(
+                RawRemoteFile(
+                    source_id=f"resource-cm:{resource_id}",
+                    course_source_id=course_source_id,
+                    title="",
+                    remote_url=None,
+                )
+            )
+
+        forum_id = _live_identifier(
+            attrs, "/current/mod/forum/view.php", "id", expected_origin
+        )
+        if (
+            forum_id is not None
+            and forum_id not in forum_seen
+            and _announcement_label(_link_label(attrs, text))
+        ):
+            forum_seen.add(forum_id)
+            forum_ids.append(forum_id)
+
+        if len(forum_ids) + len(remote_files) > _MAX_LIVE_ENTITY_LINKS:
+            raise BrowserPolicyError()
+
+    return FrontendCourseEntities(tuple(forum_ids), tuple(remote_files))
+
+
+def parse_frontend_assignment_list(
+    html: str, *, course_source_id: str, expected_origin: str
+) -> tuple[RawAssignment, ...]:
+    """Extract unique assignment course-module IDs from the normal Moodle index DOM."""
+    markup = _parse_live_entities(html)
+    records: list[RawAssignment] = []
+    seen: set[str] = set()
+    for attrs, _text in markup.links:
+        identifier = _live_identifier(
+            attrs, "/current/mod/assign/view.php", "id", expected_origin
+        )
+        if identifier is None or identifier in seen:
+            continue
+        seen.add(identifier)
+        records.append(
+            RawAssignment(
+                source_id=f"assign-cm:{identifier}",
+                course_source_id=course_source_id,
+                title="",
+            )
+        )
+        if len(records) > _MAX_LIVE_ENTITY_LINKS:
+            raise BrowserPolicyError()
+    return tuple(records)
+
+
+def parse_frontend_announcement_list(
+    html: str, *, course_source_id: str, expected_origin: str
+) -> tuple[RawAnnouncement, ...]:
+    """Extract canonical discussions while rejecting unbacked query variants."""
+    markup = _parse_live_entities(html)
+    if not any(_announcement_label(text) for text in markup.h1_texts):
+        raise BrowserPolicyError()
+
+    canonical_ids: list[str] = []
+    canonical_seen: set[str] = set()
+    variant_ids: set[str] = set()
+
+    for attrs, _text in markup.links:
+        href = attrs.get("href")
+        if not href:
+            continue
+        try:
+            parsed = urlsplit(urljoin(expected_origin + "/", href))
+        except ValueError:
+            continue
+        if (
+            f"{parsed.scheme}://{parsed.netloc}" != expected_origin
+            or parsed.path != "/current/mod/forum/discuss.php"
+        ):
+            continue
+
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        values = query.get("d")
+        if (
+            parsed.fragment
+            or values is None
+            or len(values) != 1
+            or not _is_bounded_ascii_positive_decimal(values[0])
+        ):
+            raise BrowserPolicyError()
+
+        identifier = values[0]
+        if set(query) == {"d"}:
+            if identifier not in canonical_seen:
+                canonical_seen.add(identifier)
+                canonical_ids.append(identifier)
+        else:
+            variant_ids.add(identifier)
+
+        if len(canonical_ids) + len(variant_ids) > _MAX_LIVE_ENTITY_LINKS:
+            raise BrowserPolicyError()
+
+    if not variant_ids.issubset(canonical_seen):
+        raise BrowserPolicyError()
+
+    return tuple(
+        RawAnnouncement(
+            source_id=identifier,
+            course_source_id=course_source_id,
+            title="",
+        )
+        for identifier in canonical_ids
+    )
 def parse_assignment_list(
     html: str, *, course_source_id: str, expected_origin: str
 ) -> ParsedPage[RawAssignment]:
@@ -271,6 +460,60 @@ def parse_resource_metadata(
     )
     _unique((record.source_id for record in resources))
     return resources
+
+
+def _parse_live_entities(html: object) -> _LiveEntityMarkup:
+    if not isinstance(html, str):
+        raise BrowserPolicyError()
+    markup = _LiveEntityMarkup()
+    try:
+        markup.feed(html)
+        markup.close()
+    except (ValueError, AssertionError):
+        raise BrowserPolicyError() from None
+    return markup
+
+
+def _live_identifier(
+    attrs: dict[str, str], expected_path: str, key: str, expected_origin: str
+) -> str | None:
+    href = attrs.get("href")
+    if not href:
+        return None
+    try:
+        parsed = urlsplit(urljoin(expected_origin + "/", href))
+    except ValueError:
+        return None
+    if f"{parsed.scheme}://{parsed.netloc}" != expected_origin or parsed.path != expected_path:
+        return None
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    values = query.get(key)
+    if (
+        parsed.fragment
+        or set(query) != {key}
+        or values is None
+        or len(values) != 1
+        or not _is_bounded_ascii_positive_decimal(values[0])
+    ):
+        raise BrowserPolicyError()
+    return values[0]
+
+
+def _link_label(attrs: dict[str, str], text: str) -> str:
+    return " ".join(
+        (
+            attrs.get("title", ""),
+            attrs.get("aria-label", ""),
+            attrs.get("data-activityname", ""),
+            text,
+        )
+    )
+
+
+def _announcement_label(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", text).strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return any(label in normalized for label in _ANNOUNCEMENT_LABELS)
 
 
 def _parse(html: object) -> _Markup:

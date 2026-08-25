@@ -81,6 +81,8 @@ class BrowserDocument:
     final_path: str
     content_type: str
     html: str
+    course_ids: tuple[str, ...] = ()
+    course_index_complete: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +215,11 @@ class RestrictedBrowserNavigator(Protocol):
 
     def open_frontend_course_index(self) -> BrowserDocument: ...
 
+    def open_course_detail(self, identifier: int) -> BrowserDocument: ...
+
+
+    def open_announcement_list(self, identifier: int) -> BrowserDocument: ...
+
     def close(self) -> None: ...
 
 
@@ -227,6 +234,13 @@ class _Request(Protocol):
     url: str
     resource_type: str
     post_data: str | None
+
+
+class _Response(Protocol):
+    status: int
+    request: _Request
+
+    def json(self) -> object: ...
 
 
 class _Page(Protocol):
@@ -352,6 +366,102 @@ class PlaywrightRestrictedNavigator:
                 self._blocked_frontend_course_ajax = True
             route.abort()
 
+    def _read_complete_course_response(
+        self, response: _Response
+    ) -> tuple[str, ...] | None:
+        """Validate one complete Moodle-owned unlimited course response."""
+        request = response.request
+        if not is_approved_frontend_course_ajax_request(
+            request.method,
+            request.url,
+            request.resource_type,
+            getattr(request, "post_data", None),
+            base_origin=self._base_origin,
+            canonical_wwwroot=self._canonical_wwwroot,
+        ):
+            return None
+        if response.status != 200:
+            raise BrowserPolicyError()
+
+        post_data = getattr(request, "post_data", None)
+        if not isinstance(post_data, str):
+            raise BrowserPolicyError()
+        try:
+            request_payload = json.loads(post_data)
+            response_payload = response.json()
+        except (PlaywrightError, TypeError, ValueError, json.JSONDecodeError):
+            raise BrowserPolicyError() from None
+
+        if (
+            not isinstance(request_payload, list)
+            or len(request_payload) != 1
+            or not isinstance(request_payload[0], dict)
+        ):
+            raise BrowserPolicyError()
+        args = request_payload[0].get("args")
+        if not isinstance(args, dict):
+            raise BrowserPolicyError()
+        offset = args.get("offset")
+        limit = args.get("limit")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset != 0
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit != 0
+        ):
+            raise BrowserPolicyError()
+
+        if (
+            not isinstance(response_payload, list)
+            or len(response_payload) != 1
+            or not isinstance(response_payload[0], dict)
+        ):
+            raise BrowserPolicyError()
+        item = response_payload[0]
+        if item.get("error") is not False:
+            raise BrowserPolicyError()
+        data = item.get("data")
+        if not isinstance(data, dict):
+            raise BrowserPolicyError()
+        courses = data.get("courses")
+        nextoffset = data.get("nextoffset")
+        if (
+            not isinstance(courses, list)
+            or isinstance(nextoffset, bool)
+            or not isinstance(nextoffset, int)
+            or nextoffset != len(courses)
+        ):
+            raise BrowserPolicyError()
+
+        identifiers: list[str] = []
+        seen: set[str] = set()
+        for course in courses:
+            if not isinstance(course, dict):
+                raise BrowserPolicyError()
+            raw_identifier = course.get("id")
+            if isinstance(raw_identifier, bool):
+                raise BrowserPolicyError()
+            if isinstance(raw_identifier, int):
+                identifier = str(raw_identifier)
+            elif isinstance(raw_identifier, str):
+                identifier = raw_identifier
+            else:
+                raise BrowserPolicyError()
+            if (
+                not 1 <= len(identifier) <= 10
+                or not identifier.isascii()
+                or not identifier.isdecimal()
+                or identifier == "0"
+                or (len(identifier) > 1 and identifier.startswith("0"))
+                or identifier in seen
+            ):
+                raise BrowserPolicyError()
+            seen.add(identifier)
+            identifiers.append(identifier)
+        return tuple(identifiers)
+
     def _request_is_allowed(self, request: _Request) -> bool:
         """Permit static reads plus one live-proven Moodle frontend operation."""
         if (
@@ -396,6 +506,64 @@ class PlaywrightRestrictedNavigator:
         except (OSError, TypeError, ValueError):
             raise BrowserPolicyError() from None
 
+    def _require_inert_sentinel_with(self, collection_page: _Page) -> None:
+        """Require one inert page to survive while a temporary entity page is owned."""
+        sentinel = self._transition_sentinel
+        if (
+            sentinel is None
+            or sentinel.url != "about:blank"
+            or not self._same_pages(self._context.pages, (sentinel, collection_page))
+        ):
+            raise BrowserPolicyError()
+
+    def _open_entity_document(self, route: BrowserRoute, identifier: int) -> BrowserDocument:
+        """Read one fixed GET-only entity page while preserving the inert sentinel."""
+        if self._closed:
+            raise BrowserPolicyError()
+        target = build_browser_url(route, base_origin=self._base_origin, identifier=identifier)
+        expected = urlsplit(target)
+        try:
+            page = self._context.new_page()
+        except (OSError, PlaywrightError, ValueError, TypeError):
+            self._failure_stage = "COLLECTION_PAGE_CREATE"
+            raise BrowserPolicyError() from None
+        try:
+            for event in ("popup", "download", "websocket", "filechooser"):
+                page.on(event, self._blocked_event)
+            self._require_inert_sentinel_with(page)
+            page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS)
+            parsed = urlsplit(page.url)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if (
+                origin != self._base_origin
+                or parsed.path != expected.path
+                or parsed.query != expected.query
+                or parsed.fragment
+                or parsed.username
+                or parsed.password
+            ):
+                self._failure_stage = "UNEXPECTED_REDIRECT"
+                self._redirect_class = classify_redirect(page.url, self._base_origin)
+                raise BrowserPolicyError()
+            html = page.content()
+            if not isinstance(html, str):
+                raise BrowserPolicyError()
+            return BrowserDocument(route, origin, parsed.path, "text/html", html)
+        except (OSError, TimeoutError, ValueError, TypeError):
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
+            raise BrowserPolicyError() from None
+        finally:
+            self._close_owned_page(page)
+
+    def open_course_detail(self, identifier: int) -> BrowserDocument:
+        """Read one fixed Moodle course-detail document."""
+        return self._open_entity_document("COURSE_DETAIL", identifier)
+
+    def open_announcement_list(self, identifier: int) -> BrowserDocument:
+        """Read one fixed Moodle announcement-forum document."""
+        return self._open_entity_document("ANNOUNCEMENT_LIST", identifier)
+
     def open_course_index_document(self) -> BrowserDocument:
         """Read only the fixed COURSE_INDEX document for diagnostics."""
         if self._closed:
@@ -429,7 +597,7 @@ class PlaywrightRestrictedNavigator:
             self._close_owned_page(page)
 
     def open_frontend_course_index(self) -> BrowserDocument:
-        """Wait only for the normal Moodle page lifecycle, then return its bounded DOM."""
+        """Require Moodle's own validated complete course response."""
         if self._closed:
             raise BrowserPolicyError()
         target = build_browser_url("COURSE_INDEX", base_origin=self._base_origin)
@@ -438,10 +606,27 @@ class PlaywrightRestrictedNavigator:
         except (OSError, PlaywrightError, ValueError, TypeError):
             self._failure_stage = "COLLECTION_PAGE_CREATE"
             raise BrowserPolicyError() from None
+        response_course_ids: tuple[str, ...] | None = None
+        response_invalid = False
+
+        def observe_response(response: object) -> None:
+            nonlocal response_course_ids, response_invalid
+            try:
+                identifiers = self._read_complete_course_response(
+                    cast(_Response, response)
+                )
+            except BrowserPolicyError:
+                response_invalid = True
+                return
+            if identifiers is not None:
+                response_course_ids = identifiers
+
         try:
             for event in ("popup", "download", "websocket", "filechooser"):
                 page.on(event, self._blocked_event)
-            self._complete_transition(page)
+            page.on("response", observe_response)
+            if self._transition_sentinel is not None:
+                self._require_inert_sentinel_with(page)
             page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS)
             parsed = urlsplit(page.url)
             origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -450,11 +635,50 @@ class PlaywrightRestrictedNavigator:
                 self._redirect_class = classify_redirect(page.url, self._base_origin)
                 raise BrowserPolicyError()
             deadline = monotonic() + _FRONTEND_SETTLE_TIMEOUT_SECONDS
-            html = ""
             while monotonic() < deadline:
-                html = page.content()
-                if _is_frontend_course_index_settled(html, self._base_origin):
-                    return BrowserDocument("COURSE_INDEX", origin, parsed.path, "text/html", html)
+                if response_invalid:
+                    if self._failure_stage == "NONE":
+                        self._failure_stage = "NAVIGATION"
+                    raise BrowserPolicyError()
+                if response_course_ids is not None:
+                    return BrowserDocument(
+                        "COURSE_INDEX",
+                        origin,
+                        parsed.path,
+                        "application/json",
+                        "",
+                        course_ids=response_course_ids,
+                        course_index_complete=True,
+                    )
+                try:
+                    page.content()
+                except PlaywrightError as error:
+                    if (
+                        "Unable to retrieve content because the page is navigating "
+                        "and changing the content."
+                    ) not in str(error):
+                        if self._failure_stage == "NONE":
+                            self._failure_stage = "NAVIGATION"
+                        raise BrowserPolicyError() from None
+
+                    current = urlsplit(page.url)
+                    current_origin = f"{current.scheme}://{current.netloc}"
+                    expected = urlsplit(target)
+                    if (
+                        current_origin != self._base_origin
+                        or current.path != expected.path
+                        or current.query
+                        or current.fragment
+                        or current.username
+                        or current.password
+                    ):
+                        self._failure_stage = "UNEXPECTED_REDIRECT"
+                        self._redirect_class = classify_redirect(page.url, self._base_origin)
+                        raise BrowserPolicyError()
+
+                    page.wait_for_timeout(_FRONTEND_SETTLE_POLL_MILLISECONDS)
+                    continue
+
                 if self._blocked_frontend_course_ajax:
                     raise BrowserPolicyError()
                 page.wait_for_timeout(_FRONTEND_SETTLE_POLL_MILLISECONDS)

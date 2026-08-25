@@ -23,8 +23,6 @@ def build_browser_url(
         return f"{origin}/current/my/courses.php"
     if route == "COURSE_DETAIL" and _positive_identifier(identifier):
         return f"{origin}/current/course/view.php?id={identifier}"
-    if route == "ASSIGNMENT_LIST" and _positive_identifier(identifier):
-        return f"{origin}/current/mod/assign/index.php?id={identifier}"
     if route == "ANNOUNCEMENT_LIST" and _positive_identifier(identifier):
         return f"{origin}/current/mod/forum/view.php?id={identifier}"
     raise BrowserPolicyError()
@@ -39,7 +37,7 @@ def classify_browser_request(
     resource_type: str | None = None,
     has_body: bool = False,
 ) -> BrowserRequestDecision:
-    """Allow only the COURSE_INDEX document and fixed Moodle bootstrap assets."""
+    """Allow fixed read-only Moodle documents and proven bootstrap assets."""
     if method not in {"GET", "HEAD"} or has_body:
         return BrowserRequestDecision("BLOCK")
     try:
@@ -87,7 +85,27 @@ def _positive_identifier(value: int | None) -> bool:
 
 
 def _is_approved_document(path: str, query: dict[str, list[str]]) -> bool:
-    return path == "/current/my/courses.php" and not query
+    if path == "/current/my/courses.php":
+        return not query
+    if path in {
+        "/current/course/view.php",
+        "/current/mod/forum/view.php",
+    }:
+        return _has_single_positive_identifier(query, "id")
+    return False
+
+
+def _has_single_positive_identifier(query: dict[str, list[str]], key: str) -> bool:
+    values = query.get(key)
+    if set(query) != {key} or values is None or len(values) != 1:
+        return False
+    value = values[0]
+    return (
+        1 <= len(value) <= 10
+        and value.isascii()
+        and value.isdecimal()
+        and value != "0"
+    )
 
 
 def _is_approved_asset(

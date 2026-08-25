@@ -65,7 +65,8 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                     "fetch('/current/lib/ajax/service.php?redacted', {"
                     "method: 'POST', headers: {'Content-Type': 'application/json'}, "
                     "body: JSON.stringify([{index: 0, methodname: "
-                    "'core_course_get_enrolled_courses_by_timeline_classification', args: {}}])"
+                    "'core_course_get_enrolled_courses_by_timeline_classification', "
+                    "args: {offset: 0, limit: 0}}])"
                     "}).then(() => { document.body.innerHTML = "
                     "'<a href=\"/current/course/view.php?id=42\">redacted</a>'; });"
                     "</script>"
@@ -83,7 +84,17 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                 self.send_response(404)
                 self.end_headers()
                 return
-            payload = json.dumps([{"data": {"courses": [{"id": 42}]}}]).encode("utf-8")
+            payload = json.dumps(
+                [
+                    {
+                        "error": False,
+                        "data": {
+                            "courses": [{"id": 42}],
+                            "nextoffset": 1,
+                        },
+                    }
+                ]
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

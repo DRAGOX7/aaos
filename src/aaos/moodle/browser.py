@@ -1,14 +1,14 @@
-"""Course-only restricted Moodle source; it cannot create a complete snapshot."""
+"""Restricted Moodle browser source for proven read-only academic metadata."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from playwright.sync_api import Error as PlaywrightError
 
-from aaos.academic.source import RawCourse, SourceCollectionFailure
+from aaos.academic.source import RawAnnouncement, RawCourse, SourceCollectionFailure
 from aaos.moodle.browser_models import (
     BrowserPolicyError,
     BrowserProfileBusyError,
@@ -17,6 +17,7 @@ from aaos.moodle.browser_models import (
     resolve_browser_profile_paths,
 )
 from aaos.moodle.browser_navigation import (
+    BrowserDocument,
     BrowserRequestSummary,
     MoodleHandlerClass,
     PlaywrightRestrictedNavigator,
@@ -28,9 +29,17 @@ from aaos.moodle.browser_parsing import (
     CourseIndexStructureDiagnostic,
     diagnose_course_index_loading,
     diagnose_course_index_structure,
+    parse_frontend_announcement_list,
+    parse_frontend_assignment_list,
+    parse_frontend_course_entities,
     parse_frontend_course_index,
 )
-from aaos.moodle.collection import CourseDiscovery, CourseDiscoveryResult, EntityBundleResult
+from aaos.moodle.collection import (
+    CourseDiscovery,
+    CourseDiscoveryResult,
+    EntityBundle,
+    EntityBundleResult,
+)
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
 
@@ -98,8 +107,17 @@ class BrowserSmokeFailure(BrowserPolicyError):
         self.stage = stage
 
 
+class _EntityBrowserNavigator(Protocol):
+    failure_stage: object
+
+    def open_course_detail(self, identifier: int) -> BrowserDocument: ...
+
+
+    def open_announcement_list(self, identifier: int) -> BrowserDocument: ...
+
+
 class MoodleBrowserSource:
-    """Read exactly My Courses into memory; entity collection remains unapproved."""
+    """Read proven Moodle course and entity metadata into memory."""
 
     def __init__(
         self, navigator: RestrictedBrowserNavigator, source_system: str, base_origin: str
@@ -115,14 +133,70 @@ class MoodleBrowserSource:
             stage = getattr(self._navigator, "failure_stage", "NAVIGATION")
             return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
         try:
-            courses = parse_frontend_course_index(document.html, expected_origin=self._base_origin)
+            if document.course_index_complete:
+                courses = tuple(
+                    RawCourse(source_id=identifier, title="")
+                    for identifier in document.course_ids
+                )
+            else:
+                courses = parse_frontend_course_index(
+                    document.html, expected_origin=self._base_origin
+                )
             return CourseDiscovery(courses, is_complete=True)
         except BrowserPolicyError:
             return SourceCollectionFailure(self._source_system, "browser_parser_schema")
 
     def collect_course_entities(self, course: RawCourse) -> EntityBundleResult:
-        del course
-        return SourceCollectionFailure(self._source_system, "browser_entity_scope_not_approved")
+        identifier = _bounded_course_identifier(course.source_id)
+        if identifier is None:
+            return SourceCollectionFailure(self._source_system, "browser_course_identity")
+        navigator = cast(_EntityBrowserNavigator, self._navigator)
+        try:
+            course_document = navigator.open_course_detail(identifier)
+            course_entities = parse_frontend_course_entities(
+                course_document.html,
+                course_source_id=course.source_id,
+                expected_origin=self._base_origin,
+            )
+            assignments = parse_frontend_assignment_list(
+                course_document.html,
+                course_source_id=course.source_id,
+                expected_origin=self._base_origin,
+            )
+            announcements: list[RawAnnouncement] = []
+            for forum_id in course_entities.announcement_forum_ids:
+                forum_document = navigator.open_announcement_list(int(forum_id))
+                announcements.extend(
+                    parse_frontend_announcement_list(
+                        forum_document.html,
+                        course_source_id=course.source_id,
+                        expected_origin=self._base_origin,
+                    )
+                )
+            return EntityBundle(
+                course_source_id=course.source_id,
+                assignments=assignments,
+                announcements=tuple(announcements),
+                remote_files=course_entities.remote_files,
+                is_complete=True,
+            )
+        except (AttributeError, BrowserPolicyError, OSError, TypeError, ValueError):
+            stage = getattr(self._navigator, "failure_stage", "NAVIGATION")
+            if isinstance(stage, str) and stage != "NONE":
+                return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
+            return SourceCollectionFailure(self._source_system, "browser_parser_schema")
+
+
+def _bounded_course_identifier(value: object) -> int | None:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 10
+        or not value.isascii()
+        or not value.isdecimal()
+        or value == "0"
+    ):
+        return None
+    return int(value)
 
 
 def discover_courses_for_smoke(source: MoodleBrowserSource) -> CourseDiscoveryResult:

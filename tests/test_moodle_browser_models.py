@@ -115,8 +115,6 @@ def test_request_policy_allows_only_proven_canonical_static_bootstrap_routes() -
         ("GET", origin + "/current/admin/index.php", "script"),
         ("GET", origin + "/current/theme/unapproved.css", "stylesheet"),
         ("GET", origin + "/current/theme/fonts/approved.woff2", "font"),
-        ("GET", origin + "/current/course/view.php?id=42", "document"),
-        ("GET", origin + "/current/mod/assign/index.php?id=42", "document"),
         ("GET", origin + "/current/lib/other.php/42/core.js", "script"),
     )
     for method, url, resource_type in rejected:
@@ -160,7 +158,6 @@ def test_yui_combo_policy_allows_only_static_get_or_head_without_a_body() -> Non
         ("GET", origin + "/current/theme/other.php", "script"),
         ("GET", origin + "/current/pluginfile.php/1/file.pdf", "script"),
         ("GET", origin + "/current/lib/ajax/service.php", "script"),
-        ("GET", origin + "/current/course/view.php?id=42", "document"),
     ):
         assert (
             classify_browser_request(

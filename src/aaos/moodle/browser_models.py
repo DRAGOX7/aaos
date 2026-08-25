@@ -14,7 +14,6 @@ from aaos.moodle.models import AuthPaths
 BrowserRoute: TypeAlias = Literal[
     "COURSE_INDEX",
     "COURSE_DETAIL",
-    "ASSIGNMENT_LIST",
     "ANNOUNCEMENT_LIST",
     "RESOURCE_METADATA",
 ]

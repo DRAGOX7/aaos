@@ -13,7 +13,6 @@ _ORIGIN = "https://moodle.example.edu"
 _COURSE_INDEX = _ORIGIN + "/current/my/courses.php"
 _METHOD = "core_course_get_enrolled_courses_by_timeline_classification"
 _AUTHENTICATED_PAGE = '<body class="page-mycourses"></body>'
-_COURSE_PAGE = '<a href="/current/course/view.php?id=42">redacted</a>'
 
 
 class _Route:
@@ -29,13 +28,38 @@ class _Route:
 
 class _Request:
     method = "POST"
-    url = _ORIGIN + "/current/lib/ajax/service.php?redacted"
+    url = (
+        _ORIGIN
+        + "/current/lib/ajax/service.php?sesskey=abcdefghij&info="
+        + _METHOD
+    )
     resource_type = "xhr"
 
     def __init__(self, method_name: str = _METHOD) -> None:
         self.post_data = json.dumps(
-            [{"index": 0, "methodname": method_name, "args": {"redacted": True}}]
+            [
+                {
+                    "index": 0,
+                    "methodname": method_name,
+                    "args": {"offset": 0, "limit": 0},
+                }
+            ]
         )
+
+
+class _Response:
+    status = 200
+
+    def __init__(self, request: _Request) -> None:
+        self.request = request
+
+    def json(self) -> object:
+        return [
+            {
+                "error": False,
+                "data": {"courses": [{"id": 42}], "nextoffset": 1},
+            }
+        ]
 
 
 class _Page:
@@ -63,16 +87,20 @@ class _Page:
             self._context.calls.append(
                 "unrelated-ajax-" + ("allowed" if unrelated_route.allowed else "blocked")
             )
+        request = _Request(self._context.ajax_method)
         route = _Route()
-        self._context.request_handler(route, _Request(self._context.ajax_method))
+        self._context.request_handler(route, request)
         self._course_dom_ready = route.allowed
+        if route.allowed and self._context.ajax_method == _METHOD:
+            response_handler = self._handlers.get("response")
+            if response_handler is not None:
+                cast(Any, response_handler)(_Response(request))
+                self._context.calls.append("collection-course-response")
 
     def content(self) -> str:
         self._context.calls.append(f"{self._kind}-content")
         if self._kind == "auth":
             return _AUTHENTICATED_PAGE
-        if self._kind == "collection" and self._course_dom_ready:
-            return _COURSE_PAGE
         return "<body class='page-mycourses'></body>"
 
     def wait_for_timeout(self, _milliseconds: int) -> None:
@@ -131,7 +159,7 @@ def _paths(tmp_path: Path) -> AuthPaths:
     return AuthPaths(tmp_path / "credential", tmp_path / "auth" / "fixture")
 
 
-def test_same_context_smoke_uses_moodle_frontend_dom_after_sentinel_transition(
+def test_same_context_smoke_uses_moodle_owned_response_after_sentinel_transition(
     tmp_path: Path,
 ) -> None:
     from aaos.moodle.browser import _run_same_context_browser_course_smoke
@@ -148,7 +176,8 @@ def test_same_context_smoke_uses_moodle_frontend_dom_after_sentinel_transition(
     assert context.calls.index("sentinel-new") < context.calls.index("auth-close")
     assert context.calls.index("auth-close") < context.calls.index("interception")
     assert context.calls.index("interception") < context.calls.index("collection-new")
-    assert context.calls.index("collection-new") < context.calls.index("sentinel-close")
+    assert "sentinel-close" not in context.calls
+    assert "collection-course-response" in context.calls
     assert context.closed_with_lock is True
     assert context.calls[-1] == "context-close"
 
