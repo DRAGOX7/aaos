@@ -33,9 +33,7 @@ class _Navigator:
                 <a href="https://moodle.example.edu/current/mod/assign/view.php?id=500">
                   Duplicate assignment link
                 </a>
-                <a href="https://moodle.example.edu/current/mod/resource/view.php?id=900">
-                  Lecture PDF
-                </a>
+                <a href="https://moodle.example.edu/current/mod/resource/view.php?id=900">Lecture PDF</a>
               </body>
             </html>
             """,
@@ -63,5 +61,6 @@ def test_browser_source_collects_assignments_from_course_detail_without_assignme
     assert isinstance(result, EntityBundle)
     assert tuple(record.source_id for record in result.assignments) == ("assign-cm:500",)
     assert tuple(record.source_id for record in result.remote_files) == ("resource-cm:900",)
+    assert tuple(record.title for record in result.remote_files) == ("Lecture PDF",)
     assert result.announcements == ()
     assert result.is_complete is True

@@ -100,12 +100,7 @@ def _has_single_positive_identifier(query: dict[str, list[str]], key: str) -> bo
     if set(query) != {key} or values is None or len(values) != 1:
         return False
     value = values[0]
-    return (
-        1 <= len(value) <= 10
-        and value.isascii()
-        and value.isdecimal()
-        and value != "0"
-    )
+    return 1 <= len(value) <= 10 and value.isascii() and value.isdecimal() and value != "0"
 
 
 def _is_approved_asset(

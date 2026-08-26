@@ -57,6 +57,7 @@ def test_assignment_announcement_and_resource_ids_are_typed() -> None:
     from aaos.moodle.browser_parsing import (
         parse_announcement_list,
         parse_assignment_list,
+        parse_frontend_course_entities,
         parse_resource_metadata,
     )
 
@@ -78,3 +79,88 @@ def test_assignment_announcement_and_resource_ids_are_typed() -> None:
     assert assignments.records[0].source_id == "assign-cm:7"
     assert announcements.records[0].source_id == "9"
     assert resources[0].source_id == "resource-cm:4"
+
+    entities = parse_frontend_course_entities(
+        '<a href="https://moodle.example.edu/current/mod/resource/view.php?id=4">Lecture PDF</a>',
+        course_source_id="42",
+        expected_origin="https://moodle.example.edu",
+    )
+    assert entities.remote_files[0].source_id == "resource-cm:4"
+    assert entities.remote_files[0].course_source_id == "42"
+    assert entities.remote_files[0].title == "Lecture PDF"
+
+
+@pytest.mark.parametrize("label", ("", "   ", "\x00"))
+def test_frontend_resource_parser_rejects_missing_or_unsafe_title(label: str) -> None:
+    from aaos.moodle.browser_models import BrowserPolicyError
+    from aaos.moodle.browser_parsing import parse_frontend_course_entities
+
+    html = (
+        '<a href="https://moodle.example.edu/current/mod/resource/view.php?id=4">' + label + "</a>"
+    )
+    with pytest.raises(BrowserPolicyError):
+        parse_frontend_course_entities(
+            html,
+            course_source_id="42",
+            expected_origin="https://moodle.example.edu",
+        )
+
+
+def test_frontend_resource_parser_rejects_malformed_resource_query() -> None:
+    from aaos.moodle.browser_models import BrowserPolicyError
+    from aaos.moodle.browser_parsing import parse_frontend_course_entities
+
+    with pytest.raises(BrowserPolicyError):
+        parse_frontend_course_entities(
+            '<a href="https://moodle.example.edu/current/mod/resource/view.php?id=">Lecture PDF</a>',
+            course_source_id="42",
+            expected_origin="https://moodle.example.edu",
+        )
+
+
+@pytest.mark.parametrize("label", ("", "   ", "\x00"))
+def test_frontend_assignment_parser_rejects_missing_or_unsafe_title(label: str) -> None:
+    from aaos.moodle.browser_models import BrowserPolicyError
+    from aaos.moodle.browser_parsing import parse_frontend_assignment_list
+
+    html = '<a href="https://moodle.example.edu/current/mod/assign/view.php?id=7">' + label + "</a>"
+    with pytest.raises(BrowserPolicyError):
+        parse_frontend_assignment_list(
+            html,
+            course_source_id="42",
+            expected_origin="https://moodle.example.edu",
+        )
+
+
+def test_frontend_announcement_parser_retains_canonical_link_title() -> None:
+    from aaos.moodle.browser_parsing import parse_frontend_announcement_list
+
+    records = parse_frontend_announcement_list(
+        "<h1>Announcements</h1>"
+        '<a href="https://moodle.example.edu/current/mod/forum/discuss.php?d=800">Announcement</a>',
+        course_source_id="42",
+        expected_origin="https://moodle.example.edu",
+    )
+
+    assert len(records) == 1
+    assert records[0].source_id == "800"
+    assert records[0].course_source_id == "42"
+    assert records[0].title == "Announcement"
+
+
+@pytest.mark.parametrize("label", ("", "   ", "\x00"))
+def test_frontend_announcement_parser_rejects_missing_or_unsafe_title(label: str) -> None:
+    from aaos.moodle.browser_models import BrowserPolicyError
+    from aaos.moodle.browser_parsing import parse_frontend_announcement_list
+
+    html = (
+        "<h1>Announcements</h1>"
+        '<a href="https://moodle.example.edu/current/mod/forum/discuss.php?d=800">' + label + "</a>"
+    )
+
+    with pytest.raises(BrowserPolicyError):
+        parse_frontend_announcement_list(
+            html,
+            course_source_id="42",
+            expected_origin="https://moodle.example.edu",
+        )

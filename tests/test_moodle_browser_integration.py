@@ -89,7 +89,7 @@ def local_moodle_https(tmp_path: Path) -> Iterator[tuple[str, Path, Path, set[st
                     {
                         "error": False,
                         "data": {
-                            "courses": [{"id": 42}],
+                            "courses": [{"id": 42, "fullname": "Observed Course 42"}],
                             "nextoffset": 1,
                         },
                     }

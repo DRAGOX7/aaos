@@ -112,7 +112,6 @@ class _EntityBrowserNavigator(Protocol):
 
     def open_course_detail(self, identifier: int) -> BrowserDocument: ...
 
-
     def open_announcement_list(self, identifier: int) -> BrowserDocument: ...
 
 
@@ -134,10 +133,7 @@ class MoodleBrowserSource:
             return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
         try:
             if document.course_index_complete:
-                courses = tuple(
-                    RawCourse(source_id=identifier, title="")
-                    for identifier in document.course_ids
-                )
+                courses = _courses_from_complete_document(document)
             else:
                 courses = parse_frontend_course_index(
                     document.html, expected_origin=self._base_origin
@@ -185,6 +181,33 @@ class MoodleBrowserSource:
             if isinstance(stage, str) and stage != "NONE":
                 return SourceCollectionFailure(self._source_system, f"browser_{stage.lower()}")
             return SourceCollectionFailure(self._source_system, "browser_parser_schema")
+
+
+def _courses_from_complete_document(document: BrowserDocument) -> tuple[RawCourse, ...]:
+    """Require the complete response's redundant identity views to agree."""
+    if not isinstance(document.course_ids, tuple) or not isinstance(document.course_records, tuple):
+        raise BrowserPolicyError()
+
+    record_ids: list[str] = []
+    seen: set[str] = set()
+    courses: list[RawCourse] = []
+    for record in document.course_records:
+        if (
+            not isinstance(record, tuple)
+            or len(record) != 2
+            or not isinstance(record[0], str)
+            or not isinstance(record[1], str)
+            or record[0] in seen
+        ):
+            raise BrowserPolicyError()
+        identifier, title = record
+        seen.add(identifier)
+        record_ids.append(identifier)
+        courses.append(RawCourse(source_id=identifier, title=title))
+
+    if document.course_ids != tuple(record_ids):
+        raise BrowserPolicyError()
+    return tuple(courses)
 
 
 def _bounded_course_identifier(value: object) -> int | None:

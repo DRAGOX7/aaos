@@ -147,11 +147,19 @@ class _Response:
         self._case = case
 
     def json(self) -> object:
+        courses = self._case.courses
+        if isinstance(courses, list):
+            courses = [
+                {**course, "fullname": "Observed Course"}
+                if isinstance(course, dict) and "id" in course and "fullname" not in course
+                else course
+                for course in courses
+            ]
         return [
             {
                 "error": self._case.error,
                 "data": {
-                    "courses": self._case.courses,
+                    "courses": courses,
                     "nextoffset": self._case.nextoffset,
                 },
             }

@@ -82,6 +82,7 @@ class BrowserDocument:
     content_type: str
     html: str
     course_ids: tuple[str, ...] = ()
+    course_records: tuple[tuple[str, str], ...] = ()
     course_index_complete: bool = False
 
 
@@ -216,7 +217,6 @@ class RestrictedBrowserNavigator(Protocol):
     def open_frontend_course_index(self) -> BrowserDocument: ...
 
     def open_course_detail(self, identifier: int) -> BrowserDocument: ...
-
 
     def open_announcement_list(self, identifier: int) -> BrowserDocument: ...
 
@@ -368,7 +368,7 @@ class PlaywrightRestrictedNavigator:
 
     def _read_complete_course_response(
         self, response: _Response
-    ) -> tuple[str, ...] | None:
+    ) -> tuple[tuple[str, str], ...] | None:
         """Validate one complete Moodle-owned unlimited course response."""
         request = response.request
         if not is_approved_frontend_course_ajax_request(
@@ -435,7 +435,7 @@ class PlaywrightRestrictedNavigator:
         ):
             raise BrowserPolicyError()
 
-        identifiers: list[str] = []
+        records: list[tuple[str, str]] = []
         seen: set[str] = set()
         for course in courses:
             if not isinstance(course, dict):
@@ -458,9 +458,16 @@ class PlaywrightRestrictedNavigator:
                 or identifier in seen
             ):
                 raise BrowserPolicyError()
+            raw_title = course.get("fullname")
+            if not isinstance(raw_title, str):
+                raise BrowserPolicyError()
+            if not raw_title.strip() or any(
+                ord(char) < 32 or ord(char) == 127 for char in raw_title
+            ):
+                raise BrowserPolicyError()
             seen.add(identifier)
-            identifiers.append(identifier)
-        return tuple(identifiers)
+            records.append((identifier, raw_title))
+        return tuple(records)
 
     def _request_is_allowed(self, request: _Request) -> bool:
         """Permit static reads plus one live-proven Moodle frontend operation."""
@@ -606,20 +613,18 @@ class PlaywrightRestrictedNavigator:
         except (OSError, PlaywrightError, ValueError, TypeError):
             self._failure_stage = "COLLECTION_PAGE_CREATE"
             raise BrowserPolicyError() from None
-        response_course_ids: tuple[str, ...] | None = None
+        response_course_records: tuple[tuple[str, str], ...] | None = None
         response_invalid = False
 
         def observe_response(response: object) -> None:
-            nonlocal response_course_ids, response_invalid
+            nonlocal response_course_records, response_invalid
             try:
-                identifiers = self._read_complete_course_response(
-                    cast(_Response, response)
-                )
+                identifiers = self._read_complete_course_response(cast(_Response, response))
             except BrowserPolicyError:
                 response_invalid = True
                 return
             if identifiers is not None:
-                response_course_ids = identifiers
+                response_course_records = identifiers
 
         try:
             for event in ("popup", "download", "websocket", "filechooser"):
@@ -640,14 +645,17 @@ class PlaywrightRestrictedNavigator:
                     if self._failure_stage == "NONE":
                         self._failure_stage = "NAVIGATION"
                     raise BrowserPolicyError()
-                if response_course_ids is not None:
+                if response_course_records is not None:
                     return BrowserDocument(
                         "COURSE_INDEX",
                         origin,
                         parsed.path,
                         "application/json",
                         "",
-                        course_ids=response_course_ids,
+                        course_ids=tuple(
+                            identifier for identifier, _title in response_course_records
+                        ),
+                        course_records=response_course_records,
                         course_index_complete=True,
                     )
                 try:
@@ -821,13 +829,9 @@ def _is_frontend_course_ajax_attempt(
         payload = json.loads(post_data)
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
-    return (
-        isinstance(payload, list)
-        and any(
-            isinstance(operation, dict)
-            and operation.get("methodname") == _FRONTEND_COURSE_AJAX_METHOD
-            for operation in payload
-        )
+    return isinstance(payload, list) and any(
+        isinstance(operation, dict) and operation.get("methodname") == _FRONTEND_COURSE_AJAX_METHOD
+        for operation in payload
     )
 
 

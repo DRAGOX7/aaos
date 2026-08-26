@@ -94,42 +94,30 @@ def test_complete_snapshot_normalizes_and_persists_exact_semantics(
     assert course.title == "Synthetic Course"
     assert course.code == "CS-101"
     assert course.description == "Course description"
-    assert course.source_updated_at == datetime(
-        2026, 8, 25, 16, 0, tzinfo=timezone.utc
-    )
+    assert course.source_updated_at == datetime(2026, 8, 25, 16, 0, tzinfo=timezone.utc)
 
     assignment = canonical.assignments[0]
     assert assignment.source_id == "assignment-1"
     assert assignment.course_source_id == "course-1"
     assert assignment.title == "Synthetic Assignment"
     assert assignment.description == "Assignment description"
-    assert assignment.due_at == datetime(
-        2026, 8, 25, 22, 30, tzinfo=timezone.utc
-    )
-    assert assignment.source_updated_at == datetime(
-        2026, 8, 25, 16, 5, tzinfo=timezone.utc
-    )
+    assert assignment.due_at == datetime(2026, 8, 25, 22, 30, tzinfo=timezone.utc)
+    assert assignment.source_updated_at == datetime(2026, 8, 25, 16, 5, tzinfo=timezone.utc)
 
     announcement = canonical.announcements[0]
     assert announcement.source_id == "announcement-1"
     assert announcement.course_source_id == "course-1"
     assert announcement.title == "Synthetic Announcement"
     assert announcement.body == "Announcement body"
-    assert announcement.published_at == datetime(
-        2026, 8, 25, 17, 15, tzinfo=timezone.utc
-    )
-    assert announcement.source_updated_at == datetime(
-        2026, 8, 25, 17, 20, tzinfo=timezone.utc
-    )
+    assert announcement.published_at == datetime(2026, 8, 25, 17, 15, tzinfo=timezone.utc)
+    assert announcement.source_updated_at == datetime(2026, 8, 25, 17, 20, tzinfo=timezone.utc)
 
     remote_file = canonical.remote_files[0]
     assert remote_file.source_id == "file-1"
     assert remote_file.course_source_id == "course-1"
     assert remote_file.title == "Synthetic File"
     assert remote_file.remote_url == "https://example.com/course/file.pdf?download=0"
-    assert remote_file.source_updated_at == datetime(
-        2026, 8, 25, 16, 10, tzinfo=timezone.utc
-    )
+    assert remote_file.source_updated_at == datetime(2026, 8, 25, 16, 10, tzinfo=timezone.utc)
 
     database_path = tmp_path / "moodle-semantic-acceptance.sqlite3"
     engine, session_factory = build_isolated_database(database_path)
@@ -178,9 +166,7 @@ def test_complete_snapshot_normalizes_and_persists_exact_semantics(
             assert persisted_assignment.course_id == persisted_course.id
             assert persisted_assignment.title == "Synthetic Assignment"
             assert persisted_assignment.description == "Assignment description"
-            assert persisted_assignment.due_at == datetime(
-                2026, 8, 25, 22, 30, tzinfo=timezone.utc
-            )
+            assert persisted_assignment.due_at == datetime(2026, 8, 25, 22, 30, tzinfo=timezone.utc)
 
             assert persisted_announcement.course_id == persisted_course.id
             assert persisted_announcement.title == "Synthetic Announcement"
@@ -192,8 +178,7 @@ def test_complete_snapshot_normalizes_and_persists_exact_semantics(
             assert persisted_remote_file.course_id == persisted_course.id
             assert persisted_remote_file.title == "Synthetic File"
             assert (
-                persisted_remote_file.remote_url
-                == "https://example.com/course/file.pdf?download=0"
+                persisted_remote_file.remote_url == "https://example.com/course/file.pdf?download=0"
             )
 
             first_ids = (

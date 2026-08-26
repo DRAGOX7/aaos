@@ -45,9 +45,7 @@ def _complete_graph() -> CompleteSourceSnapshot:
 
 def _count(engine: Engine, table: str) -> int:
     with engine.connect() as connection:
-        return int(
-            connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
-        )
+        return int(connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one())
 
 
 def test_isolated_database_applies_normal_migrations_and_repeat_sync_is_idempotent(

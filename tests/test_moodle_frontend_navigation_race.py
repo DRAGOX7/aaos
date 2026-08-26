@@ -35,7 +35,7 @@ class _CourseResponse:
             {
                 "error": False,
                 "data": {
-                    "courses": [{"id": 42}],
+                    "courses": [{"id": 42, "fullname": "Observed Course 42"}],
                     "nextoffset": 1,
                 },
             }

@@ -102,8 +102,11 @@ def test_browser_source_collects_live_proven_course_entities() -> None:
     assert result.course_source_id == "42"
     assert result.is_complete is True
     assert tuple(record.source_id for record in result.assignments) == ("assign-cm:500",)
+    assert tuple(record.title for record in result.assignments) == ("Assignment",)
     assert tuple(record.source_id for record in result.announcements) == ("800",)
+    assert tuple(record.title for record in result.announcements) == ("Announcement",)
     assert tuple(record.source_id for record in result.remote_files) == ("resource-cm:900",)
+    assert tuple(record.title for record in result.remote_files) == ("Lecture PDF",)
 
 
 def test_browser_policy_allows_only_get_head_for_fixed_entity_documents() -> None:
@@ -115,10 +118,14 @@ def test_browser_policy_allows_only_get_head_for_fixed_entity_documents() -> Non
         "/current/mod/forum/view.php?id=700",
     ):
         assert classify_browser_request("GET", base + path, base_origin=base).code == "ALLOW"
-        assert classify_browser_request(
-            "POST", base + path, base_origin=base, has_body=True
-        ).code == "BLOCK"
+        assert (
+            classify_browser_request("POST", base + path, base_origin=base, has_body=True).code
+            == "BLOCK"
+        )
 
-    assert classify_browser_request(
-        "GET", base + "/current/mod/url/view.php?id=901", base_origin=base
-    ).code == "BLOCK"
+    assert (
+        classify_browser_request(
+            "GET", base + "/current/mod/url/view.php?id=901", base_origin=base
+        ).code
+        == "BLOCK"
+    )

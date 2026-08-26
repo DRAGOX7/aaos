@@ -300,18 +300,17 @@ def parse_frontend_course_entities(
         )
         if resource_id is not None and resource_id not in resource_seen:
             resource_seen.add(resource_id)
+            title = _validated_anchor_title(attrs, text)
             remote_files.append(
                 RawRemoteFile(
                     source_id=f"resource-cm:{resource_id}",
                     course_source_id=course_source_id,
-                    title="",
+                    title=title,
                     remote_url=None,
                 )
             )
 
-        forum_id = _live_identifier(
-            attrs, "/current/mod/forum/view.php", "id", expected_origin
-        )
+        forum_id = _live_identifier(attrs, "/current/mod/forum/view.php", "id", expected_origin)
         if (
             forum_id is not None
             and forum_id not in forum_seen
@@ -333,18 +332,17 @@ def parse_frontend_assignment_list(
     markup = _parse_live_entities(html)
     records: list[RawAssignment] = []
     seen: set[str] = set()
-    for attrs, _text in markup.links:
-        identifier = _live_identifier(
-            attrs, "/current/mod/assign/view.php", "id", expected_origin
-        )
+    for attrs, text in markup.links:
+        identifier = _live_identifier(attrs, "/current/mod/assign/view.php", "id", expected_origin)
         if identifier is None or identifier in seen:
             continue
         seen.add(identifier)
+        title = _validated_anchor_title(attrs, text)
         records.append(
             RawAssignment(
                 source_id=f"assign-cm:{identifier}",
                 course_source_id=course_source_id,
-                title="",
+                title=title,
             )
         )
         if len(records) > _MAX_LIVE_ENTITY_LINKS:
@@ -362,9 +360,10 @@ def parse_frontend_announcement_list(
 
     canonical_ids: list[str] = []
     canonical_seen: set[str] = set()
+    canonical_titles: dict[str, str] = {}
     variant_ids: set[str] = set()
 
-    for attrs, _text in markup.links:
+    for attrs, text in markup.links:
         href = attrs.get("href")
         if not href:
             continue
@@ -391,6 +390,7 @@ def parse_frontend_announcement_list(
         identifier = values[0]
         if set(query) == {"d"}:
             if identifier not in canonical_seen:
+                canonical_titles[identifier] = _validated_anchor_title(attrs, text)
                 canonical_seen.add(identifier)
                 canonical_ids.append(identifier)
         else:
@@ -406,10 +406,12 @@ def parse_frontend_announcement_list(
         RawAnnouncement(
             source_id=identifier,
             course_source_id=course_source_id,
-            title="",
+            title=canonical_titles[identifier],
         )
         for identifier in canonical_ids
     )
+
+
 def parse_assignment_list(
     html: str, *, course_source_id: str, expected_origin: str
 ) -> ParsedPage[RawAssignment]:
@@ -508,6 +510,21 @@ def _link_label(attrs: dict[str, str], text: str) -> str:
             text,
         )
     )
+
+
+def _validated_anchor_title(attrs: dict[str, str], text: str) -> str:
+    """Return the first nonblank human-readable title from an approved link."""
+    candidates = (
+        attrs.get("data-activityname", ""),
+        attrs.get("aria-label", ""),
+        attrs.get("title", ""),
+        text,
+    )
+    for candidate in candidates:
+        normalized = candidate.strip()
+        if normalized and not any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+            return candidate
+    raise BrowserPolicyError()
 
 
 def _announcement_label(text: str) -> bool:

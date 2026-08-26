@@ -28,11 +28,7 @@ class _Route:
 
 class _Request:
     method = "POST"
-    url = (
-        _ORIGIN
-        + "/current/lib/ajax/service.php?sesskey=abcdefghij&info="
-        + _METHOD
-    )
+    url = _ORIGIN + "/current/lib/ajax/service.php?sesskey=abcdefghij&info=" + _METHOD
     resource_type = "xhr"
 
     def __init__(self, method_name: str = _METHOD) -> None:
@@ -57,7 +53,10 @@ class _Response:
         return [
             {
                 "error": False,
-                "data": {"courses": [{"id": 42}], "nextoffset": 1},
+                "data": {
+                    "courses": [{"id": 42, "fullname": "Observed Course 42"}],
+                    "nextoffset": 1,
+                },
             }
         ]
 
@@ -199,6 +198,7 @@ def test_same_context_smoke_blocks_unrelated_ajax_without_failing_course_discove
     assert tuple(course.source_id for course in result.courses) == ("42",)
     assert "unrelated-ajax-blocked" in context.calls
     assert context.closed_with_lock is True
+
 
 def test_same_context_smoke_closes_context_before_releasing_profile_lock_on_failure(
     tmp_path: Path,

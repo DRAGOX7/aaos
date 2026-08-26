@@ -23,12 +23,7 @@ class _Route:
 
 class _Request:
     method = "POST"
-    url = (
-        _ORIGIN
-        + "/current/lib/ajax/service.php"
-        + "?sesskey=abcdefghij&info="
-        + _METHOD
-    )
+    url = _ORIGIN + "/current/lib/ajax/service.php" + "?sesskey=abcdefghij&info=" + _METHOD
     resource_type = "xhr"
 
     def __init__(self) -> None:
@@ -63,8 +58,8 @@ class _Response:
                 "error": False,
                 "data": {
                     "courses": [
-                        {"id": 42},
-                        {"id": 43},
+                        {"id": 42, "fullname": "  Observed Course 42  "},
+                        {"id": 43, "fullname": "Observed Course 43"},
                     ],
                     "nextoffset": 2,
                 },
@@ -155,11 +150,126 @@ def test_frontend_course_discovery_uses_complete_moodle_owned_response_without_d
     assert document.final_origin == _ORIGIN
     assert document.final_path == "/current/my/courses.php"
 
-    # RED: these response-derived fields do not exist yet.
+    # The parser retains the validated response identity and title fields.
     assert document.course_ids == ("42", "43")
+    assert document.course_records == (
+        ("42", "  Observed Course 42  "),
+        ("43", "Observed Course 43"),
+    )
     assert document.course_index_complete is True
 
     # The inert sentinel survives for the next entity-read phase.
     assert len(context.pages) == 1
     assert context.pages[0] is sentinel
     assert sentinel.url == "about:blank"
+
+
+@pytest.mark.parametrize("title", (None, "", "   ", 42))
+def test_frontend_course_response_rejects_missing_blank_or_non_text_title(title: object) -> None:
+    import aaos.moodle.browser_navigation as navigation
+    from aaos.moodle.browser_models import BrowserPolicyError
+
+    class InvalidResponse:
+        status = 200
+        request = _Request()
+
+        def json(self) -> object:
+            return [
+                {
+                    "error": False,
+                    "data": {"courses": [{"id": 42, "fullname": title}], "nextoffset": 1},
+                }
+            ]
+
+    navigator = navigation.PlaywrightRestrictedNavigator(
+        cast(Any, _Context()), _ORIGIN, canonical_wwwroot=_ORIGIN + "/current"
+    )
+    with pytest.raises(BrowserPolicyError):
+        navigator._read_complete_course_response(InvalidResponse())  # type: ignore[arg-type]
+
+
+def test_browser_source_preserves_valid_response_course_title() -> None:
+    from aaos.moodle.browser import MoodleBrowserSource
+    from aaos.moodle.browser_navigation import BrowserDocument
+
+    class Navigator:
+        failure_stage = "NONE"
+
+        def open_course_index_document(self) -> BrowserDocument:
+            raise AssertionError("legacy route must not be used")
+
+        def close(self) -> None:
+            return None
+
+        def open_frontend_course_index(self) -> BrowserDocument:
+            return BrowserDocument(
+                "COURSE_INDEX",
+                _ORIGIN,
+                "/current/my/courses.php",
+                "application/json",
+                "",
+                course_ids=("42",),
+                course_records=(("42", "Observed Course 42"),),
+                course_index_complete=True,
+            )
+
+        def open_course_detail(self, identifier: int) -> BrowserDocument:
+            raise AssertionError(identifier)
+
+        def open_announcement_list(self, identifier: int) -> BrowserDocument:
+            raise AssertionError(identifier)
+
+    result = MoodleBrowserSource(Navigator(), "moodle:fixture", _ORIGIN).discover_courses()
+
+    assert getattr(result, "courses")[0].source_id == "42"
+    assert getattr(result, "courses")[0].title == "Observed Course 42"
+
+
+@pytest.mark.parametrize(
+    ("course_ids", "course_records"),
+    (
+        (("42",), (("43", "Observed Course 43"),)),
+        (("43", "42"), (("42", "Observed Course 42"), ("43", "Observed Course 43"))),
+        (("42",), ()),
+        ((), (("42", "Observed Course 42"),)),
+        (("42", "42"), (("42", "First"), ("42", "Second"))),
+    ),
+)
+def test_browser_source_rejects_inconsistent_complete_course_representations(
+    course_ids: tuple[str, ...],
+    course_records: tuple[tuple[str, str], ...],
+) -> None:
+    from aaos.academic.source import SourceCollectionFailure
+    from aaos.moodle.browser import MoodleBrowserSource
+    from aaos.moodle.browser_navigation import BrowserDocument
+
+    class Navigator:
+        failure_stage = "NONE"
+
+        def open_course_index_document(self) -> BrowserDocument:
+            raise AssertionError("legacy course route must not be used")
+
+        def open_frontend_course_index(self) -> BrowserDocument:
+            return BrowserDocument(
+                "COURSE_INDEX",
+                _ORIGIN,
+                "/current/my/courses.php",
+                "application/json",
+                "",
+                course_ids=course_ids,
+                course_records=course_records,
+                course_index_complete=True,
+            )
+
+        def open_course_detail(self, identifier: int) -> BrowserDocument:
+            raise AssertionError(identifier)
+
+        def open_announcement_list(self, identifier: int) -> BrowserDocument:
+            raise AssertionError(identifier)
+
+        def close(self) -> None:
+            return None
+
+    result = MoodleBrowserSource(Navigator(), "moodle:fixture", _ORIGIN).discover_courses()
+
+    assert isinstance(result, SourceCollectionFailure)
