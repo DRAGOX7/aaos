@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx2>=2.10.0",
     "playwright==1.62.0",
+    "pypdfium2==5.13.0",
     "sqlalchemy>=2,<3",
     "uvicorn>=0.52.1",
 ]
