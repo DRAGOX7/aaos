@@ -224,6 +224,10 @@ def resolve_document_runtime_paths(data_root: str | Path) -> DocumentRuntimePath
 - `BatchIngestionResult.exit_code` returns `1` when `failed > 0`, otherwise `0`.
 - `resolve_document_runtime_paths()` requires an absolute, normalized data root and returns exactly `database/aaos.db`, `documents`, and `temporary/phase3-ingestion.lock` beneath it without creating paths.
 
+- [ ] **Step 0: Complete the PyMuPDF license preflight before adding the dependency.**
+
+Inspect `LICENSE`, `COPYING`, `NOTICE`, `pyproject.toml` license metadata, `README.md`, and governance documents for the intended AAOS distribution/deployment model. Record that PyMuPDF 1.28.2 is offered under GNU AGPL v3 or an Artifex commercial license. Proceed to `uv add` only when repository governance clearly establishes a compatible use/distribution model; otherwise stop Task 1 and request a human licensing decision without offering a legal conclusion. At plan-writing time the repository has no `LICENSE`/`COPYING`/`NOTICE`, no package-license metadata, and no documented distribution model, so the expected initial result is a licensing-decision stop rather than silent dependency installation.
+
 - [ ] **Step 1: Write the RED dependency and contract tests.**
 
 ```python
@@ -679,12 +683,12 @@ class PdfProcessor:
 ```
 
 - `process()` checks byte length, opens from memory using `pymupdf.open(stream=body, filetype="pdf")`, rejects `needs_pass`, requires at least one page, and extracts `page.get_text("text")`, `page.rect.width`, and `page.rect.height` in stable 1-based order.
-- PyMuPDF open/parse errors map to `INVALID_PDF` or `PDF_PARSE_FAILED`; encrypted/password-required input maps to `PDF_ENCRYPTED`. Media type and filename are never trusted as validation.
+- `PDF_ENCRYPTED` means PyMuPDF opened the PDF far enough to determine that a password is required. `INVALID_PDF` means the bytes could not be opened or recognized as a valid PDF at the initial document-open/content-validation boundary. `PDF_PARSE_FAILED` means PyMuPDF opened a document successfully but deterministic processing later failed while reading page count, page structure, page geometry, or embedded page text. Native PyMuPDF exception text is never exposed. Media type and filename are never trusted as validation.
 - All pages are retained. `SUCCESS` means every page has non-whitespace text, `PARTIAL` means a mixture, and `NO_TEXT` means none. Text is preserved as Unicode and `text_source` is always `EMBEDDED_PDF`.
 
 - [ ] **Step 1: Create deterministic RED PDF fixtures/tests.**
 
-Create temporary fixtures for one-page English, Arabic plus English, multiple pages, mixed text/empty, all-empty, malformed bytes, renamed HTML, and password-required encrypted PDF. Assert page numbers, exact Unicode text substrings, positive finite point dimensions, empty rows, and all three extraction statuses.
+Create temporary fixtures for one-page English, Arabic plus English, multiple pages, mixed text/empty, all-empty, malformed bytes, renamed HTML, and password-required encrypted PDF. Assert malformed/HTML input maps exactly to `INVALID_PDF`, password-required input maps exactly to `PDF_ENCRYPTED`, and page numbers, Unicode text, positive finite point dimensions, empty rows, and all three extraction statuses are deterministic. Use a controlled PyMuPDF document/page test double that succeeds at open and raises during page-count/structure/geometry/text processing to prove `PDF_PARSE_FAILED`; do not depend on unstable corrupt-PDF behavior.
 
 - [ ] **Step 2: Run RED and prove the processor is absent.**
 
@@ -694,7 +698,7 @@ Expected: FAIL because `PdfProcessor` does not exist.
 
 - [ ] **Step 3: Implement minimal PyMuPDF validation/extraction.**
 
-Keep the PyMuPDF document inside a `with` block, build immutable page tuples, never write document bytes/text to logs or disk, and raise only fixed-code `DocumentIngestionFailure` outward.
+Wrap only `pymupdf.open(stream=body, filetype="pdf")` in the initial-open boundary and translate failure there to `DocumentIngestionFailure(INVALID_PDF)`. After a successful open, check `document.needs_pass` and raise `PDF_ENCRYPTED`; then wrap page-count, page-load, geometry, and text extraction in the processing boundary and translate those failures to `PDF_PARSE_FAILED`. Keep the document inside a `with` block, build immutable page tuples, never write document bytes/text to logs or disk, and never preserve native exception text.
 
 - [ ] **Step 4: Run focused GREEN verification.**
 
@@ -803,7 +807,12 @@ class ResourceFetchPermit:
     initial_url: str = field(repr=False)
 
 class MoodleFileAuthorizer:
-    def __init__(self, *, canonical_wwwroot: str) -> None: ...
+    def __init__(
+        self,
+        *,
+        canonical_wwwroot: str,
+        expected_source_system: str,
+    ) -> None: ...
     def authorize(self, selection: RemoteFileSelection) -> ResourceFetchPermit: ...
     def authorize_redirect(
         self, *, permit: ResourceFetchPermit, current_url: str, location: str
@@ -822,18 +831,22 @@ class BrowserAuthenticatedFetcher:
 
 @contextmanager
 def open_phase3_fetcher_session(
-    *, settings: MoodleSettings, auth_paths: AuthPaths
+    *,
+    canonical_wwwroot: str,
+    expected_source_system: str,
+    settings: MoodleSettings,
+    auth_paths: AuthPaths,
 ) -> Iterator[BrowserAuthenticatedFetcher]: ...
 ```
 
-- `authorize()` accepts only `source_system == settings.source_system`, positive database/course IDs, and `source_id == "resource-cm:<positive decimal>"`; it constructs `<canonical_wwwroot>/mod/resource/view.php?id=<cmid>` itself. No public method accepts a URL selector.
+- `authorize()` compares `selection.source_system` only with the constructor's explicit `expected_source_system`, accepts positive database/course IDs and `source_id == "resource-cm:<positive decimal>"`, and constructs `<canonical_wwwroot>/mod/resource/view.php?id=<cmid>` itself. It performs no global/runtime configuration lookup, and no public method accepts a URL selector.
 - Redirect authorization resolves a relative `Location`, rejects userinfo/fragments, non-HTTPS, origin/base-path mismatch, loopback/private/link-local/reserved IP literals, and every route except the exact initial Resource route followed by Moodle-owned redirect hops ending at a `pluginfile.php` path corresponding to that permit. Every hop is checked, cycles fail, and the maximum is five.
 - `fetch()` uses only `context.request.get(url, max_redirects=0, timeout=FETCH_TIMEOUT_MS)`, follows validated redirects manually, requires final HTTP 200 and an authorized final URL, rejects a valid `Content-Length` above 50 MiB before reading, reads once, then verifies actual length.
-- `open_phase3_fetcher_session()` acquires the existing profile lease, launches the existing headed persistent `msedge` context, lets the human authenticate using the existing bounded proof flow, and closes context before releasing the profile lock. It never exports cookies/storage state or invokes `httpx`/`requests`.
+- `open_phase3_fetcher_session()` constructs `MoodleFileAuthorizer(canonical_wwwroot=canonical_wwwroot, expected_source_system=expected_source_system)` from its explicit arguments, acquires the existing profile lease, launches the existing headed persistent `msedge` context, lets the human authenticate using the existing bounded proof flow, and closes context before releasing the profile lock. It never reads hidden/global configuration, exports cookies/storage state, or invokes `httpx`/`requests`.
 
 - [ ] **Step 1: Write RED authorizer and transport tests.**
 
-Test known `resource-cm:42`, unknown/malformed source IDs, direct caller `pluginfile`, cross-origin, downgrade, schemes `file`/`data`/`javascript`, localhost/private/link-local destinations, wrong base path, unsupported routes, redirect cycles/overflow, wrong final target, non-200, oversized `Content-Length`, oversized actual bytes, and fixed non-sensitive errors. Assert URL-bearing values have redacted `repr`.
+Test known `resource-cm:42`, explicit matching/mismatching `expected_source_system`, unknown/malformed source IDs, direct caller `pluginfile`, cross-origin, downgrade, schemes `file`/`data`/`javascript`, localhost/private/link-local destinations, wrong base path, unsupported routes, redirect cycles/overflow, wrong final target, non-200, oversized `Content-Length`, oversized actual bytes, and fixed non-sensitive errors. Assert URL-bearing values have redacted `repr` and that authorizer/session construction never reads global configuration.
 
 - [ ] **Step 2: Run RED and prove the Phase 3 boundary is absent.**
 
@@ -883,7 +896,7 @@ git commit -m "feat(moodle): authorize phase3 resource fetches"
 
 **Interfaces:**
 
-- Consumes: `DocumentRepository`, `ContentBlobStore`, `PdfProcessor`, `IngestionLock`, a `Callable[[], ContextManager[BrowserAuthenticatedFetcher]]`, and aware-UTC clock callable.
+- Consumes: `DocumentRepository`, `ContentBlobStore`, `PdfProcessor`, `IngestionLock`, an already-bound `Callable[[], ContextManager[BrowserAuthenticatedFetcher]]`, and aware-UTC clock callable. Task 9 binds that factory with the explicit validated `canonical_wwwroot` and `expected_source_system`; the service never reads Moodle configuration.
 - Produces:
 
 ```python
@@ -983,19 +996,25 @@ class RuntimeMoodleEnvironment:
 def load_runtime_moodle_environment() -> RuntimeMoodleEnvironment: ...
 def run_documents_command(argv: Sequence[str]) -> int: ...
 def build_phase3_service(
-    *, settings: MoodleSettings, auth_paths: AuthPaths, paths: DocumentRuntimePaths
+    *,
+    bootstrap_config: MoodleBootstrapConfig,
+    settings: MoodleSettings,
+    auth_paths: AuthPaths,
+    paths: DocumentRuntimePaths,
 ) -> Phase3IngestionService: ...
 def render_batch_result(result: BatchIngestionResult) -> tuple[str, ...]: ...
 ```
 
 - Exact accepted grammar is `aaos documents ingest-new [--remote-file-id <positive-int>]` and `aaos documents refresh [--remote-file-id <positive-int>]`. Unknown flags, duplicate selectors, missing/nonpositive IDs, URLs, and extra arguments exit `2` with fixed usage output.
 - `load_runtime_moodle_environment()` performs the existing exact four-name Process/User resolution once, retains conflict fail-closed behavior, and returns a normalized absolute `data_root`. Existing `load_runtime_moodle_configuration()` delegates to it and preserves its current three-tuple API for all Phase 2 callers.
+- `run_documents_command()` passes `environment.bootstrap_config`, `environment.settings`, `environment.auth_paths`, and paths derived from `environment.data_root` explicitly to `build_phase3_service()`.
+- `build_phase3_service()` binds `open_phase3_fetcher_session(canonical_wwwroot=bootstrap_config.canonical_wwwroot, expected_source_system=settings.source_system, settings=settings, auth_paths=auth_paths)` in its fetcher factory. No Task 7/8/9 component re-reads hidden/global configuration.
 - Production composition requires the existing migrated database file and validated content-store parent; it does not create/migrate the normal database or run Phase 2 synchronization. Store/temporary subdirectories may be created only after the ingestion lock is held by the service.
 - Safe output contains one fixed per-document line using internal ID/status/numeric metadata/error code plus the seven aggregate names. It never renders filename, URL, body, text, exception, browser output, or credentials.
 
 - [ ] **Step 1: Write RED exact-routing and privacy tests.**
 
-Test both modes with/without selector, invalid grammar, URL rejection, exit codes, fixed batch fields, and secret sentinels injected into transport exceptions/results that must not appear in stdout/stderr/repr. Extend receiver configuration tests for identical Process/User values, disagreement, missing/malformed data root, exact four-name access, and the unchanged legacy tuple API.
+Test both modes with/without selector, invalid grammar, URL rejection, exit codes, fixed batch fields, and secret sentinels injected into transport exceptions/results that must not appear in stdout/stderr/repr. Assert the exact runtime `bootstrap_config.canonical_wwwroot` and `settings.source_system` reach the fetcher factory/authorizer, with no second configuration read. Extend receiver configuration tests for identical Process/User values, disagreement, missing/malformed data root, exact four-name access, and the unchanged legacy tuple API.
 
 - [ ] **Step 2: Write RED scope-isolation tests.**
 
@@ -1013,7 +1032,7 @@ Follow the existing exact-argv dispatch style in `src/aaos/cli.py`; do not intro
 
 - [ ] **Step 5: Implement production composition without side effects on import.**
 
-Reuse configured User/process values through `load_runtime_moodle_environment()`, derive Phase 3 paths from its validated AAOS data root, require an existing migrated DB, inject the store/lock, and pass `open_phase3_fetcher_session` as the fetcher factory. Do not open Edge until the service has selected at least one fetch candidate.
+Reuse configured User/process values through `load_runtime_moodle_environment()`, derive Phase 3 paths from its validated AAOS data root, require an existing migrated DB, inject the store/lock, and bind `open_phase3_fetcher_session` with the environment's explicit bootstrap canonical root, expected source namespace, settings, and auth paths. Do not open Edge until the service has selected at least one fetch candidate.
 
 - [ ] **Step 6: Run GREEN CLI and neighboring regressions.**
 
@@ -1101,12 +1120,12 @@ git commit -m "test(documents): verify disposable ingestion integration"
 
 **Interfaces:**
 
-- Consumes: one human-selected current active Moodle PDF `RemoteFile` by internal database identity, a freshly migrated disposable SQLite populated only through the existing `SourceCollection -> normalize_collection() -> AcademicSyncService.sync()` bridge, a fresh disposable content store, and the existing authenticated Edge profile/context.
+- Consumes: one human-approved positive Moodle Resource course-module ID (`cmid`), a freshly migrated disposable SQLite populated only through the existing `SourceCollection -> normalize_collection() -> AcademicSyncService.sync()` bridge, a fresh disposable content store, and the existing authenticated Edge profile/context. The runner resolves the disposable internal `RemoteFileORM.id` only after synchronization.
 - Produces no retained production interface. The live runner emits only the exact fixed acceptance fields below and contains no filename/title/URL/body/text/token/cookie data.
 
 - [ ] **Step 1: Write the default-skipped live-smoke guard.**
 
-Require both `AAOS_RUN_LIVE_PHASE3_SMOKE=1` and a positive `AAOS_PHASE3_REMOTE_FILE_ID`; otherwise `pytest.skip`. Assert the retained test can invoke only one selected RemoteFile, a disposable DB/store, and the production service. Normal `uv run pytest` must never launch Edge or contact Moodle.
+Require both `AAOS_RUN_LIVE_PHASE3_SMOKE=1` and a positive decimal `AAOS_PHASE3_RESOURCE_CMID`; otherwise `pytest.skip`. Assert the retained test can collect current Phase 2 metadata into a disposable DB, resolve exactly one active row in the expected namespace with `source_id == f"resource-cm:{cmid}"`, and invoke the production service only with that row's disposable internal ID. Normal `uv run pytest` must never launch Edge or contact Moodle.
 
 - [ ] **Step 2: Run the guard test without opt-in.**
 
@@ -1132,11 +1151,11 @@ Expected: all deterministic checks PASS; only repository-approved live tests are
 
 - [ ] **Step 4: Create the temporary privacy-safe live acceptance runner only after explicit human authorization.**
 
-The runner must select exactly one current PDF RemoteFile by positive internal ID, build/migrate a disposable SQLite database under a temporary directory, use a disposable content-store root, acquire both owned locks, use the existing Edge profile, run `ingest-new`, then `refresh` with the same source bytes. It must not hard-code filename, page count, size, or historical entity counts.
+The runner accepts only `--resource-cmid <positive-decimal>`. It builds/migrates a disposable SQLite database, performs the approved current Phase 2 metadata collection, normalizes and synchronizes it into that database, then queries for exactly one active `RemoteFileORM` whose `source_system` equals the validated expected namespace and whose `source_id` equals `resource-cm:<cmid>`. Zero or multiple matches fail closed. The runner takes the matched disposable `RemoteFileORM.id`, invokes the real `Phase3IngestionService` with `remote_file_id=<resolved-id>` for `ingest-new` and `refresh`, and uses a disposable content store plus the existing Edge profile. It never adds cmid selection to the production CLI and does not hard-code filename, page count, size, or historical entity counts.
 
 - [ ] **Step 5: Execute exactly one controlled live acceptance.**
 
-Run from the normal Windows user session only after authorization, with `AAOS_PHASE3_REMOTE_FILE_ID` already set to the approved positive internal database ID: `uv run python aaos_live_phase3_ingestion_acceptance.py --remote-file-id $env:AAOS_PHASE3_REMOTE_FILE_ID`
+Run from the normal Windows user session only after the human selects a current Moodle Resource known to be a PDF and sets its positive cmid: `uv run python aaos_live_phase3_ingestion_acceptance.py --resource-cmid $env:AAOS_PHASE3_RESOURCE_CMID`
 
 Expected fixed output:
 
