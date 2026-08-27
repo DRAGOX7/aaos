@@ -108,14 +108,25 @@ surface to callers.
 
 ### PdfValidator
 
-Validates the actual byte length, PDF signature/content consistency, PyMuPDF
-open/parse behavior, and password requirement. Filename and `Content-Type` are
-advisory observations only.
+Validates the actual byte length, PDF signature/content consistency, selected
+PDF-engine open/parse behavior, and password requirement. Filename and
+`Content-Type` are advisory observations only.
 
 ### PdfExtractor
 
-Uses PyMuPDF to produce page count, embedded Unicode text, and page dimensions
-for every page in order.
+Uses the selected PDF engine to produce page count, embedded Unicode text, and
+page dimensions for every page in order. The engine is hidden behind the
+application-owned `PdfProcessor.process(body: bytes) -> ParsedPdf` boundary;
+no engine-specific type escapes it.
+
+### PDF engine selection
+
+Phase 3 selects `pypdfium2==5.13.0`, backed by PDFium. The dependency is
+permissively licensed according to its official package metadata (Apache-2.0,
+BSD-3-Clause, and dependency licenses). Task 1 must verify the pinned package
+metadata and preserve the PDFium and third-party license/notice material
+required for any future binary distribution. This is dependency governance,
+not a redesign of AAOS repository licensing.
 
 ### ContentBlobStore
 
@@ -244,7 +255,7 @@ Phase 3 v1 accepts PDF only. A candidate succeeds only when:
 
 - actual size is within the hard limit;
 - bytes are consistent with PDF content;
-- PyMuPDF opens and parses the document successfully; and
+- the selected PDF engine opens and parses the document successfully; and
 - the document does not require a password.
 
 HTML login pages, portal errors, renamed ZIPs or images, malformed payloads,
@@ -253,7 +264,7 @@ and filename extension are advisory and cannot authorize content.
 
 A password-required PDF fails with `PDF_ENCRYPTED`. Phase 3 never guesses,
 requests, stores, or bypasses a PDF password. A technically encrypted PDF that
-PyMuPDF can open normally without a password may proceed.
+the selected PDF engine can open normally without a password may proceed.
 
 The source filename is display metadata only. Sanitization:
 
@@ -429,7 +440,8 @@ safe error, but it does not rewrite immutable version, page, or blob rows.
 
 ## 12. Page extraction and extraction status
 
-For each accepted version, PyMuPDF produces:
+For each accepted version, the application-owned PDF adapter uses PDFium to
+produce:
 
 ```text
 immutable PDF
@@ -442,6 +454,9 @@ immutable PDF
 
 Phase 3 preserves Unicode and does not translate, summarize, aggressively
 normalize Arabic, silently repair text, chunk for retrieval, or call an LLM.
+Each page's full embedded Unicode text is extracted with
+`PdfTextPage.get_text_bounded()`; the UCS-2-limited range convenience API is
+not used.
 
 Extraction status is deterministic:
 
@@ -461,7 +476,17 @@ new version. No generic reprocessing framework is introduced in v1.
 The original bytes, stable version and page numbering, page geometry, embedded
 text, and source/course provenance intentionally preserve the substrate needed
 for later OCR or visual retrieval. Those later operations do not belong to
-Phase 3 and cannot create a new version unless the PDF bytes change.
+Phase 3 and cannot create a new version unless the PDF bytes change. If a later
+phase approves page rendering, it must use the same bounded PDFium adapter or
+an explicitly reviewed replacement; Phase 3 creates no rendered images,
+indexes, or visual-derived artifacts. The preserved future boundary is:
+
+```text
+DocumentPage
+        -> render corresponding immutable PDFium page
+        -> visual embedding
+        -> PixelRAG-style retrieval
+```
 
 ## 13. Trigger and command semantics
 
@@ -543,9 +568,17 @@ Persist only fixed non-sensitive failure codes. The closed v1 set includes:
 - `STORAGE_FAILED`; and
 - `PERSISTENCE_FAILED`.
 
+PDF processing maps failures at deterministic boundaries:
+
+- `INVALID_PDF`: initial `PdfDocument(body)` load/content recognition fails for
+  a reason other than password requirement;
+- `PDF_ENCRYPTED`: initial load reports PDFium's password-required error code;
+- `PDF_PARSE_FAILED`: after a successful document load, page count, page open,
+  geometry, or embedded-text extraction fails.
+
 Raw exception strings, response bodies, cookies, authorization headers,
 sesskeys, complete sensitive `pluginfile` URLs, and extracted text are not
-persisted or logged.
+persisted or logged. Native PDFium/pypdfium2 exception text is never exposed.
 
 Only transient network timeouts/failures receive automatic retries:
 
