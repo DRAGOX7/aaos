@@ -14,6 +14,8 @@ from aaos.moodle.receiver import (
     _read_user_environment,
     _runtime_configuration,
     begin_bootstrap_attempt,
+    load_runtime_moodle_configuration,
+    load_runtime_moodle_environment,
     main,
 )
 
@@ -246,3 +248,24 @@ def test_non_windows_resolution_does_not_read_registry(
     )
 
     _runtime_configuration()
+
+
+def test_typed_runtime_environment_preserves_wwwroot_and_browser_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_process(monkeypatch, {**NAMES, "AAOS_DATA_ROOT": str(tmp_path.resolve())})
+    monkeypatch.setattr(sys, "platform", "linux")
+    environment = load_runtime_moodle_environment()
+    assert environment.bootstrap_config.canonical_wwwroot == NAMES["AAOS_MOODLE_BASE_ORIGIN"]
+    assert environment.settings.mode == "browser"
+    assert environment.settings.base_origin == "https://elearn.just.edu.jo"
+    assert environment.data_root == tmp_path.resolve()
+
+
+def test_legacy_runtime_configuration_remains_api_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_process(monkeypatch, {**NAMES, "AAOS_DATA_ROOT": str(tmp_path.resolve())})
+    monkeypatch.setattr(sys, "platform", "linux")
+    _config, settings, _paths = load_runtime_moodle_configuration()
+    assert settings.mode == "api"

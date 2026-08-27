@@ -32,6 +32,10 @@ def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int:
 
 def main() -> int:
     """Expose the configured AAOS command through the project entry point."""
+    if sys.argv[1:2] == ["documents"]:
+        from aaos.documents.cli import run_documents_command
+
+        return run_documents_command(sys.argv[2:])
     if sys.argv[1:] == ["moodle", "bootstrap"]:
         return _run_configured_moodle_bootstrap()
     if sys.argv[1:] == ["moodle", "bootstrap", "--auth-host", "system"]:

@@ -53,11 +53,13 @@ __all__ = [
     "PendingBootstrapAttempt",
     "BootstrapCompletion",
     "ReceiverError",
+    "RuntimeMoodleEnvironment",
     "begin_bootstrap_attempt",
     "cancel_bootstrap_attempt",
     "main",
     "receive_callback",
     "read_receiver_status",
+    "load_runtime_moodle_environment",
     "wait_for_bootstrap_completion",
 ]
 
@@ -111,6 +113,16 @@ class BootstrapCompletion:
     canonical_wwwroot: str
     attempt_id: str
     completed_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMoodleEnvironment:
+    """Validated non-secret runtime inputs shared by browser-backed commands."""
+
+    bootstrap_config: MoodleBootstrapConfig
+    settings: MoodleSettings
+    auth_paths: AuthPaths
+    data_root: Path
 
 
 def _read_user_environment() -> dict[str, object]:
@@ -652,16 +664,21 @@ def receive_callback(
         _release_lock(lock)
 
 
-def load_runtime_moodle_configuration() -> tuple[MoodleBootstrapConfig, MoodleSettings, AuthPaths]:
-    """Load the validated non-secret runtime configuration for one Moodle command."""
+def load_runtime_moodle_environment() -> RuntimeMoodleEnvironment:
+    """Load one normalized, typed runtime environment without filesystem writes."""
     values = _validated_configuration_values()
     source_system = values["AAOS_MOODLE_SOURCE_SYSTEM"]
-    base_origin = values["AAOS_MOODLE_BASE_ORIGIN"]
+    canonical_wwwroot = values["AAOS_MOODLE_BASE_ORIGIN"]
     auth_alias = values["AAOS_MOODLE_AUTH_ALIAS"]
-    data_root = values["AAOS_DATA_ROOT"]
+    try:
+        data_root = Path(values["AAOS_DATA_ROOT"]).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise _configuration_invalid() from None
+    if not data_root.is_absolute():
+        raise _configuration_invalid()
     config = MoodleBootstrapConfig(
         source_system=source_system,
-        canonical_wwwroot=base_origin,
+        canonical_wwwroot=canonical_wwwroot,
         callback_kind="registered_uri",
         callback_scheme="aaos",
         timeout_seconds=WEBVIEW2_INTERACTION_TIMEOUT_SECONDS,
@@ -671,10 +688,27 @@ def load_runtime_moodle_configuration() -> tuple[MoodleBootstrapConfig, MoodleSe
     settings = MoodleSettings(
         source_system=source_system,
         base_origin=origin,
-        mode="api",
+        mode="browser",
         auth_alias=auth_alias,
     )
-    return config, settings, resolve_auth_paths(settings, data_root=data_root)
+    return RuntimeMoodleEnvironment(
+        bootstrap_config=config,
+        settings=settings,
+        auth_paths=resolve_auth_paths(settings, data_root=data_root),
+        data_root=data_root,
+    )
+
+
+def load_runtime_moodle_configuration() -> tuple[MoodleBootstrapConfig, MoodleSettings, AuthPaths]:
+    """Preserve the Phase 2 API-mode tuple while delegating validation once."""
+    environment = load_runtime_moodle_environment()
+    api_settings = MoodleSettings(
+        source_system=environment.settings.source_system,
+        base_origin=environment.settings.base_origin,
+        mode="api",
+        auth_alias=environment.settings.auth_alias,
+    )
+    return environment.bootstrap_config, api_settings, environment.auth_paths
 
 
 def _runtime_configuration() -> tuple[MoodleBootstrapConfig, AuthPaths]:
