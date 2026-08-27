@@ -182,6 +182,28 @@ def test_yui_combo_policy_allows_only_static_get_or_head_without_a_body() -> Non
     )
 
 
+def test_phase2_collection_policy_still_rejects_resource_download_routes() -> None:
+    """Phase 3 fetching must not weaken the frozen Phase 2 collection surface."""
+    from aaos.moodle.browser_policy import classify_browser_request
+
+    origin = "https://moodle.example.edu"
+    wwwroot = origin + "/current"
+    for url in (
+        wwwroot + "/mod/resource/view.php?id=42",
+        wwwroot + "/pluginfile.php/7/mod_resource/content/1/lecture.pdf",
+    ):
+        assert (
+            classify_browser_request(
+                "GET",
+                url,
+                base_origin=origin,
+                canonical_wwwroot=wwwroot,
+                resource_type="document",
+            ).code
+            == "BLOCK"
+        )
+
+
 def test_route_builder_accepts_only_approved_numeric_identifiers() -> None:
     from aaos.moodle.browser_models import BrowserPolicyError
     from aaos.moodle.browser_policy import build_browser_url
