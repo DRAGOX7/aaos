@@ -8,6 +8,7 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy.engine import Connection
 
+from aaos.persistence import document_models  # noqa: F401
 from aaos.persistence.academic_models import Base
 from aaos.persistence.database import (
     DEFAULT_DATABASE_PATH,

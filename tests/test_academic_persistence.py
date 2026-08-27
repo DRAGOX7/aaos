@@ -15,14 +15,24 @@ from aaos.persistence.academic_models import (
     UTCDateTime,
 )
 from aaos.persistence.database import create_database_engine, create_session_factory
+from aaos.persistence.document_models import (
+    ContentBlobORM,
+    DocumentORM,
+    DocumentPageORM,
+    DocumentVersionORM,
+)
 
 
-def test_phase1_metadata_contains_exact_domain_tables() -> None:
+def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
     assert set(CourseORM.metadata.tables) == {
         "courses",
         "assignments",
         "announcements",
         "remote_files",
+        "documents",
+        "content_blobs",
+        "document_versions",
+        "document_pages",
     }
 
 
@@ -125,3 +135,7 @@ def test_all_domain_models_share_metadata() -> None:
     assert AssignmentORM.metadata is CourseORM.metadata
     assert AnnouncementORM.metadata is CourseORM.metadata
     assert RemoteFileORM.metadata is CourseORM.metadata
+    assert DocumentORM.metadata is CourseORM.metadata
+    assert ContentBlobORM.metadata is CourseORM.metadata
+    assert DocumentVersionORM.metadata is CourseORM.metadata
+    assert DocumentPageORM.metadata is CourseORM.metadata

@@ -136,6 +136,10 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "assignments",
             "announcements",
             "remote_files",
+            "documents",
+            "content_blobs",
+            "document_versions",
+            "document_pages",
         }
     finally:
         engine.dispose()
