@@ -4,9 +4,9 @@
 
 **Goal:** Safely ingest approved Moodle PDF resources into immutable content-addressed storage with deterministic versioning, page extraction, provenance, and fail-closed authenticated download controls.
 
-**Architecture:** A synchronous `Phase3IngestionService` coordinates one application-owned ingestion lock, an existing dedicated Edge session, a Phase-3-only Moodle resource authorizer/fetcher, PyMuPDF validation/extraction, content-addressed filesystem storage, and per-document SQLite transactions. Phase 2 remains metadata-only: no normal sync triggers ingestion, and the existing collection policy continues to reject downloads and `pluginfile` requests.
+**Architecture:** A synchronous `Phase3IngestionService` coordinates one application-owned ingestion lock, an existing dedicated Edge session, a Phase-3-only Moodle resource authorizer/fetcher, application-owned PDF validation/extraction backed by PDFium, content-addressed filesystem storage, and per-document SQLite transactions. Phase 2 remains metadata-only: no normal sync triggers ingestion, and the existing collection policy continues to reject downloads and `pluginfile` requests.
 
-**Tech Stack:** Python 3.11, frozen dataclasses and `StrEnum`, SQLAlchemy 2.x, Alembic 1.19.x, SQLite, Playwright 1.62.0 with installed Microsoft Edge `msedge`, PyMuPDF 1.28.2, pytest 9.x, Ruff, mypy strict mode, and uv lockfile management.
+**Tech Stack:** Python 3.11, frozen dataclasses and `StrEnum`, SQLAlchemy 2.x, Alembic 1.19.x, SQLite, Playwright 1.62.0 with installed Microsoft Edge `msedge`, pypdfium2 5.13.0/PDFium, pytest 9.x, Ruff, mypy strict mode, and uv lockfile management.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-phase-3-file-downloader-document-ingestion-design.md`
 
@@ -46,7 +46,7 @@
 | `src/aaos/documents/config.py` | Fixed v1 policy and validated database/store/lock paths derived from an injected absolute AAOS data root. |
 | `src/aaos/documents/lock.py` | Atomic Phase 3 single-writer lease with fail-closed ownership semantics. |
 | `src/aaos/documents/storage.py` | Filename sanitization, staging, SHA-256 paths, atomic installation, dedup verification, and compensation. |
-| `src/aaos/documents/pdf.py` | PyMuPDF validation, encrypted-PDF rejection, page extraction, and extraction-status classification. |
+| `src/aaos/documents/pdf.py` | Application-owned pypdfium2/PDFium adapter for validation, encrypted-PDF rejection, page extraction, and extraction-status classification. |
 | `src/aaos/documents/repository.py` | Eligible `RemoteFile` selection and per-document SQLAlchemy transactions for state, versions, pages, and blob metadata. |
 | `src/aaos/documents/service.py` | Sequential ingestion orchestration, retries, compensation, mode behavior, and batch accounting. |
 | `src/aaos/documents/cli.py` | Exact `documents ingest-new` and `documents refresh` parsing, safe rendering, and production composition. |
@@ -56,8 +56,8 @@
 | `src/aaos/cli.py` | Lazy dispatch to the two exact document commands. |
 | `migrations/env.py` | Register Phase 3 mappings in Alembic metadata. |
 | `migrations/versions/0003_phase3_document_ingestion.py` | Forward/reversible Phase 3 schema migration. |
-| `pyproject.toml` | Add exact runtime dependency `pymupdf==1.28.2`. |
-| `uv.lock` | Lock PyMuPDF and its platform artifacts. |
+| `pyproject.toml` | Add exact runtime dependency `pypdfium2==5.13.0`. |
+| `uv.lock` | Lock pypdfium2 5.13.0 and its platform artifacts. |
 
 ### Test files
 
@@ -86,7 +86,7 @@
 
 ---
 
-### Task 1: Add PyMuPDF and freeze Phase 3 contracts/configuration
+### Task 1: Add pypdfium2 and freeze Phase 3 contracts/configuration
 
 **Files:**
 
@@ -224,17 +224,23 @@ def resolve_document_runtime_paths(data_root: str | Path) -> DocumentRuntimePath
 - `BatchIngestionResult.exit_code` returns `1` when `failed > 0`, otherwise `0`.
 - `resolve_document_runtime_paths()` requires an absolute, normalized data root and returns exactly `database/aaos.db`, `documents`, and `temporary/phase3-ingestion.lock` beneath it without creating paths.
 
-- [ ] **Step 0: Complete the PyMuPDF license preflight before adding the dependency.**
+- [ ] **Step 0: Verify permissive dependency metadata and notice governance.**
 
-Inspect `LICENSE`, `COPYING`, `NOTICE`, `pyproject.toml` license metadata, `README.md`, and governance documents for the intended AAOS distribution/deployment model. Record that PyMuPDF 1.28.2 is offered under GNU AGPL v3 or an Artifex commercial license. Proceed to `uv add` only when repository governance clearly establishes a compatible use/distribution model; otherwise stop Task 1 and request a human licensing decision without offering a legal conclusion. At plan-writing time the repository has no `LICENSE`/`COPYING`/`NOTICE`, no package-license metadata, and no documented distribution model, so the expected initial result is a licensing-decision stop rather than silent dependency installation.
+Verify against official package metadata that `pypdfium2==5.13.0` supports
+Python 3.11, publishes the Windows x86-64 wheel needed by this repository, and
+declares Apache-2.0, BSD-3-Clause, and dependency licenses. Record the exact
+metadata evidence. Preserve the PDFium and bundled third-party license/notice
+material required if AAOS later distributes binaries. Stop for human review if
+the resolved package metadata or wheel differs; do not make a legal conclusion
+or redesign the repository's own licensing in this task.
 
 - [ ] **Step 1: Write the RED dependency and contract tests.**
 
 ```python
-def test_pymupdf_runtime_version_matches_lock() -> None:
-    import pymupdf
+def test_pypdfium2_runtime_version_matches_lock() -> None:
+    from pypdfium2.version import PYPDFIUM_INFO
 
-    assert pymupdf.VersionBind == "1.28.2"
+    assert PYPDFIUM_INFO.tag == "5.13.0"
 
 def test_phase3_policy_values_are_fixed() -> None:
     assert MAX_PDF_BYTES == 50 * 1024 * 1024
@@ -252,13 +258,15 @@ def test_batch_exit_code_is_nonzero_only_when_any_document_failed() -> None:
 
 Run: `uv run pytest tests/test_document_contracts.py tests/test_document_config.py -v`
 
-Expected: FAIL because `pymupdf` and `aaos.documents` do not exist.
+Expected: FAIL because `pypdfium2` and `aaos.documents` do not exist.
 
 - [ ] **Step 3: Add the exact runtime dependency through uv.**
 
-Run: `uv add "pymupdf==1.28.2"`
+Run: `uv add "pypdfium2==5.13.0"`
 
-Expected: `pyproject.toml` lists `pymupdf==1.28.2`, `uv.lock` contains PyMuPDF 1.28.2, and no OCR package is added.
+Expected: `pyproject.toml` lists `pypdfium2==5.13.0`, `uv.lock` contains
+pypdfium2 5.13.0 and its Windows artifact metadata, and no OCR or PDF-authoring
+runtime package is added.
 
 - [ ] **Step 4: Implement the frozen contracts and validated path resolver.**
 
@@ -286,7 +294,7 @@ Expected: PASS with immutable enums/dataclasses, exact constants, and no filesys
 
 Run: `uv lock --check`
 
-Run: `uv run python -c "import pymupdf; import aaos.documents"`
+Run: `uv run python -c "from pypdfium2.version import PYPDFIUM_INFO; assert PYPDFIUM_INFO.tag == '5.13.0'; import aaos.documents"`
 
 Expected: both commands PASS with no `data/database/aaos.db` or `data/documents/` creation.
 
@@ -674,7 +682,7 @@ git commit -m "feat(documents): add content-addressed blob store"
 
 **Interfaces:**
 
-- Consumes: `bytes`, `ParsedPdf`, `ExtractedPage`, `ExtractionStatus`, `TextSource`, and PyMuPDF 1.28.2.
+- Consumes: `bytes`, `ParsedPdf`, `ExtractedPage`, `ExtractionStatus`, `TextSource`, and pypdfium2 5.13.0.
 - Produces:
 
 ```python
@@ -682,13 +690,35 @@ class PdfProcessor:
     def process(self, body: bytes) -> ParsedPdf: ...
 ```
 
-- `process()` checks byte length, opens from memory using `pymupdf.open(stream=body, filetype="pdf")`, rejects `needs_pass`, requires at least one page, and extracts `page.get_text("text")`, `page.rect.width`, and `page.rect.height` in stable 1-based order.
-- `PDF_ENCRYPTED` means PyMuPDF opened the PDF far enough to determine that a password is required. `INVALID_PDF` means the bytes could not be opened or recognized as a valid PDF at the initial document-open/content-validation boundary. `PDF_PARSE_FAILED` means PyMuPDF opened a document successfully but deterministic processing later failed while reading page count, page structure, page geometry, or embedded page text. Native PyMuPDF exception text is never exposed. Media type and filename are never trusted as validation.
+- `process()` checks byte length, opens from memory using
+  `pdfium.PdfDocument(body)`, requires at least one page with `len(document)`,
+  opens pages by zero-based index, reads point dimensions with
+  `page.get_size()`, creates a text page with `page.get_textpage()`, and extracts
+  full Unicode using `text_page.get_text_bounded()` in stable 1-based order.
+- At initial load, compare `pdfium.PdfiumError.err_code` with
+  `pdfium.raw.FPDF_ERR_PASSWORD`; equality maps to `PDF_ENCRYPTED`, while any
+  other initial `PdfiumError` maps to `INVALID_PDF`. After a successful load,
+  page-count, page-open, geometry, or text-page/text extraction failure maps to
+  `PDF_PARSE_FAILED`. Native PDFium/pypdfium2 exception text is never exposed.
+  Media type and filename are never trusted as validation.
+- `PdfProcessor.process(body: bytes) -> ParsedPdf` is the sole adapter boundary;
+  no pypdfium2 document, page, text-page, exception, or other library type
+  escapes it.
 - All pages are retained. `SUCCESS` means every page has non-whitespace text, `PARTIAL` means a mixture, and `NO_TEXT` means none. Text is preserved as Unicode and `text_source` is always `EMBEDDED_PDF`.
 
 - [ ] **Step 1: Create deterministic RED PDF fixtures/tests.**
 
-Create temporary fixtures for one-page English, Arabic plus English, multiple pages, mixed text/empty, all-empty, malformed bytes, renamed HTML, and password-required encrypted PDF. Assert malformed/HTML input maps exactly to `INVALID_PDF`, password-required input maps exactly to `PDF_ENCRYPTED`, and page numbers, Unicode text, positive finite point dimensions, empty rows, and all three extraction statuses are deterministic. Use a controlled PyMuPDF document/page test double that succeeds at open and raises during page-count/structure/geometry/text processing to prove `PDF_PARSE_FAILED`; do not depend on unstable corrupt-PDF behavior.
+Create temporary fixtures for one-page English, Arabic plus English, multiple
+pages, mixed text/empty, all-empty, malformed bytes, renamed HTML, and a
+password-required encrypted PDF. Fixtures may be small static test assets or
+be generated with tooling already confined to the test dependency set; do not
+add a large PDF-authoring runtime dependency. Assert malformed/HTML input maps
+exactly to `INVALID_PDF`, password-required input maps exactly to
+`PDF_ENCRYPTED`, and page numbers, full Unicode text, positive finite point
+dimensions, empty rows, and all three extraction statuses are deterministic.
+Use a controlled pypdfium2 adapter-boundary test double that succeeds at open
+and raises during page-count/page-open/geometry/text processing to prove
+`PDF_PARSE_FAILED`; do not depend on unstable corrupt-PDF behavior.
 
 - [ ] **Step 2: Run RED and prove the processor is absent.**
 
@@ -696,9 +726,19 @@ Run: `uv run pytest tests/test_document_pdf.py -v`
 
 Expected: FAIL because `PdfProcessor` does not exist.
 
-- [ ] **Step 3: Implement minimal PyMuPDF validation/extraction.**
+- [ ] **Step 3: Implement minimal pypdfium2/PDFium validation and extraction.**
 
-Wrap only `pymupdf.open(stream=body, filetype="pdf")` in the initial-open boundary and translate failure there to `DocumentIngestionFailure(INVALID_PDF)`. After a successful open, check `document.needs_pass` and raise `PDF_ENCRYPTED`; then wrap page-count, page-load, geometry, and text extraction in the processing boundary and translate those failures to `PDF_PARSE_FAILED`. Keep the document inside a `with` block, build immutable page tuples, never write document bytes/text to logs or disk, and never preserve native exception text.
+Wrap only `pdfium.PdfDocument(body)` in the initial-load boundary. Catch
+`pdfium.PdfiumError`; compare `error.err_code` with
+`pdfium.raw.FPDF_ERR_PASSWORD`, mapping equality to
+`DocumentIngestionFailure(PDF_ENCRYPTED)` and all other initial-load
+`PdfiumError` instances to `DocumentIngestionFailure(INVALID_PDF)`. After a
+successful load, wrap
+`len(document)`, page open, `page.get_size()`, `page.get_textpage()`, and
+`text_page.get_text_bounded()` in the processing boundary and map failures to
+`PDF_PARSE_FAILED`. Close each text page and page deterministically before
+closing the document, build immutable page tuples, never write document
+bytes/text to logs or disk, and never preserve native exception text.
 
 - [ ] **Step 4: Run focused GREEN verification.**
 
