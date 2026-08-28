@@ -99,7 +99,9 @@ class MoodleFileAuthorizer:
         return target
 
     def authorize_final_url(self, *, permit: ResourceFetchPermit, url: str) -> None:
-        if not self._is_chain_url(permit, url) or not self._is_pluginfile_url(url):
+        if url == permit.initial_url:
+            return
+        if not self._is_pluginfile_url(url):
             _fail(IngestionErrorCode.UNAUTHORIZED_ROUTE)
 
     def _is_chain_url(self, permit: ResourceFetchPermit, url: object) -> bool:

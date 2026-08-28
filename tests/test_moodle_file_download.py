@@ -182,10 +182,23 @@ def test_authorizer_accepts_only_the_resource_pluginfile_continuation() -> None:
     assert target == PLUGINFILE_URL
 
 
-def test_final_authorization_rejects_the_initial_resource_route() -> None:
+def test_final_authorization_accepts_the_exact_initial_resource_route() -> None:
+    permit = authorizer().authorize(selection())
+
+    authorizer().authorize_final_url(permit=permit, url=permit.initial_url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        WWWROOT + "/mod/resource/view.php?id=43",
+        WWWROOT + "/course/view.php?id=3",
+    ],
+)
+def test_final_authorization_rejects_other_same_origin_routes(url: str) -> None:
     permit = authorizer().authorize(selection())
     with pytest.raises(DocumentIngestionFailure) as caught:
-        authorizer().authorize_final_url(permit=permit, url=permit.initial_url)
+        authorizer().authorize_final_url(permit=permit, url=url)
     assert_failure(caught, IngestionErrorCode.UNAUTHORIZED_ROUTE)
 
 

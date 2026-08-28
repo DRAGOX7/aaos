@@ -40,6 +40,15 @@ def local_resource_https(
         def do_GET(self) -> None:  # noqa: N802
             served.append(self.path)
             if self.path == "/current/mod/resource/view.php?id=42":
+                if mode["value"] == "direct":
+                    body = b"%PDF-1.7 synthetic direct"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Disposition", 'attachment; filename="direct.pdf"')
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 locations = {
                     "success": "/current/pluginfile.php/7/mod_resource/content/1/lecture.pdf",
                     "cross_origin": "https://other.example.test/file.pdf",
@@ -152,6 +161,21 @@ def test_real_msedge_request_context_fetches_only_the_authorized_resource_chain(
         "/current/mod/resource/view.php?id=42",
         "/current/pluginfile.php/7/mod_resource/content/1/lecture.pdf",
     ]
+
+
+def test_real_msedge_request_context_fetches_an_exact_direct_resource_response(
+    local_resource_https: tuple[str, Path, Path, dict[str, str], list[str]], tmp_path: Path
+) -> None:
+    origin, _certificate, _private_key, mode, served = local_resource_https
+    mode["value"] = "direct"
+    fetcher, owned = _fetch(origin=origin, tmp_path=tmp_path)
+    try:
+        fetched = fetcher.fetch(_selection())
+    finally:
+        _close(owned)
+    assert fetched.body == b"%PDF-1.7 synthetic direct"
+    assert fetched.source_filename == "direct.pdf"
+    assert served == ["/current/mod/resource/view.php?id=42"]
 
 
 @pytest.mark.parametrize(
