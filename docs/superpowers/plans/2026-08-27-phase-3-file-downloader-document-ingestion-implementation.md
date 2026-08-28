@@ -4,7 +4,7 @@
 
 **Goal:** Safely ingest approved Moodle PDF resources into immutable content-addressed storage with deterministic versioning, page extraction, provenance, and fail-closed authenticated download controls.
 
-**Architecture:** A synchronous `Phase3IngestionService` coordinates one application-owned ingestion lock, an existing dedicated Edge session, a Phase-3-only Moodle resource authorizer/fetcher, application-owned PDF validation/extraction backed by PDFium, content-addressed filesystem storage, and per-document SQLite transactions. Phase 2 remains metadata-only: no normal sync triggers ingestion, and the existing collection policy continues to reject downloads and `pluginfile` requests.
+**Architecture:** A synchronous `Phase3ServiceRuntime` owns the composition-scoped SQLAlchemy `Engine` and the `Phase3IngestionService`. The service coordinates one application-owned ingestion lock, an existing dedicated Edge session, a Phase-3-only Moodle resource authorizer/fetcher, application-owned PDF validation/extraction backed by PDFium, content-addressed filesystem storage, and per-document SQLite transactions. Phase 2 remains metadata-only: no normal sync triggers ingestion, and the existing collection policy continues to reject downloads and `pluginfile` requests.
 
 **Tech Stack:** Python 3.11, frozen dataclasses and `StrEnum`, SQLAlchemy 2.x, Alembic 1.19.x, SQLite, Playwright 1.62.0 with installed Microsoft Edge `msedge`, pypdfium2 5.13.0/PDFium, pytest 9.x, Ruff, mypy strict mode, and uv lockfile management.
 
@@ -1042,10 +1042,11 @@ def build_phase3_service(
     settings: MoodleSettings,
     auth_paths: AuthPaths,
     paths: DocumentRuntimePaths,
-) -> Phase3IngestionService: ...
+) -> Phase3ServiceRuntime: ...
 def render_batch_result(result: BatchIngestionResult) -> tuple[str, ...]: ...
 ```
 
+- `build_phase3_service()` returns a `Phase3ServiceRuntime`; callers use `runtime.service` for ingestion operations. The runtime owns and deterministically disposes the composition SQLAlchemy `Engine` through idempotent `close()` and context-manager cleanup. `Phase3IngestionService` and `DocumentRepository` do not own the `Engine`; process termination is not the intended cleanup mechanism.
 - Exact accepted grammar is `aaos documents ingest-new [--remote-file-id <positive-int>]` and `aaos documents refresh [--remote-file-id <positive-int>]`. Unknown flags, duplicate selectors, missing/nonpositive IDs, URLs, and extra arguments exit `2` with fixed usage output.
 - `load_runtime_moodle_environment()` performs the existing exact four-name Process/User resolution once, retains conflict fail-closed behavior, and returns a normalized absolute `data_root`. Existing `load_runtime_moodle_configuration()` delegates to it and preserves its current three-tuple API for all Phase 2 callers.
 - `run_documents_command()` passes `environment.bootstrap_config`, `environment.settings`, `environment.auth_paths`, and paths derived from `environment.data_root` explicitly to `build_phase3_service()`.
