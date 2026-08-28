@@ -12,7 +12,38 @@ Every phase ends with:
 4. a review of failures and limitations;
 5. an explicit decision to proceed.
 
+## Status vocabulary
+
+- **PLANNED** — Scope is documented; implementation has not begun.
+- **IN PROGRESS** — Implementation or acceptance work is actively underway.
+- **IMPLEMENTED** — Code and deterministic verification are complete, but explicit human acceptance is not complete.
+- **ACCEPTED** — Required verification is complete and explicit human acceptance is recorded.
+- **FROZEN** — An accepted state is identified by a named immutable Git tag targeting the accepted SHA.
+
+**FROZEN** implies **ACCEPTED**.
+
+## Current roadmap status
+
+- Phase 0 — **ACCEPTANCE UNRESOLVED**.
+- Phase 1 — **FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`.
+- Phase 2 — **ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`.
+- Phase 3 — **FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
+- Phases 4–9 — **PLANNED / NOT STARTED**.
+
+### Historical status notes
+
+An existing `phase-00-passed` tag points to `55d2293`, a Phase 0
+final-acceptance planning commit. Repository evidence does not establish
+completed Phase 0G/0H acceptance, so Phase 0 acceptance remains unresolved.
+The historical tag is preserved pending explicit governance action.
+
+Phase 2 is accepted at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`, but no
+historical `phase-02-passed` tag is recorded. It is therefore classified
+**ACCEPTED, NOT FROZEN**.
+
 ## PHASE 0 — Foundation and Local Runtime
+
+**Current status: ACCEPTANCE UNRESOLVED.**
 
 Phase 0 is decomposed into the following governed subphases:
 
@@ -22,8 +53,8 @@ Phase 0 is decomposed into the following governed subphases:
 - **0D — SQLite + Alembic** — complete.
 - **0E — Local Model Gateway** — accepted.
 - **0F — Doctor / Hardware Diagnostics** — accepted.
-- **0G — Security Baseline Verification** — not started.
-- **0H — Phase 0 Final Acceptance** — not started.
+- **0G — Security Baseline Verification** — acceptance evidence not established.
+- **0H — Phase 0 Final Acceptance** — acceptance evidence not established.
 
 ### Purpose
 
@@ -88,6 +119,9 @@ incomplete.
 
 ## PHASE 1 — Domain Model and Mock Portal
 
+**Current status: FROZEN** at `phase-01-passed` /
+`8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`.
+
 ### Purpose
 
 Build normalized academic domain models and a deterministic mock portal before touching the real university system.
@@ -115,6 +149,10 @@ Build normalized academic domain models and a deterministic mock portal before t
 
 ## PHASE 2 — Real Moodle Authentication and Read-Only Synchronization
 
+**Current status: ACCEPTED, NOT FROZEN** at
+`736c8498ab1fe2c1d4d425ba4625774eaf791e93`. No historical
+`phase-02-passed` tag is recorded.
+
 ### Purpose
 
 Safely connect AAOS to the real Moodle portal without performing remote writes.
@@ -140,6 +178,9 @@ Safely connect AAOS to the real Moodle portal without performing remote writes.
 - Logs contain no secrets, tokens, or cookies.
 
 ## PHASE 3 — File Downloader and Document Ingestion
+
+**Current status: FROZEN** at `phase-03-passed` /
+`12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
 
 ### Purpose
 
@@ -168,6 +209,8 @@ Safely ingest newly discovered academic files.
 - Page and source metadata are preserved.
 
 ## PHASE 4 — Local RAG
+
+**Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
@@ -199,6 +242,8 @@ Build the local citation-grounded academic second brain.
 - Defined retrieval evaluation thresholds are reached.
 
 ## PHASE 5 — Local Agent Orchestrator and Typed Tools
+
+**Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
@@ -233,6 +278,8 @@ The production REPL remains disabled.
 
 ## PHASE 6 — Approval Engine, Google Calendar, and GitHub MCP
 
+**Current status: PLANNED / NOT STARTED.**
+
 ### Purpose
 
 Introduce carefully controlled external writes.
@@ -262,6 +309,8 @@ Introduce carefully controlled external writes.
 
 ## PHASE 7 — Next.js Dashboard and Telemetry
 
+**Current status: PLANNED / NOT STARTED.**
+
 ### Purpose
 
 Build the user interface only after the backend workflows are proven.
@@ -289,6 +338,8 @@ Build the user interface only after the backend workflows are proven.
 - Failures are visible and actionable.
 
 ## PHASE 8 — Restricted IPython REPL and Multimodal Vision
+
+**Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
@@ -318,6 +369,8 @@ Add advanced dynamic computation and visual-document understanding after the con
 - Ordinary PDF pages do not unnecessarily invoke the VLM.
 
 ## PHASE 9 — Hardening, Evaluation, and Portfolio Release
+
+**Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 

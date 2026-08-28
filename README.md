@@ -4,6 +4,12 @@ AAOS (Autonomous Academic Operating System) is a local-first system intended to 
 
 ## Development status
 
-Current implementation: Phase 0F — Doctor / Hardware Diagnostics accepted; Phase 0G Security Baseline Verification and Phase 0H Phase 0 Final Acceptance are not started.
+Current phase status:
 
-Development remains governed by the phase gates in [`docs/PHASES.md`](docs/PHASES.md). Phase 0 is not complete.
+- Phase 0: **ACCEPTANCE UNRESOLVED**. The existing `phase-00-passed` tag points to `55d2293` (`docs: plan Phase 0 final acceptance`); repository evidence for completed 0G/0H acceptance is not established.
+- Phase 1: **FROZEN** at `phase-01-passed` (`8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`).
+- Phase 2: **ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`; no historical `phase-02-passed` tag is recorded.
+- Phase 3: **FROZEN** at `phase-03-passed` (`12a27f7a77ed79a3e638d9fc6bf4509840a9b326`).
+- Phase 4: **PLANNED / NOT STARTED**.
+
+Development remains governed by the phase gates in [`docs/PHASES.md`](docs/PHASES.md). Phase 0 acceptance remains unresolved and Phase 4 has not started.

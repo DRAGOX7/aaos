@@ -55,4 +55,16 @@ The model never receives direct, unrestricted access to credentials, Moodle auth
 - **Environment:** contains the local or external academic systems and data being observed or changed.
 - **Structured observation:** reports a tool or environment outcome without granting it authority over the next action.
 
-This document describes intended architecture. Phase 0F — Doctor / Hardware Diagnostics — is accepted; Phase 0G Security Baseline Verification and Phase 0H Final Acceptance have not started, and Phase 0 as a whole remains in progress.
+## Current implementation status
+
+This document describes the intended architecture and the following
+evidence-qualified status: Phase 0 acceptance is unresolved; Phase 1 is
+**FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`;
+Phase 2 is **ACCEPTED, NOT FROZEN** at
+`736c8498ab1fe2c1d4d425ba4625774eaf791e93` with no historical
+`phase-02-passed` tag; Phase 3 is **FROZEN** at `phase-03-passed` /
+`12a27f7a77ed79a3e638d9fc6bf4509840a9b326`; and Phase 4 onward are
+**PLANNED / NOT STARTED**. The existing `phase-00-passed` tag points to
+`55d2293` (`docs: plan Phase 0 final acceptance`); repository evidence does not
+establish completed Phase 0G/0H acceptance, so that historical provenance
+remains unresolved pending explicit governance action.

@@ -45,4 +45,14 @@ These are planned capabilities assigned to gated phases. They are not claims abo
 
 ## Current implementation status
 
-**Phase 0 is in progress. Phase 0A, Phase 0B, Phase 0C, and Phase 0D are complete; Phase 0E and Phase 0F are accepted; Phase 0G and Phase 0H have not started. Phase 0 as a whole has not passed yet.**
+The current evidence-qualified status is:
+
+- **Phase 0 — ACCEPTANCE UNRESOLVED.** An existing `phase-00-passed` tag points to `55d2293` (`docs: plan Phase 0 final acceptance`), but repository evidence does not establish completed Phase 0G/0H acceptance. The historical tag is preserved pending explicit governance action.
+- **Phase 1 — FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`.
+- **Phase 2 — ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`; no historical `phase-02-passed` tag is recorded.
+- **Phase 3 — FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
+- **Phase 4 — PLANNED / NOT STARTED.**
+
+Phase status vocabulary and the remaining roadmap are defined in
+[`docs/PHASES.md`](PHASES.md). These status notes do not alter the product
+requirements or future scope above.
