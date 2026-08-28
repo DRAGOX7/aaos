@@ -195,8 +195,21 @@ authoritative. The resource ID must match the selected `RemoteFile` source
 identity. Base-path stripping occurs exactly once, and prefix-confusion paths
 such as `/currentevil/...` are rejected.
 
-Moodle may resolve the resource to a same-origin `pluginfile` target. A
-`pluginfile` request is authorized only when all of these conditions hold:
+A successful terminal response for a permit has exactly one of these two
+shapes:
+
+1. HTTP 2XX at the exact initial Resource URL constructed for that permit; or
+2. a same-origin redirect chain ending at the corresponding
+   `pluginfile.php/.../mod_resource/content/...` continuation.
+
+The first shape is an exact equality check against the permit's internally
+constructed URL. It does not authorize another Resource cmid, another
+Resource route, an arbitrary same-origin 2XX response, or any caller-supplied
+URL.
+
+When Moodle returns a redirect, it may resolve the resource to a same-origin
+`pluginfile` target. A `pluginfile` request is authorized only when all of
+these conditions hold:
 
 1. the chain began from the selected known resource route;
 2. the resource identity matches the selected `RemoteFile`;
@@ -213,6 +226,7 @@ Rejected destinations include:
 
 - a direct or caller-supplied `pluginfile` URL;
 - an unknown resource ID;
+- another Resource cmid or Resource route;
 - external or cross-origin URLs;
 - unsupported Moodle routes or unrelated `pluginfile` targets;
 - HTTP downgrade;
@@ -257,6 +271,11 @@ Phase 3 v1 accepts PDF only. A candidate succeeds only when:
 - bytes are consistent with PDF content;
 - the selected PDF engine opens and parses the document successfully; and
 - the document does not require a password.
+
+HTTP 2XX from the initial Resource URL is transport success only, not proof
+that the body is a PDF. The fetched bytes must still pass the size and
+PDFium-backed validation below; filename, icon, and `Content-Type` metadata
+remain advisory.
 
 HTML login pages, portal errors, renamed ZIPs or images, malformed payloads,
 and other disguised content are rejected. Server `Content-Type`, URL suffix,
@@ -707,9 +726,15 @@ Fixtures cover:
 
 ### Download authorization
 
-Tests prove a known `RemoteFile` resource chain succeeds and reject:
+Tests prove both successful terminal shapes for a known `RemoteFile`:
+
+- the exact authorized initial Resource URL with a direct HTTP 2XX response;
+- the approved Resource-to-`pluginfile` redirect continuation.
+
+They reject:
 
 - direct/arbitrary `pluginfile`;
+- another Resource cmid or Resource route;
 - unknown resource identity;
 - cross-origin or external redirect;
 - HTTP downgrade;
