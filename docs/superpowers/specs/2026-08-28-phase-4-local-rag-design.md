@@ -420,15 +420,26 @@ The public result is a validated immutable value, conceptually:
 
 ```text
 RagAnswer
-  status: ANSWERED | INSUFFICIENT_EVIDENCE | FAILED
-  answer_text: non-blank only when ANSWERED
+  status: ANSWER | PARTIAL_ANSWER | INSUFFICIENT_EVIDENCE
+  answer_text: non-blank for ANSWER or PARTIAL_ANSWER
   language: validated language code
   citations: ordered claim/page citations
   generation_id
   content_revision
 ```
 
-Failure statuses carry only fixed safe error codes. `ANSWERED` requires a
+`ANSWER` means the requested factual substance is supported by the supplied
+evidence and every factual academic claim satisfies the citation contract.
+`PARTIAL_ANSWER` means some requested substance is supported; supported
+portions may be returned with valid claim-level citations, while unsupported
+requested portions must be explicitly identified as unsupported and never
+invented. `INSUFFICIENT_EVIDENCE` means no useful factual answer can be
+grounded; no unsupported generation or pretrained-knowledge fallback occurs.
+
+Operational failures are not public answer-status variants. They remain typed
+error outcomes such as `MODEL_UNAVAILABLE`, `MODEL_TIMEOUT`,
+`INVALID_STRUCTURED_OUTPUT`, `INVALID_EVIDENCE_REFERENCE`, `UNCITED_CLAIM`,
+and `PROVENANCE_RESOLUTION_FAILED`. Every successful answer status requires a
 non-blank answer, valid language, pinned generation/revision, and citation
 validation. The model identifier may be retained as non-secret metadata for
 evaluation, but raw prompts, evidence text, and raw model output are not normal
@@ -476,15 +487,20 @@ Phase 4 exposes narrow, explicit commands rather than a generic authenticated
 Moodle or RAG API:
 
 ```text
-aaos rag rebuild
 aaos rag index-new
-aaos rag query --course-id <id> --question <text>
-aaos rag query --global --question <text>
-aaos rag query --historical <document-version-id> ... --question <text>
+aaos rag rebuild
+aaos rag status
+aaos rag ask --course-id <internal-course-id>
+aaos rag ask --global
+aaos rag ask --document-version-id <internal-document-version-id>
 ```
 
-Exact argument grammar is implementation work, but scope must be explicit and
-there is no arbitrary path, URL, SQL, model prompt, tool, or function selector.
+The three `ask` scopes are mutually exclusive: course, global, or historical
+document version. There is no ambiguous null scope. After parsing the explicit
+scope, the question is read interactively (stdin/console); ordinary academic
+question text is not required in a command-line argument. Exact input handling
+and prompt termination are implementation details, but there is no arbitrary
+path, URL, file, `moodle-cmid`, SQL, model prompt, tool, or function selector.
 CLI output is fixed and privacy-safe: status, bounded answer text when
 authorized, citations, scope identity, generation/revision, and safe error
 codes. It never prints credentials, browser state, raw prompts, raw evidence,
