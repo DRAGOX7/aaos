@@ -195,17 +195,35 @@ authoritative. The resource ID must match the selected `RemoteFile` source
 identity. Base-path stripping occurs exactly once, and prefix-confusion paths
 such as `/currentevil/...` are rejected.
 
-A successful terminal response for a permit has exactly one of these two
-shapes:
+A permitted fetch has exactly one of these three controlled shapes:
 
-1. HTTP 2XX at the exact initial Resource URL constructed for that permit; or
-2. a same-origin redirect chain ending at the corresponding
-   `pluginfile.php/.../mod_resource/content/...` continuation.
+1. the exact authorized Resource URL returns a direct, non-HTML file body;
+2. the authorized Resource URL returns an HTTP redirect chain ending at the
+   corresponding same-origin
+   `pluginfile.php/.../mod_resource/content/...` continuation; or
+3. the exact authorized Resource URL returns an HTTP 2XX HTML Resource wrapper
+   containing exactly one href that passes the existing permit-specific
+   `MoodleFileAuthorizer` `pluginfile.php/.../mod_resource/content/...`
+   continuation policy, followed by one request to that continuation.
 
 The first shape is an exact equality check against the permit's internally
-constructed URL. It does not authorize another Resource cmid, another
-Resource route, an arbitrary same-origin 2XX response, or any caller-supplied
-URL.
+constructed URL. A direct HTTP 2XX response is not accepted as a file merely
+because of its status or metadata: an HTML response at that URL is handled
+only as the controlled Resource wrapper in shape three. None of these shapes
+authorizes another Resource cmid, another Resource route, an arbitrary
+same-origin 2XX response, or any caller-supplied URL.
+
+For the Resource wrapper shape, HTML is parsed structurally to discover anchor
+href candidates; anchor text, CSS classes, filenames, and response metadata do
+not authorize a target. Every candidate is checked through the existing
+permit-specific `MoodleFileAuthorizer` policy. Unauthorized or unrelated links
+are rejected/ignored, and exactly one authorized continuation is required:
+zero candidates fail closed and multiple candidates fail closed as ambiguous.
+Arbitrary Moodle links, external URLs, `mod_folder` pluginfiles, and
+favicon/core/theme pluginfiles remain unauthorized. Callers still cannot supply
+an arbitrary `pluginfile` URL. The wrapper path performs one controlled
+continuation fetch only; it never crawls or recursively follows another HTML
+wrapper.
 
 When Moodle returns a redirect, it may resolve the resource to a same-origin
 `pluginfile` target. A `pluginfile` request is authorized only when all of
@@ -726,10 +744,17 @@ Fixtures cover:
 
 ### Download authorization
 
-Tests prove both successful terminal shapes for a known `RemoteFile`:
+Tests prove all three successful fetch shapes for a known `RemoteFile`:
 
-- the exact authorized initial Resource URL with a direct HTTP 2XX response;
-- the approved Resource-to-`pluginfile` redirect continuation.
+- the exact authorized initial Resource URL with a direct non-HTML HTTP 2XX
+  response;
+- the approved Resource-to-`pluginfile` redirect continuation; and
+- an HTTP 2XX Resource HTML wrapper with exactly one authorized
+  `mod_resource/content` anchor followed by that continuation.
+
+Wrapper tests also prove that favicon/unrelated links are ignored, zero or
+multiple authorized candidates fail closed, and external, `mod_folder`, and
+other-Resource links are rejected.
 
 They reject:
 
