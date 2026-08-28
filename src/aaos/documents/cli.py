@@ -6,9 +6,11 @@ import re
 import sys
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from aaos.documents.config import DocumentRuntimePaths, resolve_document_runtime_paths
@@ -41,6 +43,7 @@ _HEAD_REVISION = "0003_phase3_document_ingestion"
 _POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 
 __all__ = [
+    "Phase3ServiceRuntime",
     "RuntimeMoodleEnvironment",
     "build_phase3_service",
     "load_runtime_moodle_environment",
@@ -55,6 +58,28 @@ class DocumentCommandError(RuntimeError):
 
 def _configuration_failure() -> DocumentCommandError:
     return DocumentCommandError("document ingestion configuration failed")
+
+
+@dataclass(slots=True)
+class Phase3ServiceRuntime(AbstractContextManager["Phase3ServiceRuntime"]):
+    """Own one Phase 3 service and its composition-scoped database Engine."""
+
+    service: Phase3IngestionService
+    _engine: Engine
+    _closed: bool = False
+
+    def close(self) -> None:
+        """Dispose the owned Engine exactly once."""
+        if self._closed:
+            return
+        self._closed = True
+        self._engine.dispose()
+
+    def __enter__(self) -> "Phase3ServiceRuntime":
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        self.close()
 
 
 def _database_is_migrated(database_path: Path) -> None:
@@ -94,10 +119,11 @@ def build_phase3_service(
     settings: MoodleSettings,
     auth_paths: AuthPaths,
     paths: DocumentRuntimePaths,
-) -> Phase3IngestionService:
+) -> Phase3ServiceRuntime:
     """Compose Phase 3 from explicit validated runtime dependencies."""
     _database_is_migrated(paths.database_path)
     _validate_content_store_parent(paths.content_store_root)
+    engine: Engine | None = None
     try:
         engine = create_database_engine(paths.database_path)
         repository = DocumentRepository(create_session_factory(engine))
@@ -112,7 +138,7 @@ def build_phase3_service(
                 auth_paths=auth_paths,
             )
 
-        return Phase3IngestionService(
+        service = Phase3IngestionService(
             repository=repository,
             blob_store=blob_store,
             pdf_processor=PdfProcessor(),
@@ -120,9 +146,14 @@ def build_phase3_service(
             fetcher_factory=fetcher_factory,
             clock=_utc_now,
         )
+        return Phase3ServiceRuntime(service=service, _engine=engine)
     except DocumentCommandError:
+        if engine is not None:
+            engine.dispose()
         raise
     except (OSError, RuntimeError, SQLAlchemyError, TypeError, ValueError):
+        if engine is not None:
+            engine.dispose()
         raise _configuration_failure() from None
 
 
@@ -156,19 +187,19 @@ def run_documents_command(argv: Sequence[str]) -> int:
     try:
         environment = load_runtime_moodle_environment()
         paths = resolve_document_runtime_paths(environment.data_root)
-        service = build_phase3_service(
+        with build_phase3_service(
             bootstrap_config=environment.bootstrap_config,
             settings=environment.settings,
             auth_paths=environment.auth_paths,
             paths=paths,
-        )
-        result = service.run(
-            mode=mode,
-            source_system=environment.settings.source_system,
-            remote_file_id=remote_file_id,
-        )
-        lines = render_batch_result(result)
-        exit_code = _batch_exit_code(result)
+        ) as runtime:
+            result = runtime.service.run(
+                mode=mode,
+                source_system=environment.settings.source_system,
+                remote_file_id=remote_file_id,
+            )
+            lines = render_batch_result(result)
+            exit_code = _batch_exit_code(result)
     except (
         DocumentCommandError,
         DocumentIngestionFailure,

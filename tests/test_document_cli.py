@@ -10,8 +10,12 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import Engine
 
 from aaos.documents.cli import (
+    Phase3ServiceRuntime,
     RuntimeMoodleEnvironment,
     build_phase3_service,
     load_runtime_moodle_environment,
@@ -20,6 +24,7 @@ from aaos.documents.cli import (
 from aaos.documents.config import DocumentRuntimePaths
 from aaos.documents.contracts import (
     BatchIngestionResult,
+    DocumentIngestionFailure,
     DocumentIngestionResult,
     DocumentResultCode,
     IngestionErrorCode,
@@ -73,6 +78,18 @@ class FakeService:
         return self.result
 
 
+@dataclass
+class FakeRuntime:
+    service: FakeService
+    closed: bool = False
+
+    def __enter__(self) -> "FakeRuntime":
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        self.closed = True
+
+
 def environment(tmp_path: Path) -> RuntimeMoodleEnvironment:
     settings = MoodleSettings(SOURCE, ORIGIN, "browser", ALIAS)
     return RuntimeMoodleEnvironment(
@@ -101,12 +118,55 @@ def run_with_fake(
 ) -> tuple[int, FakeService]:
     env = environment(tmp_path)
     service = FakeService([], result or batch())
+    runtime = FakeRuntime(service)
     import aaos.documents.cli as module
 
     monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
-    monkeypatch.setattr(module, "build_phase3_service", lambda **_: service)
+    monkeypatch.setattr(module, "build_phase3_service", lambda **_: runtime)
     exit_code = module.run_documents_command(argv)
     return exit_code, service
+
+
+def _migrated_phase3_setup(
+    tmp_path: Path,
+) -> tuple[RuntimeMoodleEnvironment, DocumentRuntimePaths]:
+    env = environment(tmp_path)
+    database_path = tmp_path / "database" / "phase3.db"
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("aaos.database_path", str(database_path))
+    command.upgrade(config, "head")
+    return env, DocumentRuntimePaths(
+        database_path=database_path,
+        content_store_root=tmp_path / "documents",
+        ingestion_lock_path=tmp_path / "temporary" / "lock",
+    )
+
+
+def _spy_composition_engines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[Engine], list[int]]:
+    import aaos.documents.cli as module
+    import aaos.persistence.database as database_module
+
+    engines: list[Engine] = []
+    dispose_counts: list[int] = []
+
+    def create_spied_engine(path: Path) -> Engine:
+        engine = database_module.create_database_engine(path)
+        index = len(engines)
+        original_dispose = engine.dispose
+
+        def dispose(close: bool = True) -> None:
+            dispose_counts[index] += 1
+            original_dispose(close)
+
+        engine.dispose = dispose  # type: ignore[method-assign]
+        engines.append(engine)
+        dispose_counts.append(0)
+        return engine
+
+    monkeypatch.setattr(module, "create_database_engine", create_spied_engine)
+    return engines, dispose_counts
 
 
 @pytest.mark.parametrize("command", ["ingest-new", "refresh"])
@@ -304,12 +364,14 @@ def test_build_binds_canonical_wwwroot_and_source_system_explicitly(
         return object()
 
     monkeypatch.setattr(module, "open_phase3_fetcher_session", fake_fetcher_factory)
-    service = build_phase3_service(
+    runtime = build_phase3_service(
         bootstrap_config=env.bootstrap_config,
         settings=env.settings,
         auth_paths=env.auth_paths,
         paths=paths,
     )
+    assert isinstance(runtime, Phase3ServiceRuntime)
+    service = runtime.service
     assert isinstance(service, FakeService)
     factory = captured["fetcher_factory"]
     assert callable(factory)
@@ -320,6 +382,102 @@ def test_build_binds_canonical_wwwroot_and_source_system_explicitly(
     assert fetcher_kwargs["expected_source_system"] == SOURCE
     assert fetcher_kwargs["settings"] is env.settings
     assert fetcher_kwargs["auth_paths"] is env.auth_paths
+
+
+def test_built_phase3_service_exposes_idempotent_engine_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A composed disposable database must have a deterministic engine release path."""
+    env, paths = _migrated_phase3_setup(tmp_path)
+    engines, dispose_counts = _spy_composition_engines(monkeypatch)
+    runtime = build_phase3_service(
+        bootstrap_config=env.bootstrap_config,
+        settings=env.settings,
+        auth_paths=env.auth_paths,
+        paths=paths,
+    )
+
+    runtime.service.run(mode=IngestionMode.INGEST_NEW, source_system=SOURCE)
+    assert len(engines) == 2
+    release = getattr(runtime, "close", None)
+    assert callable(release)
+    release()
+    release()
+    assert dispose_counts[1] == 1
+
+
+def test_built_phase3_service_context_manager_releases_engine_on_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env, paths = _migrated_phase3_setup(tmp_path)
+    engines, dispose_counts = _spy_composition_engines(monkeypatch)
+
+    with build_phase3_service(
+        bootstrap_config=env.bootstrap_config,
+        settings=env.settings,
+        auth_paths=env.auth_paths,
+        paths=paths,
+    ) as runtime:
+        runtime.service.run(mode=IngestionMode.INGEST_NEW, source_system=SOURCE)
+
+    assert len(engines) == 2
+    assert dispose_counts[1] == 1
+
+
+def test_built_phase3_runtime_allows_disposable_database_cleanup(
+    tmp_path: Path,
+) -> None:
+    env, paths = _migrated_phase3_setup(tmp_path)
+
+    with build_phase3_service(
+        bootstrap_config=env.bootstrap_config,
+        settings=env.settings,
+        auth_paths=env.auth_paths,
+        paths=paths,
+    ) as runtime:
+        runtime.service.run(mode=IngestionMode.INGEST_NEW, source_system=SOURCE)
+
+    paths.database_path.unlink()
+    paths.database_path.parent.rmdir()
+    assert not paths.database_path.exists()
+
+
+def test_run_documents_command_closes_runtime_when_service_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import aaos.documents.cli as module
+
+    env, paths = _migrated_phase3_setup(tmp_path)
+    engines, dispose_counts = _spy_composition_engines(monkeypatch)
+
+    class FailingService:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **_kwargs: object) -> BatchIngestionResult:
+            raise DocumentIngestionFailure(IngestionErrorCode.NETWORK_FAILURE)
+
+    monkeypatch.setattr(module, "Phase3IngestionService", FailingService)
+    monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
+    monkeypatch.setattr(module, "resolve_document_runtime_paths", lambda _root: paths)
+
+    assert module.run_documents_command(["refresh"]) == 1
+    assert len(engines) == 2
+    assert dispose_counts[1] == 1
+
+
+def test_run_documents_command_closes_runtime_on_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env = environment(tmp_path)
+    runtime = FakeRuntime(FakeService([], batch()))
+    import aaos.documents.cli as module
+
+    monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
+    monkeypatch.setattr(module, "build_phase3_service", lambda **_: runtime)
+
+    assert module.run_documents_command(["refresh"]) == 0
+    assert runtime.closed
 
 
 def test_main_routes_documents_without_eagerly_running_doctor(
