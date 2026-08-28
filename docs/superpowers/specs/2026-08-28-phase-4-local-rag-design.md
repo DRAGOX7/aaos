@@ -1,0 +1,774 @@
+# Phase 4 — Local RAG Design Specification
+
+Status: human-approved architecture design; Phase 4 is **PLANNED / NOT STARTED**.
+
+This document is a design specification only. It defines the implementation
+boundary for local, citation-grounded retrieval and answer generation over
+authorized academic document content. It does not authorize implementation,
+dependency changes, migrations, live Moodle access, or a Phase 4 freeze tag.
+
+## 1. Status and purpose
+
+Phase 4 adds a local RAG capability that answers independently submitted
+questions from locally ingested academic document content. Its complete flow is:
+
+```text
+question
+  -> explicit scope resolution
+  -> hybrid retrieval
+  -> deterministic evidence selection
+  -> deterministic sufficiency gate
+  -> existing local ModelGateway
+  -> typed grounded answer
+  -> claim-level citation validation
+  -> deterministic rendering
+```
+
+The capability is local-first, stateless, read-only with respect to Moodle, and
+fail-closed. Phase 4 includes final grounded LLM answer generation. It does not
+introduce an agent loop, conversation state, tools, or external evaluation.
+
+## 2. Context and frozen prerequisites
+
+The repository records these evidence-qualified prerequisites:
+
+- Phase 0 acceptance remains unresolved; this specification does not alter that
+  governance status.
+- Phase 1 is frozen at `phase-01-passed` /
+  `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`.
+- Phase 2 is accepted, not frozen, at
+  `736c8498ab1fe2c1d4d425ba4625774eaf791e93`.
+- Phase 3 is frozen at `phase-03-passed` /
+  `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
+- The current repository checkpoint is `56d0777e41bf17a0baee40d23b4227a89883591c`;
+  the working-tree `reflex` path is unrelated and must remain untouched.
+
+Phase 4 starts only after explicit human approval of this design, a separate
+implementation plan, and the repository's active-phase gate. Implementation
+must consume the frozen Phase 3 contracts rather than modify them.
+
+Current Phase 3 contracts are the source of truth for document content and
+provenance: `Document`, `DocumentVersion`, `DocumentPage`, `ContentBlob`, and
+their joins to the Phase 1 `RemoteFile` and `Course` identities. `DocumentPage`
+text is the authoritative extracted text; RAG records are derived state.
+
+## 3. Goals
+
+Phase 4 must:
+
+1. index only authorized local document content;
+2. preserve exact page and source provenance through every derived record;
+3. support explicit course, global, and historical scopes;
+4. provide deterministic lexical, dense, and hybrid retrieval;
+5. refuse clearly unsupported questions before generation;
+6. produce grounded answers whose factual claims cite supplied evidence;
+7. support English and Arabic cross-lingual retrieval and answering;
+8. rebuild derived indexes without changing Phase 3 source truth; and
+9. provide reproducible deterministic, IR, automated, multilingual, security,
+   performance, and human evaluation evidence.
+
+## 4. Non-goals
+
+Phase 4 does not modify Phase 3 ingestion or Moodle behavior, perform OCR or
+multimodal/VLM processing, expose a public RAG HTTP API, run a background
+scheduler, ingest arbitrary filesystem or URL content, or write to Moodle.
+It does not implement an agent loop, conversation memory, historical query
+rewriting, typed action tools, approvals, dashboards, Google Calendar, GitHub
+MCP, a reranker in v1, a runtime LLM citation judge, or automatic retired-index
+purging. It does not index assignments, announcements, or other structured
+academic records. It does not silently fall back to lexical-only retrieval or
+to pretrained model knowledge.
+
+## 5. Trust model and invariants
+
+Trusted AAOS code controls scope resolution, corpus membership, chunking,
+retrieval, evidence budgets, sufficiency, prompt construction, output parsing,
+citation validation, and rendering. Document text, model output, retrieved
+content, and environment observations are untrusted data.
+
+The following are absolute invariants:
+
+- only READY indexes in an ACTIVE generation are retrievable;
+- every retrieved chunk resolves to a Phase 3 document version, page, and
+  provenance identity through SQLite;
+- a query pins generation, content revision, and scope for its entire lifetime;
+- the generator sees only the question, bounded selected evidence, and fixed
+  instructions;
+- model output cannot request tools, network access, files, or another source;
+- every factual claim has valid citation(s) from the supplied evidence IDs;
+- no unseen citation ID, fabricated source, or structurally uncited factual claim
+  is accepted;
+- insufficient evidence prevents any factual answer-generation request; and
+- all failures are represented by fixed safe categories without raw content.
+
+## 6. End-to-end architecture
+
+The proposed composition is:
+
+```text
+RagQuery (question + RagScope)
+  -> ScopeResolver
+  -> ActiveGenerationSnapshot
+  -> SQLite corpus eligibility
+  -> DenseIndex.search + SQLite FTS5/BM25 search
+  -> deterministic RRF fusion
+  -> EvidenceSelector
+  -> SufficiencyGate
+       -> INSUFFICIENT_EVIDENCE
+       -> GroundedAnswerGenerator (existing ModelGateway)
+  -> RagAnswer parser
+  -> CitationValidator
+  -> safe renderer
+```
+
+An explicit Phase 4 runtime composes SQLite repositories, FTS5, a generation-
+scoped `DenseIndex`, an `EmbeddingService`, and a grounded-answer adapter. The
+runtime owns and closes these resources deterministically; imports have no
+database, Chroma, model, or network side effects.
+
+## 7. Phase boundaries
+
+### Phase 1
+
+Phase 1 remains the owner of canonical `Course`, `Assignment`, `Announcement`,
+and `RemoteFile` identity and synchronization. Phase 4 may use course and
+remote-file provenance for citations and scope resolution, but does not alter
+normalization or synchronization.
+
+### Phase 2
+
+Phase 2 remains metadata-only, browser-policy governed, and read-only. Phase 4
+does not use browser state, Moodle APIs, cookies, or session storage.
+
+### Phase 3
+
+Phase 3 remains frozen and owns source PDF bytes, document versions, page text,
+and extraction status. Phase 4 reads those records and creates rebuildable
+derived retrieval state only.
+
+### Phase 5
+
+Phase 5 owns orchestration, task/conversation state, follow-ups, typed academic
+tools, approvals, and action selection. Phase 4 exposes a bounded query service;
+it does not become an agent or tool registry.
+
+## 8. Persistence model
+
+SQLite is authoritative for the Phase 4 relational state. Proposed derived
+records are:
+
+- `RagIndexGeneration`: generation status and immutable configuration metadata;
+- `RagDocumentIndex`: one generation/document-version indexing state;
+- `RagChunk`: exact derived chunk text, identity, order, and page bounds;
+- `RagChunkSourceSpan`: exact chunk-to-page character spans; and
+- an FTS5 virtual table plus derived lexical-normalized fields.
+
+`RagChunk` retains the exact text passed to retrieval and generation; the
+lexical index is derived and may contain a normalized search representation.
+Foreign keys resolve document versions and pages, and uniqueness prevents
+duplicate generation/document/chunk identities. Phase 4 does not store PDF
+bytes again and does not replace Phase 3 provenance.
+
+## 9. Index generations and content revisions
+
+`RagIndexGeneration` has the conceptual fields:
+
+```text
+id, status, config_fingerprint, chunker_version, chunking_config,
+lexical_normalizer_version, embedding_model, embedding_revision,
+embedding_dimensions, retrieval_config, content_revision,
+created_at, activated_at
+```
+
+Statuses are `BUILDING`, `ACTIVE`, and `RETIRED`. At most one generation is
+ACTIVE. A BUILDING generation is invisible to queries. A successful activation
+atomically changes the old ACTIVE generation to RETIRED and the new generation
+to ACTIVE. A failed build leaves the old ACTIVE generation unchanged.
+
+Retired generations remain available for explicit historical queries and are not
+automatically purged in v1.
+
+`rag index-new` identifies eligible Phase 3 `DocumentVersion` records not yet
+represented in the active generation. It adds newer versions without deleting
+older historical versions; current scope resolves the newest eligible version,
+while explicit historical scope can still select an older one. A successful
+active-generation update increments `content_revision`.
+
+## 10. Content-revision semantics
+
+`content_revision` identifies the indexed corpus under a given generation's
+retrieval configuration. It changes when the represented document-version
+corpus changes, even if chunking, models, and retrieval settings do not. A
+configuration change that is incompatible with existing derived state requires
+a new generation and fingerprint.
+
+Every query, evaluation result, and acceptance artifact records both
+`generation_id` and `content_revision`. Formal evaluations also record a
+canonical corpus manifest/fingerprint so that a metric cannot be interpreted
+without knowing exactly which document versions were present.
+
+## 11. Chunking and provenance
+
+Chunking is a pure deterministic transformation of ordered Phase 3 pages and a
+validated chunking configuration. It is page-, heading-, and paragraph-aware;
+ordinary text is not split by blind fixed windows. A long natural section may
+use a small overlap only at a split boundary.
+
+The initial design target is approximately 500 tokens, with a practical
+preferred range of roughly 450–650 and a hard maximum near 700. Final tuned
+values are configuration recorded in the generation fingerprint and locked
+before held-out evaluation.
+
+Conceptual `RagChunk` fields are:
+
+```text
+internal_id, chunk_key, index_generation_id, document_version_id, ordinal,
+exact_text, heading?, token_count, text_sha256, page_start, page_end
+```
+
+`RagChunkSourceSpan` records `rag_chunk_id`, `document_page_id`, page number,
+source character start/end, and chunk character start/end. A multi-page chunk
+therefore retains each page contribution exactly, while a user citation may
+render as a compact page range.
+
+The deterministic `chunk_key` is the SHA-256 of a canonical, sorted-field
+serialization containing the configuration fingerprint, document-version
+identity, ordinal, ordered span identities, and exact chunk-text hash. Canonical
+serialization uses explicit field names and UTF-8 JSON with sorted keys and
+fixed separators; Python `repr` and unordered serialization are forbidden.
+Identical text in different document versions has different identity because
+provenance participates.
+
+Pages with no usable extracted text are skipped for text indexing. A document
+index records `FULL`, `PARTIAL`, or `NONE` coverage. Zero searchable pages are
+`NOT_SEARCHABLE` with `NONE`, not an indexing exception. OCR is not added.
+
+## 12. SQLite and FTS5 architecture
+
+SQLite remains the source of truth for chunk text, provenance, generation
+membership, and index state. FTS5/BM25 supplies lexical candidates. The
+lexical normalizer is deterministic, Unicode-aware, whitespace-normalizing,
+and conservatively case-normalizing, with a version recorded in the generation
+fingerprint. Arabic normalization is conservative; aggressive stemming is not
+part of v1.
+
+Exact technical tokens such as `BERT`, `YOLOv11`, `mAP50-95`, `CNN`, `SAHI`,
+and `DBSCAN` must remain searchable. FTS rows contain stable chunk identities
+that resolve back to authoritative SQLite rows before evidence is trusted.
+
+## 13. Chroma architecture
+
+Chroma is an embedded/local persistent derived index. No Chroma server,
+network service, Docker service, or remote vector store is required. A separate
+collection/storage area is created for each trusted generation identity, under a
+programmatically constructed root such as:
+
+```text
+data/rag/chroma/generation-<trusted-id>/
+```
+
+Callers cannot supply an arbitrary Chroma path or collection name. Chroma never
+becomes authoritative for text, provenance, or citations; every candidate is
+resolved through SQLite. Retired-generation data is retained in v1.
+
+The domain depends on an internal abstraction:
+
+```text
+DenseIndex
+  upsert(records)
+  search(vector, limit)
+  contains(ids)
+  count()
+  close()
+
+DenseIndexFactory.open(generation_identity)
+```
+
+`ChromaDenseIndex` is the implementation adapter. Chroma-specific types and
+imports do not escape the infrastructure boundary.
+
+## 14. BGE-M3 embedding lifecycle
+
+BGE-M3 is the approved multilingual embedding model. `EmbeddingService` owns
+model identifier, revision, dimensions, device, batch settings, and lifecycle:
+
+```text
+embed_documents(texts)
+embed_query(question)
+model_metadata()
+close()
+```
+
+Index builds may batch on the GPU and persist vectors before releasing model
+resources. A query embeds once, retrieves evidence, and releases embedding
+resources before answer generation so the embedding model and answer model do
+not need to remain resident together on the target limited-VRAM machine.
+
+Object deletion alone is not proof of GPU release. Implementation must measure
+or otherwise verify resource release. If in-process release is unreliable, the
+same `EmbeddingService` contract may be implemented by a short-lived local
+worker; retrieval code must not change for that choice.
+
+## 15. Query and scoping contracts
+
+`RagQuery` is stateless and independently understandable. Scope is explicit and
+typed rather than using an ambiguous nullable course identifier:
+
+```text
+CourseScope(course_id)
+GlobalScope()
+HistoricalScope(document_version_ids)
+```
+
+The normal/default scope is `CourseScope`. `GlobalScope` requires an explicit
+request. `HistoricalScope` names selected immutable document-version identities.
+Scope validation occurs before ranking and rejects empty, malformed, duplicate,
+or unauthorized identities. Phase 4 does not infer scope from prior questions,
+pronouns, chat history, or model guesses.
+
+## 16. Authorized retrieval universe
+
+At query start, trusted code resolves:
+
+```text
+ACTIVE generation
+  -> pinned content_revision
+  -> READY RagDocumentIndex rows
+  -> explicit current or historical version scope
+  -> valid Phase 3 provenance
+```
+
+Both dense and lexical searches receive this already-authorized universe. The
+implementation must not retrieve globally and filter obsolete or out-of-scope
+versions afterward. A normal current query selects the latest eligible version
+per logical document; historical versions remain preserved but are excluded
+unless explicitly requested.
+
+## 17. Hybrid retrieval and RRF
+
+Retrieval combines BGE-M3 dense candidates with SQLite FTS5/BM25 candidates.
+The question's original semantic text is used for dense embedding, while a
+conservatively normalized representation is used for lexical search. Automatic
+translation before dense retrieval is not required.
+
+Candidate depths, RRF constant, and related settings are configuration. Scores
+from dense and BM25 retrieval are never compared directly. Reciprocal Rank
+Fusion combines ranks deterministically, with stable chunk-key tie-breaking.
+No reranker is included in v1; added complexity must later be justified by
+evaluation evidence.
+
+If the dense index or embedding service is unavailable, production retrieval
+returns an explicit safe failure. It does not silently become BM25-only.
+
+## 18. Evidence selection
+
+RRF output is a candidate set, not an automatic prompt. A deterministic
+`EvidenceSelector` removes duplicate logical evidence, limits excessive
+neighbor overlap, preserves useful source diversity where it improves support,
+and enforces both a chunk-count budget and a token budget. Relevance remains
+primary; diversity is not forced artificially.
+
+An initial engineering expectation is roughly 4–8 chunks, subject to evaluation
+and context limits. Selection output is immutable for the query and carries
+the generation and content revision pinned at query start.
+
+## 19. Sufficiency gate
+
+The sufficiency gate is deterministic and conservative. It considers retrieval
+coverage, rank/fusion evidence, scope, and labeled threshold policy. The LLM
+cannot declare evidence sufficient, and no answer-generation request is made
+when the gate returns insufficient evidence.
+
+The result is `INSUFFICIENT_EVIDENCE`, with no pretrained-knowledge fallback.
+Thresholds are calibrated on a development set, then locked before held-out
+acceptance. Unsupported false acceptance is weighted as more serious than a
+false refusal.
+
+Conflicting evidence is preserved rather than silently resolved. The generator
+may state both supported positions with distinct citations unless a trusted
+source relationship supplies precedence.
+
+## 20. Current and historical semantics
+
+Current retrieval selects the latest eligible version for each logical document
+within the pinned corpus and scope. It must never mix old and new versions of a
+document in a normal answer. Explicit historical scope may select prior
+versions, including for comparison. Historical data is preserved for audit and
+reproducible evaluation, not silently promoted into current answers.
+
+## 21. Grounded generation boundary
+
+The existing `ModelGateway` remains the local model boundary. Its current
+model-independent contract is `generate(ChatRequest) -> ChatResponse`, with
+validated `ChatMessage`, `TokenUsage`, and response fields; the configured
+`LMStudioGateway` talks only to the validated loopback LM Studio endpoint with
+redirects and proxy environment disabled.
+
+Phase 4 composes a dedicated grounded-answer adapter over that gateway. Retrieval
+does not call a raw gateway or construct arbitrary model requests. The adapter
+accepts a typed request containing the original question, answer-language
+policy, and bounded `RetrievedEvidence`, then emits a strict structured result.
+
+The prompt labels all document/evidence text as untrusted data and grants no
+tool, filesystem, network, source-selection, or policy authority to it. Only
+the supplied evidence IDs may be cited. No model call receives credentials,
+browser state, arbitrary URLs, or an unbounded corpus.
+
+## 22. Typed `RagAnswer`
+
+The public result is a validated immutable value, conceptually:
+
+```text
+RagAnswer
+  status: ANSWERED | INSUFFICIENT_EVIDENCE | FAILED
+  answer_text: non-blank only when ANSWERED
+  language: validated language code
+  citations: ordered claim/page citations
+  generation_id
+  content_revision
+```
+
+Failure statuses carry only fixed safe error codes. `ANSWERED` requires a
+non-blank answer, valid language, pinned generation/revision, and citation
+validation. The model identifier may be retained as non-secret metadata for
+evaluation, but raw prompts, evidence text, and raw model output are not normal
+CLI/log output.
+
+## 23. Claim-level citation contract
+
+Generation output is parsed into claims or claim-bearing answer segments. Each
+factual claim must reference one or more query-local evidence IDs supplied in
+the prompt. The deterministic validator rejects unseen IDs, malformed IDs,
+citations whose evidence does not resolve through SQLite, and structurally
+uncited factual claims. Citation page spans derive from `RagChunkSourceSpan`,
+not from model-provided page numbers.
+
+The renderer emits only validated answer text plus deterministic citations. It
+never accepts a model-invented source, URL, document path, or evidence excerpt.
+
+## 24. Prompt-injection defenses
+
+Stored documents and retrieved chunks are untrusted data. Instructions such as
+“ignore previous instructions”, “reveal other documents”, “call this API”, or
+“execute this command” remain text to be quoted or ignored; they cannot change
+system policy, scope, citations, tools, or source access. No Phase 4 generation
+path exposes a tool registry, shell, browser, credentials, or network client.
+
+Adversarial fixtures are required in evaluation. A passing result demonstrates
+that the answer remains bounded by supplied evidence and that no hidden-secret
+or unauthorized-source behavior occurs.
+
+## 25. Runtime and service boundaries
+
+Phase 4 uses explicit composition and deterministic lifecycle ownership. A
+runtime owns its SQLite session/engine, FTS access, dense index, embedding
+service, and grounded gateway adapter, and supports idempotent `close()` plus a
+context manager. Services do not own resources created by their caller.
+
+No import or default application startup creates a database, Chroma directory,
+index, model, migration, or LM Studio connection. No Phase 4 module imports
+Moodle browser/authentication code. Test and acceptance composition injects
+disposable SQLite and Chroma roots.
+
+## 26. CLI surface
+
+Phase 4 exposes narrow, explicit commands rather than a generic authenticated
+Moodle or RAG API:
+
+```text
+aaos rag rebuild
+aaos rag index-new
+aaos rag query --course-id <id> --question <text>
+aaos rag query --global --question <text>
+aaos rag query --historical <document-version-id> ... --question <text>
+```
+
+Exact argument grammar is implementation work, but scope must be explicit and
+there is no arbitrary path, URL, SQL, model prompt, tool, or function selector.
+CLI output is fixed and privacy-safe: status, bounded answer text when
+authorized, citations, scope identity, generation/revision, and safe error
+codes. It never prints credentials, browser state, raw prompts, raw evidence,
+raw JSON, or unrestricted model output.
+
+## 27. Concurrency and locking
+
+Only one Phase 4 index writer may operate at a time. `rag index-new` and
+`rag rebuild` are mutually exclusive and fail before work if the active write
+lease is unavailable.
+
+`index-new` uses an exclusive active-generation write lease and publishes a new
+content revision atomically after integrity verification. Queries may pause or
+fail safely during that publication. `rebuild` writes a separate BUILDING
+generation while the old ACTIVE generation serves queries, then activates it in
+one state transition.
+
+Each query pins generation, content revision, and scope before candidate
+retrieval. Activation during a query does not change that query's corpus;
+subsequent queries use the new active snapshot.
+
+## 28. Cross-store failure and recovery
+
+SQLite and Chroma are not a distributed transaction. The explicit per-document
+state machine is:
+
+```text
+Phase 3 pages
+  -> SQLite PREPARING chunks/spans/lexical rows commit
+  -> embedding generation
+  -> idempotent Chroma upsert
+  -> vector-ID/dimension verification
+  -> SQLite READY
+```
+
+`PREPARING` and `FAILED` records are invisible to retrieval. A crash before
+Chroma leaves retryable SQLite-derived state. A crash after Chroma but before
+READY reuses deterministic IDs and verifies/upserts idempotently. No duplicate
+logical chunks are created, and no partially indexed document is presented as
+READY.
+
+Before activation, integrity checks reconcile SQLite chunks, FTS rows, expected
+Chroma IDs and dimensions, READY counts, generation membership, and all page/
+document-version provenance. Failed activation leaves the previous ACTIVE
+generation intact.
+
+## 29. Configuration and fingerprinting
+
+Index-critical configuration is canonicalized into deterministic UTF-8 JSON
+(sorted keys, fixed separators, explicit version fields) and hashed with
+SHA-256. It includes chunker algorithm/version, sizes/overlap, lexical
+normalizer version, embedding model/revision/dimensions, dense/lexical depths,
+RRF constant, evidence budgets, and sufficiency settings that affect retrieval.
+
+Changing any incompatible value produces a new generation or requires a full
+rebuild. The fingerprint is stored on the generation and in evaluation
+artifacts. Python `repr`, unordered mappings, local paths, secrets, and model
+prompts are never fingerprint inputs.
+
+## 30. Safe errors and observability
+
+Indexing uses fixed categories such as:
+
+`RAG_INDEX_LOCKED`, `NO_ELIGIBLE_DOCUMENTS`, `DOCUMENT_INDEX_FAILED`,
+`EMBEDDING_FAILED`, `DENSE_INDEX_WRITE_FAILED`, `FTS_INDEX_FAILED`,
+`INDEX_INTEGRITY_FAILED`, and `GENERATION_ACTIVATION_FAILED`.
+
+Retrieval uses `NO_ACTIVE_GENERATION`, `INVALID_QUERY_SCOPE`,
+`QUERY_EMBEDDING_FAILED`, `DENSE_INDEX_UNAVAILABLE`, `LEXICAL_INDEX_FAILED`,
+`RETRIEVAL_INCONSISTENCY`, and `INSUFFICIENT_EVIDENCE`.
+
+Generation and citation validation use `MODEL_UNAVAILABLE`, `MODEL_TIMEOUT`,
+`INVALID_STRUCTURED_OUTPUT`, `INVALID_EVIDENCE_REFERENCE`, `UNCITED_CLAIM`,
+and `PROVENANCE_RESOLUTION_FAILED`.
+
+Logs and normal output contain fixed categories, counts, bounded identifiers,
+timings, and generation/revision metadata only. They do not contain question
+text, page text, raw model output, credentials, browser state, arbitrary URLs,
+or exception messages.
+
+## 31. Evaluation methodology
+
+Acceptance has four complementary layers.
+
+### Deterministic correctness
+
+Tests must prove deterministic chunk keys, exact provenance, valid-only
+citations, no uncited claims, READY-state visibility, failed-rebuild safety,
+scope/version isolation, no LLM fallback, Chroma rebuildability, and
+fingerprint determinism.
+
+### Classical information retrieval
+
+Report Recall@1, Recall@3, Recall@5, Recall@10, and MRR; use nDCG for graded or
+multi-source relevance. Compare dense-only, FTS5-only, and hybrid RRF with the
+same corpus and labeled queries. Report subgroup metrics, not only a global
+score.
+
+### Automated evaluation
+
+RAGAS is supplementary and must be reproducible. Candidate metrics include
+faithfulness/groundedness, answer relevance, context precision, and context
+recall, subject to the version actually pinned during implementation. RAGAS
+never replaces deterministic citation checks, classical IR, or human review.
+
+### Human held-out review
+
+Human gold review is authoritative for semantic correctness, completeness,
+citation appropriateness, Arabic quality, partial answers, conflicts, and
+unsupported expansion.
+
+The initial gold set targets approximately 80–120 manually verified cases,
+with an approximately 70% calibration/development portion and 30% locked
+held-out portion. Cases cover lexical and paraphrased questions, multi-source
+and conflicting evidence, partial and unsupported questions, current versus
+historical scope, course isolation, and the English, Arabic, Arabic-to-English,
+and English-to-Arabic subgroups. The exact corpus-constrained count is recorded
+in the evaluation manifest rather than silently weakening held-out separation.
+
+Sufficiency labels are `SUPPORTED`, `PARTIALLY_SUPPORTED`, and `UNSUPPORTED`.
+Evaluation reports supported acceptance, unsupported rejection, false
+acceptance, and false refusal rates. Generation reports factual correctness,
+answer completeness, citation correctness/completeness, partial-answer
+behavior, and unsupported expansion separately from retrieval scores.
+
+## 32. RAGAS evaluation policy
+
+RAGAS execution is local by default. Its version, evaluator model, evaluator
+embedding model, metric set/version, dataset version, and run identity are
+recorded. Real university/course content must not be sent to OpenAI, Gemini, or
+any other external evaluator implicitly. External evaluation requires sanitized
+data and separate explicit human authorization; there is no external/cloud
+fallback.
+
+RAGAS results are reported alongside, never instead of, deterministic
+provenance/citation gates, Recall/MRR, and human gold judgments. The final
+implementation plan must pin a compatible version after checking its installed
+API; this design intentionally does not add that dependency now.
+
+## 33. Multilingual evaluation
+
+Retrieval is multilingual and must measure English, Arabic, Arabic-question to
+English-source, and English-question to Arabic-source subgroups separately.
+Answers default to the question's language while citations retain the source's
+original identity and page labels. Arabic material is not silently translated
+in storage or citation metadata.
+
+The evaluation report includes each subgroup and overall results so a strong
+aggregate cannot hide weak Arabic behavior.
+
+## 34. Performance evaluation
+
+Measure locally where practical: indexing throughput, embedding time, cold and
+warm query embedding latency, dense and FTS latency, fusion/selection latency,
+generation latency, total latency, RAM, GPU memory, and index storage size.
+Cold-start cost is reported separately. No arbitrary production SLA is chosen
+by this design; implementation records measured baselines and hardware context.
+
+The target machine has limited VRAM. Evaluation must show that embedding and
+answer-model lifecycles do not require simultaneous residency and must record
+the observed release behavior.
+
+## 35. Acceptance and freeze gates
+
+Phase 4 may be considered for a freeze tag only after this ordered path:
+
+```text
+implementation complete
+  -> deterministic tests
+  -> index integrity
+  -> calibrated configuration
+  -> locked held-out configuration
+  -> classical IR evaluation
+  -> RAGAS evaluation
+  -> human held-out review
+  -> multilingual review
+  -> security/prompt-injection gates
+  -> local performance review
+  -> controlled local/live acceptance
+  -> explicit human approval
+  -> consider phase-04-passed
+```
+
+Acceptance must prove English and Arabic retrieval, valid source/page
+citations, appropriate refusal of unsupported questions, untrusted document
+instructions, current/historical isolation, reproducible fingerprints, and
+safe failure/cleanup. No Phase 4 tag is created by this document.
+
+## 36. Security and privacy considerations
+
+Phase 4 is local-first. SQLite, FTS5, Chroma, embeddings, and answer generation
+operate locally under explicit composition. The default runtime does not contact
+Moodle, a browser, or a cloud evaluator. The local ModelGateway is restricted
+to the configured loopback LM Studio boundary.
+
+Document text is sensitive academic content and remains behind bounded,
+scope-authorized evidence. Credentials, tokens, cookies, session state, private
+access keys, and browser artifacts never enter RAG records or model prompts.
+Raw document text, raw questions, raw prompts, raw model output, and source
+paths are not written to ordinary logs. Temporary and test artifacts use
+disposable roots and are cleaned deterministically.
+
+No model output can broaden scope, access another generation, call a tool,
+execute a command, or trigger a write. A provenance or citation uncertainty
+fails closed.
+
+## 37. Migration and storage implications
+
+Phase 4 will eventually require an Alembic migration for its generation,
+document-index, chunk, span, and FTS infrastructure. This design does not
+create that migration. The eventual migration must preserve the shared SQLAlchemy
+`Base`, Phase 3 document immutability, Phase 3 content-blob/page semantics, and
+Phase 1 foreign-key/provenance identities.
+
+Normal conceptual paths are `data/database/aaos.db` and `data/rag/chroma/`, but
+imports and startup never create them. Explicit index/query commands own all
+side effects. Tests and acceptance use disposable databases, Chroma roots, and
+sanitized fixtures. Retired generations are retained unless a separately
+approved retention design is introduced.
+
+## 38. Phase 5 integration contract
+
+Phase 5 may call Phase 4 through a typed query service that accepts a question
+and explicit `RagScope`, then returns `RagAnswer`. It may use the validated
+answer/citation result as one bounded observation in its future orchestration.
+
+Phase 5 owns conversation history, pronoun resolution, follow-up context,
+task state, typed academic tools, action selection, and approvals. Phase 4
+does not import or depend on those facilities, does not reinterpret prior
+turns, and does not expose a generic model/tool/browser surface.
+
+## 39. Out of scope (explicit)
+
+The following remain outside Phase 4:
+
+- Phase 3 modifications;
+- OCR, scanned-page recognition, and VLM/multimodal processing;
+- agent loops, conversation memory, and history-based query rewriting;
+- typed action tools, approvals, and write workflows;
+- Google Calendar, GitHub MCP, dashboards, and public RAG HTTP APIs unless
+  separately approved;
+- background schedulers and automatic retired-index purge;
+- arbitrary filesystem or URL ingestion;
+- Moodle writes or browser automation;
+- reranker models in v1;
+- runtime LLM citation judging;
+- silent BM25-only fallback;
+- external/cloud evaluator fallback; and
+- Phase 5 task/conversation orchestration.
+
+## 40. Open implementation details (non-architectural only)
+
+The following may be selected during implementation without reopening the
+architecture, provided each choice is versioned, tested, and recorded:
+
+- the final chunk token counter and overlap within the approved bounds;
+- candidate depths, RRF constant, evidence budgets, and calibrated sufficiency
+  thresholds;
+- the exact FTS5 schema/index-maintenance statements;
+- the compatible pinned RAGAS version and local evaluator model;
+- the concrete BGE-M3 revision, embedding batch size, and verified device
+  release mechanism;
+- exact SQLAlchemy/Alembic revision identifiers and migration column names;
+- exact fixed CLI grammar and safe rendering labels; and
+- benchmark hardware/run-count conventions.
+
+These details cannot expand scope, add a network dependency, expose content, or
+change the trust, lifecycle, persistence, scope, citation, or phase-boundary
+invariants above. Any issue that would require such a change is an architecture
+review gate, not an implementation detail.
+
+## 41. Design self-review checklist
+
+This specification was checked for:
+
+- no unresolved placeholder decisions;
+- explicit ACTIVE/BUILDING/RETIRED and content-revision semantics;
+- pinned query consistency during rebuild/index-new;
+- SQLite authority over Chroma and provenance;
+- no hidden model, lexical, cloud, browser, or network fallback;
+- no Phase 3 redesign or Phase 5 agent scope leakage;
+- explicit prompt-injection, citation, privacy, and safe-error behavior;
+- no requirement to add dependencies or run a model in this documentation task;
+- alignment with current `DocumentVersion`/`DocumentPage`, SQLAlchemy/Alembic,
+  local `ModelGateway`/`LMStudioGateway`, configuration, and CLI lifecycle
+  contracts; and
+- explicit separation of architecture from later non-architectural tuning.
