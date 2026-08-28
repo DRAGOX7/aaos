@@ -1,0 +1,1078 @@
+# Phase 4 Local RAG Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build a local, stateless, document-only RAG subsystem over frozen Phase 3 `DocumentVersion` and `DocumentPage` records, with deterministic hybrid retrieval, exact provenance, grounded claim-level citations, local-model generation, and evaluation-backed acceptance.
+
+**Architecture:** SQLite is authoritative for generations, document readiness, chunks, exact spans, FTS5/BM25, and provenance. Chroma is a rebuildable per-generation dense index whose results are trusted only after SQLite resolution. BGE-M3 is hidden behind an application-owned `EmbeddingService`; the existing asynchronous `ModelGateway` is the only generation boundary. One writer builds or mutates indexes, queries pin an immutable generation/revision/scope snapshot, and `LocalRagService` exposes only typed, citation-validated answers. Phase 4 reads frozen Phase 3 persistence and never depends on `Phase3ServiceRuntime`.
+
+**Tech Stack:** Python 3.11, frozen dataclasses and `StrEnum`, SQLAlchemy 2.x, Alembic, SQLite/FTS5, Chroma embedded persistence, BGE-M3 through a verified Windows/CUDA-compatible adapter, existing `ModelGateway`/`LMStudioGateway`, pytest, Ruff, strict mypy, uv, and evaluation-only RAGAS behind an explicit local evaluator.
+
+**Spec:** `docs/superpowers/specs/2026-08-28-phase-4-local-rag-design.md`
+
+## Frozen Boundaries
+
+- Phase 3 remains frozen and read-only. Phase 4 consumes persisted `DocumentVersionORM` and `DocumentPageORM` data and does not call Moodle, browser, downloader, PDF processor, or Phase 3 runtime services.
+- The corpus contains document content only. Assignments, announcements, course metadata, browser state, credentials, and structured academic facts are excluded.
+- Phase 4 is stateless across questions: no chat history, memories, agents, tools, actions, or Phase 5 orchestration.
+- Normal paths `data/database/aaos.db` and `data/rag/chroma/` are never used by automated tests. Real-corpus indexing is a separately authorized controlled acceptance action.
+- Public answer statuses are exactly `ANSWER`, `PARTIAL_ANSWER`, and `INSUFFICIENT_EVIDENCE`. Operational failures remain typed errors outside `RagAnswer`.
+- There is no hidden dense-only, lexical-only, ordinary-chat, cloud-model, or ungrounded fallback.
+- No implementation task creates or moves `phase-04-passed`; freeze requires separate human authorization after all gates.
+- The pre-existing untracked `reflex` path is never modified or staged.
+
+## Existing Contracts Reused Exactly
+
+| Existing contract | Phase 4 use |
+| --- | --- |
+| `aaos.persistence.database.create_database_engine(Path) -> Engine` | Create one explicitly owned SQLite engine. |
+| `aaos.persistence.database.create_session_factory(Engine)` | Inject session factories; no global sessions. |
+| `aaos.persistence.document_models.DocumentVersionORM` | Immutable source version and SHA-256 identity. |
+| `aaos.persistence.document_models.DocumentPageORM` | Exact page text and page-number provenance. |
+| `aaos.persistence.document_models.DocumentORM` plus academic `RemoteFileORM`/`CourseORM` | Resolve current, course, and historical eligibility without adding Moodle persistence. |
+| `aaos.inference.gateway.ModelGateway` | Existing asynchronous `generate(ChatRequest) -> ChatResponse` and availability boundary. |
+| `aaos.inference.models.ChatMessage`, `ChatRequest`, `ChatResponse` | Build the grounded prompt and consume local-model output. |
+| Existing inference errors | Translate connection, timeout, protocol, backend, and availability failures to safe Phase 4 operational errors. |
+| `Phase3ServiceRuntime` lifecycle convention | Model explicit runtime ownership, idempotent `close()`, context manager behavior, and construction-failure cleanup; Phase 4 does not depend on the runtime itself. |
+| `IngestionLock` ownership semantics | Pattern for a distinct `RagIndexLock`; no lock file or type is shared with Phase 3. |
+| `src/aaos/cli.py` lazy dispatch | Add only the approved `rag` command family without import-time construction. |
+
+## Dependency Plan and Pre-Implementation Gate
+
+No Phase 4 package is currently present in `pyproject.toml` or `uv.lock`. Task 1 must verify current official metadata before choosing exact pins; the plan intentionally does not guess versions.
+
+| Package/capability | Role | Dependency group | Compatibility and governance gate |
+| --- | --- | --- | --- |
+| `chromadb` | Embedded, persistent, rebuildable dense index | Production | Select one exact version compatible with Python 3.11 and Windows; inspect transitive telemetry/network defaults, persistence behavior, license, and SQLite coexistence; disable telemetry in explicit app configuration. |
+| `FlagEmbedding` | Preferred official BGE-M3 adapter candidate | Production | Verify the selected version supports `BAAI/bge-m3`, Python 3.11, Windows 11, installed CUDA/PyTorch combination, local model caching, and the package license. If it is not viable, stop for human architecture review rather than silently switching libraries. |
+| Transitive `torch`/`transformers` stack selected by the BGE-M3 adapter | Model execution/tokenization | Production/transitive | Record exact resolved versions, CUDA capability, wheel source, licenses, disk footprint, and expected RTX 4050 6 GB VRAM use. No model is downloaded during dependency installation or ordinary tests. |
+| `ragas` | Supplementary evaluation only | Dev/test | Select one exact version after checking its current metric APIs, Python compatibility, license, evaluator abstractions, and cloud-provider defaults. It must not enter runtime imports and must have an explicit local-evaluator/no-cloud adapter. |
+| SQLite FTS5 | Lexical index/BM25 | Standard library/runtime | Add no package. Verify `sqlite_compileoption_used('ENABLE_FTS5')` in migration/tests and fail safely if unavailable. |
+
+Task 1 records the accepted versions and licenses in test assertions plus lockfile metadata. Any package conflict, unsupported Windows/CUDA path, non-local-only evaluator constraint, or unacceptable license is a blocking dependency-governance result, not permission to substitute a new architecture.
+
+## Proposed Final File Structure
+
+### Production files
+
+| Path | Change | Responsibility | Inputs / outputs | Task |
+| --- | --- | --- | --- | --- |
+| `pyproject.toml`, `uv.lock` | Modify | Exact verified runtime/evaluation dependency pins. | Package metadata -> reproducible environment. | 1 |
+| `src/aaos/rag/__init__.py` | Create | Export only narrow public Phase 4 contracts/facade. | Public imports. | 2, 19 |
+| `src/aaos/rag/contracts.py` | Create | Closed enums, scopes, queries, indexing results, evidence, claims, answers, safe errors. | Frozen typed values. | 2, 17, 18 |
+| `src/aaos/rag/config.py` | Create | Validated paths, v1 parameters, canonical JSON fingerprint. | Injected data root/config -> immutable settings/fingerprint. | 2 |
+| `src/aaos/persistence/rag_models.py` | Create | Generation, document-index, chunk, and span ORM mappings. | Shared `Base`. | 3 |
+| `migrations/env.py` | Modify | Register Phase 4 ORM metadata. | Alembic metadata. | 3 |
+| `migrations/versions/0004_phase4_local_rag.py` | Create | Reversible tables, constraints, indexes, and FTS5 virtual table. | Revision `0003` -> `0004`. | 3 |
+| `src/aaos/rag/repository.py` | Create | Generation/revision transactions, Phase 3 eligibility, chunks/spans/FTS, query snapshots, integrity resolution. | Session factory -> authoritative SQLite operations. | 4, 6, 11, 14 |
+| `src/aaos/rag/chunking.py` | Create | Deterministic structure-aware chunker and exact page/character spans. | Phase 3 pages -> `ChunkDraft` values. | 5 |
+| `src/aaos/rag/lexical.py` | Create | Conservative versioned normalizer and BM25 query adapter. | Text/query -> normalized lexical terms/results. | 6, 14 |
+| `src/aaos/rag/dense.py` | Create | `DenseIndex`/factory protocols and typed vector records/hits. | Generation vectors and query vector -> keys/ranks. | 7 |
+| `src/aaos/rag/chroma.py` | Create | Embedded Chroma per-generation implementation. | Disposable/persistent generation path. | 8 |
+| `src/aaos/rag/embeddings.py` | Create | `EmbeddingService`, deterministic fake boundary, and BGE-M3 lifecycle adapter. | Text batches -> vectors/model metadata. | 9 |
+| `src/aaos/rag/lock.py` | Create | Ownership-safe Phase 4 single-writer lease. | Absolute lock path -> lease. | 10 |
+| `src/aaos/rag/indexing.py` | Create | Per-document indexing, `index-new`, rebuild, verification, activation, recovery. | Repository/chunker/embedding/dense/lock -> typed results. | 11–13 |
+| `src/aaos/rag/retrieval.py` | Create | Scope resolution, pinned query snapshot, dense/lexical retrieval, RRF, evidence selection/sufficiency. | `RagQuery` -> trusted selected evidence. | 14–16 |
+| `src/aaos/rag/generation.py` | Create | Grounded prompt, structured parsing/repair, citation validation and deterministic rendering. | Evidence + `ModelGateway` -> `RenderedRagResponse`. | 17–18 |
+| `src/aaos/rag/service.py` | Create | `LocalRagService` facade and no-fallback orchestration. | `RagQuery` -> rendered response. | 19 |
+| `src/aaos/rag/runtime.py` | Create | `Phase4RagRuntime` composition/lifecycle ownership. | Explicit paths/settings/gateway -> services. | 20 |
+| `src/aaos/rag/cli.py` | Create | Exact index/rebuild/status/interactive ask commands and safe rendering. | argv/stdin -> safe output/exit code. | 21 |
+| `src/aaos/cli.py` | Modify | Lazy dispatch for `rag`. | Top-level argv. | 21 |
+| `src/aaos/rag/evaluation/__init__.py` | Create | Evaluation-only public surface. | Safe tooling imports. | 22 |
+| `src/aaos/rag/evaluation/contracts.py` | Create | Gold cases, split/run manifests, sanitized result records. | Curated metadata -> validated manifests. | 22 |
+| `src/aaos/rag/evaluation/metrics.py` | Create | Recall/MRR/nDCG, subgroup, sufficiency, ablation calculations. | Ranked results/labels -> aggregates. | 22 |
+| `src/aaos/rag/evaluation/ragas_adapter.py` | Create | Explicit local-only RAGAS adapter with no cloud fallback. | Sanitized/private local evaluation inputs -> supplementary metrics. | 23 |
+| `src/aaos/rag/evaluation/reports.py` | Create | Human, injection, performance, fingerprint, and acceptance summaries. | Safe records -> sanitized artifacts. | 24, 26 |
+
+### Test and acceptance files
+
+| Path | Change | Responsibility | Task |
+| --- | --- | --- | --- |
+| `tests/test_rag_dependencies.py` | Create | Import/version/license/group/side-effect checks. | 1 |
+| `tests/test_rag_contracts.py`, `tests/test_rag_config.py` | Create | Closed types, validation, paths, fingerprint determinism. | 2 |
+| `tests/test_rag_migration.py`, `tests/test_database.py` | Create/Modify | `0004` upgrade/downgrade, FTS5, constraints, head revision. | 3 |
+| `tests/test_rag_repository.py` | Create | Eligibility, generation/revision, readiness, provenance, FTS transactions. | 4, 6, 11, 14 |
+| `tests/test_rag_chunking.py` | Create | Structure, size bounds, overlap, Unicode, spans, keys. | 5 |
+| `tests/test_rag_lexical.py` | Create | Conservative normalization and BM25 behavior. | 6 |
+| `tests/test_rag_dense.py`, `tests/test_rag_chroma.py` | Create | Protocol/fake behavior and disposable Chroma isolation. | 7–8 |
+| `tests/test_rag_embeddings.py` | Create | Fake and BGE-M3 adapter metadata/lifecycle without model download. | 9 |
+| `tests/test_rag_lock.py` | Create | Exclusive ownership and safe release. | 10 |
+| `tests/test_rag_indexing.py`, `tests/test_rag_rebuild.py` | Create | Per-document state, publication, rebuild, integrity, recovery. | 11–13 |
+| `tests/test_rag_retrieval.py` | Create | Scope/current/history, snapshot, candidate verification, RRF. | 14–15 |
+| `tests/test_rag_evidence.py` | Create | Selection, budgets, IDs, sufficiency, conflict retention. | 16 |
+| `tests/test_rag_generation.py` | Create | Prompt isolation, structured retry, answer/citation contract. | 17–18 |
+| `tests/test_rag_service.py` | Create | End-to-end facade/no-fallback behavior using fakes. | 19 |
+| `tests/test_rag_runtime.py`, `tests/test_rag_imports.py` | Create | Ownership, cleanup, construction failure, side-effect-free imports. | 20 |
+| `tests/test_rag_cli.py` | Create | Exact grammar, stdin question, scope exclusivity, safe output. | 21 |
+| `tests/test_rag_evaluation.py`, `tests/test_rag_ragas.py` | Create | Dataset/splits/metrics/ablation/privacy/local evaluator. | 22–23 |
+| `tests/test_rag_reports.py` | Create | Human/safety/performance sanitized artifacts. | 24 |
+| `tests/test_rag_integration.py`, `tests/test_rag_crash_recovery.py` | Create | Disposable full pipeline and injected cross-store failures. | 25 |
+| `tests/live/test_phase4_local_rag_acceptance.py` | Create | Explicitly opted-in real BGE-M3/local ModelGateway/hardware acceptance only. | 26 |
+
+## Core Interface Ledger
+
+```python
+class GenerationStatus(StrEnum): BUILDING = "BUILDING"; ACTIVE = "ACTIVE"; RETIRED = "RETIRED"
+class DocumentIndexStatus(StrEnum): PREPARING = "PREPARING"; READY = "READY"; NOT_SEARCHABLE = "NOT_SEARCHABLE"; FAILED = "FAILED"
+class CoverageStatus(StrEnum): FULL = "FULL"; PARTIAL = "PARTIAL"; NONE = "NONE"
+class RagAnswerStatus(StrEnum): ANSWER = "ANSWER"; PARTIAL_ANSWER = "PARTIAL_ANSWER"; INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+@dataclass(frozen=True, slots=True)
+class CourseScope: course_id: int
+@dataclass(frozen=True, slots=True)
+class GlobalScope: pass
+@dataclass(frozen=True, slots=True)
+class HistoricalScope: document_version_ids: tuple[int, ...]
+RagScope = CourseScope | GlobalScope | HistoricalScope
+
+@dataclass(frozen=True, slots=True)
+class RagRuntimePaths:
+    database_path: Path
+    chroma_root: Path
+    index_lock_path: Path
+    evaluation_output_root: Path
+
+@dataclass(frozen=True, slots=True)
+class RagIndexConfig:
+    chunk_target_tokens: int
+    chunk_preferred_min_tokens: int
+    chunk_preferred_max_tokens: int
+    chunk_hard_max_tokens: int
+    chunk_overlap_tokens: int
+    dense_candidate_limit: int
+    lexical_candidate_limit: int
+    rrf_k: int
+    max_evidence_chunks: int
+    max_evidence_tokens: int
+    chunker_version: str
+    lexical_normalizer_version: str
+    sufficiency_policy_version: str
+
+@dataclass(frozen=True, slots=True)
+class RagQuery:
+    question: str
+    scope: RagScope
+    answer_language: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class RagGenerationIdentity:
+    generation_id: int
+    config_fingerprint: str
+    content_revision: int
+    embedding_dimensions: int
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingModelMetadata:
+    model_identifier: str
+    model_revision: str
+    dimensions: int
+    device: str
+
+@dataclass(frozen=True, slots=True)
+class DenseVectorRecord:
+    chunk_key: str
+    document_version_id: int
+    vector: tuple[float, ...]
+
+@dataclass(frozen=True, slots=True)
+class DenseSearchHit:
+    chunk_key: str
+    rank: int
+    distance: float
+
+class EmbeddingService(Protocol):
+    def model_metadata(self) -> EmbeddingModelMetadata: ...
+    def embed_documents(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]: ...
+    def embed_query(self, text: str) -> tuple[float, ...]: ...
+    def release_model(self) -> None: ...
+    def close(self) -> None: ...
+
+class DenseIndex(Protocol):
+    def upsert(self, records: tuple[DenseVectorRecord, ...]) -> None: ...
+    def search(
+        self,
+        vector: tuple[float, ...],
+        *,
+        limit: int,
+        allowed_document_version_ids: tuple[int, ...],
+    ) -> tuple[DenseSearchHit, ...]: ...
+    def contains(self, chunk_keys: tuple[str, ...]) -> bool: ...
+    def count(self) -> int: ...
+    def close(self) -> None: ...
+
+class DenseIndexFactory(Protocol):
+    def open(self, generation: RagGenerationIdentity) -> DenseIndex: ...
+    def remove(self, generation: RagGenerationIdentity) -> None: ...
+
+@dataclass(frozen=True, slots=True)
+class RagChunkSourceSpanValue:
+    document_page_id: int
+    page_number: int
+    source_char_start: int
+    source_char_end: int
+    chunk_char_start: int
+    chunk_char_end: int
+
+@dataclass(frozen=True, slots=True)
+class RetrievedEvidence:
+    evidence_id: str
+    chunk_key: str
+    exact_text: str
+    heading: str | None
+    document_version_id: int
+    document_title: str
+    course_id: int
+    source_spans: tuple[RagChunkSourceSpanValue, ...]
+    dense_rank: int | None
+    lexical_rank: int | None
+    fused_rank: int
+    generation_id: int
+    content_revision: int
+
+@dataclass(frozen=True, slots=True)
+class RagClaim:
+    claim_id: str
+    text: str
+    evidence_ids: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class Citation:
+    claim_id: str
+    document_version_id: int
+    document_title: str
+    page_start: int
+    page_end: int
+
+@dataclass(frozen=True, slots=True)
+class RagAnswer:
+    status: RagAnswerStatus
+    answer_text: str
+    language: str
+    claims: tuple[RagClaim, ...]
+    citations: tuple[Citation, ...]
+    generation_id: int
+    content_revision: int
+
+@dataclass(frozen=True, slots=True)
+class RenderedRagResponse:
+    answer: RagAnswer
+    rendered_text: str
+
+@dataclass(frozen=True, slots=True)
+class IndexRunResult:
+    safe_status: str
+    generation_id: int
+    content_revision: int
+    indexed_documents: int
+    not_searchable_documents: int
+
+@dataclass(frozen=True, slots=True)
+class RagIndexStatus:
+    active_generation: RagGenerationIdentity | None
+    ready_documents: int
+    partial_documents: int
+    not_searchable_documents: int
+    chunks: int
+    dense_index_healthy: bool
+
+class LocalRagService:
+    async def ask(self, query: RagQuery) -> RenderedRagResponse: ...
+
+class RagIndexingService:
+    def index_new(self, document_version_id: int | None = None) -> IndexRunResult: ...
+    def rebuild(self) -> IndexRunResult: ...
+    def status(self) -> RagIndexStatus: ...
+
+@dataclass(slots=True)
+class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
+    service: LocalRagService
+    indexing: RagIndexingService
+    def close(self) -> None: ...
+```
+
+All public constructors validate positive internal IDs, nonblank bounded text, tuples rather than mutable collections, UTC timestamps, closed enums, monotonic character spans, and finite vectors. Safe `RagOperationalError` subclasses carry a fixed `RagErrorCode`; raw backend text is chained internally only.
+
+## Persistence, Fingerprint, Revision, and FTS5 Decisions
+
+- Migration `0004_phase4_local_rag` has `down_revision = "0003_phase3_document_ingestion"` and creates `rag_index_generations`, `rag_document_indexes`, `rag_chunks`, `rag_chunk_source_spans`, then `rag_chunks_fts`.
+- `rag_index_generations` stores status, canonical config JSON, SHA-256 config fingerprint, embedding model identifier/revision/dimension, chunker/normalizer versions, `content_revision >= 0`, and UTC timestamps. A partial unique index permits only one `ACTIVE` row.
+- `rag_document_indexes` uniquely binds `(generation_id, document_version_id)`, records PREPARING/READY/NOT_SEARCHABLE/FAILED, FULL/PARTIAL/NONE coverage, page/chunk counts, and safe error code.
+- `rag_chunks` stores deterministic `chunk_key`, generation/document/ordinal/heading/exact text/token count/page bounds; keys hash canonical fields including source version SHA-256, chunker version, ordinal, exact text hash, and exact span manifest.
+- `rag_chunk_source_spans` stores ordered page ID/number and `[page_char_start, page_char_end)` plus `[chunk_char_start, chunk_char_end)` constraints. No fuzzy page provenance is inferred.
+- FTS5 is an ordinary derived virtual table with `normalized_text`, `generation_id UNINDEXED`, and `document_version_id UNINDEXED`; its `rowid` equals authoritative `rag_chunks.id`. Repository-controlled insert/delete occurs in the same SQLite transaction as chunk publication. No triggers or external-content magic obscure synchronization.
+- Lexical retrieval joins FTS rowids back through authoritative chunk/document/generation tables and applies generation, READY, current/historical, and course predicates before accepting BM25 ranks.
+- Canonical config fingerprint is `sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))`; payload contains every retrieval-affecting version/parameter and excludes machine paths/timestamps.
+- `index-new` commits PREPARING chunk/span/FTS state and Chroma vectors first. Its final single SQLite transaction verifies every selected document, flips successful records to READY/NOT_SEARCHABLE, and increments `content_revision` exactly once when the represented document-version corpus changes, including a newly represented NOT_SEARCHABLE version. Failed/no-op runs do not increment it.
+- Queries open one SQLite read transaction, pin the ACTIVE generation ID/fingerprint/revision and authorized document universe, run dense/lexical retrieval, resolve every candidate through that same snapshot, and materialize immutable evidence/provenance before closing the transaction. Unpublished Chroma vectors cannot resolve and cause a safe integrity failure rather than partial retrieval.
+- Rebuild writes a separate BUILDING generation and Chroma directory. Only a passed cross-store integrity transaction retires the old ACTIVE and activates the new generation. Failures preserve the prior ACTIVE generation; RETIRED generations are never automatically purged.
+
+## Implementation Tasks
+
+### Task 1: Verify and Pin Phase 4 Dependencies
+
+**Files**
+- Modify: `pyproject.toml`
+- Modify: `uv.lock`
+- Create: `tests/test_rag_dependencies.py`
+
+**Interfaces**
+- Consumes: current Python 3.11/Windows/CUDA environment and dependency policy.
+- Produces: exact accepted `chromadb`, `FlagEmbedding` stack, and dev-only `ragas` pins for every later task.
+
+**Requirements**
+- Inspect official package metadata/changelogs/licenses and test resolution in a disposable uv context before editing.
+- Record package purpose, group, selected version, license, Python/Windows/CUDA compatibility, network/model-download behavior, privacy defaults, and transitive conflicts in test comments/assertions.
+- Ensure production modules cannot import `ragas`; dependency import checks must not download/load a model or create normal paths.
+
+- [ ] **Step 1 — Write failing test:** add assertions that required distributions are installed at the chosen exact versions, `ragas` is in the dev group only, prohibited `PyMuPDF`/OCR packages remain absent, and importing packages creates no AAOS storage. Representative assertion after the version gate: `assert importlib.metadata.version("chromadb") == EXPECTED_CHROMADB_VERSION`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_dependencies.py -v`; expect missing-distribution/version failures.
+- [ ] **Step 3 — Minimal implementation:** after the compatibility/license gate, add exact production pins for `chromadb` and the approved BGE-M3 adapter stack, exact dev pin for `ragas`, run `uv lock`, and document the verified decision in the test module.
+- [ ] **Step 4 — Run GREEN:** `uv run pytest tests/test_rag_dependencies.py -v`; expect PASS without model/network access.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_inference_imports.py tests/test_document_imports.py tests/test_rag_dependencies.py -v`.
+- [ ] **Step 6 — Static/lock checks:** `uv lock --check`; `uv run ruff check tests/test_rag_dependencies.py`; `uv run mypy tests/test_rag_dependencies.py`.
+- [ ] **Step 7 — Commit:** `git add pyproject.toml uv.lock tests/test_rag_dependencies.py`; `git commit -m "build(rag): pin local rag dependencies"`.
+
+### Task 2: Add Typed RAG Contracts, Configuration, and Fingerprint
+
+**Files**
+- Create: `src/aaos/rag/__init__.py`
+- Create: `src/aaos/rag/contracts.py`
+- Create: `src/aaos/rag/config.py`
+- Create: `tests/test_rag_contracts.py`
+- Create: `tests/test_rag_config.py`
+
+**Interfaces**
+- Consumes: frozen Phase 3 IDs and existing dataclass/error conventions.
+- Produces: the Core Interface Ledger types, `RagIndexConfig`, `RagRuntimePaths`, `compute_config_fingerprint()`.
+
+**Requirements**
+- Encode closed statuses/scopes/results/errors, validated retrieval/index parameters, disposable-injectable absolute paths, and canonical fingerprint fields.
+- Include chunker, lexical normalizer, embedding model/revision/dimension, candidate depths, RRF constant, evidence budgets, and sufficiency policy version in the fingerprint; exclude storage paths and timestamps.
+
+- [ ] **Step 1 — Write failing tests:** instantiate every enum/scope/query, reject invalid IDs/text/path escapes, prove semantically identical mappings fingerprint identically and every retrieval-affecting change alters the hash. Representative assertion: `assert compute_config_fingerprint(config_a) == compute_config_fingerprint(config_b)` for differently ordered equivalent mappings.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py -v`; expect import failures.
+- [ ] **Step 3 — Minimal implementation:** add immutable types and canonical JSON SHA-256 implementation exactly as specified above.
+- [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_config.py tests/test_document_config.py tests/test_rag_contracts.py tests/test_rag_config.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff format --check src/aaos/rag tests/test_rag_contracts.py tests/test_rag_config.py`; `uv run ruff check src/aaos/rag tests/test_rag_contracts.py tests/test_rag_config.py`; `uv run mypy src/aaos/rag tests/test_rag_contracts.py tests/test_rag_config.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/__init__.py src/aaos/rag/contracts.py src/aaos/rag/config.py tests/test_rag_contracts.py tests/test_rag_config.py`; `git commit -m "feat(rag): add typed contracts and configuration"`.
+
+### Task 3: Add the Phase 4 Persistence Schema and FTS5 Migration
+
+**Files**
+- Create: `src/aaos/persistence/rag_models.py`
+- Modify: `migrations/env.py`
+- Create: `migrations/versions/0004_phase4_local_rag.py`
+- Create: `tests/test_rag_migration.py`
+- Modify: `tests/test_database.py`
+
+**Interfaces**
+- Consumes: shared `Base`, `UTCDateTime`, Phase 3 document/course foreign keys, revision `0003`.
+- Produces: ORM mappings and migration schema described in Persistence Decisions.
+
+**Requirements**
+- Enforce exact foreign keys, closed status/coverage checks, positive dimensions/counts, unique generation/document and chunk identities, ordered spans, and one ACTIVE generation.
+- Create/drop the ordinary FTS5 virtual table explicitly and verify FTS5 availability before migration use.
+
+- [ ] **Step 1 — Write failing tests:** upgrade `0003 -> head`, inspect tables/indexes/checks/FKs/FTS5, reject invalid rows, verify downgrade to `0003`, and update only the legitimate head-schema expectation. Representative assertion: `assert "rag_chunks_fts" in sqlite_master_names(connection)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_migration.py tests/test_database.py -v`; expect missing revision/table failures.
+- [ ] **Step 3 — Minimal implementation:** add mappings/import registration and explicit reversible Alembic operations; do not modify Phase 3 tables.
+- [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_academic_migration.py tests/test_document_migration.py tests/test_rag_migration.py tests/test_database.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/persistence/rag_models.py migrations tests/test_rag_migration.py tests/test_database.py`; `uv run mypy src/aaos/persistence/rag_models.py tests/test_rag_migration.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/persistence/rag_models.py migrations/env.py migrations/versions/0004_phase4_local_rag.py tests/test_rag_migration.py tests/test_database.py`; `git commit -m "feat(rag): add generation and chunk persistence"`.
+
+### Task 4: Implement the Authoritative RAG Repository
+
+**Files**
+- Create: `src/aaos/rag/repository.py`
+- Create: `tests/test_rag_repository.py`
+
+**Interfaces**
+- Consumes: session factory, Phase 3 document mappings, Phase 4 ORM/contracts.
+- Produces: `RagRepository`, `GenerationBuild`, `QuerySnapshot`, eligible-version queries, transactional generation/revision operations.
+
+**Requirements**
+- Read only active Phase 3 versions/pages; resolve current course/global and explicit historical versions separately.
+- Expose no raw SQL/session/ORM objects above the repository; all mutation methods require a generation identity and expected revision.
+
+- [ ] **Step 1 — Write failing tests:** prove current-version selection, superseded exclusion, historical explicit inclusion, course isolation, no eligible documents, one ACTIVE generation, revision compare-and-swap, and Phase 3 immutability. Representative assertion: `assert repository.resolve_current_versions(CourseScope(course_id=1)) == (current_version,)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_repository.py -v`; expect missing repository failures.
+- [ ] **Step 3 — Minimal implementation:** add typed repository methods with short transactions and safe error translation.
+- [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_persistence.py tests/test_rag_migration.py tests/test_rag_repository.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/repository.py tests/test_rag_repository.py`; `uv run mypy src/aaos/rag/repository.py tests/test_rag_repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/repository.py tests/test_rag_repository.py`; `git commit -m "feat(rag): add authoritative rag repository"`.
+
+### Task 5: Implement Deterministic Structure-Aware Chunking and Provenance
+
+**Files**
+- Create: `src/aaos/rag/chunking.py`
+- Create: `tests/test_rag_chunking.py`
+
+**Interfaces**
+- Consumes: ordered immutable `DocumentPage` text and `RagIndexConfig` chunk settings.
+- Produces: `ChunkDraft` and exact `ChunkSourceSpanDraft` tuples with deterministic keys.
+
+**Requirements**
+- Prefer headings/paragraphs, target about 500 tokens, prefer 450–650, hard cap about 700, and use overlap only when splitting long sections.
+- Preserve exact Unicode text and page/character mappings; FULL/PARTIAL/NONE must be deterministic, with empty/no-usable-text documents returning NONE rather than fabricated chunks.
+
+- [ ] **Step 1 — Write failing tests:** cover headings, paragraphs, cross-page sections, long-section overlap, Arabic/English, empty pages, deterministic reruns, exact reconstruction from spans, keys, and FULL/PARTIAL/NONE. Representative assertion: `assert rebuild_text_from_spans(chunk, pages) == chunk.text`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_chunking.py -v`; expect import failures.
+- [ ] **Step 3 — Minimal implementation:** implement a versioned deterministic tokenizer boundary and pure chunker; no model/network dependency.
+- [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_pdf.py tests/test_document_persistence.py tests/test_rag_chunking.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/chunking.py tests/test_rag_chunking.py`; `uv run mypy src/aaos/rag/chunking.py tests/test_rag_chunking.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/chunking.py tests/test_rag_chunking.py`; `git commit -m "feat(rag): add deterministic chunking and provenance"`.
+
+### Task 6: Add Conservative Lexical Normalization and FTS5/BM25
+
+**Files**
+- Create: `src/aaos/rag/lexical.py`
+- Modify: `src/aaos/rag/repository.py`
+- Create: `tests/test_rag_lexical.py`
+- Modify: `tests/test_rag_repository.py`
+
+**Interfaces**
+- Consumes: exact chunk text, normalized query, authorized `QuerySnapshot`.
+- Produces: versioned normalized text, transactional FTS rows, scoped `LexicalSearchHit` ranks.
+
+**Requirements**
+- Normalize Unicode width/case/whitespace conservatively while retaining Arabic, digits, course codes, formulas, punctuation-bearing technical tokens, and original exact text in SQLite.
+- FTS writes share the chunk transaction; BM25 results must join to READY authoritative rows and the pinned scope before ranking is accepted.
+
+- [ ] **Step 1 — Write failing tests:** technical tokens/Arabic preservation, deterministic versioning, pure normalization, FTS insert/delete parity, BM25 ranks, course/history/generation filtering, and stale row rejection. Representative assertion: `assert lexical_search(query, snapshot).hits == (expected_authorized_hit,)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_lexical.py tests/test_rag_repository.py -v`; expect missing lexical/FTS behavior.
+- [ ] **Step 3 — Minimal implementation:** add pure normalizer and parameterized FTS SQL owned by repository transactions.
+- [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_migration.py tests/test_rag_repository.py tests/test_rag_lexical.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/lexical.py src/aaos/rag/repository.py tests/test_rag_lexical.py`; `uv run mypy src/aaos/rag/lexical.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/lexical.py src/aaos/rag/repository.py tests/test_rag_lexical.py tests/test_rag_repository.py`; `git commit -m "feat(rag): add scoped fts5 retrieval substrate"`.
+
+## Checkpoint A — Persistence and Chunking Substrate
+
+Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py tests/test_rag_migration.py tests/test_rag_repository.py tests/test_rag_chunking.py tests/test_rag_lexical.py -v`, relevant Phase 3 persistence regressions, Ruff, strict mypy, `uv lock --check`, disposable-path audit, migration upgrade/downgrade review, and a human review confirming Phase 3 tables/content are read-only before Task 7.
+
+### Task 7: Define Dense Index Abstractions and Deterministic Fakes
+
+**Files**
+- Create: `src/aaos/rag/dense.py`
+- Create: `tests/test_rag_dense.py`
+
+**Interfaces**
+- Consumes: generation identity, fixed-dimension vectors, deterministic chunk keys.
+- Produces: `DenseIndex`, `DenseIndexFactory`, `DenseVectorRecord`, `DenseSearchHit`, in-memory fake.
+
+**Requirements**
+- Keep Chroma types/private IDs behind the protocol; validate finite dimensions and deterministic rank ordering.
+
+- [ ] **Step 1 — Write failing tests:** protocol fake upsert/search/contains/count/close, allowed-version filtering, dimension mismatch, nonfinite vector, duplicate key, and deterministic ties. Representative assertion: `assert index.search(vector, limit=2, allowed_document_version_ids=(7,)) == (hit_a, hit_b)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_dense.py -v`; expect import failure.
+- [ ] **Step 3 — Minimal implementation:** add protocols, values, and deterministic fake used by later unit tests.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_contracts.py tests/test_rag_dense.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/dense.py tests/test_rag_dense.py`; `uv run mypy src/aaos/rag/dense.py tests/test_rag_dense.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/dense.py tests/test_rag_dense.py`; `git commit -m "feat(rag): define dense index boundary"`.
+
+### Task 8: Implement the Disposable Per-Generation Chroma Adapter
+
+**Files**
+- Create: `src/aaos/rag/chroma.py`
+- Create: `tests/test_rag_chroma.py`
+
+**Interfaces**
+- Consumes: `DenseIndexFactory`, validated generation path/identity and model dimension.
+- Produces: `ChromaDenseIndexFactory` and private `ChromaDenseIndex`.
+
+**Requirements**
+- One isolated collection/path per generation, telemetry disabled, caller-provided embeddings only, no Chroma embedding/network function, no cross-generation query.
+- Tests use temporary directories and verify close/delete behavior without normal paths.
+
+- [ ] **Step 1 — Write failing tests:** disposable open/reopen, exact vector count, query ranks, generation isolation, wrong dimension, telemetry config, close idempotence, and no normal-directory creation. Representative assertion: `assert factory.open(generation_b).count() == 0` after writing only generation A.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_chroma.py -v`; expect missing adapter failure.
+- [ ] **Step 3 — Minimal implementation:** wrap only required embedded Chroma calls and translate exceptions to safe dense-index errors.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_dense.py tests/test_rag_chroma.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/chroma.py tests/test_rag_chroma.py`; `uv run mypy src/aaos/rag/chroma.py tests/test_rag_chroma.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/chroma.py tests/test_rag_chroma.py`; `git commit -m "feat(rag): add isolated chroma dense index"`.
+
+### Task 9: Implement EmbeddingService and BGE-M3 Lifecycle
+
+**Files**
+- Create: `src/aaos/rag/embeddings.py`
+- Create: `tests/test_rag_embeddings.py`
+
+**Interfaces**
+- Consumes: selected Task 1 BGE-M3 package, local model identifier/cache configuration.
+- Produces: `EmbeddingService`, `EmbeddingModelMetadata`, `FakeEmbeddingService`, `BgeM3EmbeddingService`.
+
+**Requirements**
+- Lazily load only on first embed, validate model/revision/dimension, batch within 6 GB VRAM, and implement idempotent `release_model()` that drops model/tokenizer references, runs Python GC, calls CUDA cache release when available, and permits a later explicit lazy reload. `close()` permanently closes the adapter and calls `release_model()` once.
+- Ordinary tests monkeypatch the backend and never download a model; no simultaneous LM Studio requirement is introduced.
+
+- [ ] **Step 1 — Write failing tests:** lazy load, metadata fingerprint inputs, deterministic fake, batch/dimension checks, `release_model()`/reload, close sequence/idempotence, construction failure cleanup, CPU-safe behavior, and no import-time model/cache/network action. Representative assertion: `assert backend_factory.calls == 0` immediately after service construction.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_embeddings.py -v`; expect import failure.
+- [ ] **Step 3 — Minimal implementation:** build the protocol adapter with injected backend factory and explicit lifecycle.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS with fake backend.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_dependencies.py tests/test_rag_embeddings.py tests/test_inference_imports.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/embeddings.py tests/test_rag_embeddings.py`; `uv run mypy src/aaos/rag/embeddings.py tests/test_rag_embeddings.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/embeddings.py tests/test_rag_embeddings.py`; `git commit -m "feat(rag): add bge m3 embedding lifecycle"`.
+
+### Task 10: Add the Exclusive RAG Index Writer Lock
+
+**Files**
+- Create: `src/aaos/rag/lock.py`
+- Create: `tests/test_rag_lock.py`
+
+**Interfaces**
+- Consumes: absolute confined `RagRuntimePaths.index_lock_path`.
+- Produces: `RagIndexLock.acquire() -> RagIndexLease`.
+
+**Requirements**
+- Mirror the proven nonce/file-identity/reparse-safe ownership semantics without sharing Phase 3 lock state; all index-new and rebuild mutations require one lease.
+
+- [ ] **Step 1 — Write failing tests:** exclusive acquisition, malformed/reparse paths, owner-only idempotent release, replaced lock refusal, and mutation not started on contention. Representative assertion: `with pytest.raises(RagIndexLockUnavailable): lock.acquire()` while the first lease is held.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_lock.py -v`; expect import failure.
+- [ ] **Step 3 — Minimal implementation:** add the smallest distinct lock/lease types consistent with `documents.lock`.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_lock.py tests/test_rag_lock.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/lock.py tests/test_rag_lock.py`; `uv run mypy src/aaos/rag/lock.py tests/test_rag_lock.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/lock.py tests/test_rag_lock.py`; `git commit -m "feat(rag): add exclusive index writer lock"`.
+
+### Task 11: Implement Per-Document Cross-Store Indexing
+
+**Files**
+- Create: `src/aaos/rag/indexing.py`
+- Modify: `src/aaos/rag/repository.py`
+- Create: `tests/test_rag_indexing.py`
+- Modify: `tests/test_rag_repository.py`
+
+**Interfaces**
+- Consumes: repository, chunker, embedding service, dense factory, PREPARING generation.
+- Produces: `RagDocumentIndexer.prepare_document(...) -> DocumentIndexResult` and verification records.
+
+**Requirements**
+- State sequence: PREPARING -> chunk/spans/FTS -> embeddings -> Chroma -> cross-store verification -> publishable READY; empty/no-text becomes NOT_SEARCHABLE/NONE.
+- A failure records a safe FAILED code, leaves no READY row, and compensates generation-owned derived data without altering Phase 3.
+
+- [ ] **Step 1 — Write failing tests:** FULL/PARTIAL/NONE, READY-only visibility, embedding/dense/FTS failures, count/dimension/key mismatch, retry after PREPARING/FAILED, provenance verification, and no Phase 3 mutation. Representative assertion: `assert result.status is DocumentIndexStatus.READY` only after `verify_generation_document(...)` passes.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_indexing.py tests/test_rag_repository.py -v`; expect missing indexer behavior.
+- [ ] **Step 3 — Minimal implementation:** implement injected orchestration and explicit compensation; no writer acquisition yet.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_chunking.py tests/test_rag_chroma.py tests/test_rag_embeddings.py tests/test_rag_indexing.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py tests/test_rag_repository.py`; `git commit -m "feat(rag): add cross store document indexing"`.
+
+### Task 12: Implement Atomic `index-new` Publication
+
+**Files**
+- Modify: `src/aaos/rag/indexing.py`
+- Modify: `src/aaos/rag/repository.py`
+- Modify: `tests/test_rag_indexing.py`
+
+**Interfaces**
+- Consumes: active generation, writer lease, eligible current versions, optional internal document-version ID.
+- Produces: `RagIndexingService.index_new(document_version_id: int | None) -> IndexRunResult`.
+
+**Requirements**
+- Mint fresh PREPARING rows only for unrepresented eligible versions, publish all successful READY/NOT_SEARCHABLE changes in one SQLite transaction, increment revision exactly once for an actual represented-corpus change, and preserve revision for no-op/failure.
+- No URL/path/cmid input, retry loop, or partial READY publication.
+
+- [ ] **Step 1 — Write failing tests:** all eligible/one ID, invalid/ineligible ID, no-op, lock contention, successful revision +1, failure/no-op +0, fresh retry state, and invisible unpublished Chroma vectors. Representative assertion: `assert after.content_revision == before.content_revision + 1` for one successful publication.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_indexing.py -k "index_new or content_revision" -v`; expect orchestration failures.
+- [ ] **Step 3 — Minimal implementation:** acquire one lease, prepare selected docs, run integrity, and perform compare-and-swap publication/revision transaction.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_lock.py tests/test_rag_repository.py tests/test_rag_indexing.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `git commit -m "feat(rag): add atomic incremental indexing"`.
+
+### Task 13: Implement Blue/Green Rebuild, Integrity, and Recovery
+
+**Files**
+- Modify: `src/aaos/rag/indexing.py`
+- Modify: `src/aaos/rag/repository.py`
+- Create: `tests/test_rag_rebuild.py`
+
+**Interfaces**
+- Consumes: writer lease, full eligible current corpus, new config fingerprint.
+- Produces: `rebuild()`, `verify_generation()`, `recover_building_generations()`, typed status.
+
+**Requirements**
+- Build isolated BUILDING SQLite/Chroma state, verify counts/dimensions/keys/FTS/provenance/document statuses, atomically RETIRE old and ACTIVE new, never purge retired data.
+- Startup/status identifies abandoned BUILDING/PREPARING state; recovery may mark it failed/clean derived Chroma only under the writer lease and never changes ACTIVE.
+
+- [ ] **Step 1 — Write failing tests:** successful activation, failed embedding/Chroma/FTS/integrity preserving ACTIVE, activation transaction failure, abandoned BUILDING recovery, cross-store mismatch, and no retired purge. Representative assertion: `assert repository.get_active_generation().id == old_active.id` after injected rebuild failure.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_rebuild.py -v`; expect missing rebuild/recovery behavior.
+- [ ] **Step 3 — Minimal implementation:** add explicit integrity report and one atomic activation transaction.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_indexing.py tests/test_rag_rebuild.py tests/test_rag_chroma.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_rebuild.py`; `uv run mypy src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_rebuild.py`; `git commit -m "feat(rag): add blue green rebuild and recovery"`.
+
+## Checkpoint B — Index Infrastructure
+
+Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection, injected failure/crash review, no normal-path artifacts, `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src tests`, `uv lock --check`, and human confirmation that GPU lifecycle acceptance remains deferred before Task 14.
+
+### Task 14: Implement Typed Scope Resolution and Pinned Retrieval Snapshots
+
+**Files**
+- Create: `src/aaos/rag/retrieval.py`
+- Modify: `src/aaos/rag/repository.py`
+- Create: `tests/test_rag_retrieval.py`
+
+**Interfaces**
+- Consumes: `RagQuery`, active generation/revision, Phase 3 current/historical relationships.
+- Produces: immutable `QuerySnapshot`, normalized query, authorized chunk universe, dense and lexical candidate lists.
+
+**Requirements**
+- Course/global use current versions in the ACTIVE generation only. Historical requires explicit version IDs: prefer the ACTIVE generation when it contains every requested READY version; otherwise pin the newest RETIRED generation containing every requested READY version. Reject a request whose versions do not share one trusted generation; never merge generations or leak current/sibling course records.
+- Materialize selected chunk text/provenance inside one SQLite read snapshot; reject generation/revision changes or unresolved Chroma keys with `RETRIEVAL_INCONSISTENCY`.
+- Call `EmbeddingService.release_model()` in a `finally` boundary immediately after query embedding/dense search; lexical fusion/evidence handling then proceed without an embedding model resident, and no generation call can begin before release completes.
+
+- [ ] **Step 1 — Write failing tests:** no ACTIVE, invalid scope, course isolation, global current-only, explicit history, mixed unauthorized history, generation/revision pinning, stale vector, PREPARING/FAILED exclusion, and query normalization. Representative assertion: `assert snapshot.document_version_ids == (authorized_current_version_id,)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -v`; expect missing retrieval service.
+- [ ] **Step 3 — Minimal implementation:** add `HybridRetriever.retrieve_candidates(query) -> RetrievalCandidateSet` with injected embedding/dense/repository/lexical services. Pass the snapshot's authorized document-version IDs into `DenseIndex.search(...)` and its SQL predicates into lexical search before either rank list is produced.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_repository.py tests/test_rag_lexical.py tests/test_rag_dense.py tests/test_rag_retrieval.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py src/aaos/rag/repository.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/retrieval.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/retrieval.py src/aaos/rag/repository.py tests/test_rag_retrieval.py`; `git commit -m "feat(rag): add scoped retrieval snapshots"`.
+
+### Task 15: Add Deterministic RRF and Authoritative Candidate Verification
+
+**Files**
+- Modify: `src/aaos/rag/retrieval.py`
+- Modify: `tests/test_rag_retrieval.py`
+
+**Interfaces**
+- Consumes: ranked `DenseSearchHit`/`LexicalSearchHit` lists and pinned authorized universe.
+- Produces: ordered `FusedCandidate` tuples with dense/lexical/fused ranks.
+
+**Requirements**
+- Score `sum(1 / (rrf_k + rank))`, rank from one, combine no raw cosine/BM25 values, break ties by best component rank then deterministic chunk key.
+- Every candidate must resolve through authoritative SQLite and meet generation, READY, scope, current/history, and provenance checks; any detected stale/inconsistent hit fails the query safely.
+
+- [ ] **Step 1 — Write failing tests:** both-list, dense-only, lexical-only, ties, config change, duplicate hits, stale key, wrong generation/scope, missing provenance, and deterministic rerun. Representative assertion: `assert reciprocal_rank_fusion(dense, lexical, rrf_k=60)[0].chunk_key == shared_key`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -k "rrf or candidate" -v`; expect missing fusion/verification.
+- [ ] **Step 3 — Minimal implementation:** add pure `reciprocal_rank_fusion()` and verification before returning fused candidates.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_retrieval.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`; `git commit -m "feat(rag): add deterministic hybrid fusion"`.
+
+### Task 16: Implement Evidence Selection and Deterministic Sufficiency
+
+**Files**
+- Modify: `src/aaos/rag/retrieval.py`
+- Create: `tests/test_rag_evidence.py`
+
+**Interfaces**
+- Consumes: verified fused candidates and configured evidence/sufficiency policy.
+- Produces: `RetrievedEvidence` with query-local IDs and `SufficiencyDecision`.
+
+**Requirements**
+- Deduplicate logical evidence, suppress excessive adjacent overlap, preserve useful source diversity while relevance leads, and enforce both chunk and token budgets.
+- Evidence IDs are unpredictable request-local capabilities mapped only to evidence supplied in that request; retain conflicting valid sources.
+- The deterministic gate returns sufficient/partially sufficient/insufficient facts; clear insufficiency prevents any factual `ModelGateway` call.
+
+- [ ] **Step 1 — Write failing tests:** duplicate/neighbor suppression, multi-document diversity, 4–8 configurable chunk target, token cap, deterministic ordering, query-local ID isolation, conflict retention, and conservative sufficiency/false-accept cases. Representative assertion: `assert sum(item.token_count for item in selected) <= config.max_evidence_tokens`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_evidence.py -v`; expect missing selector/gate.
+- [ ] **Step 3 — Minimal implementation:** add `EvidenceSelector.select()` and versioned `EvidenceSufficiencyGate.evaluate()` pure logic with no LLM decision.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_retrieval.py tests/test_rag_evidence.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py tests/test_rag_evidence.py`; `uv run mypy src/aaos/rag/retrieval.py tests/test_rag_evidence.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/retrieval.py tests/test_rag_evidence.py`; `git commit -m "feat(rag): select and gate trusted evidence"`.
+
+## Checkpoint C — Hybrid Retrieval
+
+Require deterministic dense/lexical/RRF tests, current/historical/course-isolation tests, stale-vector fail-closed tests, evidence-budget and sufficiency review, no-reranker/no-fallback assertions, Checkpoints A–B regressions, Ruff, strict mypy, and a human review of the complete authorized-universe-before-ranking path before Task 17.
+
+### Task 17: Implement Grounded Structured Generation Through ModelGateway
+
+**Files**
+- Modify: `src/aaos/rag/contracts.py`
+- Create: `src/aaos/rag/generation.py`
+- Create: `tests/test_rag_generation.py`
+
+**Interfaces**
+- Consumes: existing `ModelGateway`, `ChatMessage`/`ChatRequest`, `RagQuery`, selected evidence and sufficiency decision.
+- Produces: validated internal `GroundedModelOutput` and safe generation errors.
+
+**Requirements**
+- `GroundedAnswerRequest` contains question, detected/explicit answer language, pinned generation/revision, selected evidence, and policy version only.
+- System prompt labels evidence as untrusted data and grants no tools/actions; model returns closed JSON with status, claims, and evidence IDs.
+- Retry exactly once only for schema-invalid output using a constrained repair request; do not retry transport/model/citation/policy failures.
+
+- [ ] **Step 1 — Write failing tests:** valid first response, malformed then valid repair, malformed twice, invalid status/missing fields, Arabic/English language policy, injection strings remaining evidence data, conflict response citing both, and no call on insufficient evidence. Representative assertion: `assert fake_gateway.generate_calls == 2` for one malformed output followed by one valid repair.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_generation.py -k "structured or prompt or language" -v`; expect missing generator.
+- [ ] **Step 3 — Minimal implementation:** build trusted messages, call `await ModelGateway.generate(ChatRequest(...))`, parse strict JSON without adapter-specific coupling, and enforce one repair maximum.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS with fake gateway.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_inference_models.py tests/test_model_gateway.py tests/test_rag_evidence.py tests/test_rag_generation.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/contracts.py src/aaos/rag/generation.py tests/test_rag_generation.py`; `uv run mypy src/aaos/rag/contracts.py src/aaos/rag/generation.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/contracts.py src/aaos/rag/generation.py tests/test_rag_generation.py`; `git commit -m "feat(rag): add grounded model generation"`.
+
+### Task 18: Add Claim-Level Citation Validation and Rendering
+
+**Files**
+- Modify: `src/aaos/rag/contracts.py`
+- Modify: `src/aaos/rag/generation.py`
+- Modify: `tests/test_rag_generation.py`
+
+**Interfaces**
+- Consumes: `GroundedModelOutput`, exact request-local evidence map and resolved spans.
+- Produces: typed `RagAnswer` and `RenderedRagResponse` with deterministic citations.
+
+**Requirements**
+- Every factual claim has one or more request-supplied evidence IDs; unseen/reused IDs, empty citations, unresolved pages/version/course, or partial validation reject the whole response.
+- Trusted code renders document title plus page or page range; the model never renders citation strings. PARTIAL_ANSWER exposes supported claims and identifies unsupported requested portions without inventing content.
+
+- [ ] **Step 1 — Write failing tests:** ANSWER/PARTIAL/INSUFFICIENT, hallucinated/cross-request IDs, uncited claim, missing provenance, exact single/range citation, conflicting citations, no partially validated display, and operational error separation. Representative assertion: `with pytest.raises(InvalidEvidenceReferenceError): validator.validate(output, request_evidence)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_generation.py -k "citation or answer" -v`; expect validation/render failures.
+- [ ] **Step 3 — Minimal implementation:** add strict answer validator and deterministic renderer over the already materialized evidence map.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_contracts.py tests/test_rag_generation.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/contracts.py src/aaos/rag/generation.py tests/test_rag_generation.py`; `uv run mypy src/aaos/rag/contracts.py src/aaos/rag/generation.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/contracts.py src/aaos/rag/generation.py tests/test_rag_generation.py`; `git commit -m "feat(rag): validate claims and render citations"`.
+
+### Task 19: Expose the Guarded LocalRagService Facade
+
+**Files**
+- Modify: `src/aaos/rag/__init__.py`
+- Create: `src/aaos/rag/service.py`
+- Create: `tests/test_rag_service.py`
+
+**Interfaces**
+- Consumes: `HybridRetriever`, `EvidenceSelector`, `EvidenceSufficiencyGate`, grounded generator/renderer.
+- Produces: `LocalRagService.ask(RagQuery) -> RenderedRagResponse` (async).
+
+**Requirements**
+- Preserve scope/snapshot/evidence/citation gates in one mandatory path usable by Phase 5; no lower-level public bypass, chat history, tools, or fallback. Require the retriever's verified embedding-release boundary before any `ModelGateway.generate()` call.
+
+- [ ] **Step 1 — Write failing tests:** successful/partial/insufficient, no gateway call when insufficient, dense/lexical/model failure propagation, exact one query snapshot, embedding release before gateway generation, no history/tools, and facade exports only intended types. Representative assertion: `assert (await service.ask(unsupported_query)).answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_service.py -v`; expect missing facade.
+- [ ] **Step 3 — Minimal implementation:** add narrow orchestration with no catch-all response fallback.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_retrieval.py tests/test_rag_evidence.py tests/test_rag_generation.py tests/test_rag_service.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/__init__.py src/aaos/rag/service.py tests/test_rag_service.py`; `uv run mypy src/aaos/rag tests/test_rag_service.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/__init__.py src/aaos/rag/service.py tests/test_rag_service.py`; `git commit -m "feat(rag): expose guarded local rag service"`.
+
+## Checkpoint D — Grounded Generation and Citations
+
+Require all fake-ModelGateway tests, strict public status review, exact one-repair proof, claim/provenance/cross-request ID failures, multilingual/conflict/injection fixtures, no-call-on-insufficient proof, no tools/fallback review, and Checkpoints A–C verification before Task 20.
+
+### Task 20: Compose and Own Phase4RagRuntime
+
+**Files**
+- Create: `src/aaos/rag/runtime.py`
+- Create: `tests/test_rag_runtime.py`
+- Create: `tests/test_rag_imports.py`
+
+**Interfaces**
+- Consumes: injected paths/config/gateway, database constructors, repository, dense factory, embedding factory, services.
+- Produces: `build_phase4_runtime(...) -> Phase4RagRuntime` owning Engine, dense resources, embedding lifecycle and services.
+
+**Requirements**
+- Idempotent close order: services stop -> dense indexes close -> embedding closes/releases GPU -> SQLAlchemy engine disposes. Construction failures close only owned resources.
+- Import/construction without explicit command must not migrate/create normal DB/Chroma, load BGE-M3, contact LM Studio/network, or index.
+
+- [ ] **Step 1 — Write failing tests:** ownership/close order, double close, context manager, each construction-failure point, engine disposal, side-effect-free imports, no Phase3 runtime dependency, and no normal path artifacts. Representative assertion: `assert events == ["dense.close", "embedding.close", "engine.dispose"]`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_runtime.py tests/test_rag_imports.py -v`; expect import failures.
+- [ ] **Step 3 — Minimal implementation:** compose explicit factories and track ownership with deterministic cleanup.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_imports.py tests/test_inference_imports.py tests/test_rag_runtime.py tests/test_rag_imports.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/runtime.py tests/test_rag_runtime.py tests/test_rag_imports.py`; `uv run mypy src/aaos/rag/runtime.py tests/test_rag_runtime.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/runtime.py tests/test_rag_runtime.py tests/test_rag_imports.py`; `git commit -m "feat(rag): own local rag runtime lifecycle"`.
+
+### Task 21: Add the Exact Safe RAG CLI
+
+**Files**
+- Create: `src/aaos/rag/cli.py`
+- Modify: `src/aaos/cli.py`
+- Create: `tests/test_rag_cli.py`
+
+**Interfaces**
+- Consumes: lazy runtime builder, argv and injected stdin/stdout.
+- Produces: exact approved index/status/ask command surface and safe exit codes.
+
+**Requirements**
+- Commands: `rag index-new [--document-version-id ID]`, `rag rebuild`, `rag status`, and mutually exclusive `rag ask --course-id ID|--global|--document-version-id ID`.
+- Ask reads one nonblank question interactively/stdin; no `--question`, URL, file path, Moodle cmid, arbitrary generation, or arbitrary model argument.
+- Output contains answer/citations or fixed safe operational/status fields only; never raw question/chunk/model response/path/secret.
+
+- [ ] **Step 1 — Write failing tests:** exact dispatch, every valid command, exclusivity/missing scope, stdin question, rejected flags, no import-time runtime, safe errors/status, no question echo, no cross-command routing. Representative assertion: `assert "private question" not in captured.out + captured.err`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_cli.py -v`; expect command-not-supported failures.
+- [ ] **Step 3 — Minimal implementation:** add narrow parsers/renderers and lazy top-level dispatch consistent with existing CLI style.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_cli.py tests/test_doctor_cli.py tests/test_rag_cli.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/cli.py src/aaos/rag/cli.py tests/test_rag_cli.py`; `uv run mypy src/aaos/cli.py src/aaos/rag/cli.py tests/test_rag_cli.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/cli.py src/aaos/rag/cli.py tests/test_rag_cli.py`; `git commit -m "feat(rag): add local rag command surface"`.
+
+## Checkpoint E — Runtime and CLI
+
+Require runtime construction/cleanup/import tests, exact CLI grammar/privacy/negative-surface tests, all earlier checkpoints, full Ruff/strict mypy/lock checks, and review that no normal path is touched without an explicit command and no Phase 5 capability exists before Task 22.
+
+### Task 22: Add Evaluation Dataset, Classical IR Metrics, and Ablations
+
+**Files**
+- Create: `src/aaos/rag/evaluation/__init__.py`
+- Create: `src/aaos/rag/evaluation/contracts.py`
+- Create: `src/aaos/rag/evaluation/metrics.py`
+- Create: `tests/test_rag_evaluation.py`
+
+**Interfaces**
+- Consumes: sanitized gold manifests and ranked retrieval outputs.
+- Produces: deterministic split manifest, Recall@1/3/5/10, MRR, nDCG, subgroup/sufficiency/ablation reports.
+
+**Requirements**
+- Validate 80–120 target cases with question language, answer language, expected status, scope, supporting internal document versions/pages, and category; keep real private questions/content untracked.
+- Deterministically split about 70/30 calibration/held-out by stable case ID, lock held-out before tuning, and cover English, Arabic, cross-language, lexical, semantic, multi-source, conflicting, partial, unsupported, current/history, and course isolation.
+- Compare dense-only, FTS-only, hybrid RRF and a controlled ~300/~500/~700 chunk ablation; no giant search. If hybrid has no meaningful benefit, checkpoint pauses for design review.
+
+- [ ] **Step 1 — Write failing tests:** schema/privacy, duplicate IDs, subgroup coverage, deterministic split/no leakage, hand-calculated recall/MRR/nDCG, sufficiency false acceptance/refusal, baseline labels, and fingerprinted run manifests. Representative assertion: `assert calibration_ids.isdisjoint(held_out_ids)`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_evaluation.py -v`; expect missing evaluation modules.
+- [ ] **Step 3 — Minimal implementation:** implement pure manifest/metric/aggregation functions and explicit ablation configurations.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_evaluation.py tests/test_rag_retrieval.py tests/test_rag_evidence.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/evaluation tests/test_rag_evaluation.py`; `uv run mypy src/aaos/rag/evaluation tests/test_rag_evaluation.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/evaluation/__init__.py src/aaos/rag/evaluation/contracts.py src/aaos/rag/evaluation/metrics.py tests/test_rag_evaluation.py`; `git commit -m "feat(rag): add deterministic retrieval evaluation"`.
+
+### Task 23: Add Explicit Local-Only RAGAS Evaluation
+
+**Files**
+- Create: `src/aaos/rag/evaluation/ragas_adapter.py`
+- Create: `tests/test_rag_ragas.py`
+
+**Interfaces**
+- Consumes: Task 1 verified RAGAS APIs, explicit local evaluator/embeddings, evaluation cases/results.
+- Produces: supplementary groundedness/relevance/context metrics plus recorded evaluator configuration.
+
+**Requirements**
+- No runtime import/dependency on RAGAS; no implicit OpenAI/Gemini/Anthropic credentials/provider; missing local evaluator fails explicitly.
+- Record RAGAS version, evaluator model/embeddings, metric set, dataset version, run ID; cloud evaluation requires future separate authorization and sanitized data.
+
+- [ ] **Step 1 — Write failing tests:** local evaluator required, cloud provider/env fallback rejected, unavailable local evaluator failure, no runtime import, safe manifest, and current selected metric API behavior. Representative assertion: `with pytest.raises(LocalEvaluatorUnavailableError): adapter.evaluate(run)` when the configured local evaluator is absent.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_ragas.py -v`; expect missing adapter.
+- [ ] **Step 3 — Minimal implementation:** create an injected RAGAS adapter with an allowlisted local evaluator factory and zero provider auto-discovery.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS with local fakes.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_evaluation.py tests/test_rag_ragas.py tests/test_rag_imports.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/evaluation/ragas_adapter.py tests/test_rag_ragas.py`; `uv run mypy src/aaos/rag/evaluation/ragas_adapter.py tests/test_rag_ragas.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/evaluation/ragas_adapter.py tests/test_rag_ragas.py`; `git commit -m "feat(rag): add local only ragas evaluation"`.
+
+### Task 24: Add Human, Safety, and Performance Evaluation Reports
+
+**Files**
+- Create: `src/aaos/rag/evaluation/reports.py`
+- Create: `tests/test_rag_reports.py`
+
+**Interfaces**
+- Consumes: dataset/run manifests, retrieval/generation/safety timings and human labels.
+- Produces: sanitized reproducible `EvaluationSummary`/acceptance artifact files under injected output roots.
+
+**Requirements**
+- Report human claim-evidence support, citation appropriateness, completeness, Arabic quality, partial/conflicting/unsupported behavior; injection fixtures remain data and have no tools.
+- Report cold/warm embedding, dense, FTS, RRF/selection, generation/total latency, indexing throughput, RAM, GPU memory where measurable, Chroma size, corpus/config fingerprints and model identifiers; make no SLA claim before measurement.
+- Never serialize real questions, chunks, answers, document titles, or private content into repository artifacts.
+
+- [ ] **Step 1 — Write failing tests:** required human fields, injection outcomes, latency/resource units, fingerprint lineage, aggregate-only privacy scan, deterministic JSON, and injected output root. Representative assertion: `assert set(report) <= SAFE_ACCEPTANCE_FIELDS`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_reports.py -v`; expect missing reporter.
+- [ ] **Step 3 — Minimal implementation:** add typed aggregate collectors/renderers with allowlisted fields.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_evaluation.py tests/test_rag_ragas.py tests/test_rag_reports.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/evaluation/reports.py tests/test_rag_reports.py`; `uv run mypy src/aaos/rag/evaluation/reports.py tests/test_rag_reports.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/evaluation/reports.py tests/test_rag_reports.py`; `git commit -m "feat(rag): add safe evaluation reporting"`.
+
+## Checkpoint F — Evaluation Infrastructure
+
+Require deterministic dataset/split/metric tests, no held-out leakage, dense/lexical/hybrid and chunk ablation harnesses, sufficiency metrics, local-only RAGAS privacy proof, sanitized human/injection/performance outputs, no private corpus committed, no cloud fallback, and human approval of the calibration protocol before Task 25.
+
+### Task 25: Add Disposable End-to-End and Crash-Recovery Integration
+
+**Files**
+- Create: `tests/test_rag_integration.py`
+- Create: `tests/test_rag_crash_recovery.py`
+- Modify: `src/aaos/rag/indexing.py`
+- Modify: `src/aaos/rag/retrieval.py`
+- Modify: `src/aaos/rag/generation.py`
+- Modify: `src/aaos/rag/service.py`
+- Modify: `src/aaos/rag/runtime.py`
+
+**Interfaces**
+- Consumes: migrated disposable SQLite, disposable Chroma, deterministic pages, fake embeddings and fake ModelGateway.
+- Produces: full offline proof from Phase 3 rows through indexing/retrieval/answer/citations.
+
+**Requirements**
+- Exercise index-new, no-op revision, rebuild/activation, current/history/course scope, cross-store crash injection at every boundary, startup recovery, injection evidence, no fallback, and deterministic repeated answers/citations.
+- Tests inspect that normal DB/Chroma paths remain absent and Phase 3 rows remain unchanged.
+
+- [ ] **Step 1 — Write failing tests:** one complete bilingual corpus flow plus parametrized crashes before/after SQLite, FTS, Chroma, READY, revision, and activation commits. Representative assertion: `assert answer.citations[0].page_start == gold_page` after the disposable end-to-end query.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_integration.py tests/test_rag_crash_recovery.py -v`; expect integration gaps.
+- [ ] **Step 3 — Minimal implementation:** fix only missing composition/recovery behavior in existing Phase 4 modules, test-first for each observed failure; do not change frozen Phase 3.
+- [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests -k rag -v`.
+- [ ] **Step 6 — Static/full checks:** `uv run ruff format --check .`; `uv run ruff check .`; `uv run mypy src tests`; `uv lock --check`; `git diff --check`.
+- [ ] **Step 7 — Commit:** inspect `git status --short`, then stage only changed Task 25 paths explicitly: `git add tests/test_rag_integration.py tests/test_rag_crash_recovery.py src/aaos/rag/indexing.py src/aaos/rag/retrieval.py src/aaos/rag/generation.py src/aaos/rag/service.py src/aaos/rag/runtime.py`; inspect `git diff --cached`; `git commit -m "test(rag): prove disposable end to end recovery"`.
+
+### Task 26: Add Controlled Target-Hardware Acceptance and Evidence
+
+**Files**
+- Create: `tests/live/test_phase4_local_rag_acceptance.py`
+- Modify: `src/aaos/rag/evaluation/reports.py`
+- Modify: `tests/test_rag_reports.py`
+
+**Interfaces**
+- Consumes: explicit human opt-in, separately authorized disposable/real corpus paths, real BGE-M3, local configured `ModelGateway`, locked evaluation config/held-out set.
+- Produces: safe aggregate acceptance report; no automatic tag.
+
+**Requirements**
+- Default pytest skips before any model/storage/network action. Explicit acceptance separately verifies BGE-M3 model identity/dimension, indexing, GPU/RAM lifecycle on RTX 4050 6 GB, embedding release before local generation, local LM Studio availability, answer/citation behavior, held-out IR/RAGAS/human/safety/performance results, and no normal-path use unless that exact run is human-authorized.
+- If BGE-M3 cannot run/release safely, local ModelGateway unavailable, hybrid benefit absent, or held-out/security gates fail, stop for architecture/human review. Do not auto-switch model, worker process, cloud evaluator, or simpler retrieval.
+
+- [ ] **Step 1 — Write failing/default-skip tests:** prove no opt-in means skip with zero side effects, exact required environment/authorization fields, safe output schema, model/GPU lifecycle markers, and no freeze tag operation. Representative assertion: `assert not normal_database_path.exists() and not normal_chroma_path.exists()` after the default-skipped test collection.
+- [ ] **Step 2 — Run RED:** run the isolated acceptance test with fake acceptance dependencies enabled; expect missing acceptance wiring, while ordinary `uv run pytest tests/live/test_phase4_local_rag_acceptance.py -v` remains safely skipped.
+- [ ] **Step 3 — Minimal implementation:** add guarded acceptance composition and aggregate report fields; never embed private corpus text in output.
+- [ ] **Step 4 — Run GREEN offline:** run guarded tests with fakes; expect PASS and default skip.
+- [ ] **Step 5 — Controlled real acceptance:** only after separate human authorization, run the exact opted-in command recorded by the implementation review, then complete held-out human review and capture sanitized aggregates.
+- [ ] **Step 6 — Final verification:** `uv run pytest`; `uv run ruff format --check .`; `uv run ruff check .`; `uv run mypy src tests`; `uv lock --check`; `git diff --check`; verify `data/database/aaos.db` and `data/rag/chroma/` were untouched unless explicitly authorized.
+- [ ] **Step 7 — Commit:** after human review of safe acceptance evidence, `git add tests/live/test_phase4_local_rag_acceptance.py src/aaos/rag/evaluation/reports.py tests/test_rag_reports.py`; `git commit -m "test(rag): add controlled phase4 acceptance"`. Do not create `phase-04-passed`.
+
+## Checkpoint G — Controlled Acceptance
+
+Require fresh full deterministic verification, migration upgrade/downgrade, disposable SQLite/Chroma E2E, crash recovery, prompt injection/no-fallback tests, real BGE-M3 lifecycle on the target RTX 4050 6 GB, real local ModelGateway generation, locked held-out classical IR/RAGAS/multilingual/human review, performance/resource report, sanitized artifact review, security review, and explicit human acceptance. Tagging remains a separate future authorization.
+
+## Evaluation and Acceptance Sequence
+
+1. Build sanitized deterministic fixtures and run all unit/persistence/adapter/integration tests with fake embeddings/gateway.
+2. Create the private 80–120-case gold manifest from authorized Phase 3 content; keep content untracked, commit only schema/tooling/safe aggregates.
+3. Freeze deterministic 70/30 calibration/held-out split by case ID.
+4. On calibration only, compare chunk sizes near 300/500/700, candidate depths, RRF constant, evidence budgets and sufficiency thresholds; record config fingerprints.
+5. Compare dense-only, FTS5-only and hybrid RRF. If hybrid lacks meaningful useful benefit, stop for design review.
+6. Lock config/policy versions, rebuild a fresh generation, and run held-out Recall@1/3/5/10, MRR, nDCG, subgroup and sufficiency metrics.
+7. Run explicit local-only RAGAS supplementary metrics; unavailable local evaluator is a failure, never a cloud fallback.
+8. Perform held-out human claim/evidence/citation/completeness/Arabic/partial/conflict/unsupported review.
+9. Run injection and no-tools/no-secret/no-cross-scope safety evaluation.
+10. Measure cold/warm latency, throughput, RAM, GPU memory and storage; verify embedding release before generation.
+11. Produce an aggregate acceptance summary containing dataset/corpus/config/model/generation/revision fingerprints and no private content.
+12. Stop for human Phase 4 acceptance. A later explicit command may create `phase-04-passed`; this plan never does so automatically.
+
+## Exact Final Verification Commands
+
+```powershell
+uv run pytest
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy src tests
+uv lock --check
+git diff --check
+```
+
+Additionally require the Phase 4 focused migration, disposable SQLite, disposable Chroma, chunking, index-new, rebuild, crash recovery, scope/isolation, citation, injection, no-fallback, IR, RAGAS, multilingual, GPU lifecycle, local generation, held-out human review, and acceptance-report gates named in Tasks 1–26 and Checkpoints A–G.
+
+## Specification Coverage Matrix
+
+| # | Approved requirement | Task(s) |
+| ---: | --- | --- |
+| 1 | Phase 3 read-only dependency | 4, 11, 20, 25 |
+| 2 | Document-only corpus | 4, 14, 25 |
+| 3 | Stateless Phase 4 | 2, 19, 21 |
+| 4 | Explicit Course/Global/Historical scopes | 2, 14, 21 |
+| 5 | Current-version default | 4, 14 |
+| 6 | Historical isolation | 4, 14, 25 |
+| 7 | Deterministic structure-aware chunking | 5 |
+| 8 | Exact source spans | 3, 5, 18 |
+| 9 | Deterministic chunk keys | 3, 5 |
+| 10 | FULL/PARTIAL/NONE | 2, 5, 11 |
+| 11 | NOT_SEARCHABLE | 2, 3, 11 |
+| 12 | RagIndexGeneration | 2–4 |
+| 13 | content_revision | 3, 4, 12, 14 |
+| 14 | Deterministic fingerprint | 2, 13, 22 |
+| 15 | PREPARING/READY states | 2, 3, 11–13 |
+| 16 | READY-only retrieval | 6, 11, 14 |
+| 17 | SQLite authority | 3, 4, 14–15 |
+| 18 | FTS5/BM25 | 3, 6, 14 |
+| 19 | Lexical normalizer versioning | 2, 6 |
+| 20 | Chroma rebuildability | 7–8, 13 |
+| 21 | Generation isolation | 3, 8, 13–15 |
+| 22 | DenseIndex abstraction | 7–8 |
+| 23 | BGE-M3 EmbeddingService | 1, 9 |
+| 24 | Verified GPU lifecycle | 9, 20, 26 |
+| 25 | No mandatory simultaneous embedding+LLM residency | 9, 20, 26 |
+| 26 | Hybrid dense + lexical | 14–15, 22 |
+| 27 | RRF | 15, 22 |
+| 28 | No reranker v1 | 15, 19, 25 |
+| 29 | Evidence selection | 16 |
+| 30 | Token/chunk budget | 2, 16 |
+| 31 | Deterministic sufficiency | 16, 22 |
+| 32 | No unsupported fallback | 16, 19, 25 |
+| 33 | Conflicting evidence | 16–18, 22 |
+| 34 | Multilingual retrieval | 5–6, 9, 22 |
+| 35 | Answer-language policy | 17, 22 |
+| 36 | ModelGateway reuse | 17, 20, 26 |
+| 37 | Typed RagAnswer | 2, 18 |
+| 38 | ANSWER | 2, 18 |
+| 39 | PARTIAL_ANSWER | 2, 18 |
+| 40 | INSUFFICIENT_EVIDENCE | 2, 16, 18 |
+| 41 | Bounded retry | 17 |
+| 42 | Query-local evidence IDs | 16, 18 |
+| 43 | Claim-level citations | 18 |
+| 44 | Exact citation provenance | 5, 18 |
+| 45 | Prompt injection handling | 17, 24–26 |
+| 46 | No tools | 17, 19, 24 |
+| 47 | LocalRagService facade | 19 |
+| 48 | Phase 5 cannot bypass safeguards | 19–20 |
+| 49 | Single index writer | 10, 12–13 |
+| 50 | Generation/revision pinning | 4, 14 |
+| 51 | index-new lease | 10, 12 |
+| 52 | Blue/green rebuild | 13 |
+| 53 | Failed rebuild preserves ACTIVE | 13, 25 |
+| 54 | No retired-generation purge | 13 |
+| 55 | Cross-store recovery | 11–13, 25 |
+| 56 | Activation integrity gate | 13, 25 |
+| 57 | Side-effect-free imports | 1, 9, 20–21 |
+| 58 | Disposable storage | 3, 8, 25–26 |
+| 59 | No normal-path live writes without authorization | 20–21, 25–26 |
+| 60 | Safe errors | 2, 8–21 |
+| 61 | Safe logging | 17–21, 24–26 |
+| 62 | index-new CLI | 21 |
+| 63 | rebuild CLI | 21 |
+| 64 | status CLI | 21 |
+| 65 | ask CLI | 21 |
+| 66 | Interactive question input | 21 |
+| 67 | No URL/path/cmid | 21 |
+| 68 | Deterministic evaluation | 22–24 |
+| 69 | Recall@1/3/5/10 | 22 |
+| 70 | MRR | 22 |
+| 71 | nDCG | 22 |
+| 72 | Dense-only baseline | 22 |
+| 73 | Lexical-only baseline | 22 |
+| 74 | Hybrid baseline | 22 |
+| 75 | Multilingual subgroup metrics | 22, 26 |
+| 76 | Calibration/held-out split | 22, 26 |
+| 77 | Sufficiency metrics | 22 |
+| 78 | RAGAS | 1, 23, 26 |
+| 79 | Explicit local evaluator | 23, 26 |
+| 80 | No cloud fallback | 23, 26 |
+| 81 | Human claim/evidence review | 24, 26 |
+| 82 | Injection evaluation | 17, 24–26 |
+| 83 | Latency/resources | 24, 26 |
+| 84 | Corpus/config fingerprinting | 2, 22, 24, 26 |
+| 85 | Sanitized acceptance artifacts | 22–24, 26 |
+| 86 | Explicit human freeze gate | 26 |
+
+## Plan Self-Review Checklist
+
+- [ ] Re-read the complete approved design and this plan together.
+- [ ] Verify all 86 matrix rows map to concrete RED/GREEN tasks.
+- [ ] Verify every interface consumed is produced by an earlier task.
+- [ ] Verify every coding task has a focused RED command, expected failure, minimal GREEN, regression/static verification, and exact commit.
+- [ ] Search for unresolved placeholder language and undefined symbols/paths.
+- [ ] Verify Phase 3 schema/semantics/runtime remain untouched except read-only foreign-key relationships.
+- [ ] Verify no Phase 5 agents/history/tools/actions enter any task.
+- [ ] Verify normal tests never download/load BGE-M3, contact LM Studio/network, or require a GPU.
+- [ ] Verify RAGAS cannot discover/use cloud providers automatically.
+- [ ] Verify every database/Chroma/evaluation test injects disposable paths.
+- [ ] Verify no task creates `phase-04-passed` or stages `reflex`.
+- [ ] Stop for architecture review if Task 1 dependency compatibility, BGE-M3 lifecycle, hybrid-benefit, or controlled acceptance gates contradict the approved design.
+
+## Implementation Handoff Boundary
+
+This document is the coding plan only. Do not execute Task 1 until a human has reviewed and explicitly approved this plan. After approval, execute tasks in order and stop at Checkpoints A–G for the specified reviews.
