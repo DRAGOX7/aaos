@@ -229,6 +229,146 @@ def test_fetch_follows_one_manual_redirect_and_reads_the_body_once() -> None:
     ]
 
 
+def test_fetch_follows_authorized_resource_html_wrapper() -> None:
+    wrapper = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=(
+            f'<div class="resourceworkaround"><a href="{PLUGINFILE_URL}">file</a></div>'
+        ).encode(),
+    )
+    final = FakeResponse(
+        200,
+        headers={
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="lecture.pdf"',
+        },
+        body=b"%PDF-1.7 wrapper continuation",
+    )
+    request = FakeRequest([wrapper, final])
+
+    fetched = BrowserAuthenticatedFetcher(
+        context=AnyContext(FakeContext(request)), authorizer=authorizer()
+    ).fetch(selection())
+
+    assert fetched.body == b"%PDF-1.7 wrapper continuation"
+    assert final.body_reads == 1
+    assert request.calls == [
+        (RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000}),
+        (PLUGINFILE_URL, {"max_redirects": 0, "timeout": 120_000}),
+    ]
+
+
+def test_fetch_ignores_non_anchor_pluginfile_and_follows_one_authorized_anchor() -> None:
+    wrapper = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=(
+            f'<link rel="icon" href="{WWWROOT}/pluginfile.php/9/mod_resource/content/1/icon.ico">'
+            f'<div class="resourceworkaround"><a href="{PLUGINFILE_URL}">file</a></div>'
+        ).encode(),
+    )
+    final = FakeResponse(200, headers={"content-type": "application/pdf"}, body=b"%PDF-wrapper")
+    request = FakeRequest([wrapper, final])
+
+    fetched = BrowserAuthenticatedFetcher(
+        context=AnyContext(FakeContext(request)), authorizer=authorizer()
+    ).fetch(selection())
+
+    assert fetched.body == b"%PDF-wrapper"
+    assert request.calls == [
+        (RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000}),
+        (PLUGINFILE_URL, {"max_redirects": 0, "timeout": 120_000}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        WWWROOT + "/course/view.php?id=3",
+        "https://other.example.edu/current/pluginfile.php/7/mod_resource/content/1/a.pdf",
+        WWWROOT + "/pluginfile.php/7/mod_folder/content/1/a.pdf",
+        WWWROOT + "/mod/resource/view.php?id=43",
+    ],
+)
+def test_fetch_rejects_wrapper_without_an_authorized_resource_continuation(href: str) -> None:
+    wrapper = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=f'<div class="resourceworkaround"><a href="{href}">link</a></div>'.encode(),
+    )
+    request = FakeRequest([wrapper])
+
+    with pytest.raises(DocumentIngestionFailure) as caught:
+        BrowserAuthenticatedFetcher(
+            context=AnyContext(FakeContext(request)), authorizer=authorizer()
+        ).fetch(selection())
+
+    assert_failure(caught, IngestionErrorCode.UNAUTHORIZED_REDIRECT)
+    assert request.calls == [(RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000})]
+
+
+def test_fetch_rejects_wrapper_with_multiple_authorized_continuations() -> None:
+    second_pluginfile = WWWROOT + "/pluginfile.php/8/mod_resource/content/1/other.pdf"
+    wrapper = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=(
+            f'<a href="{PLUGINFILE_URL}">first</a><a href="{second_pluginfile}">second</a>'
+        ).encode(),
+    )
+    request = FakeRequest([wrapper])
+
+    with pytest.raises(DocumentIngestionFailure) as caught:
+        BrowserAuthenticatedFetcher(
+            context=AnyContext(FakeContext(request)), authorizer=authorizer()
+        ).fetch(selection())
+
+    assert_failure(caught, IngestionErrorCode.UNAUTHORIZED_REDIRECT)
+    assert request.calls == [(RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000})]
+
+
+def test_fetch_accepts_a_direct_2xx_pdf_response() -> None:
+    response = FakeResponse(
+        200,
+        headers={"content-type": "application/pdf"},
+        body=b"%PDF-direct",
+    )
+    request = FakeRequest([response])
+
+    fetched = BrowserAuthenticatedFetcher(
+        context=AnyContext(FakeContext(request)), authorizer=authorizer()
+    ).fetch(selection())
+
+    assert fetched.body == b"%PDF-direct"
+    assert request.calls == [(RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000})]
+
+
+def test_fetch_rejects_an_html_continuation_without_recursing() -> None:
+    wrapper = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=f'<a href="{PLUGINFILE_URL}">file</a>'.encode(),
+    )
+    continuation = FakeResponse(
+        200,
+        headers={"content-type": "text/html"},
+        body=b"<html><body>unexpected</body></html>",
+    )
+    request = FakeRequest([wrapper, continuation])
+
+    with pytest.raises(DocumentIngestionFailure) as caught:
+        BrowserAuthenticatedFetcher(
+            context=AnyContext(FakeContext(request)), authorizer=authorizer()
+        ).fetch(selection())
+
+    assert_failure(caught, IngestionErrorCode.UNAUTHORIZED_REDIRECT)
+    assert request.calls == [
+        (RESOURCE_URL, {"max_redirects": 0, "timeout": 120_000}),
+        (PLUGINFILE_URL, {"max_redirects": 0, "timeout": 120_000}),
+    ]
+
+
 class AnyContext:
     """Test adapter that keeps fake transport details out of production types."""
 

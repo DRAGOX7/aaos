@@ -49,6 +49,19 @@ def local_resource_https(
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if mode["value"] == "wrapper":
+                    body = (
+                        '<div class="resourceworkaround">'
+                        '<a href="/current/pluginfile.php/7/mod_resource/content/1/lecture.pdf">'
+                        "file"
+                        "</a></div>"
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 locations = {
                     "success": "/current/pluginfile.php/7/mod_resource/content/1/lecture.pdf",
                     "cross_origin": "https://other.example.test/file.pdf",
@@ -176,6 +189,23 @@ def test_real_msedge_request_context_fetches_an_exact_direct_resource_response(
     assert fetched.body == b"%PDF-1.7 synthetic direct"
     assert fetched.source_filename == "direct.pdf"
     assert served == ["/current/mod/resource/view.php?id=42"]
+
+
+def test_real_msedge_request_context_fetches_an_html_resource_wrapper(
+    local_resource_https: tuple[str, Path, Path, dict[str, str], list[str]], tmp_path: Path
+) -> None:
+    origin, _certificate, _private_key, mode, served = local_resource_https
+    mode["value"] = "wrapper"
+    fetcher, owned = _fetch(origin=origin, tmp_path=tmp_path)
+    try:
+        fetched = fetcher.fetch(_selection())
+    finally:
+        _close(owned)
+    assert fetched.body == b"%PDF-1.7 synthetic"
+    assert served == [
+        "/current/mod/resource/view.php?id=42",
+        "/current/pluginfile.php/7/mod_resource/content/1/lecture.pdf",
+    ]
 
 
 @pytest.mark.parametrize(

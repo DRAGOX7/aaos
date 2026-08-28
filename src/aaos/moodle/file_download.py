@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import PurePath
 from typing import Any, NoReturn, cast
 from urllib.parse import unquote, urljoin, urlsplit
@@ -42,6 +43,7 @@ _CONTENT_DISPOSITION_FILENAME = re.compile(
 )
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _AUTH_TIMEOUT_SECONDS = 600
+_HTML_MEDIA_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +149,46 @@ class MoodleFileAuthorizer:
         return parsed
 
 
+class _ResourceHrefParser(HTMLParser):
+    """Collect anchor hrefs and no other HTML content."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.saw_markup = False
+        self.hrefs: list[str] = []
+
+    def handle_decl(self, _decl: str) -> None:
+        self.saw_markup = True
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.saw_markup = True
+        if tag.lower() != "a":
+            return
+        for name, value in attrs:
+            if name.lower() == "href" and value is not None:
+                self.hrefs.append(value)
+                break
+
+
+def _parse_resource_html(body: bytes, headers: object) -> tuple[bool, tuple[str, ...]]:
+    """Classify a non-PDF body as HTML and retain only anchor references."""
+    if body.startswith(b"%PDF-"):
+        return False, ()
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        text = body.decode("utf-8", errors="replace")
+    parser = _ResourceHrefParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except (TypeError, ValueError):
+        parser.hrefs.clear()
+    media_type = _media_type(_header(headers, "content-type"))
+    is_html = media_type in _HTML_MEDIA_TYPES or parser.saw_markup
+    return is_html, tuple(parser.hrefs)
+
+
 class BrowserAuthenticatedFetcher:
     """Fetch one authorized Resource through an existing authenticated browser context."""
 
@@ -200,6 +242,30 @@ class BrowserAuthenticatedFetcher:
                 _fail(IngestionErrorCode.NETWORK_FAILURE)
             if len(body) > MAX_PDF_BYTES:
                 _fail(IngestionErrorCode.DOWNLOAD_TOO_LARGE)
+            is_html, hrefs = _parse_resource_html(body, response.headers)
+            if current_url == permit.initial_url and is_html:
+                candidates: set[str] = set()
+                for href in hrefs:
+                    try:
+                        candidates.add(
+                            self._authorizer.authorize_redirect(
+                                permit=permit,
+                                current_url=permit.initial_url,
+                                location=href,
+                            )
+                        )
+                    except DocumentIngestionFailure:
+                        continue
+                if len(candidates) != 1:
+                    _fail(IngestionErrorCode.UNAUTHORIZED_REDIRECT)
+                continuation = next(iter(candidates))
+                if continuation in visited:
+                    _fail(IngestionErrorCode.UNAUTHORIZED_REDIRECT)
+                visited.add(continuation)
+                current_url = continuation
+                continue
+            if is_html:
+                _fail(IngestionErrorCode.UNAUTHORIZED_REDIRECT)
             cmid = permit.source_id.removeprefix("resource-cm:")
             return FetchedPdf(
                 body=body,
