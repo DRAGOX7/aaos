@@ -109,13 +109,16 @@ class IngestionStatus(StrEnum):
     READY = "READY"
     FAILED = "FAILED"
 
+
 class ExtractionStatus(StrEnum):
     SUCCESS = "SUCCESS"
     PARTIAL = "PARTIAL"
     NO_TEXT = "NO_TEXT"
 
+
 class TextSource(StrEnum):
     EMBEDDED_PDF = "EMBEDDED_PDF"
+
 
 class IngestionErrorCode(StrEnum):
     NETWORK_TIMEOUT = "NETWORK_TIMEOUT"
@@ -129,18 +132,22 @@ class IngestionErrorCode(StrEnum):
     STORAGE_FAILED = "STORAGE_FAILED"
     PERSISTENCE_FAILED = "PERSISTENCE_FAILED"
 
+
 class IngestionMode(StrEnum):
     INGEST_NEW = "INGEST_NEW"
     REFRESH = "REFRESH"
 
+
 class FileType(StrEnum):
     PDF_ONLY = "PDF_ONLY"
+
 
 class DocumentResultCode(StrEnum):
     INGESTED = "INGESTED"
     UNCHANGED = "UNCHANGED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
+
 
 @dataclass(frozen=True, slots=True)
 class RemoteFileSelection:
@@ -150,6 +157,7 @@ class RemoteFileSelection:
     source_id: str
     title: str
 
+
 @dataclass(frozen=True, slots=True)
 class ExtractedPage:
     page_number: int
@@ -158,11 +166,13 @@ class ExtractedPage:
     width_points: float
     height_points: float
 
+
 @dataclass(frozen=True, slots=True)
 class ParsedPdf:
     page_count: int
     extraction_status: ExtractionStatus
     pages: tuple[ExtractedPage, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class FetchedPdf:
@@ -170,12 +180,14 @@ class FetchedPdf:
     source_filename: str
     advisory_media_type: str | None
 
+
 @dataclass(frozen=True, slots=True)
 class BlobInstall:
     sha256: str
     size_bytes: int
     storage_key: str
     created: bool
+
 
 @dataclass(frozen=True, slots=True)
 class DocumentIngestionResult:
@@ -187,6 +199,7 @@ class DocumentIngestionResult:
     extraction_status: ExtractionStatus | None = None
     deduplicated: bool = False
     error_code: IngestionErrorCode | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class BatchIngestionResult:
@@ -202,8 +215,10 @@ class BatchIngestionResult:
     @property
     def exit_code(self) -> int: ...
 
+
 class DocumentIngestionFailure(RuntimeError):
     def __init__(self, code: IngestionErrorCode) -> None: ...
+
 
 MAX_PDF_BYTES = 52_428_800
 MAX_TRANSIENT_RETRIES = 2
@@ -211,11 +226,13 @@ MAX_AUTHORIZED_REDIRECTS = 5
 FETCH_TIMEOUT_MS = 120_000
 FILE_TYPE = FileType.PDF_ONLY
 
+
 @dataclass(frozen=True, slots=True)
 class DocumentRuntimePaths:
     database_path: Path
     content_store_root: Path
     ingestion_lock_path: Path
+
 
 def resolve_document_runtime_paths(data_root: str | Path) -> DocumentRuntimePaths: ...
 ```
@@ -242,12 +259,14 @@ def test_pypdfium2_runtime_version_matches_lock() -> None:
 
     assert PYPDFIUM_INFO.tag == "5.13.0"
 
+
 def test_phase3_policy_values_are_fixed() -> None:
     assert MAX_PDF_BYTES == 50 * 1024 * 1024
     assert MAX_TRANSIENT_RETRIES == 2
     assert MAX_AUTHORIZED_REDIRECTS == 5
     assert FETCH_TIMEOUT_MS == 120_000
     assert FILE_TYPE is FileType.PDF_ONLY
+
 
 def test_batch_exit_code_is_nonzero_only_when_any_document_failed() -> None:
     assert BatchIngestionResult(1, 1, 0, 0, 0, 1, 0, ()).exit_code == 0
@@ -333,6 +352,7 @@ class DocumentORM(Base):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
+
 class ContentBlobORM(Base):
     __tablename__ = "content_blobs"
     id: Mapped[int]
@@ -341,6 +361,7 @@ class ContentBlobORM(Base):
     media_type: Mapped[str]
     storage_key: Mapped[str]
     created_at: Mapped[datetime]
+
 
 class DocumentVersionORM(Base):
     __tablename__ = "document_versions"
@@ -352,6 +373,7 @@ class DocumentVersionORM(Base):
     ingested_at: Mapped[datetime]
     extraction_status: Mapped[str]
     page_count: Mapped[int]
+
 
 class DocumentPageORM(Base):
     __tablename__ = "document_pages"
@@ -384,13 +406,18 @@ def test_phase3_upgrade_adds_exact_document_tables(tmp_path: Path) -> None:
         set(inspect(create_database_engine(database_path)).get_table_names())
     )
 
+
 def test_phase3_downgrade_preserves_phase1_tables(tmp_path: Path) -> None:
     database_path = tmp_path / "phase3.db"
     config = make_config(database_path)
     command.upgrade(config, "head")
     command.downgrade(config, "0002_phase1_academic_domain")
     assert set(inspect(create_database_engine(database_path)).get_table_names()) == {
-        "alembic_version", "courses", "assignments", "announcements", "remote_files"
+        "alembic_version",
+        "courses",
+        "assignments",
+        "announcements",
+        "remote_files",
     }
 ```
 
@@ -471,12 +498,14 @@ class SelectionPlan:
     fetch: tuple[RemoteFileSelection, ...]
     skipped: tuple[RemoteFileSelection, ...]
 
+
 @dataclass(frozen=True, slots=True)
 class PersistedVersion:
     document_id: int
     version_number: int
     content_blob_id: int
     content_blob_created: bool
+
 
 class DocumentRepository:
     def __init__(self, session_factory: Callable[[], Session]) -> None: ...
@@ -489,9 +518,7 @@ class DocumentRepository:
         remote_file_id: int | None,
     ) -> SelectionPlan: ...
 
-    def existing_version_for_sha256(
-        self, *, remote_file_id: int, sha256: str
-    ) -> int | None: ...
+    def existing_version_for_sha256(self, *, remote_file_id: int, sha256: str) -> int | None: ...
 
     def persist_success(
         self,
@@ -532,6 +559,7 @@ def test_ingest_new_skips_ready_document_without_fetch_selection(session_factory
     )
     assert tuple(item.remote_file_id for item in plan.fetch) == ()
     assert len(plan.skipped) == 1
+
 
 def test_failed_refresh_preserves_ready_status_and_versions(session_factory) -> None:
     repository = DocumentRepository(session_factory)
@@ -612,11 +640,13 @@ git commit -m "feat(documents): add document ingestion repository"
 ```python
 def sanitize_source_filename(value: str | None, *, fallback: str) -> str: ...
 
+
 @dataclass(frozen=True, slots=True)
 class StagedBlob:
     sha256: str
     size_bytes: int
     temporary_path: Path = field(repr=False)
+
 
 class ContentBlobStore:
     def __init__(self, root: Path) -> None: ...
@@ -776,10 +806,12 @@ git commit -m "feat(documents): validate and extract PDF pages"
 ```python
 class IngestionLockUnavailable(RuntimeError): ...
 
+
 class IngestionLease:
     def __enter__(self) -> IngestionLease: ...
     def __exit__(self, exc_type, exc, traceback) -> None: ...
     def release(self) -> None: ...
+
 
 class IngestionLock:
     def __init__(self, path: Path) -> None: ...
@@ -846,6 +878,7 @@ class ResourceFetchPermit:
     source_id: str
     initial_url: str = field(repr=False)
 
+
 class MoodleFileAuthorizer:
     def __init__(
         self,
@@ -859,6 +892,7 @@ class MoodleFileAuthorizer:
     ) -> str: ...
     def authorize_final_url(self, *, permit: ResourceFetchPermit, url: str) -> None: ...
 
+
 class BrowserAuthenticatedFetcher:
     def __init__(
         self,
@@ -868,6 +902,7 @@ class BrowserAuthenticatedFetcher:
         timeout_ms: int = FETCH_TIMEOUT_MS,
     ) -> None: ...
     def fetch(self, selection: RemoteFileSelection) -> FetchedPdf: ...
+
 
 @contextmanager
 def open_phase3_fetcher_session(
@@ -1034,6 +1069,7 @@ class RuntimeMoodleEnvironment:
     settings: MoodleSettings
     auth_paths: AuthPaths
     data_root: Path
+
 
 def load_runtime_moodle_environment() -> RuntimeMoodleEnvironment: ...
 def run_documents_command(argv: Sequence[str]) -> int: ...

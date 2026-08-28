@@ -6,9 +6,7 @@ import hashlib
 import struct
 from collections.abc import Sequence
 
-_PADDING = bytes.fromhex(
-    "28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a"
-)
+_PADDING = bytes.fromhex("28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a")
 
 
 def _rc4(key: bytes, value: bytes) -> bytes:
@@ -119,7 +117,9 @@ def _pdf(pages: Sequence[str], *, encrypted: bool = False) -> bytes:
             if not payload:
                 raise AssertionError("fixture stream missing")
             payload, suffix = suffix.split(b"\nendstream", maxsplit=1)
-            objects[object_id] = prefix + b"\nstream\n" + _rc4(object_key, payload) + b"\nendstream" + suffix
+            objects[object_id] = (
+                prefix + b"\nstream\n" + _rc4(object_key, payload) + b"\nendstream" + suffix
+            )
     trailer_extra = f" /Encrypt {encrypt_id} 0 R" if encrypt_id is not None else ""
     return _serialize(objects, trailer_extra=trailer_extra)
 

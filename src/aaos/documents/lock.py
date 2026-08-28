@@ -152,8 +152,7 @@ def _reject_reparse_ancestors(path: Path) -> None:
 def _is_reparse(metadata: os.stat_result) -> bool:
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     return bool(
-        stat.S_ISLNK(metadata.st_mode)
-        or getattr(metadata, "st_file_attributes", 0) & reparse_flag
+        stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0) & reparse_flag
     )
 
 

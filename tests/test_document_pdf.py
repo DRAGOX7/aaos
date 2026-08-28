@@ -28,7 +28,9 @@ from aaos.documents.contracts import (
 from aaos.documents.pdf import PdfProcessor
 
 
-def assert_failure(caught: pytest.ExceptionInfo[DocumentIngestionFailure], code: IngestionErrorCode) -> None:
+def assert_failure(
+    caught: pytest.ExceptionInfo[DocumentIngestionFailure], code: IngestionErrorCode
+) -> None:
     assert caught.value.code is code
     assert str(caught.value) == "document ingestion failed"
 
