@@ -112,18 +112,48 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 ## Core Interface Ledger
 
 ```python
-class GenerationStatus(StrEnum): BUILDING = "BUILDING"; ACTIVE = "ACTIVE"; RETIRED = "RETIRED"
-class DocumentIndexStatus(StrEnum): PREPARING = "PREPARING"; READY = "READY"; NOT_SEARCHABLE = "NOT_SEARCHABLE"; FAILED = "FAILED"
-class CoverageStatus(StrEnum): FULL = "FULL"; PARTIAL = "PARTIAL"; NONE = "NONE"
-class RagAnswerStatus(StrEnum): ANSWER = "ANSWER"; PARTIAL_ANSWER = "PARTIAL_ANSWER"; INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+class GenerationStatus(StrEnum):
+    BUILDING = "BUILDING"
+    ACTIVE = "ACTIVE"
+    RETIRED = "RETIRED"
+
+
+class DocumentIndexStatus(StrEnum):
+    PREPARING = "PREPARING"
+    READY = "READY"
+    NOT_SEARCHABLE = "NOT_SEARCHABLE"
+    FAILED = "FAILED"
+
+
+class CoverageStatus(StrEnum):
+    FULL = "FULL"
+    PARTIAL = "PARTIAL"
+    NONE = "NONE"
+
+
+class RagAnswerStatus(StrEnum):
+    ANSWER = "ANSWER"
+    PARTIAL_ANSWER = "PARTIAL_ANSWER"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
 
 @dataclass(frozen=True, slots=True)
-class CourseScope: course_id: int
+class CourseScope:
+    course_id: int
+
+
 @dataclass(frozen=True, slots=True)
-class GlobalScope: pass
+class GlobalScope:
+    pass
+
+
 @dataclass(frozen=True, slots=True)
-class HistoricalScope: document_version_ids: tuple[int, ...]
+class HistoricalScope:
+    document_version_ids: tuple[int, ...]
+
+
 RagScope = CourseScope | GlobalScope | HistoricalScope
+
 
 @dataclass(frozen=True, slots=True)
 class RagRuntimePaths:
@@ -131,6 +161,7 @@ class RagRuntimePaths:
     chroma_root: Path
     index_lock_path: Path
     evaluation_output_root: Path
+
 
 @dataclass(frozen=True, slots=True)
 class RagIndexConfig:
@@ -148,11 +179,13 @@ class RagIndexConfig:
     lexical_normalizer_version: str
     sufficiency_policy_version: str
 
+
 @dataclass(frozen=True, slots=True)
 class RagQuery:
     question: str
     scope: RagScope
     answer_language: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class RagGenerationIdentity:
@@ -161,6 +194,7 @@ class RagGenerationIdentity:
     content_revision: int
     embedding_dimensions: int
 
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingModelMetadata:
     model_identifier: str
@@ -168,11 +202,13 @@ class EmbeddingModelMetadata:
     dimensions: int
     device: str
 
+
 @dataclass(frozen=True, slots=True)
 class DenseVectorRecord:
     chunk_key: str
     document_version_id: int
     vector: tuple[float, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class DenseSearchHit:
@@ -180,12 +216,14 @@ class DenseSearchHit:
     rank: int
     distance: float
 
+
 class EmbeddingService(Protocol):
     def model_metadata(self) -> EmbeddingModelMetadata: ...
     def embed_documents(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]: ...
     def embed_query(self, text: str) -> tuple[float, ...]: ...
     def release_model(self) -> None: ...
     def close(self) -> None: ...
+
 
 class DenseIndex(Protocol):
     def upsert(self, records: tuple[DenseVectorRecord, ...]) -> None: ...
@@ -200,9 +238,11 @@ class DenseIndex(Protocol):
     def count(self) -> int: ...
     def close(self) -> None: ...
 
+
 class DenseIndexFactory(Protocol):
     def open(self, generation: RagGenerationIdentity) -> DenseIndex: ...
     def remove(self, generation: RagGenerationIdentity) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class RagChunkSourceSpanValue:
@@ -212,6 +252,7 @@ class RagChunkSourceSpanValue:
     source_char_end: int
     chunk_char_start: int
     chunk_char_end: int
+
 
 @dataclass(frozen=True, slots=True)
 class RetrievedEvidence:
@@ -229,11 +270,13 @@ class RetrievedEvidence:
     generation_id: int
     content_revision: int
 
+
 @dataclass(frozen=True, slots=True)
 class RagClaim:
     claim_id: str
     text: str
     evidence_ids: tuple[str, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class Citation:
@@ -242,6 +285,7 @@ class Citation:
     document_title: str
     page_start: int
     page_end: int
+
 
 @dataclass(frozen=True, slots=True)
 class RagAnswer:
@@ -253,10 +297,12 @@ class RagAnswer:
     generation_id: int
     content_revision: int
 
+
 @dataclass(frozen=True, slots=True)
 class RenderedRagResponse:
     answer: RagAnswer
     rendered_text: str
+
 
 @dataclass(frozen=True, slots=True)
 class IndexRunResult:
@@ -265,6 +311,7 @@ class IndexRunResult:
     content_revision: int
     indexed_documents: int
     not_searchable_documents: int
+
 
 @dataclass(frozen=True, slots=True)
 class RagIndexStatus:
@@ -275,18 +322,22 @@ class RagIndexStatus:
     chunks: int
     dense_index_healthy: bool
 
+
 class LocalRagService:
     async def ask(self, query: RagQuery) -> RenderedRagResponse: ...
+
 
 class RagIndexingService:
     def index_new(self, document_version_id: int | None = None) -> IndexRunResult: ...
     def rebuild(self) -> IndexRunResult: ...
     def status(self) -> RagIndexStatus: ...
 
+
 @dataclass(slots=True)
 class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
     service: LocalRagService
     indexing: RagIndexingService
+
     def close(self) -> None: ...
 ```
 
