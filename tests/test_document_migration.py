@@ -44,7 +44,7 @@ def revision(database_path: Path) -> str | None:
 
 def test_phase3_upgrade_adds_exact_document_tables(tmp_path: Path) -> None:
     database_path = tmp_path / "phase3.db"
-    command.upgrade(make_config(database_path), "head")
+    command.upgrade(make_config(database_path), "0003_phase3_document_ingestion")
 
     assert revision(database_path) == "0003_phase3_document_ingestion"
     engine = create_database_engine(database_path)
@@ -57,7 +57,7 @@ def test_phase3_upgrade_adds_exact_document_tables(tmp_path: Path) -> None:
 def test_phase3_downgrade_preserves_phase1_tables(tmp_path: Path) -> None:
     database_path = tmp_path / "phase3.db"
     config = make_config(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0003_phase3_document_ingestion")
 
     command.downgrade(config, "0002_phase1_academic_domain")
 
@@ -71,7 +71,7 @@ def test_phase3_downgrade_preserves_phase1_tables(tmp_path: Path) -> None:
 
 def test_phase3_schema_exposes_required_named_indexes(tmp_path: Path) -> None:
     database_path = tmp_path / "phase3.db"
-    command.upgrade(make_config(database_path), "head")
+    command.upgrade(make_config(database_path), "0003_phase3_document_ingestion")
     engine = create_database_engine(database_path)
     try:
         inspector = inspect(engine)
@@ -96,7 +96,7 @@ def test_phase3_schema_exposes_positive_id_and_finite_dimension_checks(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "phase3.db"
-    command.upgrade(make_config(database_path), "head")
+    command.upgrade(make_config(database_path), "0003_phase3_document_ingestion")
     engine = create_database_engine(database_path)
     try:
         inspector = inspect(engine)
@@ -126,7 +126,7 @@ def test_phase3_schema_exposes_positive_id_and_finite_dimension_checks(
 
 def test_phase3_sqlite_schema_contains_no_pdf_blob_column(tmp_path: Path) -> None:
     database_path = tmp_path / "phase3.db"
-    command.upgrade(make_config(database_path), "head")
+    command.upgrade(make_config(database_path), "0003_phase3_document_ingestion")
     engine = create_database_engine(database_path)
     try:
         inspector = inspect(engine)
