@@ -126,7 +126,7 @@ def integration_harness(tmp_path: Path) -> Iterator[IntegrationHarness]:
     database_path = (tmp_path / "database" / "phase3.db").resolve()
     content_root = (tmp_path / "content-store").resolve()
     lock_path = (tmp_path / "locks" / "phase3.lock").resolve()
-    command.upgrade(_alembic_config(database_path), "head")
+    command.upgrade(_alembic_config(database_path), "0003_phase3_document_ingestion")
     engine = create_database_engine(database_path)
     with engine.connect() as connection:
         assert (

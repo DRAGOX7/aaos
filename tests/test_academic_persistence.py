@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
+from aaos.persistence import rag_models as _rag_models  # noqa: F401
 from aaos.persistence.academic_models import (
     AnnouncementORM,
     AssignmentORM,
@@ -33,6 +34,10 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
         "content_blobs",
         "document_versions",
         "document_pages",
+        "rag_index_generations",
+        "rag_document_indexes",
+        "rag_chunks",
+        "rag_chunk_source_spans",
     }
 
 

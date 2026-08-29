@@ -134,7 +134,7 @@ def _migrated_phase3_setup(
     database_path = tmp_path / "database" / "phase3.db"
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("aaos.database_path", str(database_path))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0003_phase3_document_ingestion")
     return env, DocumentRuntimePaths(
         database_path=database_path,
         content_store_root=tmp_path / "documents",
