@@ -39,6 +39,13 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RagScope,
 )
+from aaos.rag.lexical import (
+    LexicalSearchResult,
+    delete_fts_row,
+    insert_fts_row,
+    rebuild_fts_rows,
+    search_fts,
+)
 
 SessionFactory = Callable[[], Session]
 _Record = TypeVar("_Record")
@@ -830,11 +837,85 @@ class RagRepository:
                 )
                 session.add(row)
                 session.flush()
+                insert_fts_row(
+                    session,
+                    chunk_id=int(row.id),
+                    exact_text=row.exact_text,
+                    generation_id=int(row.generation_id),
+                    document_version_id=int(row.document_version_id),
+                )
                 return self._record_chunk(row)
         except RagOperationalError:
             raise
         except SQLAlchemyError as error:
             raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def delete_chunk(
+        self,
+        identity: RagGenerationIdentity,
+        rag_chunk_id: int,
+        *,
+        expected_revision: int,
+    ) -> None:
+        """Delete one authoritative chunk and its FTS row atomically."""
+        if isinstance(rag_chunk_id, bool) or not isinstance(rag_chunk_id, int) or rag_chunk_id <= 0:
+            raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(session, identity, expected_revision)
+                row = session.scalar(
+                    select(RagChunkORM).where(
+                        RagChunkORM.id == rag_chunk_id,
+                        RagChunkORM.generation_id == identity.generation_id,
+                    )
+                )
+                if row is None:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                delete_fts_row(session, chunk_id=rag_chunk_id)
+                session.delete(row)
+                session.flush()
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def rebuild_fts(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Rebuild derived FTS rows for one generation transactionally."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(session, identity, expected_revision)
+                rows = tuple(
+                    (
+                        int(row.id),
+                        row.exact_text,
+                        int(row.document_version_id),
+                    )
+                    for row in session.scalars(
+                        select(RagChunkORM)
+                        .where(RagChunkORM.generation_id == identity.generation_id)
+                        .order_by(RagChunkORM.id)
+                    ).all()
+                )
+                return rebuild_fts_rows(
+                    session,
+                    generation_id=identity.generation_id,
+                    rows=rows,
+                )
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.FTS_INDEX_FAILED, error) from error
         finally:
             session.close()
 
@@ -859,6 +940,32 @@ class RagRepository:
                 return tuple(self._record_chunk(row) for row in rows)
         except SQLAlchemyError as error:
             raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def lexical_search(
+        self,
+        query: str,
+        snapshot: QuerySnapshot,
+        *,
+        limit: int = 30,
+    ) -> LexicalSearchResult:
+        """Return BM25 candidates restricted to an authorized query snapshot."""
+        if not isinstance(snapshot, QuerySnapshot):
+            raise RagOperationalError(RagErrorCode.LEXICAL_INDEX_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(
+                    session,
+                    snapshot.generation,
+                    snapshot.generation.content_revision,
+                )
+                return search_fts(session, query, snapshot, limit=limit)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.LEXICAL_INDEX_FAILED, error) from error
         finally:
             session.close()
 
