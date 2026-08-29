@@ -6,7 +6,13 @@ from math import nan
 
 import pytest
 
-from aaos.rag.contracts import DenseIndex, DenseSearchHit, DenseVectorRecord, RagGenerationIdentity
+from aaos.rag.contracts import (
+    DenseIndex,
+    DenseIndexFactory,
+    DenseSearchHit,
+    DenseVectorRecord,
+    RagGenerationIdentity,
+)
 from aaos.rag.dense import InMemoryDenseIndexFactory
 
 
@@ -78,5 +84,37 @@ def test_close_is_idempotent_and_operations_fail_safely_after_close() -> None:
     index.close()
     index.close()
 
-    with pytest.raises(RuntimeError, match="closed"):
-        index.count()
+    operations = (
+        lambda: index.upsert((DenseVectorRecord("chunk", 7, (0.0, 0.0)),)),
+        lambda: index.search((0.0, 0.0), limit=1, allowed_document_version_ids=(7,)),
+        lambda: index.contains(("chunk",)),
+        index.count,
+    )
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="closed"):
+            operation()
+
+
+def test_factory_is_generation_isolated_and_remove_reopens_empty_index() -> None:
+    factory: DenseIndexFactory = InMemoryDenseIndexFactory()
+    generation_a = _generation(generation_id=1)
+    generation_b = _generation(generation_id=2)
+    index_a = factory.open(generation_a)
+    index_a.upsert((DenseVectorRecord("chunk-a", 7, (0.0, 0.0)),))
+
+    assert factory.open(generation_b).count() == 0
+
+    factory.remove(generation_a)
+
+    assert factory.open(generation_a).count() == 0
+
+
+def test_rejects_nonfinite_stored_record_vector_independently_of_query_validation() -> None:
+    malformed_record = object.__new__(DenseVectorRecord)
+    object.__setattr__(malformed_record, "chunk_key", "chunk")
+    object.__setattr__(malformed_record, "document_version_id", 7)
+    object.__setattr__(malformed_record, "vector", (nan, 0.0))
+    index = InMemoryDenseIndexFactory().open(_generation())
+
+    with pytest.raises(ValueError, match="vector"):
+        index.upsert((malformed_record,))
