@@ -130,7 +130,11 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
 
     engine = create_database_engine(database_path)
     try:
-        assert set(inspect(engine).get_table_names()) == {
+        tables = set(inspect(engine).get_table_names())
+        fts_shadow_tables = {
+            table for table in tables if table.startswith("rag_chunks_fts_")
+        }
+        assert tables - fts_shadow_tables == {
             "alembic_version",
             "courses",
             "assignments",
@@ -140,6 +144,11 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "content_blobs",
             "document_versions",
             "document_pages",
+            "rag_index_generations",
+            "rag_document_indexes",
+            "rag_chunks",
+            "rag_chunk_source_spans",
+            "rag_chunks_fts",
         }
     finally:
         engine.dispose()
