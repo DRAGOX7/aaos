@@ -77,15 +77,51 @@ class _ChromaDenseIndex:
                 query_embeddings=[list(vector)],
                 n_results=limit,
                 where={"document_version_id": {"$in": list(allowed_document_version_ids)}},
-                include=["distances"],
+                include=["distances", "metadatas"],
             )
-            ids = result["ids"][0]
-            distances = result["distances"][0]
-            if len(ids) != len(distances):
+            ids = result["ids"]
+            distances = result["distances"]
+            metadatas = result["metadatas"]
+            if (
+                not isinstance(ids, list)
+                or not isinstance(distances, list)
+                or not isinstance(metadatas, list)
+                or len(ids) != 1
+                or len(distances) != 1
+                or len(metadatas) != 1
+                or not isinstance(ids[0], list)
+                or not isinstance(distances[0], list)
+                or not isinstance(metadatas[0], list)
+                or len(ids[0]) != len(distances[0])
+                or len(ids[0]) != len(metadatas[0])
+                or len(ids[0]) > limit
+            ):
+                raise ValueError("invalid Chroma query result")
+            candidates: list[tuple[float, str]] = []
+            for chunk_key, distance, metadata in zip(ids[0], distances[0], metadatas[0]):
+                if (
+                    not isinstance(chunk_key, str)
+                    or not chunk_key.strip()
+                    or isinstance(distance, bool)
+                    or not isinstance(distance, (int, float))
+                    or not isfinite(distance)
+                    or not isinstance(metadata, dict)
+                ):
+                    raise ValueError("invalid Chroma query result")
+                document_version_id = metadata.get("document_version_id")
+                if (
+                    isinstance(document_version_id, bool)
+                    or not isinstance(document_version_id, int)
+                    or document_version_id <= 0
+                    or document_version_id not in allowed_document_version_ids
+                ):
+                    raise ValueError("invalid Chroma query result")
+                candidates.append((float(distance), chunk_key))
+            if len({chunk_key for _, chunk_key in candidates}) != len(candidates):
                 raise ValueError("invalid Chroma query result")
             return tuple(
                 DenseSearchHit(chunk_key, rank, float(distance))
-                for rank, (chunk_key, distance) in enumerate(zip(ids, distances), start=1)
+                for rank, (distance, chunk_key) in enumerate(sorted(candidates), start=1)
             )
         except RagOperationalError:
             raise
@@ -191,5 +227,6 @@ class ChromaDenseIndexFactory:
     def _generation_path(self, generation: RagGenerationIdentity) -> Path:
         return self._chroma_root / (
             f"generation-{generation.generation_id}-"
-            f"{generation.config_fingerprint}-r{generation.content_revision}"
+            f"{generation.config_fingerprint}-r{generation.content_revision}-"
+            f"d{generation.embedding_dimensions}"
         )
