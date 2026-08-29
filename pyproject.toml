@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "alembic>=1.19.1",
+    "chromadb==1.5.9",
     "fastapi>=0.141.1",
+    "FlagEmbedding==1.4.2",
     "httpx2>=2.10.0",
     "playwright==1.62.0",
     "pypdfium2==5.13.0",
@@ -24,9 +26,11 @@ aaos-moodle-callback = "aaos.moodle.receiver:main"
 
 [dependency-groups]
 dev = [
+    "langchain-community==0.3.27",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "ragas==0.4.3",
     "ruff>=0.16.2",
     "trustme>=1.2.1",
 ]
