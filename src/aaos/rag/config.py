@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from .contracts import MAX_RAG_TEXT_CHARACTERS
+
 
 def _positive_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -15,8 +17,11 @@ def _positive_int(value: object, name: str) -> int:
 
 
 def _nonblank_text(value: object, name: str) -> str:
-    if not isinstance(value, str) or not (normalized := value.strip()):
+    if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-blank string")
+    if len(value) > MAX_RAG_TEXT_CHARACTERS:
+        raise ValueError(f"{name} must not exceed {MAX_RAG_TEXT_CHARACTERS} characters")
+    normalized = value.strip()
     return normalized
 
 

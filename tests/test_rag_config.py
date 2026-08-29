@@ -14,6 +14,7 @@ from aaos.rag.config import (
     compute_config_fingerprint,
     resolve_rag_runtime_paths,
 )
+from aaos.rag.contracts import MAX_RAG_TEXT_CHARACTERS
 
 
 def make_config(**changes: object) -> RagIndexConfig:
@@ -89,6 +90,21 @@ def test_runtime_paths_are_side_effect_free_and_reject_path_escapes(tmp_path: Pa
 def test_invalid_index_configuration_is_rejected(changes: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         make_config(**changes)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "chunker_version",
+        "lexical_normalizer_version",
+        "sufficiency_policy_version",
+        "embedding_model_identifier",
+        "embedding_model_revision",
+    ],
+)
+def test_oversized_index_configuration_text_is_rejected(field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        make_config(**{field: "x" * (MAX_RAG_TEXT_CHARACTERS + 1)})
 
 
 def test_equivalent_configurations_have_the_same_canonical_fingerprint() -> None:

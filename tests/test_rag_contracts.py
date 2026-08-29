@@ -12,19 +12,24 @@ from aaos.rag.contracts import (
     Citation,
     CourseScope,
     CoverageStatus,
+    DenseIndex,
+    DenseIndexFactory,
     DenseSearchHit,
     DenseVectorRecord,
     DocumentIndexStatus,
     EmbeddingModelMetadata,
+    EmbeddingService,
     GenerationStatus,
     GlobalScope,
     HistoricalScope,
+    LocalRagService,
     RagAnswer,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
     RagClaim,
     RagErrorCode,
     RagGenerationIdentity,
+    RagIndexingService,
     RagOperationalError,
     RagQuery,
     RetrievedEvidence,
@@ -38,9 +43,13 @@ def test_public_package_exports_task_two_contracts_and_configuration() -> None:
     assert rag.RagIndexConfig.__name__ == "RagIndexConfig"
     assert rag.RagOperationalError is RagOperationalError
     assert rag.RagQuery is RagQuery
+    assert rag.EmbeddingService is EmbeddingService
+    assert rag.DenseIndex is DenseIndex
+    assert rag.DenseIndexFactory is DenseIndexFactory
+    assert rag.LocalRagService is LocalRagService
+    assert rag.RagIndexingService is RagIndexingService
     assert rag.compute_config_fingerprint.__name__ == "compute_config_fingerprint"
     assert rag.resolve_rag_runtime_paths.__name__ == "resolve_rag_runtime_paths"
-    assert not hasattr(rag, "LocalRagService")
 
 
 def test_closed_enums_expose_only_approved_values() -> None:
