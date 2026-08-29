@@ -8,6 +8,7 @@ from math import inf, nan
 import pytest
 
 from aaos.rag.contracts import (
+    MAX_RAG_TEXT_CHARACTERS,
     Citation,
     CourseScope,
     CoverageStatus,
@@ -28,6 +29,18 @@ from aaos.rag.contracts import (
     RagQuery,
     RetrievedEvidence,
 )
+
+
+def test_public_package_exports_task_two_contracts_and_configuration() -> None:
+    from aaos import rag
+
+    assert rag.RagAnswer is RagAnswer
+    assert rag.RagIndexConfig.__name__ == "RagIndexConfig"
+    assert rag.RagOperationalError is RagOperationalError
+    assert rag.RagQuery is RagQuery
+    assert rag.compute_config_fingerprint.__name__ == "compute_config_fingerprint"
+    assert rag.resolve_rag_runtime_paths.__name__ == "resolve_rag_runtime_paths"
+    assert not hasattr(rag, "LocalRagService")
 
 
 def test_closed_enums_expose_only_approved_values() -> None:
@@ -129,6 +142,28 @@ def test_public_records_are_validated_immutable_and_slot_backed() -> None:
     ],
 )
 def test_invalid_contract_values_are_rejected(factory: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        factory()  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: RagQuery("x" * (MAX_RAG_TEXT_CHARACTERS + 1), GlobalScope()),
+            "question",
+        ),
+        (
+            lambda: EmbeddingModelMetadata("x" * (MAX_RAG_TEXT_CHARACTERS + 1), "v1", 1, "cpu"),
+            "model_identifier",
+        ),
+        (
+            lambda: RagClaim("claim", "x" * (MAX_RAG_TEXT_CHARACTERS + 1), ("evidence",)),
+            "text",
+        ),
+    ],
+)
+def test_oversized_public_text_is_rejected(factory: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         factory()  # type: ignore[operator]
 

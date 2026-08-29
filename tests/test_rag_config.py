@@ -60,6 +60,8 @@ def test_runtime_paths_are_side_effect_free_and_reject_path_escapes(tmp_path: Pa
     with pytest.raises(ValueError, match="absolute normalized path"):
         resolve_rag_runtime_paths(Path("relative-data"))
     with pytest.raises(ValueError, match="absolute normalized path"):
+        resolve_rag_runtime_paths("~")
+    with pytest.raises(ValueError, match="absolute normalized path"):
         resolve_rag_runtime_paths(tmp_path / "child" / "..")
 
 
@@ -77,6 +79,10 @@ def test_runtime_paths_are_side_effect_free_and_reject_path_escapes(tmp_path: Pa
         ({"max_evidence_chunks": 0}, "max_evidence_chunks"),
         ({"max_evidence_tokens": 0}, "max_evidence_tokens"),
         ({"chunker_version": " "}, "chunker_version"),
+        ({"lexical_normalizer_version": " "}, "lexical_normalizer_version"),
+        ({"sufficiency_policy_version": " "}, "sufficiency_policy_version"),
+        ({"embedding_model_identifier": " "}, "embedding_model_identifier"),
+        ({"embedding_model_revision": " "}, "embedding_model_revision"),
         ({"embedding_dimensions": 0}, "embedding_dimensions"),
     ],
 )
@@ -86,8 +92,26 @@ def test_invalid_index_configuration_is_rejected(changes: dict[str, object], mes
 
 
 def test_equivalent_configurations_have_the_same_canonical_fingerprint() -> None:
-    config_a = make_config()
-    config_b = make_config()
+    fields = {
+        "chunk_target_tokens": 400,
+        "chunk_preferred_min_tokens": 200,
+        "chunk_preferred_max_tokens": 600,
+        "chunk_hard_max_tokens": 800,
+        "chunk_overlap_tokens": 80,
+        "dense_candidate_limit": 30,
+        "lexical_candidate_limit": 30,
+        "rrf_k": 60,
+        "max_evidence_chunks": 6,
+        "max_evidence_tokens": 2400,
+        "chunker_version": "heading-page-v1",
+        "lexical_normalizer_version": "unicode-v1",
+        "sufficiency_policy_version": "conservative-v1",
+        "embedding_model_identifier": "BAAI/bge-m3",
+        "embedding_model_revision": "v1",
+        "embedding_dimensions": 1024,
+    }
+    config_a = RagIndexConfig(**cast(Any, fields))
+    config_b = RagIndexConfig(**cast(Any, dict(reversed(tuple(fields.items())))))
 
     assert compute_config_fingerprint(config_a) == compute_config_fingerprint(config_b)
     assert len(compute_config_fingerprint(config_a)) == 64

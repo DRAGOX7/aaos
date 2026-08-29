@@ -30,8 +30,11 @@ class RagRuntimePaths:
 
 def resolve_rag_runtime_paths(data_root: str | Path) -> RagRuntimePaths:
     """Resolve disposable, confined RAG paths without creating filesystem state."""
-    root = Path(data_root).expanduser()
-    if not root.is_absolute() or root.resolve(strict=False) != root:
+    injected_root = Path(data_root)
+    if not injected_root.is_absolute():
+        raise ValueError("rag data root must be an absolute normalized path")
+    root = injected_root.expanduser()
+    if root.resolve(strict=False) != root:
         raise ValueError("rag data root must be an absolute normalized path")
     return RagRuntimePaths(
         database_path=root / "database" / "aaos.db",

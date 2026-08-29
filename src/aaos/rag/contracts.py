@@ -7,6 +7,8 @@ from enum import StrEnum
 from math import isfinite
 from typing import Protocol, TypeAlias
 
+MAX_RAG_TEXT_CHARACTERS = 16_384
+
 
 class GenerationStatus(StrEnum):
     BUILDING = "BUILDING"
@@ -70,8 +72,11 @@ def _nonnegative_int(value: object, name: str) -> int:
 
 
 def _nonblank_text(value: object, name: str) -> str:
-    if not isinstance(value, str) or not (normalized := value.strip()):
+    if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-blank string")
+    if len(value) > MAX_RAG_TEXT_CHARACTERS:
+        raise ValueError(f"{name} must not exceed {MAX_RAG_TEXT_CHARACTERS} characters")
+    normalized = value.strip()
     return normalized
 
 
