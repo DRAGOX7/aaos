@@ -131,9 +131,7 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
     engine = create_database_engine(database_path)
     try:
         tables = set(inspect(engine).get_table_names())
-        fts_shadow_tables = {
-            table for table in tables if table.startswith("rag_chunks_fts_")
-        }
+        fts_shadow_tables = {table for table in tables if table.startswith("rag_chunks_fts_")}
         assert tables - fts_shadow_tables == {
             "alembic_version",
             "courses",

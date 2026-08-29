@@ -38,10 +38,7 @@ def revision(database_path: Path) -> str | None:
 
 
 def sqlite_master_names(connection: Connection) -> set[str]:
-    return {
-        row[0]
-        for row in connection.execute(text("SELECT name FROM sqlite_master"))
-    }
+    return {row[0] for row in connection.execute(text("SELECT name FROM sqlite_master"))}
 
 
 def seed_phase3_provenance(connection: Connection) -> None:
@@ -217,9 +214,13 @@ def test_phase4_upgrade_from_phase3_adds_rag_tables_and_fts5(tmp_path: Path) -> 
         assert set(inspector.get_table_names()) >= RAG_TABLES
         with engine.connect() as connection:
             assert "rag_chunks_fts" in sqlite_master_names(connection)
-            fts_sql = connection.execute(
-                text("SELECT sql FROM sqlite_master WHERE name = 'rag_chunks_fts'")
-            ).scalar_one().lower()
+            fts_sql = (
+                connection.execute(
+                    text("SELECT sql FROM sqlite_master WHERE name = 'rag_chunks_fts'")
+                )
+                .scalar_one()
+                .lower()
+            )
             assert fts_sql.startswith("create virtual table rag_chunks_fts using fts5")
             assert "normalized_text" in fts_sql
             assert "generation_id unindexed" in fts_sql
@@ -243,12 +244,16 @@ def test_phase4_schema_enforces_named_constraints_indexes_and_foreign_keys(tmp_p
         assert {item["name"] for item in inspector.get_indexes("rag_chunk_source_spans")} >= {
             "ix_rag_chunk_source_spans_chunk_ordinal"
         }
-        assert {item["name"] for item in inspector.get_check_constraints("rag_index_generations")} >= {
+        assert {
+            item["name"] for item in inspector.get_check_constraints("rag_index_generations")
+        } >= {
             "ck_rag_index_generations_status",
             "ck_rag_index_generations_embedding_dimensions",
             "ck_rag_index_generations_content_revision",
         }
-        assert {item["name"] for item in inspector.get_check_constraints("rag_document_indexes")} >= {
+        assert {
+            item["name"] for item in inspector.get_check_constraints("rag_document_indexes")
+        } >= {
             "ck_rag_document_indexes_status",
             "ck_rag_document_indexes_coverage_status",
             "ck_rag_document_indexes_searchable_page_count",
@@ -259,19 +264,30 @@ def test_phase4_schema_enforces_named_constraints_indexes_and_foreign_keys(tmp_p
             "ck_rag_chunks_token_count",
             "ck_rag_chunks_page_bounds",
         }
-        assert {item["name"] for item in inspector.get_check_constraints("rag_chunk_source_spans")} >= {
+        assert {
+            item["name"] for item in inspector.get_check_constraints("rag_chunk_source_spans")
+        } >= {
             "ck_rag_chunk_source_spans_page_bounds",
             "ck_rag_chunk_source_spans_chunk_bounds",
         }
-        assert {foreign_key["referred_table"] for foreign_key in inspector.get_foreign_keys("rag_document_indexes")} == {
+        assert {
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys("rag_document_indexes")
+        } == {
             "rag_index_generations",
             "document_versions",
         }
-        assert {foreign_key["referred_table"] for foreign_key in inspector.get_foreign_keys("rag_chunks")} == {
+        assert {
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys("rag_chunks")
+        } == {
             "rag_index_generations",
             "document_versions",
         }
-        assert {foreign_key["referred_table"] for foreign_key in inspector.get_foreign_keys("rag_chunk_source_spans")} == {
+        assert {
+            foreign_key["referred_table"]
+            for foreign_key in inspector.get_foreign_keys("rag_chunk_source_spans")
+        } == {
             "rag_chunks",
             "document_pages",
         }
@@ -362,7 +378,47 @@ def test_phase4_schema_rejects_invalid_rag_document_index_references_statuses_an
         ):
             with pytest.raises(IntegrityError):
                 with engine.begin() as connection:
-                    insert_document_index(connection, **({"generation_id": generation_id} | overrides))
+                    insert_document_index(
+                        connection, **({"generation_id": generation_id} | overrides)
+                    )
+    finally:
+        engine.dispose()
+
+
+def test_phase4_schema_rejects_duplicate_generation_document_index_identity(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase4.db"
+    command.upgrade(make_config(database_path), "head")
+    engine = create_database_engine(database_path)
+    try:
+        with engine.begin() as connection:
+            seed_phase3_provenance(connection)
+            generation_id = insert_generation(connection)
+            insert_document_index(connection, generation_id=generation_id)
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_document_index(connection, generation_id=generation_id)
+    finally:
+        engine.dispose()
+
+
+def test_phase4_schema_rejects_invalid_generation_status_revision_and_fingerprint(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase4.db"
+    command.upgrade(make_config(database_path), "head")
+    engine = create_database_engine(database_path)
+    try:
+        for overrides in (
+            {"status": "UNKNOWN"},
+            {"content_revision": -1},
+            {"config_fingerprint": "not-a-sha256"},
+            {"config_fingerprint": "a" * 63},
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as connection:
+                    insert_generation(connection, **overrides)
     finally:
         engine.dispose()
 
@@ -390,6 +446,33 @@ def test_phase4_schema_rejects_invalid_chunk_identity_foreign_keys_and_bounds(
             with pytest.raises(IntegrityError):
                 with engine.begin() as connection:
                     insert_chunk(connection, **({"generation_id": generation_id} | overrides))
+    finally:
+        engine.dispose()
+
+
+def test_phase4_schema_rejects_duplicate_global_chunk_key(tmp_path: Path) -> None:
+    database_path = tmp_path / "phase4.db"
+    command.upgrade(make_config(database_path), "head")
+    engine = create_database_engine(database_path)
+    try:
+        with engine.begin() as connection:
+            seed_phase3_provenance(connection)
+            first_generation_id = insert_generation(connection)
+            chunk_key = "b" * 64
+            insert_chunk(
+                connection,
+                generation_id=first_generation_id,
+                chunk_key=chunk_key,
+            )
+            second_generation_id = insert_generation(connection)
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_chunk(
+                    connection,
+                    generation_id=second_generation_id,
+                    ordinal=2,
+                    chunk_key=chunk_key,
+                )
     finally:
         engine.dispose()
 
@@ -442,9 +525,12 @@ def test_phase4_fts5_uses_authoritative_chunk_rowids(tmp_path: Path) -> None:
                     "document_version_id": 1,
                 },
             )
-            assert connection.execute(
-                text("SELECT rowid FROM rag_chunks_fts WHERE rag_chunks_fts MATCH 'YOLOv11'")
-            ).scalar_one() == chunk_id
+            assert (
+                connection.execute(
+                    text("SELECT rowid FROM rag_chunks_fts WHERE rag_chunks_fts MATCH 'YOLOv11'")
+                ).scalar_one()
+                == chunk_id
+            )
     finally:
         engine.dispose()
 

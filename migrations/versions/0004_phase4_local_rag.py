@@ -70,8 +70,15 @@ def upgrade() -> None:
     op.create_table(
         "rag_document_indexes",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("generation_id", sa.Integer(), sa.ForeignKey("rag_index_generations.id"), nullable=False),
-        sa.Column("document_version_id", sa.Integer(), sa.ForeignKey("document_versions.id"), nullable=False),
+        sa.Column(
+            "generation_id", sa.Integer(), sa.ForeignKey("rag_index_generations.id"), nullable=False
+        ),
+        sa.Column(
+            "document_version_id",
+            sa.Integer(),
+            sa.ForeignKey("document_versions.id"),
+            nullable=False,
+        ),
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("coverage_status", sa.String(16), nullable=False),
         sa.Column("searchable_page_count", sa.Integer(), nullable=False),
@@ -79,21 +86,42 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(64), nullable=True),
         sa.Column("created_at", _utc_datetime(), nullable=False),
         sa.Column("updated_at", _utc_datetime(), nullable=False),
-        sa.UniqueConstraint("generation_id", "document_version_id", name="uq_rag_document_indexes_generation_document"),
+        sa.UniqueConstraint(
+            "generation_id",
+            "document_version_id",
+            name="uq_rag_document_indexes_generation_document",
+        ),
         sa.CheckConstraint("id > 0", name="ck_rag_document_indexes_id"),
         sa.CheckConstraint("generation_id > 0", name="ck_rag_document_indexes_generation_id"),
-        sa.CheckConstraint("document_version_id > 0", name="ck_rag_document_indexes_document_version_id"),
-        sa.CheckConstraint("status IN ('PREPARING','READY','NOT_SEARCHABLE','FAILED')", name="ck_rag_document_indexes_status"),
-        sa.CheckConstraint("coverage_status IN ('FULL','PARTIAL','NONE')", name="ck_rag_document_indexes_coverage_status"),
-        sa.CheckConstraint("searchable_page_count >= 0", name="ck_rag_document_indexes_searchable_page_count"),
+        sa.CheckConstraint(
+            "document_version_id > 0", name="ck_rag_document_indexes_document_version_id"
+        ),
+        sa.CheckConstraint(
+            "status IN ('PREPARING','READY','NOT_SEARCHABLE','FAILED')",
+            name="ck_rag_document_indexes_status",
+        ),
+        sa.CheckConstraint(
+            "coverage_status IN ('FULL','PARTIAL','NONE')",
+            name="ck_rag_document_indexes_coverage_status",
+        ),
+        sa.CheckConstraint(
+            "searchable_page_count >= 0", name="ck_rag_document_indexes_searchable_page_count"
+        ),
         sa.CheckConstraint("chunk_count >= 0", name="ck_rag_document_indexes_chunk_count"),
     )
     op.create_table(
         "rag_chunks",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("chunk_key", sa.String(64), nullable=False),
-        sa.Column("generation_id", sa.Integer(), sa.ForeignKey("rag_index_generations.id"), nullable=False),
-        sa.Column("document_version_id", sa.Integer(), sa.ForeignKey("document_versions.id"), nullable=False),
+        sa.Column(
+            "generation_id", sa.Integer(), sa.ForeignKey("rag_index_generations.id"), nullable=False
+        ),
+        sa.Column(
+            "document_version_id",
+            sa.Integer(),
+            sa.ForeignKey("document_versions.id"),
+            nullable=False,
+        ),
         sa.Column("ordinal", sa.Integer(), nullable=False),
         sa.Column("heading", sa.String(1000), nullable=True),
         sa.Column("exact_text", sa.Text(), nullable=False),
@@ -103,40 +131,75 @@ def upgrade() -> None:
         sa.Column("page_end", sa.Integer(), nullable=False),
         sa.Column("created_at", _utc_datetime(), nullable=False),
         sa.UniqueConstraint("chunk_key", name="uq_rag_chunks_chunk_key"),
-        sa.UniqueConstraint("generation_id", "document_version_id", "ordinal", name="uq_rag_chunks_generation_document_ordinal"),
+        sa.UniqueConstraint(
+            "generation_id",
+            "document_version_id",
+            "ordinal",
+            name="uq_rag_chunks_generation_document_ordinal",
+        ),
         sa.CheckConstraint("id > 0", name="ck_rag_chunks_id"),
         sa.CheckConstraint("generation_id > 0", name="ck_rag_chunks_generation_id"),
         sa.CheckConstraint("document_version_id > 0", name="ck_rag_chunks_document_version_id"),
-        sa.CheckConstraint("length(chunk_key) = 64 AND chunk_key NOT GLOB '*[^0-9a-f]*'", name="ck_rag_chunks_chunk_key"),
+        sa.CheckConstraint(
+            "length(chunk_key) = 64 AND chunk_key NOT GLOB '*[^0-9a-f]*'",
+            name="ck_rag_chunks_chunk_key",
+        ),
         sa.CheckConstraint("ordinal > 0", name="ck_rag_chunks_ordinal"),
         sa.CheckConstraint("length(exact_text) > 0", name="ck_rag_chunks_exact_text"),
         sa.CheckConstraint("token_count > 0", name="ck_rag_chunks_token_count"),
-        sa.CheckConstraint("length(text_sha256) = 64 AND text_sha256 NOT GLOB '*[^0-9a-f]*'", name="ck_rag_chunks_text_sha256"),
-        sa.CheckConstraint("page_start > 0 AND page_end >= page_start", name="ck_rag_chunks_page_bounds"),
+        sa.CheckConstraint(
+            "length(text_sha256) = 64 AND text_sha256 NOT GLOB '*[^0-9a-f]*'",
+            name="ck_rag_chunks_text_sha256",
+        ),
+        sa.CheckConstraint(
+            "page_start > 0 AND page_end >= page_start", name="ck_rag_chunks_page_bounds"
+        ),
     )
-    op.create_index("ix_rag_chunks_generation_document_ordinal", "rag_chunks", ["generation_id", "document_version_id", "ordinal"])
+    op.create_index(
+        "ix_rag_chunks_generation_document_ordinal",
+        "rag_chunks",
+        ["generation_id", "document_version_id", "ordinal"],
+    )
     op.create_table(
         "rag_chunk_source_spans",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("rag_chunk_id", sa.Integer(), sa.ForeignKey("rag_chunks.id"), nullable=False),
-        sa.Column("document_page_id", sa.Integer(), sa.ForeignKey("document_pages.id"), nullable=False),
+        sa.Column(
+            "document_page_id", sa.Integer(), sa.ForeignKey("document_pages.id"), nullable=False
+        ),
         sa.Column("ordinal", sa.Integer(), nullable=False),
         sa.Column("page_number", sa.Integer(), nullable=False),
         sa.Column("page_char_start", sa.Integer(), nullable=False),
         sa.Column("page_char_end", sa.Integer(), nullable=False),
         sa.Column("chunk_char_start", sa.Integer(), nullable=False),
         sa.Column("chunk_char_end", sa.Integer(), nullable=False),
-        sa.UniqueConstraint("rag_chunk_id", "ordinal", name="uq_rag_chunk_source_spans_chunk_ordinal"),
+        sa.UniqueConstraint(
+            "rag_chunk_id", "ordinal", name="uq_rag_chunk_source_spans_chunk_ordinal"
+        ),
         sa.CheckConstraint("id > 0", name="ck_rag_chunk_source_spans_id"),
         sa.CheckConstraint("rag_chunk_id > 0", name="ck_rag_chunk_source_spans_chunk_id"),
-        sa.CheckConstraint("document_page_id > 0", name="ck_rag_chunk_source_spans_document_page_id"),
+        sa.CheckConstraint(
+            "document_page_id > 0", name="ck_rag_chunk_source_spans_document_page_id"
+        ),
         sa.CheckConstraint("ordinal > 0", name="ck_rag_chunk_source_spans_ordinal"),
         sa.CheckConstraint("page_number > 0", name="ck_rag_chunk_source_spans_page_number"),
-        sa.CheckConstraint("page_char_start >= 0 AND page_char_end > page_char_start", name="ck_rag_chunk_source_spans_page_bounds"),
-        sa.CheckConstraint("chunk_char_start >= 0 AND chunk_char_end > chunk_char_start", name="ck_rag_chunk_source_spans_chunk_bounds"),
+        sa.CheckConstraint(
+            "page_char_start >= 0 AND page_char_end > page_char_start",
+            name="ck_rag_chunk_source_spans_page_bounds",
+        ),
+        sa.CheckConstraint(
+            "chunk_char_start >= 0 AND chunk_char_end > chunk_char_start",
+            name="ck_rag_chunk_source_spans_chunk_bounds",
+        ),
     )
-    op.create_index("ix_rag_chunk_source_spans_chunk_ordinal", "rag_chunk_source_spans", ["rag_chunk_id", "ordinal"])
-    op.execute("CREATE VIRTUAL TABLE rag_chunks_fts USING fts5(normalized_text, generation_id UNINDEXED, document_version_id UNINDEXED)")
+    op.create_index(
+        "ix_rag_chunk_source_spans_chunk_ordinal",
+        "rag_chunk_source_spans",
+        ["rag_chunk_id", "ordinal"],
+    )
+    op.execute(
+        "CREATE VIRTUAL TABLE rag_chunks_fts USING fts5(normalized_text, generation_id UNINDEXED, document_version_id UNINDEXED)"
+    )
 
 
 def downgrade() -> None:

@@ -30,8 +30,7 @@ class RagIndexGenerationORM(Base):
             name="ck_rag_index_generations_status",
         ),
         CheckConstraint(
-            "length(config_fingerprint) = 64 "
-            "AND config_fingerprint NOT GLOB '*[^0-9a-f]*'",
+            "length(config_fingerprint) = 64 AND config_fingerprint NOT GLOB '*[^0-9a-f]*'",
             name="ck_rag_index_generations_config_fingerprint",
         ),
         CheckConstraint(
@@ -76,9 +75,7 @@ class RagDocumentIndexORM(Base):
             name="uq_rag_document_indexes_generation_document",
         ),
         CheckConstraint("id > 0", name="ck_rag_document_indexes_id"),
-        CheckConstraint(
-            "generation_id > 0", name="ck_rag_document_indexes_generation_id"
-        ),
+        CheckConstraint("generation_id > 0", name="ck_rag_document_indexes_generation_id"),
         CheckConstraint(
             "document_version_id > 0", name="ck_rag_document_indexes_document_version_id"
         ),
@@ -94,9 +91,7 @@ class RagDocumentIndexORM(Base):
             "searchable_page_count >= 0",
             name="ck_rag_document_indexes_searchable_page_count",
         ),
-        CheckConstraint(
-            "chunk_count >= 0", name="ck_rag_document_indexes_chunk_count"
-        ),
+        CheckConstraint("chunk_count >= 0", name="ck_rag_document_indexes_chunk_count"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -129,9 +124,7 @@ class RagChunkORM(Base):
         ),
         CheckConstraint("id > 0", name="ck_rag_chunks_id"),
         CheckConstraint("generation_id > 0", name="ck_rag_chunks_generation_id"),
-        CheckConstraint(
-            "document_version_id > 0", name="ck_rag_chunks_document_version_id"
-        ),
+        CheckConstraint("document_version_id > 0", name="ck_rag_chunks_document_version_id"),
         CheckConstraint(
             "length(chunk_key) = 64 AND chunk_key NOT GLOB '*[^0-9a-f]*'",
             name="ck_rag_chunks_chunk_key",
@@ -146,7 +139,12 @@ class RagChunkORM(Base):
         CheckConstraint(
             "page_start > 0 AND page_end >= page_start", name="ck_rag_chunks_page_bounds"
         ),
-        Index("ix_rag_chunks_generation_document_ordinal", "generation_id", "document_version_id", "ordinal"),
+        Index(
+            "ix_rag_chunks_generation_document_ordinal",
+            "generation_id",
+            "document_version_id",
+            "ordinal",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -172,14 +170,10 @@ class RagChunkSourceSpanORM(Base):
 
     __tablename__ = "rag_chunk_source_spans"
     __table_args__ = (
-        UniqueConstraint(
-            "rag_chunk_id", "ordinal", name="uq_rag_chunk_source_spans_chunk_ordinal"
-        ),
+        UniqueConstraint("rag_chunk_id", "ordinal", name="uq_rag_chunk_source_spans_chunk_ordinal"),
         CheckConstraint("id > 0", name="ck_rag_chunk_source_spans_id"),
         CheckConstraint("rag_chunk_id > 0", name="ck_rag_chunk_source_spans_chunk_id"),
-        CheckConstraint(
-            "document_page_id > 0", name="ck_rag_chunk_source_spans_document_page_id"
-        ),
+        CheckConstraint("document_page_id > 0", name="ck_rag_chunk_source_spans_document_page_id"),
         CheckConstraint("ordinal > 0", name="ck_rag_chunk_source_spans_ordinal"),
         CheckConstraint("page_number > 0", name="ck_rag_chunk_source_spans_page_number"),
         CheckConstraint(
@@ -195,9 +189,7 @@ class RagChunkSourceSpanORM(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     rag_chunk_id: Mapped[int] = mapped_column(ForeignKey("rag_chunks.id"), nullable=False)
-    document_page_id: Mapped[int] = mapped_column(
-        ForeignKey("document_pages.id"), nullable=False
-    )
+    document_page_id: Mapped[int] = mapped_column(ForeignKey("document_pages.id"), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     page_char_start: Mapped[int] = mapped_column(Integer, nullable=False)
