@@ -106,6 +106,8 @@ def test_factory_is_generation_isolated_and_remove_reopens_empty_index() -> None
 
     factory.remove(generation_a)
 
+    with pytest.raises(RuntimeError, match="closed"):
+        index_a.count()
     assert factory.open(generation_a).count() == 0
 
 

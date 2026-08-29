@@ -114,14 +114,19 @@ class InMemoryDenseIndexFactory:
 
     def __init__(self) -> None:
         self._records_by_generation: dict[RagGenerationIdentity, dict[str, DenseVectorRecord]] = {}
+        self._handles_by_generation: dict[RagGenerationIdentity, set[InMemoryDenseIndex]] = {}
 
     def open(self, generation: RagGenerationIdentity) -> InMemoryDenseIndex:
         if not isinstance(generation, RagGenerationIdentity):
             raise ValueError("generation must be a RagGenerationIdentity")
         records = self._records_by_generation.setdefault(generation, {})
-        return InMemoryDenseIndex(generation, records)
+        index = InMemoryDenseIndex(generation, records)
+        self._handles_by_generation.setdefault(generation, set()).add(index)
+        return index
 
     def remove(self, generation: RagGenerationIdentity) -> None:
         if not isinstance(generation, RagGenerationIdentity):
             raise ValueError("generation must be a RagGenerationIdentity")
         self._records_by_generation.pop(generation, None)
+        for index in self._handles_by_generation.pop(generation, set()):
+            index.close()
