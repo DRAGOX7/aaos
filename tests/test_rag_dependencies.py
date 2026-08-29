@@ -7,6 +7,23 @@ checks intentionally query installed metadata and execute real imports; they
 never construct a Chroma client or a BGE-M3 model, so they cannot create an
 index or download model weights.
 
+Security boundary decision: Chroma 1.5.9 server/multi-tenant and
+``trust_remote_code`` attack paths are out of scope. AAOS permits only an
+in-process ``PersistentClient`` with application-owned embeddings: no HTTP or
+server/API exposure, no multi-tenant authentication surface, and no
+caller/model-supplied embedding function or ``trust_remote_code``. Task 8 must
+preserve those constraints or stop and update the dependency decision.
+
+RAGAS 0.4.3 is dev-only because its multimodal URL/context-processing metrics
+are covered by GHSA-95ww-475f-pr4f. Production imports and runtime entrypoints
+must reject RAGAS and cloud-provider modules. Task 20 must use explicitly
+injected local evaluator LLM and local embeddings, set ``RAGAS_DO_NOT_TRACK``,
+avoid ``evaluate()`` defaults and implicit providers, fail closed when the
+local evaluator is unavailable, and exclude multimodal/URL metrics. Any need
+for those metrics or external URL processing requires a dependency update and
+security re-review. Transitive cloud-provider packages are dev-only packages,
+not authorized execution paths.
+
 Compatibility decision (verified 2026-08-29 against official metadata):
 
 | Distribution | Version | Group | License | Compatibility and side effects |
@@ -57,7 +74,16 @@ EXPECTED_PACKAGING_VERSION = "25.0"
 EXPECTED_RAGAS_VERSION = "0.4.3"
 EXPECTED_LANGCHAIN_COMMUNITY_VERSION = "0.3.27"
 PROHIBITED_DISTRIBUTIONS = ("PyMuPDF", "pytesseract", "easyocr", "ocrmypdf")
-PRODUCTION_FORBIDDEN_MODULES = ("ragas", "openai", "langchain_openai")
+PRODUCTION_FORBIDDEN_MODULES = (
+    "anthropic",
+    "boto3",
+    "cohere",
+    "google",
+    "langchain_openai",
+    "openai",
+    "ragas",
+    "vertexai",
+)
 
 
 def _path_snapshot(path: Path) -> tuple[tuple[str, int, int, int], ...] | None:
@@ -171,6 +197,37 @@ def test_production_modules_do_not_import_evaluation_or_cloud_client_modules() -
             )
             for name in imports
         ), source_path
+
+
+def test_runtime_entrypoints_do_not_route_to_evaluation_or_cloud_provider_modules() -> None:
+    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+
+    for entrypoint in pyproject["project"]["scripts"].values():
+        module_name = entrypoint.partition(":")[0]
+        assert all(
+            module_name != blocked and not module_name.startswith(f"{blocked}.")
+            for blocked in PRODUCTION_FORBIDDEN_MODULES
+        )
+
+        module_path = PROJECT_ROOT / "src" / Path(*module_name.split(".")).with_suffix(".py")
+        module = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+        imports = (
+            imported_name
+            for node in ast.walk(module)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for imported_name in (
+                (alias.name for alias in node.names)
+                if isinstance(node, ast.Import)
+                else (() if node.module is None else (node.module,))
+            )
+        )
+        assert all(
+            all(
+                name != blocked and not name.startswith(f"{blocked}.")
+                for blocked in PRODUCTION_FORBIDDEN_MODULES
+            )
+            for name in imports
+        ), module_path
 
 
 def test_rag_dependency_imports_are_side_effect_safe(tmp_path: Path) -> None:
