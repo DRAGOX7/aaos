@@ -33,7 +33,10 @@ class ControlledBackend:
     def encode(self, texts: object, **kwargs: object) -> object:
         self.calls.append((texts, kwargs))
         if self._responses:
-            return self._responses.pop(0)
+            response = self._responses.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            return response
         return {"dense_vecs": [[1.0, 0.0, 0.0, 0.0]]}
 
 
@@ -154,6 +157,26 @@ def test_default_snapshot_resolver_uses_only_the_required_local_bge_m3_assets(
             },
         )
     ]
+
+    with pytest.raises(ValueError, match="local_files_only"):
+        _resolve_local_snapshot(BGE_M3_MODEL_IDENTIFIER, BGE_M3_MODEL_REVISION, False)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "cuda:0", "cuda:12"])
+def test_explicit_device_syntax_accepts_only_supported_cpu_cuda_forms(device: str) -> None:
+    """Catches valid CUDA device forms being rejected before any lazy loading work."""
+    service = BgeM3EmbeddingService(device=device)
+
+    assert service.model_metadata().device == device
+
+
+@pytest.mark.parametrize("device", ["cudaoops", "cuda:bad", "cuda:-1", "cuda:", "cuda:+1", "CUDA"])
+def test_explicit_device_syntax_rejects_invalid_cuda_lookalikes(device: str) -> None:
+    """Catches invalid device syntax reaching snapshot or model construction."""
+    with pytest.raises(ValueError, match="device"):
+        BgeM3EmbeddingService(device=device)
 
 
 def test_document_embedding_uses_fixed_bounded_batches_and_dense_only_flags() -> None:
@@ -344,6 +367,50 @@ def test_load_failure_cleans_up_and_is_safe_without_revealing_input(
     assert str(error.value) == "rag operation failed"
     assert "sensitive document sentence" not in str(error.value)
     assert "secret cache path" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert cleanup_calls == [None]
+
+
+@pytest.mark.parametrize(
+    ("operation", "backend_error", "expected_code"),
+    [
+        (
+            "documents",
+            RuntimeError("private document text and backend path"),
+            RagErrorCode.EMBEDDING_FAILED,
+        ),
+        (
+            "query",
+            RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE),
+            RagErrorCode.QUERY_EMBEDDING_FAILED,
+        ),
+    ],
+)
+def test_backend_failures_release_resources_map_operation_codes_and_expose_no_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    backend_error: BaseException,
+    expected_code: RagErrorCode,
+) -> None:
+    """Catches unsafe exception chaining or backend failures that retain model resources."""
+    service, _, _ = _service(backend=ControlledBackend([backend_error]))
+    cleanup_calls: list[None] = []
+    monkeypatch.setattr("aaos.rag.embeddings._clear_cuda_cache", lambda: cleanup_calls.append(None))
+
+    with pytest.raises(RagOperationalError) as error:
+        if operation == "documents":
+            service.embed_documents(("private input",))
+        else:
+            service.embed_query("private input")
+
+    assert error.value.code is expected_code
+    assert str(error.value) == "rag operation failed"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert "private input" not in repr(error.value)
+    assert "private document text" not in repr(error.value)
+    assert service._backend is None
     assert cleanup_calls == [None]
 
 

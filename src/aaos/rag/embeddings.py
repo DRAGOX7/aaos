@@ -46,13 +46,15 @@ BackendFactory = Callable[[str, str], object]
 
 def _resolve_local_snapshot(model_identifier: str, revision: str, local_files_only: bool) -> str:
     """Resolve the immutable model snapshot without permitting a network request."""
+    if local_files_only is not True:
+        raise ValueError("local_files_only must be True")
     from huggingface_hub import snapshot_download
 
     return str(
         snapshot_download(
             model_identifier,
             revision=revision,
-            local_files_only=local_files_only,
+            local_files_only=True,
             allow_patterns=_BGE_M3_REQUIRED_SNAPSHOT_FILES,
         )
     )
@@ -91,12 +93,17 @@ def _clear_cuda_cache() -> None:
 
 
 def _validate_device(device: object) -> str:
-    if not isinstance(device, str) or not device.strip():
+    if not isinstance(device, str) or not device:
         raise ValueError("device must be a non-blank string")
-    normalized = device.strip()
-    if normalized != "cpu" and not normalized.startswith("cuda"):
-        raise ValueError("device must be cpu or a cuda device")
-    return normalized
+    if device in {"cpu", "cuda"}:
+        return device
+    if (
+        device.startswith("cuda:")
+        and device.removeprefix("cuda:").isascii()
+        and device.removeprefix("cuda:").isdigit()
+    ):
+        return device
+    raise ValueError("device must be cpu, cuda, or cuda:<non-negative integer>")
 
 
 def _validate_text(text: object, name: str) -> str:
@@ -205,38 +212,53 @@ class BgeM3EmbeddingService:
         self._require_open()
         validated_texts = _validate_texts(texts)
         vectors: list[tuple[float, ...]] = []
+        failed = False
         try:
             backend = self._load_backend()
-            for offset in range(0, len(validated_texts), BGE_M3_BATCH_SIZE):
-                batch = list(validated_texts[offset : offset + BGE_M3_BATCH_SIZE])
-                vectors.extend(self._encode_batch(backend, batch))
         except RagOperationalError:
-            raise
-        except Exception as error:
-            self.release_model()
-            raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED) from error
+            failed = True
+        else:
+            try:
+                for offset in range(0, len(validated_texts), BGE_M3_BATCH_SIZE):
+                    batch = list(validated_texts[offset : offset + BGE_M3_BATCH_SIZE])
+                    vectors.extend(self._encode_batch(backend, batch))
+            except Exception:
+                self._release_model_resources()
+                failed = True
+        if failed:
+            raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
         if len(vectors) != len(validated_texts):
-            self.release_model()
+            self._release_model_resources()
             raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
         return tuple(vectors)
 
     def embed_query(self, text: str) -> tuple[float, ...]:
         self._require_open()
         validated_text = _validate_text(text, "text")
+        vectors: tuple[tuple[float, ...], ...] = ()
+        failed = False
         try:
-            vectors = self._encode_batch(self._load_backend(), [validated_text])
+            backend = self._load_backend()
         except RagOperationalError:
-            raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED) from None
-        except Exception as error:
-            self.release_model()
-            raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED) from error
+            failed = True
+        else:
+            try:
+                vectors = self._encode_batch(backend, [validated_text])
+            except Exception:
+                self._release_model_resources()
+                failed = True
+        if failed:
+            raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED)
         if len(vectors) != 1:
-            self.release_model()
+            self._release_model_resources()
             raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED)
         return vectors[0]
 
     def release_model(self) -> None:
         self._require_open()
+        self._release_model_resources()
+
+    def _release_model_resources(self) -> None:
         self._backend = None
         gc.collect()
         _clear_cuda_cache()
@@ -250,6 +272,7 @@ class BgeM3EmbeddingService:
     def _load_backend(self) -> _BgeM3Backend:
         if self._backend is not None:
             return self._backend
+        failed = False
         try:
             snapshot_path = self._snapshot_resolver(
                 BGE_M3_MODEL_IDENTIFIER,
@@ -258,13 +281,18 @@ class BgeM3EmbeddingService:
             )
             if not isinstance(snapshot_path, str) or not snapshot_path.strip():
                 raise ValueError("invalid local model snapshot")
-            self._backend = cast(_BgeM3Backend, self._backend_factory(snapshot_path, self._device))
-            return self._backend
-        except Exception as error:
-            self._backend = None
-            gc.collect()
-            _clear_cuda_cache()
-            raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED) from error
+            backend = self._backend_factory(snapshot_path, self._device)
+            if not callable(getattr(backend, "encode", None)):
+                raise ValueError("invalid BGE-M3 backend")
+            self._backend = cast(_BgeM3Backend, backend)
+        except Exception:
+            self._release_model_resources()
+            failed = True
+        if failed:
+            raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
+        if self._backend is None:
+            raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
+        return self._backend
 
     @staticmethod
     def _encode_batch(backend: _BgeM3Backend, texts: list[str]) -> tuple[tuple[float, ...], ...]:
