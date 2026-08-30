@@ -34,6 +34,7 @@ from aaos.persistence.rag_models import (
     RagIndexGenerationORM,
 )
 from aaos.rag.contracts import (
+    MAX_RAG_TEXT_CHARACTERS,
     CourseScope,
     CoverageStatus,
     DocumentIndexStatus,
@@ -124,6 +125,31 @@ class QuerySnapshot:
     generation: RagGenerationIdentity
     scope: RagScope
     document_version_ids: tuple[int, ...]
+    normalized_query: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation, RagGenerationIdentity):
+            raise ValueError("generation must be a RagGenerationIdentity")
+        if not isinstance(self.scope, (CourseScope, GlobalScope, HistoricalScope)):
+            raise ValueError("scope must be a supported RAG scope")
+        if isinstance(self.scope, HistoricalScope) and len(
+            set(self.scope.document_version_ids)
+        ) != len(self.scope.document_version_ids):
+            raise ValueError("historical scope must not contain duplicate versions")
+        if (
+            not isinstance(self.document_version_ids, tuple)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                for value in self.document_version_ids
+            )
+            or len(set(self.document_version_ids)) != len(self.document_version_ids)
+        ):
+            raise ValueError("document_version_ids must be a tuple of unique positive integers")
+        if (
+            not isinstance(self.normalized_query, str)
+            or len(self.normalized_query) > MAX_RAG_TEXT_CHARACTERS
+        ):
+            raise ValueError("normalized_query must be a string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,28 +527,138 @@ class RagRepository:
         """Resolve only explicitly requested eligible historical versions."""
         return self._resolve_versions(scope, current=False)
 
-    def pin_query_snapshot(self, scope: RagScope) -> QuerySnapshot:
-        """Pin the active generation and an immutable eligible version universe."""
+    @classmethod
+    def _published_version_query(
+        cls,
+        generation_id: int,
+        *,
+        document_version_ids: tuple[int, ...] | None = None,
+        course_id: int | None = None,
+    ) -> Select[Any]:
+        """Build the terminal-publication view used by query authorization."""
+        query = (
+            cls._version_query()
+            .add_columns(RagDocumentIndexORM.status.label("published_status"))
+            .join(
+                RagDocumentIndexORM,
+                (RagDocumentIndexORM.document_version_id == DocumentVersionORM.id)
+                & (RagDocumentIndexORM.generation_id == generation_id)
+                & RagDocumentIndexORM.status.in_(
+                    (
+                        DocumentIndexStatus.READY.value,
+                        DocumentIndexStatus.NOT_SEARCHABLE.value,
+                    )
+                ),
+            )
+        )
+        if document_version_ids is not None:
+            query = query.where(DocumentVersionORM.id.in_(document_version_ids))
+        if course_id is not None:
+            query = query.where(CourseORM.id == course_id)
+        return query
+
+    def _resolve_current_query_versions_in_session(
+        self, session: Session, scope: CourseScope | GlobalScope, generation_id: int
+    ) -> tuple[tuple[DocumentVersionRecord, ...], bool]:
+        """Resolve latest published versions and report whether any were published."""
+        query = self._published_version_query(
+            generation_id,
+            course_id=scope.course_id if isinstance(scope, CourseScope) else None,
+        ).order_by(
+            CourseORM.id,
+            RemoteFileORM.id,
+            DocumentVersionORM.document_id,
+            DocumentVersionORM.version_number.desc(),
+            DocumentVersionORM.id.desc(),
+        )
+        rows = session.execute(query).all()
+        latest_by_document: dict[int, Any] = {}
+        for row in rows:
+            document_id = int(row.document_id)
+            latest_by_document.setdefault(document_id, row)
+        ordered_rows = tuple(
+            sorted(
+                latest_by_document.values(),
+                key=lambda row: (int(row.course_id), int(row.remote_file_id), int(row.id)),
+            )
+        )
+        records = tuple(
+            self._record_version(row)
+            for row in ordered_rows
+            if row.published_status == DocumentIndexStatus.READY.value
+        )
+        return records, bool(rows)
+
+    def _resolve_historical_query_versions_in_session(
+        self,
+        session: Session,
+        scope: HistoricalScope,
+        generation_ids: tuple[int, ...],
+    ) -> tuple[RagGenerationIdentity, tuple[DocumentVersionRecord, ...]]:
+        """Select one generation containing every requested published version."""
+        requested_ids = tuple(sorted(scope.document_version_ids))
+        if len(set(requested_ids)) != len(requested_ids):
+            raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
+        for generation_id in generation_ids:
+            rows = session.execute(
+                self._published_version_query(generation_id, document_version_ids=requested_ids)
+            ).all()
+            by_version = {int(row.id): row for row in rows}
+            if set(by_version) != set(requested_ids):
+                continue
+            generation = session.get(RagIndexGenerationORM, generation_id)
+            if generation is None:
+                continue
+            records = tuple(
+                self._record_version(by_version[version_id])
+                for version_id in requested_ids
+                if by_version[version_id].published_status == DocumentIndexStatus.READY.value
+            )
+            return self._generation_from_row(generation).identity, records
+        raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
+
+    def pin_query_snapshot(self, scope: RagScope, *, normalized_query: str = "") -> QuerySnapshot:
+        """Pin one coherent generation/revision and immutable version universe."""
         session = self._session_factory()
         try:
             with session.begin():
-                generation = session.scalar(
+                active = session.scalar(
                     select(RagIndexGenerationORM)
                     .where(RagIndexGenerationORM.status == GenerationStatus.ACTIVE.value)
                     .order_by(RagIndexGenerationORM.id)
                 )
-                if generation is None:
+                if active is None:
                     raise RagOperationalError(RagErrorCode.NO_ACTIVE_GENERATION)
-                records = self._resolve_versions_in_session(
-                    session,
-                    scope,
-                    current=not isinstance(scope, HistoricalScope),
-                    ready_generation_id=int(generation.id),
-                )
+                if not isinstance(scope, (CourseScope, GlobalScope, HistoricalScope)):
+                    raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
+                if isinstance(scope, HistoricalScope):
+                    retired_ids = tuple(
+                        int(value)
+                        for value in session.scalars(
+                            select(RagIndexGenerationORM.id)
+                            .where(RagIndexGenerationORM.status == GenerationStatus.RETIRED.value)
+                            .order_by(RagIndexGenerationORM.id.desc())
+                        ).all()
+                    )
+                    generation_identity, records = (
+                        self._resolve_historical_query_versions_in_session(
+                            session,
+                            scope,
+                            (int(active.id), *retired_ids),
+                        )
+                    )
+                else:
+                    records, published = self._resolve_current_query_versions_in_session(
+                        session, scope, int(active.id)
+                    )
+                    generation_identity = self._generation_from_row(active).identity
+                    if not published:
+                        raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
                 return QuerySnapshot(
-                    generation=self._generation_from_row(generation).identity,
+                    generation=generation_identity,
                     scope=scope,
                     document_version_ids=tuple(item.document_version_id for item in records),
+                    normalized_query=normalized_query,
                 )
         except RagOperationalError:
             raise
