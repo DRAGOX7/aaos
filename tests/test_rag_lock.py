@@ -320,3 +320,44 @@ def test_two_distinct_injected_lock_paths_do_not_block_each_other(tmp_path: Path
     with RagIndexLock(first_path).acquire(), RagIndexLock(second_path).acquire():
         assert first_path.exists()
         assert second_path.exists()
+
+
+def test_assert_owned_accepts_current_owner(tmp_path: Path) -> None:
+    lock = RagIndexLock(tmp_path / "phase4-rag-index.lock")
+    lease = lock.acquire()
+    try:
+        lock.assert_owned(lease)
+    finally:
+        lease.release()
+
+
+def test_assert_owned_rejects_released_lease(tmp_path: Path) -> None:
+    lock = RagIndexLock(tmp_path / "phase4-rag-index.lock")
+    lease = lock.acquire()
+    lease.release()
+
+    with pytest.raises(RagIndexLockUnavailable):
+        lock.assert_owned(lease)
+
+
+def test_assert_owned_rejects_foreign_lock_lease(tmp_path: Path) -> None:
+    first = RagIndexLock(tmp_path / "first.lock")
+    second = RagIndexLock(tmp_path / "second.lock")
+    lease = first.acquire()
+    try:
+        with pytest.raises(RagIndexLockUnavailable):
+            second.assert_owned(lease)
+    finally:
+        lease.release()
+
+
+def test_assert_owned_rejects_replaced_marker(tmp_path: Path) -> None:
+    lock_path = tmp_path / "phase4-rag-index.lock"
+    lock = RagIndexLock(lock_path)
+    lease = lock.acquire()
+    original_nonce = lock_path.read_bytes()
+    lock_path.unlink()
+    lock_path.write_bytes(original_nonce)
+
+    with pytest.raises(RagIndexLockUnavailable):
+        lock.assert_owned(lease)

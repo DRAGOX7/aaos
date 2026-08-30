@@ -6,6 +6,16 @@ from math import isfinite
 
 from aaos.rag.contracts import DenseSearchHit, DenseVectorRecord, RagGenerationIdentity
 
+_GenerationStorageKey = tuple[int, str, int]
+
+
+def _generation_storage_key(generation: RagGenerationIdentity) -> _GenerationStorageKey:
+    return (
+        generation.generation_id,
+        generation.config_fingerprint,
+        generation.embedding_dimensions,
+    )
+
 
 class InMemoryDenseIndex:
     """An isolated, deterministic dense index used only by unit tests."""
@@ -113,20 +123,22 @@ class InMemoryDenseIndexFactory:
     """Factory for generation-isolated in-memory indexes used by unit tests."""
 
     def __init__(self) -> None:
-        self._records_by_generation: dict[RagGenerationIdentity, dict[str, DenseVectorRecord]] = {}
-        self._handles_by_generation: dict[RagGenerationIdentity, set[InMemoryDenseIndex]] = {}
+        self._records_by_generation: dict[_GenerationStorageKey, dict[str, DenseVectorRecord]] = {}
+        self._handles_by_generation: dict[_GenerationStorageKey, set[InMemoryDenseIndex]] = {}
 
     def open(self, generation: RagGenerationIdentity) -> InMemoryDenseIndex:
         if not isinstance(generation, RagGenerationIdentity):
             raise ValueError("generation must be a RagGenerationIdentity")
-        records = self._records_by_generation.setdefault(generation, {})
+        storage_key = _generation_storage_key(generation)
+        records = self._records_by_generation.setdefault(storage_key, {})
         index = InMemoryDenseIndex(generation, records)
-        self._handles_by_generation.setdefault(generation, set()).add(index)
+        self._handles_by_generation.setdefault(storage_key, set()).add(index)
         return index
 
     def remove(self, generation: RagGenerationIdentity) -> None:
         if not isinstance(generation, RagGenerationIdentity):
             raise ValueError("generation must be a RagGenerationIdentity")
-        self._records_by_generation.pop(generation, None)
-        for index in self._handles_by_generation.pop(generation, set()):
+        storage_key = _generation_storage_key(generation)
+        self._records_by_generation.pop(storage_key, None)
+        for index in self._handles_by_generation.pop(storage_key, set()):
             index.close()

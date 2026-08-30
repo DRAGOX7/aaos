@@ -101,6 +101,21 @@ class RagIndexLock:
                 except OSError:
                     pass
 
+    def assert_owned(self, lease: RagIndexLease) -> None:
+        """Require a live lease for this exact marker without acquiring it again."""
+        if (
+            not isinstance(lease, RagIndexLease)
+            or lease._released
+            or lease._lock_path != self._path
+        ):
+            raise RagIndexLockUnavailable()
+        try:
+            nonce, identity = _read_lock_state(self._path)
+        except (FileNotFoundError, OSError, RuntimeError, ValueError):
+            raise RagIndexLockUnavailable() from None
+        if nonce != lease._nonce or identity != lease._identity:
+            raise RagIndexLockUnavailable()
+
 
 def _validate_lock_path(path: Path) -> None:
     if not path.is_absolute() or path.resolve(strict=False) != path or not path.name:

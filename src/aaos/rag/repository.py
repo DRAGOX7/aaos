@@ -183,6 +183,56 @@ class DocumentVerificationRecord:
     fts_row_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class StagedDocumentIndexResult:
+    """Verified PREPARING state awaiting one atomic ACTIVE publication."""
+
+    generation: RagGenerationIdentity
+    document_version_id: int
+    intended_status: DocumentIndexStatus
+    coverage_status: CoverageStatus
+    searchable_page_count: int
+    chunk_count: int
+    verification: DocumentVerificationRecord | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation, RagGenerationIdentity):
+            raise ValueError("generation must be a RagGenerationIdentity")
+        if (
+            isinstance(self.document_version_id, bool)
+            or not isinstance(self.document_version_id, int)
+            or self.document_version_id <= 0
+        ):
+            raise ValueError("document_version_id must be positive")
+        if self.intended_status not in {
+            DocumentIndexStatus.READY,
+            DocumentIndexStatus.NOT_SEARCHABLE,
+        }:
+            raise ValueError("intended_status must be READY or NOT_SEARCHABLE")
+        if not isinstance(self.coverage_status, CoverageStatus):
+            raise ValueError("coverage_status must be a CoverageStatus")
+        for name in ("searchable_page_count", "chunk_count"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be nonnegative")
+        if self.intended_status is DocumentIndexStatus.NOT_SEARCHABLE:
+            coherent = (
+                self.coverage_status is CoverageStatus.NONE
+                and self.searchable_page_count == 0
+                and self.chunk_count == 0
+                and self.verification is None
+            )
+        else:
+            coherent = (
+                self.coverage_status in {CoverageStatus.FULL, CoverageStatus.PARTIAL}
+                and self.searchable_page_count > 0
+                and self.chunk_count > 0
+                and isinstance(self.verification, DocumentVerificationRecord)
+            )
+        if not coherent:
+            raise ValueError("staged document metadata is incoherent")
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -335,6 +385,74 @@ class RagRepository:
     ) -> tuple[DocumentVersionRecord, ...]:
         """Resolve newest eligible version per document for course/global scope."""
         return self._resolve_versions(scope, current=True)
+
+    def resolve_index_new_candidates(
+        self,
+        identity: RagGenerationIdentity,
+        document_version_id: int | None = None,
+    ) -> tuple[DocumentVersionRecord, ...]:
+        """Return current eligible versions not terminally published in ACTIVE."""
+        if document_version_id is not None and (
+            isinstance(document_version_id, bool)
+            or not isinstance(document_version_id, int)
+            or document_version_id <= 0
+        ):
+            raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, identity.content_revision)
+                if generation.status != GenerationStatus.ACTIVE.value:
+                    raise RagOperationalError(RagErrorCode.NO_ACTIVE_GENERATION)
+                try:
+                    current = self._resolve_versions_in_session(
+                        session, GlobalScope(), current=True
+                    )
+                except RagOperationalError as error:
+                    if error.code is not RagErrorCode.NO_ELIGIBLE_DOCUMENTS:
+                        raise
+                    current = ()
+                if document_version_id is not None:
+                    current = tuple(
+                        item for item in current if item.document_version_id == document_version_id
+                    )
+                    if not current:
+                        raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
+                statuses = {
+                    int(row.document_version_id): _as_index_status(row.status)
+                    for row in session.scalars(
+                        select(RagDocumentIndexORM).where(
+                            RagDocumentIndexORM.generation_id == identity.generation_id,
+                            RagDocumentIndexORM.document_version_id.in_(
+                                tuple(item.document_version_id for item in current)
+                            ),
+                        )
+                    )
+                }
+                return tuple(
+                    sorted(
+                        (
+                            item
+                            for item in current
+                            if statuses.get(item.document_version_id)
+                            not in {
+                                DocumentIndexStatus.READY,
+                                DocumentIndexStatus.NOT_SEARCHABLE,
+                            }
+                        ),
+                        key=lambda item: (
+                            item.document_id,
+                            item.version_number,
+                            item.document_version_id,
+                        ),
+                    )
+                )
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.PROVENANCE_RESOLUTION_FAILED, error) from error
+        finally:
+            session.close()
 
     def resolve_historical_versions(
         self, scope: HistoricalScope
@@ -634,27 +752,8 @@ class RagRepository:
         session = self._session_factory()
         try:
             with session.begin():
-                result = cast(
-                    CursorResult[Any],
-                    session.execute(
-                        update(RagIndexGenerationORM)
-                        .where(
-                            RagIndexGenerationORM.id == identity.generation_id,
-                            RagIndexGenerationORM.config_fingerprint == identity.config_fingerprint,
-                            RagIndexGenerationORM.embedding_dimensions
-                            == identity.embedding_dimensions,
-                            RagIndexGenerationORM.content_revision == expected_revision,
-                        )
-                        .values(content_revision=RagIndexGenerationORM.content_revision + 1)
-                    ),
-                )
-                if result.rowcount != 1:
-                    raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
-                return RagGenerationIdentity(
-                    generation_id=identity.generation_id,
-                    config_fingerprint=identity.config_fingerprint,
-                    content_revision=expected_revision + 1,
-                    embedding_dimensions=identity.embedding_dimensions,
+                return self._bump_content_revision_in_session(
+                    session, identity, expected_revision=expected_revision
                 )
         except RagOperationalError:
             raise
@@ -664,6 +763,43 @@ class RagRepository:
             session.close()
 
     update_content_revision = bump_content_revision
+
+    @staticmethod
+    def _bump_content_revision_in_session(
+        session: Session,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+    ) -> RagGenerationIdentity:
+        if (
+            not isinstance(identity, RagGenerationIdentity)
+            or isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+            or expected_revision != identity.content_revision
+        ):
+            raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(RagIndexGenerationORM)
+                .where(
+                    RagIndexGenerationORM.id == identity.generation_id,
+                    RagIndexGenerationORM.config_fingerprint == identity.config_fingerprint,
+                    RagIndexGenerationORM.embedding_dimensions == identity.embedding_dimensions,
+                    RagIndexGenerationORM.content_revision == expected_revision,
+                )
+                .values(content_revision=RagIndexGenerationORM.content_revision + 1)
+            ),
+        )
+        if result.rowcount != 1:
+            raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+        return RagGenerationIdentity(
+            generation_id=identity.generation_id,
+            config_fingerprint=identity.config_fingerprint,
+            content_revision=expected_revision + 1,
+            embedding_dimensions=identity.embedding_dimensions,
+        )
 
     def _require_eligible_version(
         self, session: Session, document_version_id: int
@@ -836,6 +972,242 @@ class RagRepository:
             raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
         finally:
             session.close()
+
+    def begin_document_staging(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        document_version_id: int,
+    ) -> DocumentIndexRecord:
+        """Create/reset retryable PREPARING state in the exact ACTIVE generation."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, expected_revision)
+                if generation.status != GenerationStatus.ACTIVE.value:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                self._require_eligible_version(session, document_version_id)
+                row = session.scalar(
+                    select(RagDocumentIndexORM).where(
+                        RagDocumentIndexORM.generation_id == identity.generation_id,
+                        RagDocumentIndexORM.document_version_id == document_version_id,
+                    )
+                )
+                if row is None:
+                    row = RagDocumentIndexORM(
+                        generation_id=identity.generation_id,
+                        document_version_id=document_version_id,
+                        status=DocumentIndexStatus.PREPARING.value,
+                        coverage_status=CoverageStatus.NONE.value,
+                        searchable_page_count=0,
+                        chunk_count=0,
+                        error_code=None,
+                        created_at=_now_utc(),
+                        updated_at=_now_utc(),
+                    )
+                    session.add(row)
+                else:
+                    self._delete_document_chunks(
+                        session,
+                        generation_id=identity.generation_id,
+                        document_version_id=document_version_id,
+                    )
+                    row.status = DocumentIndexStatus.PREPARING.value
+                    row.coverage_status = CoverageStatus.NONE.value
+                    row.searchable_page_count = 0
+                    row.chunk_count = 0
+                    row.error_code = None
+                    row.updated_at = _now_utc()
+                session.flush()
+                return self._record_index(row)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def record_staged_document(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        document_version_id: int,
+        intended_status: DocumentIndexStatus,
+        coverage_status: CoverageStatus,
+        searchable_page_count: int,
+        chunk_count: int,
+        verification: DocumentVerificationRecord | None,
+    ) -> DocumentIndexRecord:
+        """Validate and retain coherent PREPARING metadata for later publication."""
+        if (
+            isinstance(document_version_id, bool)
+            or not isinstance(document_version_id, int)
+            or document_version_id <= 0
+            or not isinstance(coverage_status, CoverageStatus)
+            or isinstance(searchable_page_count, bool)
+            or not isinstance(searchable_page_count, int)
+            or searchable_page_count < 0
+            or isinstance(chunk_count, bool)
+            or not isinstance(chunk_count, int)
+            or chunk_count < 0
+            or intended_status
+            not in {
+                DocumentIndexStatus.READY,
+                DocumentIndexStatus.NOT_SEARCHABLE,
+            }
+        ):
+            raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, expected_revision)
+                if generation.status != GenerationStatus.ACTIVE.value:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                version = self._require_eligible_version(session, document_version_id)
+                row = session.scalar(
+                    select(RagDocumentIndexORM).where(
+                        RagDocumentIndexORM.generation_id == identity.generation_id,
+                        RagDocumentIndexORM.document_version_id == document_version_id,
+                    )
+                )
+                if row is None or row.status != DocumentIndexStatus.PREPARING.value:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                self._validate_staged_metadata(
+                    session,
+                    identity,
+                    version,
+                    intended_status=intended_status,
+                    coverage_status=coverage_status,
+                    searchable_page_count=searchable_page_count,
+                    chunk_count=chunk_count,
+                    verification=verification,
+                )
+                row.coverage_status = coverage_status.value
+                row.searchable_page_count = searchable_page_count
+                row.chunk_count = chunk_count
+                row.error_code = None
+                row.updated_at = _now_utc()
+                session.flush()
+                return self._record_index(row)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def publish_staged_documents(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        staged_documents: tuple[StagedDocumentIndexResult, ...],
+    ) -> RagGenerationIdentity:
+        """Atomically publish a verified ACTIVE batch and its one revision CAS."""
+        if (
+            not staged_documents
+            or any(not isinstance(item, StagedDocumentIndexResult) for item in staged_documents)
+            or len({item.document_version_id for item in staged_documents}) != len(staged_documents)
+        ):
+            raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, expected_revision)
+                if generation.status != GenerationStatus.ACTIVE.value:
+                    raise RagOperationalError(RagErrorCode.NO_ACTIVE_GENERATION)
+                rows: list[RagDocumentIndexORM] = []
+                for staged in staged_documents:
+                    if staged.generation != identity:
+                        raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                    version = self._require_eligible_version(session, staged.document_version_id)
+                    row = session.scalar(
+                        select(RagDocumentIndexORM).where(
+                            RagDocumentIndexORM.generation_id == identity.generation_id,
+                            RagDocumentIndexORM.document_version_id == staged.document_version_id,
+                        )
+                    )
+                    if (
+                        row is None
+                        or row.status != DocumentIndexStatus.PREPARING.value
+                        or _as_coverage_status(row.coverage_status) is not staged.coverage_status
+                        or int(row.searchable_page_count) != staged.searchable_page_count
+                        or int(row.chunk_count) != staged.chunk_count
+                        or row.error_code is not None
+                    ):
+                        raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                    self._validate_staged_metadata(
+                        session,
+                        identity,
+                        version,
+                        intended_status=staged.intended_status,
+                        coverage_status=staged.coverage_status,
+                        searchable_page_count=staged.searchable_page_count,
+                        chunk_count=staged.chunk_count,
+                        verification=staged.verification,
+                    )
+                    rows.append(row)
+                for row, staged in zip(rows, staged_documents, strict=True):
+                    row.status = staged.intended_status.value
+                    row.updated_at = _now_utc()
+                revised = self._bump_content_revision_in_session(
+                    session, identity, expected_revision=expected_revision
+                )
+                session.flush()
+                return revised
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def _validate_staged_metadata(
+        self,
+        session: Session,
+        identity: RagGenerationIdentity,
+        version: DocumentVersionRecord,
+        *,
+        intended_status: DocumentIndexStatus,
+        coverage_status: CoverageStatus,
+        searchable_page_count: int,
+        chunk_count: int,
+        verification: DocumentVerificationRecord | None,
+    ) -> None:
+        if intended_status is DocumentIndexStatus.NOT_SEARCHABLE:
+            if (
+                coverage_status is not CoverageStatus.NONE
+                or searchable_page_count != 0
+                or chunk_count != 0
+                or verification is not None
+            ):
+                raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+            return
+        if (
+            coverage_status is CoverageStatus.NONE
+            or searchable_page_count <= 0
+            or searchable_page_count > version.page_count
+            or (
+                coverage_status is CoverageStatus.FULL
+                and searchable_page_count != version.page_count
+            )
+            or (
+                coverage_status is CoverageStatus.PARTIAL
+                and searchable_page_count >= version.page_count
+            )
+            or chunk_count <= 0
+            or verification is None
+            or verification.generation_id != identity.generation_id
+            or verification.document_version_id != version.document_version_id
+            or verification.chunk_count != chunk_count
+            or self._verify_generation_document_in_session(
+                session, identity, version.document_version_id
+            )
+            != verification
+        ):
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
 
     def finish_document_preparation(
         self,

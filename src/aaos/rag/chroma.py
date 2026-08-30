@@ -184,7 +184,7 @@ class ChromaDenseIndexFactory:
         if not isinstance(paths, RagRuntimePaths):
             raise ValueError("paths must be a RagRuntimePaths")
         self._chroma_root = paths.chroma_root
-        self._handles_by_generation: dict[RagGenerationIdentity, set[_ChromaDenseIndex]] = {}
+        self._handles_by_generation: dict[tuple[int, str, int], set[_ChromaDenseIndex]] = {}
 
     def open(self, generation: RagGenerationIdentity) -> _ChromaDenseIndex:
         if not isinstance(generation, RagGenerationIdentity):
@@ -203,13 +203,13 @@ class ChromaDenseIndexFactory:
             raise RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE) from error
 
         index = _ChromaDenseIndex(generation, collection)
-        self._handles_by_generation.setdefault(generation, set()).add(index)
+        self._handles_by_generation.setdefault(self._generation_key(generation), set()).add(index)
         return index
 
     def remove(self, generation: RagGenerationIdentity) -> None:
         if not isinstance(generation, RagGenerationIdentity):
             raise ValueError("generation must be a RagGenerationIdentity")
-        for index in self._handles_by_generation.pop(generation, set()):
+        for index in self._handles_by_generation.pop(self._generation_key(generation), set()):
             index.close()
 
         generation_path = self._generation_path(generation)
@@ -227,6 +227,14 @@ class ChromaDenseIndexFactory:
     def _generation_path(self, generation: RagGenerationIdentity) -> Path:
         return self._chroma_root / (
             f"generation-{generation.generation_id}-"
-            f"{generation.config_fingerprint}-r{generation.content_revision}-"
+            f"{generation.config_fingerprint}-"
             f"d{generation.embedding_dimensions}"
+        )
+
+    @staticmethod
+    def _generation_key(generation: RagGenerationIdentity) -> tuple[int, str, int]:
+        return (
+            generation.generation_id,
+            generation.config_fingerprint,
+            generation.embedding_dimensions,
         )

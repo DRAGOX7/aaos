@@ -14,6 +14,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from aaos.documents.contracts import IngestionStatus
@@ -35,15 +36,21 @@ from aaos.rag.contracts import (
     DenseVectorRecord,
     DocumentIndexStatus,
     EmbeddingService,
+    GlobalScope,
     RagErrorCode,
     RagGenerationIdentity,
     RagOperationalError,
 )
 from aaos.rag.dense import InMemoryDenseIndexFactory
 from aaos.rag.embeddings import FakeEmbeddingService
-from aaos.rag.indexing import RagDocumentIndexer
+from aaos.rag.indexing import RagDocumentIndexer, RagIndexingCoordinator
 from aaos.rag.lock import RagIndexLock
-from aaos.rag.repository import DocumentVerificationRecord, GenerationBuild, RagRepository
+from aaos.rag.repository import (
+    DocumentVerificationRecord,
+    GenerationBuild,
+    RagRepository,
+    StagedDocumentIndexResult,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
@@ -129,6 +136,48 @@ def _seed(sessions: SessionFactory, page_texts: tuple[str, ...]) -> int:
         return int(version.id)
 
 
+def _seed_next_version(
+    sessions: SessionFactory, current_version_id: int, page_texts: tuple[str, ...]
+) -> int:
+    with sessions() as session, session.begin():
+        current = session.get(DocumentVersionORM, current_version_id)
+        assert current is not None
+        digest = sha256(("next\n" + "\n".join(page_texts)).encode("utf-8")).hexdigest()
+        blob = ContentBlobORM(
+            sha256=digest,
+            size_bytes=100,
+            media_type="application/pdf",
+            storage_key=f"sha256/{digest[:2]}/{digest}.pdf",
+            created_at=NOW,
+        )
+        session.add(blob)
+        session.flush()
+        version = DocumentVersionORM(
+            document_id=current.document_id,
+            version_number=current.version_number + 1,
+            content_blob_id=blob.id,
+            source_filename="file-v2.pdf",
+            ingested_at=NOW,
+            extraction_status="SUCCESS",
+            page_count=len(page_texts),
+        )
+        session.add(version)
+        session.flush()
+        session.add_all(
+            DocumentPageORM(
+                document_version_id=version.id,
+                page_number=index,
+                text=page_text,
+                text_source="EMBEDDED_PDF",
+                width_points=612.0,
+                height_points=792.0,
+                created_at=NOW,
+            )
+            for index, page_text in enumerate(page_texts, start=1)
+        )
+        return int(version.id)
+
+
 def _chunker() -> DeterministicChunker:
     return DeterministicChunker(
         RagIndexConfig(
@@ -203,6 +252,240 @@ def test_prepare_document_is_ready_only_after_cross_store_verification(tmp_path:
         )
 
 
+def test_stage_document_uses_owned_lease_and_leaves_searchable_preparing(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        lease = lock.acquire()
+        try:
+            staged = indexer.stage_document_for_publication(lease, active.identity, version_id)
+            assert staged.intended_status is DocumentIndexStatus.READY
+            assert staged.verification is not None
+            assert repository.get_document_index(active.identity, version_id).status is (
+                DocumentIndexStatus.PREPARING
+            )
+            lock.assert_owned(lease)
+        finally:
+            lease.release()
+
+
+def test_stage_document_leaves_empty_document_preparing_for_not_searchable(
+    tmp_path: Path,
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("   ",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        with lock.acquire() as lease:
+            staged = indexer.stage_document_for_publication(lease, active.identity, version_id)
+        assert staged.intended_status is DocumentIndexStatus.NOT_SEARCHABLE
+        assert staged.verification is None
+        assert repository.get_document_index(active.identity, version_id).status is (
+            DocumentIndexStatus.PREPARING
+        )
+
+
+def test_staged_result_rejects_non_publishable_terminal_status() -> None:
+    identity = RagGenerationIdentity(1, "a" * 64, 0, 3)
+
+    with pytest.raises(ValueError, match="intended_status"):
+        StagedDocumentIndexResult(
+            identity,
+            1,
+            DocumentIndexStatus.FAILED,
+            CoverageStatus.NONE,
+            0,
+            0,
+            None,
+        )
+
+
+def test_index_new_publishes_two_documents_with_one_revision_increment(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        first_id = _seed(sessions, ("first searchable text",))
+        second_id = _seed(sessions, ("second searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+
+        result = RagIndexingCoordinator(repository, indexer, lock).index_new()
+
+        assert result.content_revision == 1
+        assert result.indexed_documents == 2
+        refreshed = repository.get_generation(active.generation_id)
+        assert refreshed.identity.content_revision == 1
+        assert {
+            item.document_version_id: item.status
+            for item in repository.list_document_indexes(refreshed.identity)
+        } == {
+            first_id: DocumentIndexStatus.READY,
+            second_id: DocumentIndexStatus.READY,
+        }
+
+
+def test_index_new_stages_in_stable_order_with_the_same_outer_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_ids = tuple(
+            _seed(sessions, (f"searchable document {ordinal}",)) for ordinal in (3, 1, 2)
+        )
+        generation = _generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        original = indexer.stage_document_for_publication
+        calls: list[tuple[int, int]] = []
+
+        def record_call(lease: object, identity: RagGenerationIdentity, version_id: int) -> object:
+            calls.append((id(lease), version_id))
+            return original(lease, identity, version_id)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(indexer, "stage_document_for_publication", record_call)
+        RagIndexingCoordinator(repository, indexer, lock).index_new()
+
+        assert tuple(version_id for _, version_id in calls) == tuple(sorted(version_ids))
+        assert len({lease_id for lease_id, _ in calls}) == 1
+
+
+@pytest.mark.parametrize("document_version_id", (0, True, 999_999))
+def test_index_new_rejects_invalid_or_ineligible_explicit_id(
+    tmp_path: Path, document_version_id: int
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        coordinator = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository,
+                _chunker(),
+                FakeEmbeddingService(dimensions=3),
+                InMemoryDenseIndexFactory(),
+                lock,
+            ),
+            lock,
+        )
+
+        with pytest.raises(RagOperationalError) as caught:
+            coordinator.index_new(document_version_id)
+
+        assert caught.value.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+
+
+def test_index_new_retries_failed_active_document_and_publishes_partial_coverage(
+    tmp_path: Path,
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text", "   "))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        repository.begin_document_staging(
+            active.identity, expected_revision=0, document_version_id=version_id
+        )
+        repository.finish_document_preparation(
+            active.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+            status=DocumentIndexStatus.FAILED,
+            coverage_status=CoverageStatus.NONE,
+            searchable_page_count=0,
+            chunk_count=0,
+            error_code=RagErrorCode.DOCUMENT_INDEX_FAILED,
+        )
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        result = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository,
+                _chunker(),
+                FakeEmbeddingService(dimensions=3),
+                InMemoryDenseIndexFactory(),
+                lock,
+            ),
+            lock,
+        ).index_new()
+
+        identity = repository.get_generation(active.generation_id).identity
+        stored = repository.get_document_index(identity, version_id)
+        assert result.content_revision == 1
+        assert (stored.status, stored.coverage_status) == (
+            DocumentIndexStatus.READY,
+            CoverageStatus.PARTIAL,
+        )
+
+
+@pytest.mark.parametrize("failure_position", (0, 2))
+def test_index_new_first_or_final_staging_failure_never_publishes_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_position: int
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_ids = tuple(_seed(sessions, (f"searchable {ordinal}",)) for ordinal in range(3))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        original = indexer.stage_document_for_publication
+
+        def fail_selected(
+            lease: object, identity: RagGenerationIdentity, version_id: int
+        ) -> object:
+            if version_id == version_ids[failure_position]:
+                raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+            return original(lease, identity, version_id)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(indexer, "stage_document_for_publication", fail_selected)
+        with pytest.raises(RagOperationalError):
+            RagIndexingCoordinator(repository, indexer, lock).index_new()
+
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        assert all(
+            item.status is DocumentIndexStatus.PREPARING
+            for item in repository.list_document_indexes(active.identity)
+        )
+        with lock.acquire():
+            pass
+
+
 def test_prepare_document_records_partial_and_empty_coverage(tmp_path: Path) -> None:
     with _database(tmp_path) as (repository, sessions, _):
         partial_id = _seed(sessions, ("searchable text", "   "))
@@ -224,6 +507,22 @@ def test_prepare_document_records_partial_and_empty_coverage(tmp_path: Path) -> 
 
 class _BrokenEmbeddings(FakeEmbeddingService):
     def embed_documents(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
+
+
+class _CountingEmbeddings(FakeEmbeddingService):
+    def __init__(self) -> None:
+        super().__init__(dimensions=3)
+        self.release_calls = 0
+
+    def release_model(self) -> None:
+        self.release_calls += 1
+        super().release_model()
+
+
+class _ReleaseFailureEmbeddings(_CountingEmbeddings):
+    def release_model(self) -> None:
+        self.release_calls += 1
         raise RagOperationalError(RagErrorCode.EMBEDDING_FAILED)
 
 
@@ -313,6 +612,52 @@ class _ControlledDenseFactory:
             index.close()
 
 
+class _LeaseInvalidatingDenseFactory:
+    def __init__(self, lock_path: Path) -> None:
+        self._lock_path = lock_path
+        self._inner = InMemoryDenseIndexFactory()
+        self.upsert_calls = 0
+
+    def open(self, generation: RagGenerationIdentity) -> DenseIndex:
+        nonce = self._lock_path.read_bytes()
+        self._lock_path.unlink()
+        self._lock_path.write_bytes(nonce)
+        inner = self._inner.open(generation)
+        owner = self
+
+        class _Index:
+            def upsert(self, records: tuple[DenseVectorRecord, ...]) -> None:
+                owner.upsert_calls += 1
+                inner.upsert(records)
+
+            def search(
+                self,
+                vector: tuple[float, ...],
+                *,
+                limit: int,
+                allowed_document_version_ids: tuple[int, ...],
+            ) -> tuple[DenseSearchHit, ...]:
+                return inner.search(
+                    vector,
+                    limit=limit,
+                    allowed_document_version_ids=allowed_document_version_ids,
+                )
+
+            def contains(self, chunk_keys: tuple[str, ...]) -> bool:
+                return inner.contains(chunk_keys)
+
+            def count(self) -> int:
+                return inner.count()
+
+            def close(self) -> None:
+                inner.close()
+
+        return _Index()
+
+    def remove(self, generation: RagGenerationIdentity) -> None:
+        self._inner.remove(generation)
+
+
 def test_prepare_document_failure_is_safe_compensated_and_retryable(tmp_path: Path) -> None:
     with _database(tmp_path) as (repository, sessions, _):
         version_id = _seed(sessions, ("searchable text",))
@@ -365,6 +710,322 @@ def test_embedding_shape_failures_are_safe_and_invisible(
         assert result.status is DocumentIndexStatus.FAILED
         assert result.error_code is RagErrorCode.EMBEDDING_FAILED
         assert repository.list_chunks(generation.identity, version_id) == ()
+
+
+def test_index_new_no_op_skips_terminal_documents_and_revision_churn(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        embeddings = _CountingEmbeddings()
+        indexer = RagDocumentIndexer(
+            repository, _chunker(), embeddings, InMemoryDenseIndexFactory(), lock
+        )
+        coordinator = RagIndexingCoordinator(repository, indexer, lock)
+        first = coordinator.index_new(version_id)
+        second = coordinator.index_new(version_id)
+
+        assert (first.content_revision, second.safe_status, second.content_revision) == (
+            1,
+            "NO_OP",
+            1,
+        )
+        assert embeddings.release_calls == 1
+        assert repository.get_generation(active.generation_id).identity.content_revision == 1
+
+
+def test_index_new_empty_corpus_is_no_op_without_embedding_lifecycle(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, _, _engine):
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        embeddings = _CountingEmbeddings()
+        result = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository, _chunker(), embeddings, InMemoryDenseIndexFactory(), lock
+            ),
+            lock,
+        ).index_new()
+
+        assert (result.safe_status, result.content_revision) == ("NO_OP", 0)
+        assert embeddings.release_calls == 0
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+
+
+def test_record_staged_document_rejects_boolean_counts(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        repository.begin_document_staging(
+            active.identity, expected_revision=0, document_version_id=version_id
+        )
+
+        with pytest.raises(RagOperationalError):
+            repository.record_staged_document(
+                active.identity,
+                expected_revision=0,
+                document_version_id=version_id,
+                intended_status=DocumentIndexStatus.READY,
+                coverage_status=CoverageStatus.FULL,
+                searchable_page_count=True,
+                chunk_count=True,
+                verification=None,
+            )
+
+
+def test_index_new_not_searchable_is_published_once_as_corpus_change(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("   ",))
+        generation = _generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        coordinator = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository,
+                _chunker(),
+                FakeEmbeddingService(dimensions=3),
+                InMemoryDenseIndexFactory(),
+                lock,
+            ),
+            lock,
+        )
+
+        result = coordinator.index_new()
+
+        refreshed = repository.get_generation(generation.generation_id)
+        assert (result.content_revision, result.not_searchable_documents) == (1, 1)
+        assert repository.get_document_index(refreshed.identity, version_id).status is (
+            DocumentIndexStatus.NOT_SEARCHABLE
+        )
+        assert coordinator.index_new().safe_status == "NO_OP"
+
+
+def test_index_new_staging_failure_keeps_sibling_preparing_and_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        first_id = _seed(sessions, ("first searchable text",))
+        second_id = _seed(sessions, ("second searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        embeddings = _CountingEmbeddings()
+        indexer = RagDocumentIndexer(
+            repository, _chunker(), embeddings, InMemoryDenseIndexFactory(), lock
+        )
+        original = indexer.stage_document_for_publication
+
+        def fail_second(lease: object, identity: RagGenerationIdentity, version_id: int) -> object:
+            if version_id == second_id:
+                raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+            return original(lease, identity, version_id)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(indexer, "stage_document_for_publication", fail_second)
+        with pytest.raises(RagOperationalError):
+            RagIndexingCoordinator(repository, indexer, lock).index_new()
+
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        assert repository.get_document_index(active.identity, first_id).status is (
+            DocumentIndexStatus.PREPARING
+        )
+        with pytest.raises(RagOperationalError):
+            repository.get_document_index(active.identity, second_id)
+        assert embeddings.release_calls == 1
+        with lock.acquire():
+            pass
+
+        monkeypatch.setattr(indexer, "stage_document_for_publication", original)
+        retried = RagIndexingCoordinator(repository, indexer, lock).index_new()
+        assert retried.content_revision == 1
+        retried_identity = repository.get_generation(active.generation_id).identity
+        chunk_keys = tuple(chunk.chunk_key for chunk in repository.list_chunks(retried_identity))
+        assert len(chunk_keys) == len(set(chunk_keys))
+        assert retried_identity.content_revision == 1
+
+
+def test_index_new_release_failure_prevents_publication_and_releases_lease(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        embeddings = _ReleaseFailureEmbeddings()
+        coordinator = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository, _chunker(), embeddings, InMemoryDenseIndexFactory(), lock
+            ),
+            lock,
+        )
+
+        with pytest.raises(RagOperationalError):
+            coordinator.index_new()
+
+        assert embeddings.release_calls == 1
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        assert repository.get_document_index(active.identity, version_id).status is (
+            DocumentIndexStatus.PREPARING
+        )
+        with lock.acquire():
+            pass
+
+
+def test_index_new_rejects_historical_explicit_version_before_staging(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        historical_id = _seed(sessions, ("version one",))
+        current_id = _seed_next_version(sessions, historical_id, ("version two",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        coordinator = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository,
+                _chunker(),
+                FakeEmbeddingService(dimensions=3),
+                InMemoryDenseIndexFactory(),
+                lock,
+            ),
+            lock,
+        )
+
+        with pytest.raises(RagOperationalError) as caught:
+            coordinator.index_new(historical_id)
+
+        assert caught.value.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        with pytest.raises(RagOperationalError):
+            repository.get_document_index(active.identity, current_id)
+
+
+def test_new_not_searchable_version_supersedes_old_ready_without_deleting_history(
+    tmp_path: Path,
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        first_id = _seed(sessions, ("version one searchable",))
+        generation = _generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        coordinator = RagIndexingCoordinator(
+            repository,
+            RagDocumentIndexer(
+                repository,
+                _chunker(),
+                FakeEmbeddingService(dimensions=3),
+                InMemoryDenseIndexFactory(),
+                lock,
+            ),
+            lock,
+        )
+        coordinator.index_new()
+        second_id = _seed_next_version(sessions, first_id, ("   ",))
+
+        result = coordinator.index_new()
+
+        identity = repository.get_generation(generation.generation_id).identity
+        states = {
+            item.document_version_id: item.status
+            for item in repository.list_document_indexes(identity)
+        }
+        assert result.content_revision == 2
+        assert states == {
+            first_id: DocumentIndexStatus.READY,
+            second_id: DocumentIndexStatus.NOT_SEARCHABLE,
+        }
+        current = repository.resolve_current_versions(GlobalScope())
+        assert tuple(item.document_version_id for item in current) == (second_id,)
+        searchable_current_ids = tuple(
+            item.document_version_id
+            for item in current
+            if repository.get_document_index(identity, item.document_version_id).status
+            is DocumentIndexStatus.READY
+        )
+        assert searchable_current_ids == ()
+        assert repository.resolve_index_new_candidates(identity) == ()
+
+
+def test_publication_cas_failure_rolls_back_all_terminal_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        first_id = _seed(sessions, ("first searchable text",))
+        second_id = _seed(sessions, ("second searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        with lock.acquire() as lease:
+            staged = tuple(
+                indexer.stage_document_for_publication(lease, active.identity, version_id)
+                for version_id in (first_id, second_id)
+            )
+            monkeypatch.setattr(
+                repository,
+                "_bump_content_revision_in_session",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+                ),
+            )
+            with pytest.raises(RagOperationalError):
+                repository.publish_staged_documents(
+                    active.identity, expected_revision=0, staged_documents=staged
+                )
+
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        assert {
+            item.document_version_id: item.status
+            for item in repository.list_document_indexes(active.identity)
+        } == {
+            first_id: DocumentIndexStatus.PREPARING,
+            second_id: DocumentIndexStatus.PREPARING,
+        }
+
+
+def test_publication_database_failure_rolls_back_terminal_states_and_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock = RagIndexLock(tmp_path / "phase4.lock")
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        with lock.acquire() as lease:
+            staged = indexer.stage_document_for_publication(lease, active.identity, version_id)
+            monkeypatch.setattr(
+                repository,
+                "_bump_content_revision_in_session",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    SQLAlchemyError("private persistence failure")
+                ),
+            )
+            with pytest.raises(RagOperationalError) as caught:
+                repository.publish_staged_documents(
+                    active.identity, expected_revision=0, staged_documents=(staged,)
+                )
+
+        assert caught.value.code is RagErrorCode.DOCUMENT_INDEX_FAILED
+        assert "private" not in str(caught.value)
+        assert repository.get_generation(active.generation_id).identity.content_revision == 0
+        assert repository.get_document_index(active.identity, version_id).status is (
+            DocumentIndexStatus.PREPARING
+        )
 
 
 def test_chunk_persistence_failure_is_compensated(
@@ -534,6 +1195,31 @@ def test_dense_failure_never_publishes_ready_and_releases_lock(
         assert repository.list_chunks(generation.identity, version_id) == ()
         with RagIndexLock(tmp_path / "phase4.lock").acquire():
             pass
+
+
+def test_stage_revalidates_lease_after_dense_open_before_upsert(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("searchable text",))
+        generation = _generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        lock_path = tmp_path / "phase4.lock"
+        lock = RagIndexLock(lock_path)
+        factory = _LeaseInvalidatingDenseFactory(lock_path)
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            FakeEmbeddingService(dimensions=3),
+            factory,
+            lock,
+        )
+        lease = lock.acquire()
+
+        try:
+            with pytest.raises(RagOperationalError):
+                indexer.stage_document_for_publication(lease, active.identity, version_id)
+            assert factory.upsert_calls == 0
+        finally:
+            lock_path.unlink(missing_ok=True)
 
 
 def test_partial_dense_upsert_is_idempotently_replaced_on_retry(tmp_path: Path) -> None:

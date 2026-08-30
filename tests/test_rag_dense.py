@@ -16,8 +16,10 @@ from aaos.rag.contracts import (
 from aaos.rag.dense import InMemoryDenseIndexFactory
 
 
-def _generation(*, generation_id: int = 1, dimensions: int = 2) -> RagGenerationIdentity:
-    return RagGenerationIdentity(generation_id, "a" * 64, 0, dimensions)
+def _generation(
+    *, generation_id: int = 1, revision: int = 0, dimensions: int = 2
+) -> RagGenerationIdentity:
+    return RagGenerationIdentity(generation_id, "a" * 64, revision, dimensions)
 
 
 def test_factory_provides_generation_scoped_dense_index_protocol() -> None:
@@ -109,6 +111,21 @@ def test_factory_is_generation_isolated_and_remove_reopens_empty_index() -> None
     with pytest.raises(RuntimeError, match="closed"):
         index_a.count()
     assert factory.open(generation_a).count() == 0
+
+
+def test_generation_vectors_remain_visible_across_content_revisions() -> None:
+    factory = InMemoryDenseIndexFactory()
+    revision_zero = _generation(revision=0)
+    revision_one = _generation(revision=1)
+    revision_two = _generation(revision=2)
+    factory.open(revision_zero).upsert((DenseVectorRecord("chunk-a", 7, (0.0, 0.0)),))
+
+    assert factory.open(revision_one).contains(("chunk-a",))
+    factory.open(revision_one).upsert((DenseVectorRecord("chunk-b", 8, (1.0, 0.0)),))
+    assert factory.open(revision_two).contains(("chunk-a", "chunk-b"))
+
+    factory.remove(revision_two)
+    assert factory.open(revision_zero).count() == 0
 
 
 def test_rejects_nonfinite_stored_record_vector_independently_of_query_validation() -> None:

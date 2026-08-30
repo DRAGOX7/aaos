@@ -25,8 +25,10 @@ from aaos.rag.contracts import (
 )
 
 
-def _generation(*, generation_id: int = 1, dimensions: int = 2) -> RagGenerationIdentity:
-    return RagGenerationIdentity(generation_id, "a" * 64, 0, dimensions)
+def _generation(
+    *, generation_id: int = 1, revision: int = 0, dimensions: int = 2
+) -> RagGenerationIdentity:
+    return RagGenerationIdentity(generation_id, "a" * 64, revision, dimensions)
 
 
 def _factory(tmp_path: Path) -> ChromaDenseIndexFactory:
@@ -138,6 +140,21 @@ def test_close_is_idempotent_and_reopen_persists_across_a_new_factory(tmp_path: 
     assert reopened.search((0.0, 0.0), limit=1, allowed_document_version_ids=(7,)) == (
         DenseSearchHit("chunk", 1, 0.0),
     )
+
+
+def test_persistent_generation_survives_content_revision_publication(tmp_path: Path) -> None:
+    factory = _factory(tmp_path)
+    revision_zero = _generation(revision=0)
+    revision_one = _generation(revision=1)
+    revision_two = _generation(revision=2)
+    factory.open(revision_zero).upsert((DenseVectorRecord("chunk-a", 7, (0.0, 0.0)),))
+
+    assert factory.open(revision_one).contains(("chunk-a",))
+    factory.open(revision_one).upsert((DenseVectorRecord("chunk-b", 8, (1.0, 0.0)),))
+    assert _factory(tmp_path).open(revision_two).contains(("chunk-a", "chunk-b"))
+
+    factory.remove(revision_two)
+    assert _factory(tmp_path).open(revision_zero).count() == 0
 
 
 def test_collection_uses_no_default_embedding_function_and_squared_l2(tmp_path: Path) -> None:
