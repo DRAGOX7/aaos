@@ -353,8 +353,8 @@ All public constructors validate positive internal IDs, nonblank bounded text, t
 - FTS5 is an ordinary derived virtual table with `normalized_text`, `generation_id UNINDEXED`, and `document_version_id UNINDEXED`; its `rowid` equals authoritative `rag_chunks.id`. Repository-controlled insert/delete occurs in the same SQLite transaction as chunk publication. No triggers or external-content magic obscure synchronization.
 - Lexical retrieval joins FTS rowids back through authoritative chunk/document/generation tables and applies generation, READY, current/historical, and course predicates before accepting BM25 ranks.
 - Canonical config fingerprint is `sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))`; payload contains every retrieval-affecting version/parameter and excludes machine paths/timestamps.
-- `index-new` commits PREPARING chunk/span/FTS state and Chroma vectors first. Its final single SQLite transaction verifies every selected document, flips successful records to READY/NOT_SEARCHABLE, and increments `content_revision` exactly once when the represented document-version corpus changes, including a newly represented NOT_SEARCHABLE version. Failed/no-op runs do not increment it.
-- Queries open one SQLite read transaction, pin the ACTIVE generation ID/fingerprint/revision and authorized document universe, run dense/lexical retrieval, resolve every candidate through that same snapshot, and materialize immutable evidence/provenance before closing the transaction. Unpublished Chroma vectors cannot resolve and cause a safe integrity failure rather than partial retrieval.
+- `index-new` owns one non-reentrant writer lease for the whole batch and calls the public lease-aware `RagDocumentIndexer.stage_document_for_publication(...)` boundary. Staging commits PREPARING chunk/span/FTS state and Chroma vectors but no terminal document state. Its final single SQLite transaction verifies every staged document, flips every staged row to READY/NOT_SEARCHABLE, and performs guarded `content_revision` CAS exactly once when the represented corpus changes, including a newly published NOT_SEARCHABLE version. Failed/no-op runs do not increment it.
+- Queries open one SQLite read transaction and atomically pin the ACTIVE generation ID/fingerprint/revision, requested scope, latest published READY/NOT_SEARCHABLE version per logical resource, and final authorized READY document-version IDs. Dense and lexical search use that frozen universe for the entire query. A latest published NOT_SEARCHABLE version suppresses older READY versions in normal scope; newer PREPARING/FAILED versions do not hide the previous published version. Unpublished Chroma vectors cannot resolve and cause a safe integrity failure rather than partial retrieval.
 - Rebuild writes a separate BUILDING generation and Chroma directory. Only a passed cross-store integrity transaction retires the old ACTIVE and activates the new generation. Failures preserve the prior ACTIVE generation; RETIRED generations are never automatically purged.
 
 ## Implementation Tasks
@@ -578,14 +578,15 @@ Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py test
 
 **Interfaces**
 - Consumes: absolute confined `RagRuntimePaths.index_lock_path`.
-- Produces: `RagIndexLock.acquire() -> RagIndexLease`.
+- Produces: `RagIndexLock.acquire() -> RagIndexLease` and `RagIndexLock.assert_owned(lease: RagIndexLease) -> None`.
 
 **Requirements**
 - Mirror the proven nonce/file-identity/reparse-safe ownership semantics without sharing Phase 3 lock state; all index-new and rebuild mutations require one lease.
+- `assert_owned()` re-reads the marker and accepts only an unreleased lease whose lock path is this exact `RagIndexLock` path and whose nonce plus file identity still match the marker. It raises the existing safe `RagIndexLockUnavailable` for a released lease, another lock's lease, a missing/replaced/malformed marker, or nonce/identity mismatch. It never acquires, adopts, renews, or releases a lease and does not make the lock reentrant.
 
-- [ ] **Step 1 — Write failing tests:** exclusive acquisition, malformed/reparse paths, owner-only idempotent release, replaced lock refusal, and mutation not started on contention. Representative assertion: `with pytest.raises(RagIndexLockUnavailable): lock.acquire()` while the first lease is held.
-- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_lock.py -v`; expect import failure.
-- [ ] **Step 3 — Minimal implementation:** add the smallest distinct lock/lease types consistent with `documents.lock`.
+- [ ] **Step 1 — Write failing tests:** exclusive acquisition, malformed/reparse paths, owner-only idempotent release, replaced lock refusal, mutation not started on contention, and ownership validation. Add `test_assert_owned_accepts_current_owner`, `test_assert_owned_rejects_released_lease`, `test_assert_owned_rejects_foreign_lock_lease`, and `test_assert_owned_rejects_replaced_marker`; assert `with pytest.raises(RagIndexLockUnavailable): lock.assert_owned(lease)` for every invalid capability.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_lock.py -k "assert_owned" -v`; expect `RagIndexLock` to lack the ownership-validation method.
+- [ ] **Step 3 — Minimal implementation:** retain the existing distinct lock/lease types and add only the `assert_owned()` revalidation described above.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_document_lock.py tests/test_rag_lock.py -v`.
 - [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/lock.py tests/test_rag_lock.py`; `uv run mypy src/aaos/rag/lock.py tests/test_rag_lock.py`.
@@ -600,43 +601,65 @@ Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py test
 - Modify: `tests/test_rag_repository.py`
 
 **Interfaces**
-- Consumes: repository, chunker, embedding service, dense factory, PREPARING generation.
-- Produces: `RagDocumentIndexer.prepare_document(...) -> DocumentIndexResult` and verification records.
+- Consumes: repository, chunker, embedding service, dense factory, `RagIndexLock`, optional already-owned `RagIndexLease`, and exact generation identity.
+- Produces:
+  - `RagDocumentIndexer.prepare_document(generation: RagGenerationIdentity, document_version_id: int) -> DocumentIndexResult` for standalone BUILDING-generation preparation.
+  - `RagDocumentIndexer.stage_document_for_publication(lease: RagIndexLease, generation: RagGenerationIdentity, document_version_id: int) -> StagedDocumentIndexResult` for ACTIVE-generation staging under an outer owner.
+  - `RagDocumentIndexer.release_embedding_model() -> None`, delegating only the existing injected `EmbeddingService.release_model()` boundary so one batch can reuse the model and then reclaim it deterministically without closing the runtime-owned service.
+  - `StagedDocumentIndexResult(generation: RagGenerationIdentity, document_version_id: int, intended_status: DocumentIndexStatus, coverage_status: CoverageStatus, searchable_page_count: int, chunk_count: int, verification: DocumentVerificationRecord | None)`; `intended_status` is exactly READY or NOT_SEARCHABLE, and `verification` is required only for READY.
+  - Define `StagedDocumentIndexResult` in `src/aaos/rag/repository.py` beside `DocumentVerificationRecord` so repository staging/publication primitives can consume it without an `indexing`/`repository` import cycle.
 
 **Requirements**
-- State sequence: PREPARING -> chunk/spans/FTS -> embeddings -> Chroma -> cross-store verification -> publishable READY; empty/no-text becomes NOT_SEARCHABLE/NONE.
-- A failure records a safe FAILED code, leaves no READY row, and compensates generation-owned derived data without altering Phase 3.
+- `prepare_document()` acquires/releases its own lease, requires a BUILDING generation, performs the existing cross-store verification, and may publish READY/NOT_SEARCHABLE because BUILDING is not query-visible. Task 13 rebuild uses this mode.
+- `stage_document_for_publication()` calls `RagIndexLock.assert_owned(lease)` before every mutation boundary, requires the exact ACTIVE generation identity/revision, and never reacquires or releases the caller's lease. It shares the deterministic Task 11 preparation pipeline but leaves the row PREPARING after successful chunk/span/FTS, embedding, dense upsert, expected-key verification, and authoritative count/provenance verification.
+- Add `RagRepository.record_staged_document(identity: RagGenerationIdentity, *, expected_revision: int, document_version_id: int, intended_status: DocumentIndexStatus, coverage_status: CoverageStatus, searchable_page_count: int, chunk_count: int, verification: DocumentVerificationRecord | None) -> DocumentIndexRecord`. This short SQLite transaction validates exact state/counts and records coherent PREPARING metadata without changing the terminal status.
+- Searchable staging returns intended READY with FULL/PARTIAL coverage and matching verification. Empty/no-text staging remains PREPARING with intended NOT_SEARCHABLE, NONE coverage, zero counts, and no verification. A failure uses the existing sanitized FAILED/compensation path and never returns a staged result.
+- Task 12 calls `release_embedding_model()` exactly once after its last staging attempt on success or failure and before any successful publication transaction. A release failure prevents publication and leaves the revision unchanged; runtime ownership and final `EmbeddingService.close()` remain outside Task 12.
 
-- [ ] **Step 1 — Write failing tests:** FULL/PARTIAL/NONE, READY-only visibility, embedding/dense/FTS failures, count/dimension/key mismatch, retry after PREPARING/FAILED, provenance verification, and no Phase 3 mutation. Representative assertion: `assert result.status is DocumentIndexStatus.READY` only after `verify_generation_document(...)` passes.
-- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_indexing.py tests/test_rag_repository.py -v`; expect missing indexer behavior.
-- [ ] **Step 3 — Minimal implementation:** implement injected orchestration and explicit compensation; no writer acquisition yet.
+- [ ] **Step 1 — Write failing tests:** preserve standalone FULL/PARTIAL/NONE and failure tests, then add lease-aware staging tests: valid owner accepted without a second acquisition; released/foreign/replaced lease rejected before mutation; ACTIVE required; searchable and empty results remain PREPARING; intended terminal type is closed; exact counts/provenance survive; failure records FAILED; caller retains/release ownership; and no Phase 3 mutation. Representative assertions: `assert stored.status is DocumentIndexStatus.PREPARING` and `assert staged.intended_status is DocumentIndexStatus.READY`.
+- [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_indexing.py -k "stage_document or standalone" -v`; expect missing lease-aware staging and ownership validation while existing standalone tests remain green.
+- [ ] **Step 3 — Minimal implementation:** preserve the public standalone locking boundary, extract only a shared private preparation pipeline inside `RagDocumentIndexer`, and add the public lease-aware staging boundary plus repository PREPARING metadata validation. Task 12 calls only the public staging method, never the private helper.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_chunking.py tests/test_rag_chroma.py tests/test_rag_embeddings.py tests/test_rag_indexing.py -v`.
-- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/lock.py src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_lock.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/lock.py src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
 - [ ] **Step 7 — Commit:** `git add src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py tests/test_rag_repository.py`; `git commit -m "feat(rag): add cross store document indexing"`.
 
 ### Task 12: Implement Atomic `index-new` Publication
 
 **Files**
+- Modify: `src/aaos/rag/lock.py`
 - Modify: `src/aaos/rag/indexing.py`
 - Modify: `src/aaos/rag/repository.py`
+- Modify: `tests/test_rag_lock.py`
 - Modify: `tests/test_rag_indexing.py`
+- Modify: `tests/test_rag_repository.py`
 
 **Interfaces**
-- Consumes: active generation, writer lease, eligible current versions, optional internal document-version ID.
-- Produces: `RagIndexingService.index_new(document_version_id: int | None) -> IndexRunResult`.
+- Consumes: `RagRepository`, `RagDocumentIndexer`, `RagIndexLock`, exact ACTIVE generation, eligible current Phase 3 versions, and optional positive internal document-version ID.
+- Produces: `RagIndexingCoordinator.index_new(document_version_id: int | None = None) -> IndexRunResult`. Task 12 intentionally implements only this method; Task 13 adds `rebuild()` and `status()` before the coordinator is exposed through the complete `RagIndexingService` protocol.
+- Repository publication boundary: `RagRepository.publish_staged_documents(identity: RagGenerationIdentity, *, expected_revision: int, staged_documents: tuple[StagedDocumentIndexResult, ...]) -> RagGenerationIdentity`.
 
 **Requirements**
-- Mint fresh PREPARING rows only for unrepresented eligible versions, publish all successful READY/NOT_SEARCHABLE changes in one SQLite transaction, increment revision exactly once for an actual represented-corpus change, and preserve revision for no-op/failure.
-- No URL/path/cmid input, retry loop, or partial READY publication.
+- `index_new()` acquires exactly one outer lease and keeps it through ACTIVE-generation pinning, deterministic candidate discovery, serial staging, final publication, and cleanup. It passes the same lease to `stage_document_for_publication()`; it never calls standalone `prepare_document()`, reacquires the lock, releases between documents, or parallelizes work.
+- Candidate discovery uses trusted Phase 3 current/latest versions in stable `(document_id, version_number, document_version_id)` order. With no explicit ID, stage current versions not successfully published in the pinned ACTIVE generation, including retryable PREPARING/FAILED versions. With one ID, require that positive ID to be the current eligible version. Skip unchanged READY/NOT_SEARCHABLE versions. Do not index historical superseded versions or crawl external state.
+- After every candidate returns a valid staged result, call `publish_staged_documents()` once. In one short SQLite transaction it must: require the exact ACTIVE generation and revision `R`; require a nonempty, duplicate-free staged tuple whose identities match that generation; re-read every row; require PREPARING plus exact staged coverage/counts; re-run authoritative SQLite/FTS/provenance verification for intended READY; require NONE/zero/no verification for intended NOT_SEARCHABLE; transition all rows to their intended terminal states; execute guarded CAS `R -> R+1`; flush; and return the `R+1` identity. Any error rolls back every terminal transition and the CAS together.
+- Refactor the existing Task 4 guarded revision update into one private session-scoped CAS helper used by both `bump_content_revision()` and `publish_staged_documents()`; do not duplicate or weaken its generation ID, fingerprint, dimensions, expected-revision, and one-row update checks.
+- Do not hold the final SQLite transaction across chunking, embedding, model lifecycle, Chroma, or network. SQLite is authoritative; unpublished deterministic Chroma vectors may remain after failure and converge on retry.
+- No candidates means deterministic no-op: no staging, embeddings, terminal transitions, or revision increment. A newly published NOT_SEARCHABLE version is a corpus change and increments once because it supersedes the previous current version. Multiple successful candidates increment once per batch, never per document.
+- If any staging fails, do not call publication: successful siblings remain PREPARING, failed rows remain sanitized FAILED, revision stays `R`, and previously published versions remain current. CAS mismatch or injected publication failure rolls back all staged terminal transitions and leaves `R` unchanged. Always release the outer lease; do not add retries or Task 13 recovery.
+- No URL/path/cmid input, generation activation/retirement, rebuild, query retrieval, schema migration, or partial terminal publication.
 
-- [ ] **Step 1 — Write failing tests:** all eligible/one ID, invalid/ineligible ID, no-op, lock contention, successful revision +1, failure/no-op +0, fresh retry state, and invisible unpublished Chroma vectors. Representative assertion: `assert after.content_revision == before.content_revision + 1` for one successful publication.
+- [ ] **Step 1 — Write failing tests:** add exact tests for all eligible/one current ID, invalid/ineligible/historical ID, stable order, READY/NOT_SEARCHABLE skip, PREPARING/FAILED retry, PARTIAL acceptance, two-document single increment, no-op +0, new current V2, V2 NOT_SEARCHABLE supersession, lock contention, same-lease composition, document failure at first/middle/final position, failure after all staging before publication, CAS mismatch, publication persistence failure, rollback of every terminal row, one model release on success/failure before publication, release failure blocking publication, lease release, idempotent retry, no duplicate chunks/vectors, Phase 3 immutability, and no Task 13 symbols. Representative assertions:
+  - `assert calls == [(lease, first_id), (lease, second_id)]` and both calls receive the identical lease object;
+  - `assert repository.get_generation(generation.id).identity.content_revision == revision + 1` after a successful nonempty batch;
+  - `assert revision_after == revision_before` and every successfully staged sibling remains PREPARING after any failed batch;
+  - after V2 NOT_SEARCHABLE publication, current published selection returns V2 as the superseding version while its searchable authorized ID set is empty.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_indexing.py -k "index_new or content_revision" -v`; expect orchestration failures.
-- [ ] **Step 3 — Minimal implementation:** acquire one lease, prepare selected docs, run integrity, and perform compare-and-swap publication/revision transaction.
+- [ ] **Step 3 — Minimal implementation:** add `assert_owned`, typed staging, ACTIVE candidate discovery, `RagIndexingCoordinator.index_new()`, and the single repository publication transaction exactly as specified above. Reuse Task 11 cross-store code; do not call private `_prepare_locked()` from Task 12 or duplicate its pipeline.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_lock.py tests/test_rag_repository.py tests/test_rag_indexing.py -v`.
-- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
-- [ ] **Step 7 — Commit:** `git add src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_indexing.py`; `git commit -m "feat(rag): add atomic incremental indexing"`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/lock.py src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_lock.py tests/test_rag_indexing.py`; `uv run mypy src/aaos/rag/lock.py src/aaos/rag/indexing.py src/aaos/rag/repository.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/lock.py src/aaos/rag/indexing.py src/aaos/rag/repository.py tests/test_rag_lock.py tests/test_rag_indexing.py tests/test_rag_repository.py`; `git commit -m "feat(rag): add atomic incremental indexing"`.
 
 ### Task 13: Implement Blue/Green Rebuild, Integrity, and Recovery
 
@@ -647,10 +670,11 @@ Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py test
 
 **Interfaces**
 - Consumes: writer lease, full eligible current corpus, new config fingerprint.
-- Produces: `rebuild()`, `verify_generation()`, `recover_building_generations()`, typed status.
+- Produces: `RagIndexingCoordinator.rebuild()`, `RagIndexingCoordinator.status()`, `verify_generation()`, `recover_building_generations()`, and the complete `RagIndexingService` protocol surface.
 
 **Requirements**
 - Build isolated BUILDING SQLite/Chroma state, verify counts/dimensions/keys/FTS/provenance/document statuses, atomically RETIRE old and ACTIVE new, never purge retired data.
+- Rebuild uses standalone `RagDocumentIndexer.prepare_document()` for the BUILDING generation; individual READY/NOT_SEARCHABLE rows are safe because BUILDING is query-invisible. It does not use ACTIVE-generation staging or Task 12's content-revision publication transaction.
 - Startup/status identifies abandoned BUILDING/PREPARING state; recovery may mark it failed/clean derived Chroma only under the writer lease and never changes ACTIVE.
 
 - [ ] **Step 1 — Write failing tests:** successful activation, failed embedding/Chroma/FTS/integrity preserving ACTIVE, activation transaction failure, abandoned BUILDING recovery, cross-store mismatch, and no retired purge. Representative assertion: `assert repository.get_active_generation().id == old_active.id` after injected rebuild failure.
@@ -677,13 +701,14 @@ Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection
 - Produces: immutable `QuerySnapshot`, normalized query, authorized chunk universe, dense and lexical candidate lists.
 
 **Requirements**
-- Course/global use current versions in the ACTIVE generation only. Historical requires explicit version IDs: prefer the ACTIVE generation when it contains every requested READY version; otherwise pin the newest RETIRED generation containing every requested READY version. Reject a request whose versions do not share one trusted generation; never merge generations or leak current/sibling course records.
+- In one SQLite read transaction, resolve ACTIVE generation identity, content_revision, requested scope, latest successfully published READY/NOT_SEARCHABLE version per logical resource, and final authorized READY document-version IDs; freeze all of them in one immutable `QuerySnapshot`. Dense and lexical search must use those frozen IDs and must not re-resolve current versions after the snapshot.
+- Course/global current scope ignores newer PREPARING/FAILED versions. Latest published READY contributes its version ID. Latest published NOT_SEARCHABLE contributes no searchable ID and must suppress fallback to an older READY version. Historical requires explicit version IDs: prefer the ACTIVE generation when it contains every requested published version; otherwise pin the newest RETIRED generation containing every requested published version. Reject a request whose versions do not share one trusted generation; never merge generations or leak current/sibling course records.
 - Materialize selected chunk text/provenance inside one SQLite read snapshot; reject generation/revision changes or unresolved Chroma keys with `RETRIEVAL_INCONSISTENCY`.
 - Call `EmbeddingService.release_model()` in a `finally` boundary immediately after query embedding/dense search; lexical fusion/evidence handling then proceed without an embedding model resident, and no generation call can begin before release completes.
 
-- [ ] **Step 1 — Write failing tests:** no ACTIVE, invalid scope, course isolation, global current-only, explicit history, mixed unauthorized history, generation/revision pinning, stale vector, PREPARING/FAILED exclusion, and query normalization. Representative assertion: `assert snapshot.document_version_ids == (authorized_current_version_id,)`.
+- [ ] **Step 1 — Write failing tests:** no ACTIVE, invalid scope, course isolation, global current-only, explicit history, mixed unauthorized history, atomic generation/revision/version-universe pinning, stale vector, PREPARING/FAILED exclusion, V1 READY plus V2 PREPARING/FAILED selecting V1, V1 READY plus V2 NOT_SEARCHABLE selecting no searchable ID, publication between two queries producing separate consistent snapshots, and query normalization. Representative assertions: `assert snapshot.document_version_ids == (authorized_current_version_id,)` and `assert (q1.generation.content_revision, q1.document_version_ids) == (revision_r, old_ids)` while a later `q2` equals `(revision_r_plus_1, new_ids)`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -v`; expect missing retrieval service.
-- [ ] **Step 3 — Minimal implementation:** add `HybridRetriever.retrieve_candidates(query) -> RetrievalCandidateSet` with injected embedding/dense/repository/lexical services. Pass the snapshot's authorized document-version IDs into `DenseIndex.search(...)` and its SQL predicates into lexical search before either rank list is produced.
+- [ ] **Step 3 — Minimal implementation:** add one repository snapshot method that resolves generation, revision, scope, latest-published selection, and authorized IDs inside one read transaction; then add `HybridRetriever.retrieve_candidates(query) -> RetrievalCandidateSet` with injected embedding/dense/repository/lexical services. Pass the immutable snapshot's authorized document-version IDs into `DenseIndex.search(...)` and its SQL predicates into lexical search before either rank list is produced.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_repository.py tests/test_rag_lexical.py tests/test_rag_dense.py tests/test_rag_retrieval.py -v`.
 - [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py src/aaos/rag/repository.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/retrieval.py src/aaos/rag/repository.py`.

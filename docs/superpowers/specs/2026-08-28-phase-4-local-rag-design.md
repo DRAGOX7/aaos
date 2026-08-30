@@ -189,10 +189,13 @@ Retired generations remain available for explicit historical queries and are not
 automatically purged in v1.
 
 `rag index-new` identifies eligible Phase 3 `DocumentVersion` records not yet
-represented in the active generation. It adds newer versions without deleting
-older historical versions; current scope resolves the newest eligible version,
-while explicit historical scope can still select an older one. A successful
-active-generation update increments `content_revision`.
+successfully published in the active generation. It adds newer versions without
+deleting older historical versions. For an ACTIVE generation, a published
+document version is one whose `RagDocumentIndex` has the terminal state `READY`
+or `NOT_SEARCHABLE`; `PREPARING` and `FAILED` are unpublished. A newer
+unpublished version does not hide the latest successfully published version.
+Explicit historical scope can still select an older published version. A
+successful active-generation update increments `content_revision`.
 
 ## 10. Content-revision semantics
 
@@ -201,6 +204,20 @@ retrieval configuration. It changes when the represented document-version
 corpus changes, even if chunking, models, and retrieval settings do not. A
 configuration change that is incompatible with existing derived state requires
 a new generation and fingerprint.
+
+Incremental publication against an ACTIVE generation is one short SQLite
+transaction. It validates every staged `PREPARING` document, changes all staged
+rows to their intended `READY` or `NOT_SEARCHABLE` terminal states, and performs
+the guarded `content_revision` compare-and-swap from `R` to `R+1`. Those state
+transitions and the revision increment commit or roll back together. A no-op or
+failed batch leaves the revision unchanged. Publishing a newer
+`NOT_SEARCHABLE` version is a corpus change because it supersedes the prior
+current version even though it contributes no searchable chunks.
+
+Phase 4 v1 does not add a per-document publication-revision column. SQLite
+transaction atomicity provides the before/after publication boundary, and a
+query freezes both the revision and its authorized document-version universe in
+one read snapshot.
 
 Every query, evaluation result, and acceptance artifact records both
 `generation_id` and `content_revision`. Formal evaluations also record a
@@ -333,16 +350,27 @@ At query start, trusted code resolves:
 ```text
 ACTIVE generation
   -> pinned content_revision
-  -> READY RagDocumentIndex rows
   -> explicit current or historical version scope
+  -> latest published READY/NOT_SEARCHABLE version per logical resource
+  -> searchable READY DocumentVersion IDs
   -> valid Phase 3 provenance
 ```
 
-Both dense and lexical searches receive this already-authorized universe. The
-implementation must not retrieve globally and filter obsolete or out-of-scope
-versions afterward. A normal current query selects the latest eligible version
-per logical document; historical versions remain preserved but are excluded
-unless explicitly requested.
+Generation identity, `content_revision`, requested scope, latest-published
+selection, and final authorized `DocumentVersion` IDs are resolved in one
+consistent SQLite read transaction and stored in an immutable `QuerySnapshot`.
+Both dense and lexical searches receive those frozen IDs. They must not
+re-resolve current versions after the snapshot or retrieve globally and filter
+obsolete or out-of-scope versions afterward.
+
+For normal current scope, the latest published row is the newest `READY` or
+`NOT_SEARCHABLE` version for the logical resource in the pinned ACTIVE
+generation. A latest published `READY` version contributes its ID to the
+searchable universe. A latest published `NOT_SEARCHABLE` version contributes no
+ID and does not fall back to an older `READY` version. Newer `PREPARING` or
+`FAILED` versions are ignored for publication visibility, so an older published
+version remains current until a replacement is atomically published. Historical
+versions remain preserved and are excluded unless explicitly requested.
 
 ## 17. Hybrid retrieval and RRF
 
@@ -513,10 +541,14 @@ Only one Phase 4 index writer may operate at a time. `rag index-new` and
 lease is unavailable.
 
 `index-new` uses an exclusive active-generation write lease and publishes a new
-content revision atomically after integrity verification. Queries may pause or
-fail safely during that publication. `rebuild` writes a separate BUILDING
-generation while the old ACTIVE generation serves queries, then activates it in
-one state transition.
+content revision atomically after integrity verification. It acquires exactly
+one outer lease for candidate discovery, serial document staging, and final
+publication. Lease-aware staging validates that same live owner capability and
+does not reacquire the non-reentrant lock. The lock remains nonce- and
+file-identity-bound, non-reentrant, and fail-closed for released, foreign, or
+replaced leases. Queries may pause or fail safely during publication. `rebuild`
+writes a separate BUILDING generation while the old ACTIVE generation serves
+queries, then activates it in one state transition.
 
 Each query pins generation, content revision, and scope before candidate
 retrieval. Activation during a query does not change that query's corpus;
@@ -524,8 +556,13 @@ subsequent queries use the new active snapshot.
 
 ## 28. Cross-store failure and recovery
 
-SQLite and Chroma are not a distributed transaction. The explicit per-document
-state machine is:
+SQLite and Chroma are not a distributed transaction. Per-document preparation
+has two explicit modes.
+
+For a BUILDING generation, standalone preparation owns a writer lease and may
+finish one document as `READY` or `NOT_SEARCHABLE`; the generation remains
+invisible until Task 13 activation. For ACTIVE-generation `index-new`,
+lease-aware staging accepts the already-owned batch lease and performs:
 
 ```text
 Phase 3 pages
@@ -533,14 +570,23 @@ Phase 3 pages
   -> embedding generation
   -> idempotent Chroma upsert
   -> vector-ID/dimension verification
-  -> SQLite READY
+  -> verified SQLite PREPARING state with intended READY/NOT_SEARCHABLE result
 ```
 
-`PREPARING` and `FAILED` records are invisible to retrieval. A crash before
+After every required ACTIVE-generation document is staged, one SQLite
+transaction validates the pinned generation/revision and every staged identity,
+coverage, count, and `PREPARING` state; changes all staged rows to their intended
+terminal states; and performs `content_revision` CAS `R -> R+1`. Any failed
+validation, persistence operation, or CAS rolls back both terminal transitions
+and revision change.
+
+`PREPARING` and `FAILED` records are invisible to retrieval. If one document in
+a batch fails, successfully staged siblings remain `PREPARING`, the revision is
+unchanged, and the previously published corpus remains current. A crash before
 Chroma leaves retryable SQLite-derived state. A crash after Chroma but before
-READY reuses deterministic IDs and verifies/upserts idempotently. No duplicate
-logical chunks are created, and no partially indexed document is presented as
-READY.
+publication reuses deterministic IDs and verifies/upserts idempotently. Harmless
+unpublished Chroma vectors may remain derived state; no duplicate logical chunks
+are created, and no partially indexed document is presented as published.
 
 Before activation, integrity checks reconcile SQLite chunks, FTS rows, expected
 Chroma IDs and dimensions, READY counts, generation membership, and all page/
