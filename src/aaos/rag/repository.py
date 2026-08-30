@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -20,7 +20,12 @@ from sqlalchemy.sql.selectable import Select
 
 from aaos.documents.contracts import IngestionStatus
 from aaos.persistence.academic_models import CourseORM, RemoteFileORM
-from aaos.persistence.document_models import DocumentORM, DocumentPageORM, DocumentVersionORM
+from aaos.persistence.document_models import (
+    ContentBlobORM,
+    DocumentORM,
+    DocumentPageORM,
+    DocumentVersionORM,
+)
 from aaos.persistence.rag_models import (
     RagChunkORM,
     RagChunkSourceSpanORM,
@@ -79,6 +84,7 @@ class DocumentVersionRecord:
     course_id: int
     version_number: int
     content_blob_id: int
+    content_sha256: str
     source_filename: str
     page_count: int
 
@@ -165,6 +171,18 @@ class SourceSpanRecord:
     chunk_char_end: int
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentVerificationRecord:
+    """SQLite-side integrity evidence for one publishable document index."""
+
+    generation_id: int
+    document_version_id: int
+    chunk_keys: tuple[str, ...]
+    chunk_count: int
+    source_span_count: int
+    fts_row_count: int
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -218,10 +236,12 @@ class RagRepository:
                 CourseORM.id.label("course_id"),
                 DocumentVersionORM.version_number,
                 DocumentVersionORM.content_blob_id,
+                ContentBlobORM.sha256.label("content_sha256"),
                 DocumentVersionORM.source_filename,
                 DocumentVersionORM.page_count,
             )
             .join(DocumentORM, DocumentVersionORM.document_id == DocumentORM.id)
+            .join(ContentBlobORM, DocumentVersionORM.content_blob_id == ContentBlobORM.id)
             .join(RemoteFileORM, DocumentORM.remote_file_id == RemoteFileORM.id)
             .join(CourseORM, RemoteFileORM.course_id == CourseORM.id)
             .where(*cls._version_filters())
@@ -244,6 +264,7 @@ class RagRepository:
             course_id=int(row.course_id),
             version_number=int(row.version_number),
             content_blob_id=int(row.content_blob_id),
+            content_sha256=str(row.content_sha256),
             source_filename=str(row.source_filename),
             page_count=int(row.page_count),
         )
@@ -660,6 +681,19 @@ class RagRepository:
             raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
         return self._record_version(row)
 
+    def get_eligible_document_version(self, document_version_id: int) -> DocumentVersionRecord:
+        """Return one eligible immutable Phase 3 version without mutating it."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                return self._require_eligible_version(session, document_version_id)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.PROVENANCE_RESOLUTION_FAILED, error) from error
+        finally:
+            session.close()
+
     @staticmethod
     def _record_index(row: RagDocumentIndexORM) -> DocumentIndexRecord:
         return DocumentIndexRecord(
@@ -724,6 +758,292 @@ class RagRepository:
             raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
         finally:
             session.close()
+
+    @staticmethod
+    def _delete_document_chunks(
+        session: Session, *, generation_id: int, document_version_id: int
+    ) -> None:
+        """Remove only retryable derived rows owned by one generation/document."""
+        chunk_ids = tuple(
+            session.scalars(
+                select(RagChunkORM.id).where(
+                    RagChunkORM.generation_id == generation_id,
+                    RagChunkORM.document_version_id == document_version_id,
+                )
+            ).all()
+        )
+        for chunk_id in chunk_ids:
+            delete_fts_row(session, chunk_id=int(chunk_id))
+        if chunk_ids:
+            session.execute(
+                delete(RagChunkSourceSpanORM).where(
+                    RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids)
+                )
+            )
+            session.execute(delete(RagChunkORM).where(RagChunkORM.id.in_(chunk_ids)))
+
+    def begin_document_preparation(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        document_version_id: int,
+    ) -> DocumentIndexRecord:
+        """Create or reset one retryable PREPARING document state and its derived rows."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, expected_revision)
+                if generation.status != GenerationStatus.BUILDING.value:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                self._require_eligible_version(session, document_version_id)
+                row = session.scalar(
+                    select(RagDocumentIndexORM).where(
+                        RagDocumentIndexORM.generation_id == identity.generation_id,
+                        RagDocumentIndexORM.document_version_id == document_version_id,
+                    )
+                )
+                if row is None:
+                    row = RagDocumentIndexORM(
+                        generation_id=identity.generation_id,
+                        document_version_id=document_version_id,
+                        status=DocumentIndexStatus.PREPARING.value,
+                        coverage_status=CoverageStatus.NONE.value,
+                        searchable_page_count=0,
+                        chunk_count=0,
+                        error_code=None,
+                        created_at=_now_utc(),
+                        updated_at=_now_utc(),
+                    )
+                    session.add(row)
+                else:
+                    self._delete_document_chunks(
+                        session,
+                        generation_id=identity.generation_id,
+                        document_version_id=document_version_id,
+                    )
+                    row.status = DocumentIndexStatus.PREPARING.value
+                    row.coverage_status = CoverageStatus.NONE.value
+                    row.searchable_page_count = 0
+                    row.chunk_count = 0
+                    row.error_code = None
+                    row.updated_at = _now_utc()
+                session.flush()
+                return self._record_index(row)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def finish_document_preparation(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        document_version_id: int,
+        status: DocumentIndexStatus,
+        coverage_status: CoverageStatus,
+        searchable_page_count: int,
+        chunk_count: int,
+        error_code: RagErrorCode | None = None,
+        verification: DocumentVerificationRecord | None = None,
+    ) -> DocumentIndexRecord:
+        """Publish a verified state or safely record an invisible failed state."""
+        if status not in {
+            DocumentIndexStatus.READY,
+            DocumentIndexStatus.NOT_SEARCHABLE,
+            DocumentIndexStatus.FAILED,
+        } or not isinstance(coverage_status, CoverageStatus):
+            raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        if (
+            isinstance(searchable_page_count, bool)
+            or not isinstance(searchable_page_count, int)
+            or searchable_page_count < 0
+            or isinstance(chunk_count, bool)
+            or not isinstance(chunk_count, int)
+            or chunk_count < 0
+        ):
+            raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(session, identity, expected_revision)
+                version = self._require_eligible_version(session, document_version_id)
+                row = session.scalar(
+                    select(RagDocumentIndexORM).where(
+                        RagDocumentIndexORM.generation_id == identity.generation_id,
+                        RagDocumentIndexORM.document_version_id == document_version_id,
+                    )
+                )
+                if row is None or row.status != DocumentIndexStatus.PREPARING.value:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                if status is DocumentIndexStatus.FAILED and (
+                    coverage_status is not CoverageStatus.NONE
+                    or searchable_page_count != 0
+                    or chunk_count != 0
+                    or error_code is None
+                    or verification is not None
+                ):
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                if status is DocumentIndexStatus.FAILED:
+                    self._delete_document_chunks(
+                        session,
+                        generation_id=identity.generation_id,
+                        document_version_id=document_version_id,
+                    )
+                    coverage_status = CoverageStatus.NONE
+                    searchable_page_count = 0
+                    chunk_count = 0
+                if status is DocumentIndexStatus.NOT_SEARCHABLE and (
+                    coverage_status is not CoverageStatus.NONE
+                    or searchable_page_count != 0
+                    or chunk_count != 0
+                    or error_code is not None
+                    or verification is not None
+                ):
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                if status is DocumentIndexStatus.READY and (
+                    coverage_status is CoverageStatus.NONE
+                    or searchable_page_count <= 0
+                    or searchable_page_count > version.page_count
+                    or (
+                        coverage_status is CoverageStatus.FULL
+                        and searchable_page_count != version.page_count
+                    )
+                    or (
+                        coverage_status is CoverageStatus.PARTIAL
+                        and searchable_page_count >= version.page_count
+                    )
+                    or chunk_count <= 0
+                    or error_code is not None
+                    or verification is None
+                    or verification.generation_id != identity.generation_id
+                    or verification.document_version_id != document_version_id
+                    or verification.chunk_count != chunk_count
+                ):
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+                if status is DocumentIndexStatus.READY:
+                    current = self._verify_generation_document_in_session(
+                        session, identity, document_version_id
+                    )
+                    if current != verification:
+                        raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+                row.status = status.value
+                row.coverage_status = coverage_status.value
+                row.searchable_page_count = searchable_page_count
+                row.chunk_count = chunk_count
+                row.error_code = error_code.value if error_code is not None else None
+                row.updated_at = _now_utc()
+                session.flush()
+                return self._record_index(row)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def verify_generation_document(
+        self, identity: RagGenerationIdentity, document_version_id: int
+    ) -> DocumentVerificationRecord:
+        """Verify chunk, span, and FTS membership before a row may become READY."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                return self._verify_generation_document_in_session(
+                    session, identity, document_version_id
+                )
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.INDEX_INTEGRITY_FAILED, error) from error
+        finally:
+            session.close()
+
+    def _verify_generation_document_in_session(
+        self, session: Session, identity: RagGenerationIdentity, document_version_id: int
+    ) -> DocumentVerificationRecord:
+        """Verify exact current SQLite/FTS membership inside a caller transaction."""
+        self._require_generation(session, identity, identity.content_revision)
+        index = session.scalar(
+            select(RagDocumentIndexORM).where(
+                RagDocumentIndexORM.generation_id == identity.generation_id,
+                RagDocumentIndexORM.document_version_id == document_version_id,
+            )
+        )
+        chunks = tuple(
+            session.scalars(
+                select(RagChunkORM)
+                .where(
+                    RagChunkORM.generation_id == identity.generation_id,
+                    RagChunkORM.document_version_id == document_version_id,
+                )
+                .order_by(RagChunkORM.ordinal, RagChunkORM.id)
+            ).all()
+        )
+        chunk_ids = tuple(int(chunk.id) for chunk in chunks)
+        fts_ids = tuple(
+            int(row.rowid)
+            for row in session.execute(
+                text(
+                    "SELECT rowid FROM rag_chunks_fts WHERE generation_id = :generation_id "
+                    "AND document_version_id = :document_version_id ORDER BY rowid"
+                ),
+                {
+                    "generation_id": identity.generation_id,
+                    "document_version_id": document_version_id,
+                },
+            )
+        )
+        spans = (
+            tuple(
+                session.execute(
+                    select(RagChunkSourceSpanORM, DocumentPageORM, RagChunkORM)
+                    .join(
+                        DocumentPageORM,
+                        RagChunkSourceSpanORM.document_page_id == DocumentPageORM.id,
+                    )
+                    .join(RagChunkORM, RagChunkSourceSpanORM.rag_chunk_id == RagChunkORM.id)
+                    .where(RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids))
+                    .order_by(RagChunkSourceSpanORM.rag_chunk_id, RagChunkSourceSpanORM.ordinal)
+                )
+            )
+            if chunk_ids
+            else ()
+        )
+        valid_span_ids: set[int] = set()
+        for span, page, chunk in spans:
+            if not (
+                span.document_page_id == page.id
+                and page.document_version_id == chunk.document_version_id
+                and page.page_number == span.page_number
+                and 0 <= span.page_char_start < span.page_char_end <= len(page.text)
+                and 0 <= span.chunk_char_start < span.chunk_char_end <= len(chunk.exact_text)
+                and page.text[span.page_char_start : span.page_char_end]
+                == chunk.exact_text[span.chunk_char_start : span.chunk_char_end]
+            ):
+                raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+            valid_span_ids.add(int(chunk.id))
+        if (
+            index is None
+            or index.status
+            not in {DocumentIndexStatus.PREPARING.value, DocumentIndexStatus.READY.value}
+            or not chunks
+            or tuple(sorted(chunk_ids)) != fts_ids
+            or valid_span_ids != set(chunk_ids)
+            or len({chunk.chunk_key for chunk in chunks}) != len(chunks)
+        ):
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+        return DocumentVerificationRecord(
+            generation_id=identity.generation_id,
+            document_version_id=document_version_id,
+            chunk_keys=tuple(chunk.chunk_key for chunk in chunks),
+            chunk_count=len(chunks),
+            source_span_count=len(spans),
+            fts_row_count=len(fts_ids),
+        )
 
     def get_document_index(
         self, identity: RagGenerationIdentity, document_version_id: int
@@ -1082,6 +1402,7 @@ class RagRepository:
 __all__ = [
     "ChunkRecord",
     "DocumentIndexRecord",
+    "DocumentVerificationRecord",
     "DocumentPageRecord",
     "DocumentVersionRecord",
     "GenerationBuild",

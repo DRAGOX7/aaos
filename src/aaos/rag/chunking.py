@@ -428,6 +428,11 @@ class DeterministicChunker:
         self._config = config
         self._config_fingerprint = compute_config_fingerprint(config)
 
+    @property
+    def config_fingerprint(self) -> str:
+        """Expose the immutable fingerprint required to bind a generation safely."""
+        return self._config_fingerprint
+
     def chunk(
         self,
         document_version_id: int,

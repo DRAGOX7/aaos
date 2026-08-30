@@ -588,3 +588,23 @@ def test_document_index_duplicate_rolls_back_without_partial_rows(tmp_path: Path
             assert connection.scalar(select(func.count()).select_from(RagDocumentIndexORM)) == 1
             assert connection.scalar(select(func.count()).select_from(RagChunkORM)) == 0
             assert connection.scalar(select(func.count()).select_from(RagChunkSourceSpanORM)) == 0
+
+
+def test_generation_document_verification_rejects_non_ready_or_incomplete_rows(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.insert_document_index(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=ids["one_v2"],
+            status=DocumentIndexStatus.PREPARING,
+            coverage_status=CoverageStatus.FULL,
+            searchable_page_count=1,
+            chunk_count=1,
+        )
+        with pytest.raises(RagOperationalError) as caught:
+            repository.verify_generation_document(generation.identity, ids["one_v2"])
+        assert caught.value.code is RagErrorCode.INDEX_INTEGRITY_FAILED
