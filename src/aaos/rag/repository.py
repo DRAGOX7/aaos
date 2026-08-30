@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any, Callable, TypeVar, cast
 
 from sqlalchemy import delete, func, select, text, update
@@ -181,6 +182,46 @@ class DocumentVerificationRecord:
     chunk_count: int
     source_span_count: int
     fts_row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationIntegrityReport:
+    """Safe cross-store-independent integrity evidence for one generation."""
+
+    generation_id: int
+    expected_document_count: int
+    ready_document_count: int
+    not_searchable_document_count: int
+    preparing_document_count: int
+    failed_document_count: int
+    chunk_count: int
+    fts_row_count: int
+    valid: bool
+    dense_vector_count: int = 0
+    dense_index_healthy: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.generation_id, bool)
+            or not isinstance(self.generation_id, int)
+            or self.generation_id <= 0
+        ):
+            raise ValueError("generation_id must be positive")
+        for name in (
+            "expected_document_count",
+            "ready_document_count",
+            "not_searchable_document_count",
+            "preparing_document_count",
+            "failed_document_count",
+            "chunk_count",
+            "fts_row_count",
+            "dense_vector_count",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.valid, bool) or not isinstance(self.dense_index_healthy, bool):
+            raise ValueError("integrity flags must be bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,6 +699,40 @@ class RagRepository:
         finally:
             session.close()
 
+    def list_building_generations(self) -> tuple[GenerationBuild, ...]:
+        """Return BUILDING generations in stable creation order."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                rows = session.scalars(
+                    select(RagIndexGenerationORM)
+                    .where(RagIndexGenerationORM.status == GenerationStatus.BUILDING.value)
+                    .order_by(RagIndexGenerationORM.id)
+                ).all()
+                return tuple(self._generation_from_row(row) for row in rows)
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.GENERATION_ACTIVATION_FAILED, error) from error
+        finally:
+            session.close()
+
+    def resolve_rebuild_candidates(self) -> tuple[DocumentVersionRecord, ...]:
+        """Resolve the complete current eligible Phase 3 corpus deterministically."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                try:
+                    return self._resolve_versions_in_session(session, GlobalScope(), current=True)
+                except RagOperationalError as error:
+                    if error.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS:
+                        return ()
+                    raise
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.PROVENANCE_RESOLUTION_FAILED, error) from error
+        finally:
+            session.close()
+
     def _require_generation(
         self,
         session: Session,
@@ -690,23 +765,181 @@ class RagRepository:
         identity: RagGenerationIdentity,
         *,
         expected_revision: int,
+        expected_active_generation_id: int | None = None,
     ) -> GenerationBuild:
-        """Atomically retire the current active row and activate this BUILDING row."""
+        """Atomically retire the expected ACTIVE row and activate a BUILDING row."""
         session = self._session_factory()
         try:
             with session.begin():
                 row = self._require_generation(session, identity, expected_revision)
                 if row.status != GenerationStatus.BUILDING.value:
                     raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
-                session.execute(
-                    update(RagIndexGenerationORM)
-                    .where(RagIndexGenerationORM.status == GenerationStatus.ACTIVE.value)
-                    .values(status=GenerationStatus.RETIRED.value)
+                active_rows = tuple(
+                    session.scalars(
+                        select(RagIndexGenerationORM)
+                        .where(RagIndexGenerationORM.status == GenerationStatus.ACTIVE.value)
+                        .order_by(RagIndexGenerationORM.id)
+                    ).all()
                 )
+                if len(active_rows) > 1:
+                    raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+                if expected_active_generation_id is not None:
+                    if (
+                        isinstance(expected_active_generation_id, bool)
+                        or not isinstance(expected_active_generation_id, int)
+                        or expected_active_generation_id <= 0
+                        or len(active_rows) != 1
+                        or int(active_rows[0].id) != expected_active_generation_id
+                    ):
+                        raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+                if active_rows:
+                    active_rows[0].status = GenerationStatus.RETIRED.value
                 row.status = GenerationStatus.ACTIVE.value
                 row.activated_at = _now_utc()
                 session.flush()
                 return self._generation_from_row(row)
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.GENERATION_ACTIVATION_FAILED, error) from error
+        finally:
+            session.close()
+
+    def verify_generation(
+        self,
+        identity: RagGenerationIdentity,
+        expected_document_version_ids: tuple[int, ...],
+    ) -> GenerationIntegrityReport:
+        """Validate one generation's authoritative SQLite/FTS state."""
+        if (
+            not isinstance(expected_document_version_ids, tuple)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                for value in expected_document_version_ids
+            )
+            or len(set(expected_document_version_ids)) != len(expected_document_version_ids)
+        ):
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(session, identity, identity.content_revision)
+                expected = tuple(expected_document_version_ids)
+                expected_set = set(expected)
+                rows = tuple(
+                    session.scalars(
+                        select(RagDocumentIndexORM)
+                        .where(RagDocumentIndexORM.generation_id == identity.generation_id)
+                        .order_by(RagDocumentIndexORM.document_version_id, RagDocumentIndexORM.id)
+                    ).all()
+                )
+                row_ids = {int(row.document_version_id) for row in rows}
+                ready = sum(row.status == DocumentIndexStatus.READY.value for row in rows)
+                not_searchable = sum(
+                    row.status == DocumentIndexStatus.NOT_SEARCHABLE.value for row in rows
+                )
+                preparing = sum(row.status == DocumentIndexStatus.PREPARING.value for row in rows)
+                failed = sum(row.status == DocumentIndexStatus.FAILED.value for row in rows)
+                chunk_count = int(
+                    session.scalar(
+                        select(func.count(RagChunkORM.id)).where(
+                            RagChunkORM.generation_id == identity.generation_id
+                        )
+                    )
+                    or 0
+                )
+                fts_row_count = int(
+                    session.scalar(
+                        text(
+                            "SELECT count(*) FROM rag_chunks_fts "
+                            "WHERE generation_id = :generation_id"
+                        ),
+                        {"generation_id": identity.generation_id},
+                    )
+                    or 0
+                )
+                valid = row_ids == expected_set and not preparing and not failed
+                if valid:
+                    for row in rows:
+                        document_version_id = int(row.document_version_id)
+                        if row.status == DocumentIndexStatus.READY.value:
+                            try:
+                                verification = self._verify_generation_document_in_session(
+                                    session, identity, document_version_id
+                                )
+                            except RagOperationalError:
+                                valid = False
+                                break
+                            if verification.chunk_count != int(row.chunk_count):
+                                valid = False
+                                break
+                        elif row.status == DocumentIndexStatus.NOT_SEARCHABLE.value:
+                            if (
+                                row.coverage_status != CoverageStatus.NONE.value
+                                or int(row.searchable_page_count) != 0
+                                or int(row.chunk_count) != 0
+                                or session.scalar(
+                                    select(func.count(RagChunkORM.id)).where(
+                                        RagChunkORM.generation_id == identity.generation_id,
+                                        RagChunkORM.document_version_id == document_version_id,
+                                    )
+                                )
+                            ):
+                                valid = False
+                                break
+                        else:
+                            valid = False
+                            break
+                if chunk_count != fts_row_count:
+                    valid = False
+                return GenerationIntegrityReport(
+                    generation_id=identity.generation_id,
+                    expected_document_count=len(expected),
+                    ready_document_count=ready,
+                    not_searchable_document_count=not_searchable,
+                    preparing_document_count=preparing,
+                    failed_document_count=failed,
+                    chunk_count=chunk_count,
+                    fts_row_count=fts_row_count,
+                    valid=valid,
+                )
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.INDEX_INTEGRITY_FAILED, error) from error
+        finally:
+            session.close()
+
+    def recover_building_generation(self, identity: RagGenerationIdentity) -> tuple[int, ...]:
+        """Mark interrupted PREPARING documents failed without changing ACTIVE state."""
+        session = self._session_factory()
+        recovered: list[int] = []
+        try:
+            with session.begin():
+                generation = self._require_generation(session, identity, identity.content_revision)
+                if generation.status != GenerationStatus.BUILDING.value:
+                    raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+                rows = session.scalars(
+                    select(RagDocumentIndexORM).where(
+                        RagDocumentIndexORM.generation_id == identity.generation_id,
+                        RagDocumentIndexORM.status == DocumentIndexStatus.PREPARING.value,
+                    )
+                ).all()
+                for row in rows:
+                    self._delete_document_chunks(
+                        session,
+                        generation_id=identity.generation_id,
+                        document_version_id=int(row.document_version_id),
+                    )
+                    row.status = DocumentIndexStatus.FAILED.value
+                    row.coverage_status = CoverageStatus.NONE.value
+                    row.searchable_page_count = 0
+                    row.chunk_count = 0
+                    row.error_code = RagErrorCode.DOCUMENT_INDEX_FAILED.value
+                    row.updated_at = _now_utc()
+                    recovered.append(int(row.document_version_id))
+                session.flush()
+                return tuple(sorted(recovered))
         except RagOperationalError:
             raise
         except SQLAlchemyError as error:
@@ -816,6 +1049,23 @@ class RagRepository:
         if row is None:
             raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
         return self._record_version(row)
+
+    @staticmethod
+    def _generation_chunk_key(
+        session: Session, identity: RagGenerationIdentity, chunk_key: str
+    ) -> str:
+        """Namespace a deterministic chunk key when another generation owns it."""
+        owner = session.scalar(
+            select(RagChunkORM.id).where(
+                RagChunkORM.chunk_key == chunk_key,
+                RagChunkORM.generation_id != identity.generation_id,
+            )
+        )
+        if owner is None:
+            return chunk_key
+        return sha256(
+            f"generation:{identity.generation_id}:{chunk_key}".encode("ascii")
+        ).hexdigest()
 
     def get_eligible_document_version(self, document_version_id: int) -> DocumentVersionRecord:
         """Return one eligible immutable Phase 3 version without mutating it."""
@@ -1514,8 +1764,9 @@ class RagRepository:
                     or page_end > version.page_count
                 ):
                     raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+                stored_chunk_key = self._generation_chunk_key(session, identity, chunk_key)
                 row = RagChunkORM(
-                    chunk_key=chunk_key,
+                    chunk_key=stored_chunk_key,
                     generation_id=identity.generation_id,
                     document_version_id=document_version_id,
                     ordinal=ordinal,
