@@ -73,6 +73,7 @@ EXPECTED_TOKENIZERS_VERSION = "0.23.1"
 EXPECTED_PACKAGING_VERSION = "25.0"
 EXPECTED_RAGAS_VERSION = "0.4.3"
 EXPECTED_LANGCHAIN_COMMUNITY_VERSION = "0.3.27"
+DEPENDENCY_IMPORT_TIMEOUT_SECONDS = 90
 PROHIBITED_DISTRIBUTIONS = ("PyMuPDF", "pytesseract", "easyocr", "ocrmypdf")
 PRODUCTION_FORBIDDEN_MODULES = (
     "anthropic",
@@ -230,7 +231,21 @@ def test_runtime_entrypoints_do_not_route_to_evaluation_or_cloud_provider_module
         ), module_path
 
 
-def test_rag_dependency_imports_are_side_effect_safe(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "dependency_import",
+    (
+        "import chromadb",
+        "import FlagEmbedding",
+        "import ragas\n"
+        "from langchain_community.chat_models.vertexai import ChatVertexAI\n"
+        "assert ChatVertexAI is not None",
+    ),
+    ids=("chromadb", "flagembedding", "ragas"),
+)
+def test_rag_dependency_imports_are_side_effect_safe(
+    tmp_path: Path, dependency_import: str
+) -> None:
+    """Give each real dependency import its own bounded side-effect check."""
     normal_state_before = {
         NORMAL_DATABASE: _path_snapshot(NORMAL_DATABASE),
         NORMAL_RAG_ROOT: _path_snapshot(NORMAL_RAG_ROOT),
@@ -252,10 +267,7 @@ def forbidden(*_args, **_kwargs):
 socket.socket = forbidden
 socket.create_connection = forbidden
 
-import chromadb
-import FlagEmbedding
-import ragas
-from langchain_community.chat_models.vertexai import ChatVertexAI
+{dependency_import}
 
 assert not pathlib.Path("data/database/aaos.db").exists()
 assert not pathlib.Path("data/rag").exists()
@@ -268,9 +280,8 @@ for cache_variable in (
     "XDG_CACHE_HOME",
 ):
     assert not pathlib.Path(os.environ[cache_variable]).exists(), cache_variable
-assert ChatVertexAI is not None
 print("IMPORT_SAFE_OFFLINE")
-"""
+""".format(dependency_import=dependency_import)
     environment = os.environ.copy()
     environment["RAGAS_DO_NOT_TRACK"] = "true"
     environment["HF_HUB_OFFLINE"] = "1"
@@ -290,7 +301,9 @@ print("IMPORT_SAFE_OFFLINE")
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        # FlagEmbedding took 50.64s in isolation and exceeded 60s under full-suite load.
+        # Keep each safety probe bounded without treating cold import speed as its contract.
+        timeout=DEPENDENCY_IMPORT_TIMEOUT_SECONDS,
     )
 
     assert completed.returncode == 0, completed.stderr
