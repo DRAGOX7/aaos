@@ -199,6 +199,15 @@ class SourceSpanRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthoritativeRetrievalChunk:
+    """One snapshot-authorized chunk with immutable document provenance."""
+
+    chunk: ChunkRecord
+    document_version: DocumentVersionRecord
+    source_spans: tuple[SourceSpanRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentVerificationRecord:
     """SQLite-side integrity evidence for one publishable document index."""
 
@@ -894,6 +903,38 @@ class RagRepository:
         )
         if row is None:
             raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+        return row
+
+    @staticmethod
+    def _resolve_snapshot_generation(
+        session: Session, snapshot: QuerySnapshot
+    ) -> RagIndexGenerationORM:
+        """Resolve only the immutable identity of an already-created snapshot."""
+        if not isinstance(snapshot, QuerySnapshot):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        row = session.scalar(
+            select(RagIndexGenerationORM).where(
+                RagIndexGenerationORM.id == snapshot.generation.generation_id,
+                RagIndexGenerationORM.config_fingerprint == snapshot.generation.config_fingerprint,
+                RagIndexGenerationORM.embedding_dimensions
+                == snapshot.generation.embedding_dimensions,
+            )
+        )
+        if row is None:
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        return row
+
+    @classmethod
+    def _require_snapshot_generation(
+        cls, session: Session, snapshot: QuerySnapshot
+    ) -> RagIndexGenerationORM:
+        """Require an ACTIVE or RETIRED generation for materialization."""
+        row = cls._resolve_snapshot_generation(session, snapshot)
+        if row.status not in {
+            GenerationStatus.ACTIVE.value,
+            GenerationStatus.RETIRED.value,
+        }:
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
         return row
 
     def activate_generation(
@@ -2035,16 +2076,225 @@ class RagRepository:
         session = self._session_factory()
         try:
             with session.begin():
-                self._require_generation(
-                    session,
-                    snapshot.generation,
-                    snapshot.generation.content_revision,
-                )
+                self._resolve_snapshot_generation(session, snapshot)
                 return search_fts(session, query, snapshot, limit=limit)
         except RagOperationalError:
             raise
         except SQLAlchemyError as error:
             raise _safe_database_error(RagErrorCode.LEXICAL_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def materialize_snapshot_chunks(
+        self,
+        snapshot: QuerySnapshot,
+        chunk_keys: tuple[str, ...],
+    ) -> tuple[AuthoritativeRetrievalChunk, ...]:
+        """Materialize requested chunks from one durable snapshot read.
+
+        The snapshot's generation identity and authorized version IDs are the
+        complete authorization boundary.  Current revision, ACTIVE status, and
+        current-version resolution are intentionally not consulted here.
+        """
+        if not isinstance(snapshot, QuerySnapshot) or not isinstance(chunk_keys, tuple):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        if any(not isinstance(key, str) or not key.strip() for key in chunk_keys):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        if len(set(chunk_keys)) != len(chunk_keys):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        if not chunk_keys:
+            return ()
+
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_snapshot_generation(session, snapshot)
+                generation_id = snapshot.generation.generation_id
+                authorized_versions = set(snapshot.document_version_ids)
+                requested_keys = set(chunk_keys)
+
+                requested_chunks = tuple(
+                    session.scalars(
+                        select(RagChunkORM).where(
+                            RagChunkORM.generation_id == generation_id,
+                            RagChunkORM.chunk_key.in_(requested_keys),
+                        )
+                    ).all()
+                )
+                if len(requested_chunks) != len(chunk_keys):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                requested_by_key = {chunk.chunk_key: chunk for chunk in requested_chunks}
+                if set(requested_by_key) != requested_keys:
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                if any(
+                    int(chunk.generation_id) != generation_id
+                    or int(chunk.document_version_id) not in authorized_versions
+                    for chunk in requested_chunks
+                ):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                requested_version_ids = {
+                    int(chunk.document_version_id) for chunk in requested_chunks
+                }
+                all_chunks = tuple(
+                    session.scalars(
+                        select(RagChunkORM)
+                        .where(
+                            RagChunkORM.generation_id == generation_id,
+                            RagChunkORM.document_version_id.in_(requested_version_ids),
+                        )
+                        .order_by(
+                            RagChunkORM.document_version_id, RagChunkORM.ordinal, RagChunkORM.id
+                        )
+                    ).all()
+                )
+                if not all_chunks or len({chunk.chunk_key for chunk in all_chunks}) != len(
+                    all_chunks
+                ):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                by_key = {chunk.chunk_key: chunk for chunk in all_chunks}
+                if any(requested_by_key[key].id != by_key[key].id for key in requested_keys):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                chunks_by_version: dict[int, tuple[RagChunkORM, ...]] = {}
+                for document_version_id in requested_version_ids:
+                    chunks_by_version[document_version_id] = tuple(
+                        chunk
+                        for chunk in all_chunks
+                        if int(chunk.document_version_id) == document_version_id
+                    )
+                indexes = tuple(
+                    session.scalars(
+                        select(RagDocumentIndexORM).where(
+                            RagDocumentIndexORM.generation_id == generation_id,
+                            RagDocumentIndexORM.document_version_id.in_(authorized_versions),
+                        )
+                    ).all()
+                )
+                indexes_by_version = {int(index.document_version_id): index for index in indexes}
+                for document_version_id, chunks in chunks_by_version.items():
+                    index = indexes_by_version.get(document_version_id)
+                    if (
+                        index is None
+                        or index.status != DocumentIndexStatus.READY.value
+                        or int(index.chunk_count) != len(chunks)
+                        or not chunks
+                    ):
+                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                chunk_ids = tuple(int(chunk.id) for chunk in all_chunks)
+                version_ids = tuple(sorted(requested_version_ids))
+                placeholders = ", ".join(
+                    f":version_id_{index}" for index in range(len(version_ids))
+                )
+                fts_rows = tuple(
+                    session.execute(
+                        text(
+                            "SELECT rowid, generation_id, document_version_id "
+                            "FROM rag_chunks_fts WHERE generation_id = :generation_id "
+                            "AND document_version_id IN ("
+                            f"{placeholders})"
+                        ),
+                        {
+                            "generation_id": generation_id,
+                            **{
+                                f"version_id_{index}": version_id
+                                for index, version_id in enumerate(version_ids)
+                            },
+                        },
+                    ).all()
+                )
+                if len(fts_rows) != len(all_chunks) or {int(row.rowid) for row in fts_rows} != set(
+                    chunk_ids
+                ):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                chunks_by_id = {int(chunk.id): chunk for chunk in all_chunks}
+                for row in fts_rows:
+                    chunk = chunks_by_id.get(int(row.rowid))
+                    if chunk is None:
+                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                    if int(row.generation_id) != generation_id or int(
+                        row.document_version_id
+                    ) != int(chunk.document_version_id):
+                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                span_rows = tuple(
+                    session.execute(
+                        select(RagChunkSourceSpanORM, DocumentPageORM, RagChunkORM)
+                        .join(
+                            DocumentPageORM,
+                            RagChunkSourceSpanORM.document_page_id == DocumentPageORM.id,
+                        )
+                        .join(RagChunkORM, RagChunkSourceSpanORM.rag_chunk_id == RagChunkORM.id)
+                        .where(RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids))
+                        .order_by(RagChunkSourceSpanORM.rag_chunk_id, RagChunkSourceSpanORM.ordinal)
+                    )
+                )
+                spans_by_chunk: dict[int, list[SourceSpanRecord]] = {}
+                for span, page, chunk in span_rows:
+                    if (
+                        int(chunk.generation_id) != generation_id
+                        or int(page.document_version_id) != int(chunk.document_version_id)
+                        or int(page.page_number) != int(span.page_number)
+                        or not (
+                            0
+                            <= int(span.page_char_start)
+                            < int(span.page_char_end)
+                            <= len(page.text)
+                        )
+                        or not (
+                            0
+                            <= int(span.chunk_char_start)
+                            < int(span.chunk_char_end)
+                            <= len(chunk.exact_text)
+                        )
+                        or page.text[int(span.page_char_start) : int(span.page_char_end)]
+                        != chunk.exact_text[int(span.chunk_char_start) : int(span.chunk_char_end)]
+                    ):
+                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                    spans_by_chunk.setdefault(int(chunk.id), []).append(self._record_span(span))
+                for chunk in all_chunks:
+                    spans = spans_by_chunk.get(int(chunk.id), [])
+                    if not spans or tuple(span.ordinal for span in spans) != tuple(
+                        range(1, len(spans) + 1)
+                    ):
+                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                version_query = (
+                    select(
+                        DocumentVersionORM.id,
+                        DocumentVersionORM.document_id,
+                        RemoteFileORM.id.label("remote_file_id"),
+                        CourseORM.id.label("course_id"),
+                        DocumentVersionORM.version_number,
+                        DocumentVersionORM.content_blob_id,
+                        ContentBlobORM.sha256.label("content_sha256"),
+                        DocumentVersionORM.source_filename,
+                        DocumentVersionORM.page_count,
+                    )
+                    .join(DocumentORM, DocumentVersionORM.document_id == DocumentORM.id)
+                    .join(ContentBlobORM, DocumentVersionORM.content_blob_id == ContentBlobORM.id)
+                    .join(RemoteFileORM, DocumentORM.remote_file_id == RemoteFileORM.id)
+                    .join(CourseORM, RemoteFileORM.course_id == CourseORM.id)
+                    .where(DocumentVersionORM.id.in_(version_ids))
+                )
+                version_rows = session.execute(version_query).all()
+                versions = {int(row.id): self._record_version(row) for row in version_rows}
+                if set(versions) != set(version_ids):
+                    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+                return tuple(
+                    AuthoritativeRetrievalChunk(
+                        chunk=self._record_chunk(requested_by_key[key]),
+                        document_version=versions[int(requested_by_key[key].document_version_id)],
+                        source_spans=tuple(spans_by_chunk[int(requested_by_key[key].id)]),
+                    )
+                    for key in chunk_keys
+                )
+        except RagOperationalError:
+            raise
+        except Exception:
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY) from None
         finally:
             session.close()
 
@@ -2159,6 +2409,7 @@ class RagRepository:
 
 
 __all__ = [
+    "AuthoritativeRetrievalChunk",
     "ChunkRecord",
     "DocumentIndexRecord",
     "DocumentVerificationRecord",

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from aaos.persistence.rag_models import (
     RagChunkORM,
     RagChunkSourceSpanORM,
     RagDocumentIndexORM,
+    RagIndexGenerationORM,
 )
 from aaos.rag.contracts import (
     CourseScope,
@@ -40,6 +41,7 @@ from aaos.rag.contracts import (
     RagOperationalError,
 )
 from aaos.rag.repository import (
+    AuthoritativeRetrievalChunk,
     ChunkRecord,
     DocumentIndexRecord,
     DocumentPageRecord,
@@ -48,6 +50,55 @@ from aaos.rag.repository import (
     RagRepository,
     SourceSpanRecord,
 )
+
+
+def _add_authoritative_retrieval_chunk(
+    repository: RagRepository,
+    generation: GenerationBuild,
+    document_version_id: int,
+    page: DocumentPageORM,
+    *,
+    chunk_key: str,
+) -> ChunkRecord:
+    repository.insert_document_index(
+        generation.identity,
+        expected_revision=generation.identity.content_revision,
+        document_version_id=document_version_id,
+        status=DocumentIndexStatus.READY,
+        coverage_status=CoverageStatus.FULL,
+        searchable_page_count=1,
+        chunk_count=1,
+    )
+    chunk = repository.insert_chunk(
+        generation.identity,
+        expected_revision=generation.identity.content_revision,
+        document_version_id=document_version_id,
+        chunk_key=chunk_key,
+        ordinal=1,
+        heading=None,
+        exact_text=page.text,
+        token_count=1,
+        text_sha256="a" * 64,
+        page_start=1,
+        page_end=1,
+    )
+    repository.insert_source_span(
+        generation.identity,
+        expected_revision=generation.identity.content_revision,
+        rag_chunk_id=chunk.chunk_id,
+        document_page_id=page.id,
+        ordinal=1,
+        page_number=1,
+        page_char_start=0,
+        page_char_end=len(page.text),
+        chunk_char_start=0,
+        chunk_char_end=len(page.text),
+    )
+    repository.rebuild_fts(
+        generation.identity, expected_revision=generation.identity.content_revision
+    )
+    return chunk
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 8, 28, 12, tzinfo=timezone.utc)
@@ -514,6 +565,115 @@ def test_query_snapshot_rejects_generation_without_ready_indexes(tmp_path: Path)
         with pytest.raises(RagOperationalError) as caught:
             repository.pin_query_snapshot(CourseScope(ids["course_one"]))
         assert caught.value.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS
+
+
+def test_materialize_snapshot_chunks_returns_requested_order_and_authority(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        with sessions() as session:
+            pages = {
+                int(page.document_version_id): page for page in session.query(DocumentPageORM).all()
+            }
+        first = _add_authoritative_retrieval_chunk(
+            repository,
+            generation,
+            ids["one_v2"],
+            pages[ids["one_v2"]],
+            chunk_key="1" * 64,
+        )
+        second = _add_authoritative_retrieval_chunk(
+            repository,
+            generation,
+            ids["two_v1"],
+            pages[ids["two_v1"]],
+            chunk_key="2" * 64,
+        )
+        snapshot = repository.pin_query_snapshot(GlobalScope())
+
+        single = repository.materialize_snapshot_chunks(snapshot, (first.chunk_key,))
+        assert tuple(item.chunk.chunk_key for item in single) == (first.chunk_key,)
+        materialized = repository.materialize_snapshot_chunks(
+            snapshot, (second.chunk_key, first.chunk_key)
+        )
+
+        assert tuple(item.chunk.chunk_key for item in materialized) == (
+            second.chunk_key,
+            first.chunk_key,
+        )
+        assert all(isinstance(item, AuthoritativeRetrievalChunk) for item in materialized)
+        assert tuple(item.document_version.document_version_id for item in materialized) == (
+            ids["two_v1"],
+            ids["one_v2"],
+        )
+        assert all(item.source_spans for item in materialized)
+
+
+def test_materialize_snapshot_chunks_rejects_empty_duplicates_and_missing_keys(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        with sessions() as session:
+            page = session.query(DocumentPageORM).filter_by(document_version_id=ids["one_v2"]).one()
+        chunk = _add_authoritative_retrieval_chunk(
+            repository,
+            generation,
+            ids["one_v2"],
+            page,
+            chunk_key="3" * 64,
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(ids["course_one"]))
+
+        assert repository.materialize_snapshot_chunks(snapshot, ()) == ()
+        for keys in ((chunk.chunk_key, chunk.chunk_key), ("f" * 64,)):
+            with pytest.raises(RagOperationalError) as caught:
+                repository.materialize_snapshot_chunks(snapshot, keys)
+            assert caught.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_materialize_snapshot_chunks_survives_revision_and_retirement_but_rejects_building(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        with sessions() as session:
+            page = session.query(DocumentPageORM).filter_by(document_version_id=ids["one_v2"]).one()
+        chunk = _add_authoritative_retrieval_chunk(
+            repository,
+            generation,
+            ids["one_v2"],
+            page,
+            chunk_key="4" * 64,
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(ids["course_one"]))
+        revised = repository.bump_content_revision(generation.identity, expected_revision=0)
+
+        assert (
+            repository.materialize_snapshot_chunks(snapshot, (chunk.chunk_key,))[0].chunk == chunk
+        )
+
+        repository.retire_generation(revised, expected_revision=1)
+        assert (
+            repository.materialize_snapshot_chunks(snapshot, (chunk.chunk_key,))[0].chunk == chunk
+        )
+
+        with sessions() as session, session.begin():
+            session.execute(
+                update(RagIndexGenerationORM)
+                .where(RagIndexGenerationORM.id == generation.generation_id)
+                .values(status=GenerationStatus.BUILDING.value)
+            )
+        with pytest.raises(RagOperationalError) as caught:
+            repository.materialize_snapshot_chunks(snapshot, (chunk.chunk_key,))
+        assert caught.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
 
 
 def test_phase3_rows_remain_unchanged_by_rag_repository(tmp_path: Path) -> None:

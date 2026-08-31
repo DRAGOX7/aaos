@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from aaos.persistence.database import create_database_engine, create_session_fac
 from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
+    DocumentPageORM,
     DocumentVersionORM,
 )
 from aaos.rag.contracts import (
@@ -34,13 +36,17 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RagQuery,
 )
+from aaos.rag.lexical import LexicalSearchHit
 from aaos.rag.repository import GenerationBuild, RagRepository
 from aaos.rag.retrieval import (
+    FusedCandidate,
     HybridRetriever,
     QuerySnapshotResolver,
     RetrievalCandidateSet,
     normalize_query,
+    reciprocal_rank_fusion,
     resolve_query_snapshot,
+    verify_fused_candidates,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +131,17 @@ def _seed_documents(sessions: SessionFactory, *, course_count: int = 2) -> dict[
                 )
                 session.add(version)
                 session.flush()
+                session.add(
+                    DocumentPageORM(
+                        document_version_id=version.id,
+                        page_number=1,
+                        text=f"Authoritative text for course {index} version {version_number}.",
+                        text_source="EMBEDDED_PDF",
+                        width_points=612.0,
+                        height_points=792.0,
+                        created_at=NOW,
+                    )
+                )
                 versions[f"course{index}_v{version_number}"] = int(version.id)
         return {"courses": tuple(int(course.id) for course in courses), "versions": versions}
 
@@ -167,6 +184,44 @@ def _active_generation(repository: RagRepository) -> GenerationBuild:
     generation = _create_generation(repository)
     repository.activate_generation(generation.identity, expected_revision=0)
     return generation
+
+
+def _add_authoritative_chunk(
+    repository: RagRepository,
+    generation: GenerationBuild,
+    document_version_id: int,
+    *,
+    chunk_key: str,
+) -> None:
+    """Create one READY chunk with exact Phase 3 provenance for retrieval tests."""
+    _publish(repository, generation, document_version_id, DocumentIndexStatus.READY)
+    page = repository.read_pages(document_version_id)[0]
+    chunk = repository.insert_chunk(
+        generation.identity,
+        expected_revision=generation.identity.content_revision,
+        document_version_id=document_version_id,
+        chunk_key=chunk_key,
+        ordinal=1,
+        heading=None,
+        exact_text=page.text,
+        token_count=8,
+        text_sha256="f" * 64,
+        page_start=1,
+        page_end=1,
+    )
+    repository.insert_source_span(
+        generation.identity,
+        expected_revision=generation.identity.content_revision,
+        rag_chunk_id=chunk.chunk_id,
+        document_page_id=page.document_page_id,
+        ordinal=1,
+        page_number=1,
+        page_char_start=0,
+        page_char_end=len(page.text),
+        chunk_char_start=0,
+        chunk_char_end=len(page.text),
+    )
+    repository.verify_generation_document(generation.identity, document_version_id)
 
 
 def test_query_normalization_is_bounded_and_conservative() -> None:
@@ -347,6 +402,69 @@ def test_snapshot_revision_is_pinned_across_later_publication(tmp_path: Path) ->
         )
 
 
+def test_retrieval_snapshot_survives_index_new_publication(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        seeded = _seed_documents(sessions)
+        generation = _active_generation(repository)
+        versions = seeded["versions"]
+        assert isinstance(versions, dict)
+        v1 = versions["course0_v1"]
+        v2 = versions["course0_v2"]
+        _add_authoritative_chunk(repository, generation, v1, chunk_key="a" * 64)
+        first = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+
+        revised_identity = repository.bump_content_revision(
+            generation.identity, expected_revision=0
+        )
+        revised = replace(generation, identity=revised_identity)
+        _add_authoritative_chunk(repository, revised, v2, chunk_key="b" * 64)
+        second = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+
+        lexical = repository.lexical_search("authoritative", first, limit=30)
+        assert tuple(hit.chunk_key for hit in lexical.hits) == ("a" * 64,)
+        materialized = repository.materialize_snapshot_chunks(first, ("a" * 64,))
+        assert materialized[0].document_version.document_version_id == v1
+        fused = reciprocal_rank_fusion(
+            (DenseSearchHit("a" * 64, 1, 0.1),),
+            (LexicalSearchHit("a" * 64, v1, 1, -1.0),),
+            rrf_k=60,
+        )
+        assert verify_fused_candidates(repository, first, fused) == fused
+        assert second.generation.content_revision == 1
+        assert second.document_version_ids == (v2,)
+
+
+def test_retrieval_snapshot_survives_generation_activation_and_rejects_new_generation(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        seeded = _seed_documents(sessions)
+        first_generation = _active_generation(repository)
+        versions = seeded["versions"]
+        assert isinstance(versions, dict)
+        v1 = versions["course0_v1"]
+        _add_authoritative_chunk(repository, first_generation, v1, chunk_key="c" * 64)
+        first = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+
+        second_generation = _create_generation(repository, fingerprint="b" * 64)
+        _add_authoritative_chunk(repository, second_generation, v1, chunk_key="d" * 64)
+        repository.activate_generation(second_generation.identity, expected_revision=0)
+
+        lexical = repository.lexical_search("authoritative", first, limit=30)
+        assert tuple(hit.chunk_key for hit in lexical.hits) == ("c" * 64,)
+        assert (
+            repository.materialize_snapshot_chunks(first, ("c" * 64,))[0].chunk.chunk_key
+            == "c" * 64
+        )
+
+        wrong_generation = reciprocal_rank_fusion((DenseSearchHit("d" * 64, 1, 0.1),), (), rrf_k=60)
+        with pytest.raises(RagOperationalError) as caught:
+            verify_fused_candidates(repository, first, wrong_generation)
+        assert caught.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+        second = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+        assert second.generation.generation_id == second_generation.generation_id
+
+
 def test_no_active_generation_and_invalid_resolver_input_are_safe(tmp_path: Path) -> None:
     with repository_database(tmp_path) as (repository, _, _):
         with pytest.raises(RagOperationalError) as caught:
@@ -437,3 +555,148 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         assert dense.allowed == (versions["course0_v1"],)
         assert lexical_calls == [("course", (versions["course0_v1"],), 30)]
         assert embedding.released is True
+
+
+def test_rrf_combines_channel_ranks_without_using_raw_scores() -> None:
+    shared_key = "a" * 64
+    dense_only_key = "b" * 64
+    lexical_only_key = "c" * 64
+    dense = (
+        DenseSearchHit(shared_key, 1, 999.0),
+        DenseSearchHit(dense_only_key, 2, -999.0),
+    )
+    lexical = (
+        LexicalSearchHit(shared_key, 7, 1, 5000.0),
+        LexicalSearchHit(lexical_only_key, 8, 2, -5000.0),
+    )
+
+    fused = reciprocal_rank_fusion(dense, lexical, rrf_k=60)
+
+    assert fused == (
+        FusedCandidate(shared_key, 1, 1, 7, (1 / 61) + (1 / 61), 1),
+        FusedCandidate(dense_only_key, 2, None, None, 1 / 62, 2),
+        FusedCandidate(lexical_only_key, None, 2, 8, 1 / 62, 3),
+    )
+
+
+def test_rrf_supports_one_or_zero_channels_and_configuration_changes() -> None:
+    dense_key = "d" * 64
+    lexical_key = "e" * 64
+    dense = (DenseSearchHit(dense_key, 1, 0.25),)
+    lexical = (LexicalSearchHit(lexical_key, 3, 1, -0.75),)
+
+    assert reciprocal_rank_fusion(dense, (), rrf_k=60) == (
+        FusedCandidate(dense_key, 1, None, None, 1 / 61, 1),
+    )
+    assert reciprocal_rank_fusion((), lexical, rrf_k=60) == (
+        FusedCandidate(lexical_key, None, 1, 3, 1 / 61, 1),
+    )
+    assert reciprocal_rank_fusion((), (), rrf_k=60) == ()
+    assert reciprocal_rank_fusion(dense, (), rrf_k=10)[0].fused_score == 1 / 11
+
+
+def test_rrf_deduplicates_cross_channel_identity_and_breaks_ties_deterministically() -> None:
+    first_key = "1" * 64
+    second_key = "2" * 64
+    shared_key = "3" * 64
+    dense = (
+        DenseSearchHit(first_key, 1, 0.1),
+        DenseSearchHit(shared_key, 2, 0.2),
+    )
+    lexical = (
+        LexicalSearchHit(second_key, 9, 1, -5.0),
+        LexicalSearchHit(shared_key, 7, 2, -4.0),
+    )
+
+    expected = reciprocal_rank_fusion(dense, lexical, rrf_k=60)
+
+    assert tuple(candidate.chunk_key for candidate in expected) == (
+        shared_key,
+        first_key,
+        second_key,
+    )
+    assert len(expected) == 3
+    assert reciprocal_rank_fusion(dense, lexical, rrf_k=60) == expected
+
+
+def test_rrf_rejects_duplicate_or_malformed_channel_ranks() -> None:
+    key = "4" * 64
+    with pytest.raises(RagOperationalError) as duplicate:
+        reciprocal_rank_fusion(
+            (DenseSearchHit(key, 1, 0.1), DenseSearchHit(key, 2, 0.2)),
+            (),
+            rrf_k=60,
+        )
+    assert duplicate.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+    with pytest.raises(RagOperationalError) as rank_gap:
+        reciprocal_rank_fusion((DenseSearchHit(key, 2, 0.1),), (), rrf_k=60)
+    assert rank_gap.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_candidate_verification_accepts_only_ready_authoritative_provenance(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        seeded = _seed_documents(sessions)
+        generation = _active_generation(repository)
+        versions = seeded["versions"]
+        assert isinstance(versions, dict)
+        version_id = versions["course0_v1"]
+        key = "5" * 64
+        _add_authoritative_chunk(repository, generation, version_id, chunk_key=key)
+        snapshot = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+        candidates = reciprocal_rank_fusion(
+            (DenseSearchHit(key, 1, 0.1),),
+            (LexicalSearchHit(key, version_id, 1, -1.0),),
+            rrf_k=60,
+        )
+
+        assert verify_fused_candidates(repository, snapshot, candidates) == candidates
+
+
+def test_candidate_verification_rejects_stale_wrong_scope_and_missing_provenance(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        seeded = _seed_documents(sessions)
+        generation = _active_generation(repository)
+        versions = seeded["versions"]
+        assert isinstance(versions, dict)
+        authorized_id = versions["course0_v1"]
+        other_id = versions["course1_v1"]
+        good_key = "6" * 64
+        _add_authoritative_chunk(repository, generation, authorized_id, chunk_key=good_key)
+        snapshot = repository.pin_query_snapshot(CourseScope(seeded["courses"][0]))  # type: ignore[index]
+
+        stale = reciprocal_rank_fusion((DenseSearchHit("7" * 64, 1, 0.1),), (), rrf_k=60)
+        with pytest.raises(RagOperationalError) as stale_error:
+            verify_fused_candidates(repository, snapshot, stale)
+        assert stale_error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+        wrong_scope = reciprocal_rank_fusion(
+            (), (LexicalSearchHit(good_key, other_id, 1, -1.0),), rrf_k=60
+        )
+        with pytest.raises(RagOperationalError) as scope_error:
+            verify_fused_candidates(repository, snapshot, wrong_scope)
+        assert scope_error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+        incomplete_key = "8" * 64
+        _publish(repository, generation, other_id, DocumentIndexStatus.READY)
+        page = repository.read_pages(other_id)[0]
+        repository.insert_chunk(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=other_id,
+            chunk_key=incomplete_key,
+            ordinal=1,
+            heading=None,
+            exact_text=page.text,
+            token_count=8,
+            text_sha256="e" * 64,
+            page_start=1,
+            page_end=1,
+        )
+        global_snapshot = repository.pin_query_snapshot(GlobalScope())
+        incomplete = reciprocal_rank_fusion((DenseSearchHit(incomplete_key, 1, 0.1),), (), rrf_k=60)
+        with pytest.raises(RagOperationalError) as provenance_error:
+            verify_fused_candidates(repository, global_snapshot, incomplete)
+        assert provenance_error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
