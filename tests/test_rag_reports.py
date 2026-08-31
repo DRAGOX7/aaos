@@ -22,6 +22,7 @@ from aaos.rag.evaluation.reports import (
     PerformanceSample,
     RubricScore,
     SafetyObservation,
+    build_acceptance_report,
     build_evaluation_summary,
     build_human_report,
     build_performance_report,
@@ -235,6 +236,13 @@ def test_summary_and_json_artifact_are_deterministic_and_use_injected_root(tmp_p
     assert first.parent == tmp_path / "evaluation-output"
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
     assert "private question" not in first.read_text(encoding="utf-8")
+
+
+def test_acceptance_report_uses_the_same_allowlisted_summary_contract() -> None:
+    expected = build_evaluation_summary(_dataset(), run_id="acceptance-run")
+    actual = build_acceptance_report(_dataset(), run_id="acceptance-run")
+    assert actual == expected
+    assert set(actual) == SAFE_ACCEPTANCE_FIELDS
 
 
 def test_summary_rejects_mismatched_ragas_lineage() -> None:

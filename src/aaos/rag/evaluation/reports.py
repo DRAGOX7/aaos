@@ -614,6 +614,38 @@ def build_evaluation_summary(
     }
 
 
+def build_acceptance_report(
+    dataset: EvaluationDataset,
+    *,
+    run_id: str,
+    human_labels: Sequence[HumanReviewLabel] | None = None,
+    safety_observations: Sequence[SafetyObservation] | None = None,
+    performance_samples: Sequence[PerformanceSample] | None = None,
+    ragas_result: RagasEvaluationResult | None = None,
+    split: EvaluationSplit | None = None,
+    retrieval_manifest: SafeRunManifest | None = None,
+) -> EvaluationSummary:
+    """Build the final acceptance aggregate through the existing safe schema.
+
+    Task 26 needs an explicit acceptance-named entry point, but acceptance
+    evidence uses the same lineage and allowlisted report sections as the
+    deterministic evaluation summary.  Keeping this as a typed delegation
+    prevents a second report schema from drifting away from the established
+    privacy validation boundary.
+    """
+
+    return build_evaluation_summary(
+        dataset,
+        run_id=run_id,
+        human_labels=human_labels,
+        safety_observations=safety_observations,
+        performance_samples=performance_samples,
+        ragas_result=ragas_result,
+        split=split,
+        retrieval_manifest=retrieval_manifest,
+    )
+
+
 def serialize_evaluation_summary(summary: EvaluationSummary) -> str:
     """Return deterministic JSON for a validated summary."""
 
@@ -875,6 +907,7 @@ __all__ = [
     "RubricScore",
     "SafetyObservation",
     "build_evaluation_summary",
+    "build_acceptance_report",
     "build_human_evaluation_report",
     "build_human_report",
     "build_performance_evaluation_report",
