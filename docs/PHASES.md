@@ -28,7 +28,8 @@ Every phase ends with:
 - Phase 1 — **FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`.
 - Phase 2 — **ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`.
 - Phase 3 — **FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
-- Phases 4–9 — **PLANNED / NOT STARTED**.
+- Phase 4 — **IN PROGRESS**.
+- Phases 5–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
 
@@ -210,7 +211,7 @@ Safely ingest newly discovered academic files.
 
 ## PHASE 4 — Local RAG
 
-**Current status: PLANNED / NOT STARTED.**
+**Current status: IN PROGRESS.**
 
 ### Purpose
 
