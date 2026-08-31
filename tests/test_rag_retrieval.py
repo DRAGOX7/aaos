@@ -33,11 +33,12 @@ from aaos.rag.contracts import (
     GlobalScope,
     HistoricalScope,
     RagErrorCode,
+    RagGenerationIdentity,
     RagOperationalError,
     RagQuery,
 )
-from aaos.rag.lexical import LexicalSearchHit
-from aaos.rag.repository import GenerationBuild, RagRepository
+from aaos.rag.lexical import LexicalSearchHit, LexicalSearchResult
+from aaos.rag.repository import GenerationBuild, QuerySnapshot, RagRepository
 from aaos.rag.retrieval import (
     FusedCandidate,
     HybridRetriever,
@@ -498,6 +499,7 @@ class _EmbeddingStub:
 class _DenseStub:
     def __init__(self) -> None:
         self.allowed: tuple[int, ...] | None = None
+        self.closed = 0
 
     def upsert(self, records: tuple[object, ...]) -> None:
         return None
@@ -519,7 +521,31 @@ class _DenseStub:
         return 1
 
     def close(self) -> None:
+        self.closed += 1
+
+
+class _DenseFactoryStub:
+    def __init__(self, dense: _DenseStub) -> None:
+        self.dense = dense
+        self.opened: list[object] = []
+
+    def open(self, generation: object) -> _DenseStub:
+        self.opened.append(generation)
+        return self.dense
+
+    def remove(self, _generation: object) -> None:
         return None
+
+
+class _FailingDenseStub(_DenseStub):
+    def search(
+        self,
+        vector: tuple[float, ...],
+        *,
+        limit: int,
+        allowed_document_version_ids: tuple[int, ...],
+    ) -> tuple[DenseSearchHit, ...]:
+        raise RuntimeError("dense search failed")
 
 
 def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Path) -> None:
@@ -531,10 +557,12 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         _publish(repository, generation, versions["course0_v1"], DocumentIndexStatus.READY)
         embedding = _EmbeddingStub()
         dense = _DenseStub()
+        dense_factory = _DenseFactoryStub(dense)
         lexical_calls: list[tuple[str, tuple[int, ...], int]] = []
 
         def lexical_search(query: str, snapshot: object, limit: int) -> object:
             assert hasattr(snapshot, "document_version_ids")
+            assert dense.closed == 1
             ids = snapshot.document_version_ids
             lexical_calls.append((query, ids, limit))
             from aaos.rag.lexical import LexicalSearchResult
@@ -544,7 +572,7 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         retriever = HybridRetriever(
             repository,
             embedding,
-            dense,
+            dense_factory,
             lexical_search=lexical_search,  # type: ignore[arg-type]
         )
         candidates = retriever.retrieve_candidates(
@@ -552,10 +580,93 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         )
 
         assert isinstance(candidates, RetrievalCandidateSet)
+        assert dense_factory.opened == [generation.identity]
         assert dense.allowed == (versions["course0_v1"],)
         assert lexical_calls == [("course", (versions["course0_v1"],), 30)]
         assert embedding.released is True
         assert candidates.embedding_release_verified is True
+        assert dense.closed == 1
+
+
+def test_hybrid_retrieval_opens_and_closes_the_snapshot_generation_handle() -> None:
+    generations = (
+        RagGenerationIdentity(1, "a" * 64, 0, 3),
+        RagGenerationIdentity(2, "b" * 64, 0, 3),
+        RagGenerationIdentity(1, "a" * 64, 0, 3),
+    )
+    snapshots = [
+        QuerySnapshot(generations[0], GlobalScope(), (1,), "course"),
+        QuerySnapshot(generations[1], GlobalScope(), (1,), "course"),
+        QuerySnapshot(generations[2], HistoricalScope((1,)), (1,), "course"),
+    ]
+
+    class SnapshotRepository:
+        def pin_query_snapshot(self, _scope: object, *, normalized_query: str) -> QuerySnapshot:
+            return snapshots.pop(0)
+
+    embedding = _EmbeddingStub()
+    handles = [_DenseStub(), _DenseStub(), _DenseStub()]
+
+    class TrackingFactory:
+        def __init__(self) -> None:
+            self.opened: list[RagGenerationIdentity] = []
+
+        def open(self, requested: RagGenerationIdentity) -> _DenseStub:
+            self.opened.append(requested)
+            return handles[len(self.opened) - 1]
+
+        def remove(self, _requested: RagGenerationIdentity) -> None:
+            return None
+
+    factory = TrackingFactory()
+
+    def lexical_search(query: str, _snapshot: object, _limit: int) -> LexicalSearchResult:
+        return LexicalSearchResult(query, ())
+
+    retriever = HybridRetriever(
+        SnapshotRepository(),  # type: ignore[arg-type]
+        embedding,
+        factory,
+        lexical_search=lexical_search,
+    )
+    query = RagQuery("course", GlobalScope())
+
+    first = retriever.retrieve_candidates(query)
+    second = retriever.retrieve_candidates(query)
+    historical = retriever.retrieve_candidates(query)
+
+    assert first.snapshot.generation == generations[0]
+    assert second.snapshot.generation == generations[1]
+    assert historical.snapshot.generation == generations[2]
+    assert factory.opened == list(generations)
+    assert [handle.closed for handle in handles] == [1, 1, 1]
+
+
+def test_hybrid_retrieval_closes_dense_handle_when_search_fails(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        seeded = _seed_documents(sessions)
+        generation = _active_generation(repository)
+        versions = seeded["versions"]
+        assert isinstance(versions, dict)
+        _publish(repository, generation, versions["course0_v1"], DocumentIndexStatus.READY)
+        embedding = _EmbeddingStub()
+        dense = _FailingDenseStub()
+        factory = _DenseFactoryStub(dense)
+        retriever = HybridRetriever(
+            repository,
+            embedding,
+            factory,
+            lexical_search=lambda query, _snapshot, _limit: LexicalSearchResult(query, ()),
+        )
+
+        with pytest.raises(RagOperationalError) as caught:
+            retriever.retrieve_candidates(
+                RagQuery("course", CourseScope(seeded["courses"][0]))  # type: ignore[index]
+            )
+
+        assert caught.value.code is RagErrorCode.DENSE_INDEX_UNAVAILABLE
+        assert dense.closed == 1
+        assert embedding.released is True
 
 
 def test_rrf_combines_channel_ranks_without_using_raw_scores() -> None:

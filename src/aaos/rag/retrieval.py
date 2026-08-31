@@ -18,6 +18,7 @@ from aaos.rag.contracts import (
     MAX_RAG_TEXT_CHARACTERS,
     CourseScope,
     DenseIndex,
+    DenseIndexFactory,
     DenseSearchHit,
     EmbeddingService,
     RagChunkSourceSpanValue,
@@ -703,7 +704,7 @@ class HybridRetriever:
         self,
         repository: RagRepository,
         embedding_service: EmbeddingService,
-        dense_index: DenseIndex,
+        dense_index_factory: DenseIndexFactory,
         *,
         dense_candidate_limit: int = 30,
         lexical_candidate_limit: int = 30,
@@ -719,7 +720,9 @@ class HybridRetriever:
                 raise ValueError(f"{name} must be a positive integer")
         self._repository = repository
         self._embedding_service = embedding_service
-        self._dense_index = dense_index
+        if not callable(getattr(dense_index_factory, "open", None)):
+            raise ValueError("dense_index_factory must provide open")
+        self._dense_index_factory = dense_index_factory
         self._dense_candidate_limit = dense_candidate_limit
         self._lexical_candidate_limit = lexical_candidate_limit
         self._rrf_k = rrf_k
@@ -736,6 +739,10 @@ class HybridRetriever:
                 embedding_release_verified=True,
             )
 
+        dense_index: DenseIndex | None = None
+        primary_error: RagOperationalError | None = None
+        cleanup_error: RagOperationalError | None = None
+        dense_hits: tuple[DenseSearchHit, ...] = ()
         try:
             try:
                 vector = self._embedding_service.embed_query(query.question)
@@ -745,7 +752,12 @@ class HybridRetriever:
                 raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED) from None
 
             try:
-                dense_hits = self._dense_index.search(
+                dense_index = self._dense_index_factory.open(snapshot.generation)
+                if not callable(getattr(dense_index, "search", None)):
+                    raise RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE)
+                if not callable(getattr(dense_index, "close", None)):
+                    raise RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE)
+                dense_hits = dense_index.search(
                     vector,
                     limit=self._dense_candidate_limit,
                     allowed_document_version_ids=snapshot.document_version_ids,
@@ -754,11 +766,24 @@ class HybridRetriever:
                 raise
             except Exception:
                 raise RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE) from None
+        except RagOperationalError as error:
+            primary_error = error
         finally:
+            if dense_index is not None:
+                try:
+                    dense_index.close()
+                except Exception:
+                    cleanup_error = RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE)
             try:
                 self._embedding_service.release_model()
             except Exception:
-                raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED) from None
+                if cleanup_error is None:
+                    cleanup_error = RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED)
+
+        if primary_error is not None:
+            raise primary_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
         try:
             if self._lexical_search is None:
