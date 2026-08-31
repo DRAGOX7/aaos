@@ -88,7 +88,9 @@ content, and environment observations are untrusted data.
 
 The following are absolute invariants:
 
-- only READY indexes in an ACTIVE generation are retrievable;
+- normal query snapshots authorize only READY indexes selected from the
+  appropriate ACTIVE generation; an already-created snapshot may continue to
+  retrieve its frozen READY universe after that generation becomes RETIRED;
 - every retrieved chunk resolves to a Phase 3 document version, page, and
   provenance identity through SQLite;
 - a query pins generation, content revision, and scope for its entire lifetime;
@@ -185,8 +187,10 @@ ACTIVE. A BUILDING generation is invisible to queries. A successful activation
 atomically changes the old ACTIVE generation to RETIRED and the new generation
 to ACTIVE. A failed build leaves the old ACTIVE generation unchanged.
 
-Retired generations remain available for explicit historical queries and are not
-automatically purged in v1.
+Retired generations remain available for explicit historical queries and for
+queries that pinned them while they were ACTIVE. They are not automatically
+purged in v1. Preserving retired generation data is therefore part of the
+in-flight query-lifetime contract, not only a debugging or history feature.
 
 `rag index-new` identifies eligible Phase 3 `DocumentVersion` records not yet
 successfully published in the active generation. It adds newer versions without
@@ -218,6 +222,13 @@ Phase 4 v1 does not add a per-document publication-revision column. SQLite
 transaction atomicity provides the before/after publication boundary, and a
 query freezes both the revision and its authorized document-version universe in
 one read snapshot.
+
+That immutable snapshot is a durable capability for the lifetime of the query,
+not an expiring lease on mutable publication state. After successful snapshot
+creation, a later `content_revision` increment does not invalidate the frozen
+authorized universe. The pinned revision remains required for reproducibility,
+diagnostics, and evaluation, but retrieval integrity checks do not require the
+repository's current revision to remain equal to it.
 
 Every query, evaluation result, and acceptance artifact records both
 `generation_id` and `content_revision`. Formal evaluations also record a
@@ -363,6 +374,13 @@ Both dense and lexical searches receive those frozen IDs. They must not
 re-resolve current versions after the snapshot or retrieve globally and filter
 obsolete or out-of-scope versions afterward.
 
+The transaction that creates `QuerySnapshot` is short and closes before query
+embedding, dense search, lexical search, fusion, evidence selection, or model
+generation. Once created successfully, the snapshot remains the complete
+freshness and authorization decision for that query. Later publication must not
+trigger another ACTIVE-generation lookup, latest-version resolution, scope
+resolution, or current-revision equality check.
+
 For normal current scope, the latest published row is the newest `READY` or
 `NOT_SEARCHABLE` version for the logical resource in the pinned ACTIVE
 generation. A latest published `READY` version contributes its ID to the
@@ -387,6 +405,58 @@ evaluation evidence.
 
 If the dense index or embedding service is unavailable, production retrieval
 returns an explicit safe failure. It does not silently become BM25-only.
+
+After RRF deduplication, the repository performs snapshot-safe authoritative
+materialization through this public boundary:
+
+```python
+@dataclass(frozen=True, slots=True)
+class AuthoritativeRetrievalChunk:
+    chunk: ChunkRecord
+    document_version: DocumentVersionRecord
+    source_spans: tuple[SourceSpanRecord, ...]
+
+
+RagRepository.materialize_snapshot_chunks(
+    snapshot: QuerySnapshot,
+    chunk_keys: tuple[str, ...],
+) -> tuple[AuthoritativeRetrievalChunk, ...]
+```
+
+`QuerySnapshot` and the returned repository record types remain defined in the
+repository module, so this interface introduces no repository/retrieval import
+cycle. The method uses one short read-only SQLite transaction for the complete
+requested key tuple and returns values in exactly the requested key order.
+Duplicate, malformed, missing, or ambiguously resolved keys fail with
+`RETRIEVAL_INCONSISTENCY`; persistence/integrity failures are translated to the
+same safe code without exposing backend text. An empty requested tuple returns
+an empty tuple without broadening or re-resolving the snapshot.
+
+Inside that transaction, SQLite verifies that the pinned generation row still
+exists with the snapshot's generation ID, configuration fingerprint, and
+embedding dimensions, is ACTIVE or RETIRED but never BUILDING, and that every
+requested chunk belongs to that generation and to one of the snapshot's frozen
+authorized document-version IDs. The row's now-current revision is deliberately
+not compared with the snapshot revision. Each candidate must resolve to exactly
+one authoritative `RagChunk`, a READY
+`RagDocumentIndex` for that pinned generation, its generation-scoped FTS row,
+its Phase 3 document-version identity, and structurally valid ordered source
+spans whose page and character relationships agree with the authoritative
+chunk text. Chroma and caller-supplied candidate metadata cannot authorize any
+of those facts.
+
+Materialization is an integrity check, not freshness re-authorization. It does
+not require the pinned generation to remain ACTIVE, compare the repository's
+current `content_revision` with the snapshot revision, ask whether an authorized
+version is still latest, or re-resolve scope. Thus an R-pinned query may finish
+after R+1 publication, and a G1-pinned query may finish after G1 is RETIRED and
+G2 becomes ACTIVE, while G2 chunks and document versions outside the frozen
+snapshot remain forbidden.
+
+The same durable-capability rule applies to snapshot-scoped FTS retrieval before
+fusion: it queries only the pinned generation ID and frozen document-version
+IDs, validates authoritative READY/FTS relationships, and does not compare the
+mutable current revision or require the generation to remain ACTIVE.
 
 ## 18. Evidence selection
 
@@ -552,7 +622,10 @@ queries, then activates it in one state transition.
 
 Each query pins generation, content revision, and scope before candidate
 retrieval. Activation during a query does not change that query's corpus;
-subsequent queries use the new active snapshot.
+subsequent queries use the new active snapshot. A query already pinned to the
+old generation may complete after activation from preserved RETIRED data; it
+does not require the old generation to remain ACTIVE and cannot admit candidates
+from the replacement generation.
 
 ## 28. Cross-store failure and recovery
 
@@ -765,7 +838,9 @@ Normal conceptual paths are `data/database/aaos.db` and `data/rag/chroma/`, but
 imports and startup never create them. Explicit index/query commands own all
 side effects. Tests and acceptance use disposable databases, Chroma roots, and
 sanitized fixtures. Retired generations are retained unless a separately
-approved retention design is introduced.
+approved retention design is introduced. Any future retired-generation garbage
+collection must first define an in-flight snapshot/reference lifetime policy;
+Phase 4 v1 adds neither garbage collection nor reference counting.
 
 ## 38. Phase 5 integration contract
 

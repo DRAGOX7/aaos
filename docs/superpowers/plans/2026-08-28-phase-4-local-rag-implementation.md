@@ -64,7 +64,7 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 | `src/aaos/persistence/rag_models.py` | Create | Generation, document-index, chunk, and span ORM mappings. | Shared `Base`. | 3 |
 | `migrations/env.py` | Modify | Register Phase 4 ORM metadata. | Alembic metadata. | 3 |
 | `migrations/versions/0004_phase4_local_rag.py` | Create | Reversible tables, constraints, indexes, and FTS5 virtual table. | Revision `0003` -> `0004`. | 3 |
-| `src/aaos/rag/repository.py` | Create | Generation/revision transactions, Phase 3 eligibility, chunks/spans/FTS, query snapshots, integrity resolution. | Session factory -> authoritative SQLite operations. | 4, 6, 11, 14 |
+| `src/aaos/rag/repository.py` | Create | Generation/revision transactions, Phase 3 eligibility, chunks/spans/FTS, durable query snapshots, snapshot-safe authoritative materialization, integrity resolution. | Session factory -> authoritative SQLite operations. | 4, 6, 11, 14–15 |
 | `src/aaos/rag/chunking.py` | Create | Deterministic structure-aware chunker and exact page/character spans. | Phase 3 pages -> `ChunkDraft` values. | 5 |
 | `src/aaos/rag/lexical.py` | Create | Conservative versioned normalizer and BM25 query adapter. | Text/query -> normalized lexical terms/results. | 6, 14 |
 | `src/aaos/rag/dense.py` | Create | `DenseIndex`/factory protocols and typed vector records/hits. | Generation vectors and query vector -> keys/ranks. | 7 |
@@ -354,8 +354,8 @@ All public constructors validate positive internal IDs, nonblank bounded text, t
 - Lexical retrieval joins FTS rowids back through authoritative chunk/document/generation tables and applies generation, READY, current/historical, and course predicates before accepting BM25 ranks.
 - Canonical config fingerprint is `sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))`; payload contains every retrieval-affecting version/parameter and excludes machine paths/timestamps.
 - `index-new` owns one non-reentrant writer lease for the whole batch and calls the public lease-aware `RagDocumentIndexer.stage_document_for_publication(...)` boundary. Staging commits PREPARING chunk/span/FTS state and Chroma vectors but no terminal document state. Its final single SQLite transaction verifies every staged document, flips every staged row to READY/NOT_SEARCHABLE, and performs guarded `content_revision` CAS exactly once when the represented corpus changes, including a newly published NOT_SEARCHABLE version. Failed/no-op runs do not increment it.
-- Queries open one SQLite read transaction and atomically pin the ACTIVE generation ID/fingerprint/revision, requested scope, latest published READY/NOT_SEARCHABLE version per logical resource, and final authorized READY document-version IDs. Dense and lexical search use that frozen universe for the entire query. A latest published NOT_SEARCHABLE version suppresses older READY versions in normal scope; newer PREPARING/FAILED versions do not hide the previous published version. Unpublished Chroma vectors cannot resolve and cause a safe integrity failure rather than partial retrieval.
-- Rebuild writes a separate BUILDING generation and Chroma directory. Only a passed cross-store integrity transaction retires the old ACTIVE and activates the new generation. Failures preserve the prior ACTIVE generation; RETIRED generations are never automatically purged.
+- Queries open one short SQLite read transaction and atomically pin the ACTIVE generation ID/fingerprint/revision, requested scope, latest published READY/NOT_SEARCHABLE version per logical resource, and final authorized READY document-version IDs. That transaction closes before retrieval. Dense and lexical search use the resulting immutable capability for the entire query. Its revision records the selected publication state but is not an expiring lease: later publication does not trigger current-revision, latest-version, scope, or ACTIVE-generation revalidation. A latest published NOT_SEARCHABLE version suppresses older READY versions in normal scope; newer PREPARING/FAILED versions do not hide the previous published version. Unpublished Chroma vectors cannot resolve and cause a safe integrity failure rather than partial retrieval.
+- Rebuild writes a separate BUILDING generation and Chroma directory. Only a passed cross-store integrity transaction retires the old ACTIVE and activates the new generation. Failures preserve the prior ACTIVE generation; RETIRED generations are never automatically purged and remain available to already-pinned snapshots.
 
 ## Implementation Tasks
 
@@ -674,6 +674,7 @@ Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py test
 
 **Requirements**
 - Build isolated BUILDING SQLite/Chroma state, verify counts/dimensions/keys/FTS/provenance/document statuses, atomically RETIRE old and ACTIVE new, never purge retired data.
+- Preserve the RETIRED generation's SQLite, FTS, and generation-isolated Chroma state so a query that pinned it before activation can complete. This does not make BUILDING query-visible and does not add automatic purge or in-flight reference counting.
 - Rebuild uses standalone `RagDocumentIndexer.prepare_document()` for the BUILDING generation; individual READY/NOT_SEARCHABLE rows are safe because BUILDING is query-invisible. It does not use ACTIVE-generation staging or Task 12's content-revision publication transaction.
 - Startup/status identifies abandoned BUILDING/PREPARING state; recovery may mark it failed/clean derived Chroma only under the writer lease and never changes ACTIVE.
 
@@ -703,7 +704,7 @@ Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection
 **Requirements**
 - In one SQLite read transaction, resolve ACTIVE generation identity, content_revision, requested scope, latest successfully published READY/NOT_SEARCHABLE version per logical resource, and final authorized READY document-version IDs; freeze all of them in one immutable `QuerySnapshot`. Dense and lexical search must use those frozen IDs and must not re-resolve current versions after the snapshot.
 - Course/global current scope ignores newer PREPARING/FAILED versions. Latest published READY contributes its version ID. Latest published NOT_SEARCHABLE contributes no searchable ID and must suppress fallback to an older READY version. Historical requires explicit version IDs: prefer the ACTIVE generation when it contains every requested published version; otherwise pin the newest RETIRED generation containing every requested published version. Reject a request whose versions do not share one trusted generation; never merge generations or leak current/sibling course records.
-- Materialize selected chunk text/provenance inside one SQLite read snapshot; reject generation/revision changes or unresolved Chroma keys with `RETRIEVAL_INCONSISTENCY`.
+- Treat the immutable `QuerySnapshot` as a durable in-flight query capability. Its short creation transaction closes before embedding and retrieval. Later revision publication or generation activation does not invalidate it, and no later step re-resolves current scope, latest versions, ACTIVE generation, or current revision. Task 15 owns snapshot-safe authoritative chunk materialization; unresolved Chroma keys still fail with `RETRIEVAL_INCONSISTENCY`.
 - Call `EmbeddingService.release_model()` in a `finally` boundary immediately after query embedding/dense search; lexical fusion/evidence handling then proceed without an embedding model resident, and no generation call can begin before release completes.
 
 - [ ] **Step 1 — Write failing tests:** no ACTIVE, invalid scope, course isolation, global current-only, explicit history, mixed unauthorized history, atomic generation/revision/version-universe pinning, stale vector, PREPARING/FAILED exclusion, V1 READY plus V2 PREPARING/FAILED selecting V1, V1 READY plus V2 NOT_SEARCHABLE selecting no searchable ID, publication between two queries producing separate consistent snapshots, and query normalization. Representative assertions: `assert snapshot.document_version_ids == (authorized_current_version_id,)` and `assert (q1.generation.content_revision, q1.document_version_ids) == (revision_r, old_ids)` while a later `q2` equals `(revision_r_plus_1, new_ids)`.
@@ -718,23 +719,46 @@ Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection
 
 **Files**
 - Modify: `src/aaos/rag/retrieval.py`
+- Modify: `src/aaos/rag/repository.py`
 - Modify: `tests/test_rag_retrieval.py`
+- Modify: `tests/test_rag_repository.py`
 
 **Interfaces**
 - Consumes: ranked `DenseSearchHit`/`LexicalSearchHit` lists and pinned authorized universe.
 - Produces: ordered `FusedCandidate` tuples with dense/lexical/fused ranks.
+- Repository materialization boundary:
+
+```python
+@dataclass(frozen=True, slots=True)
+class AuthoritativeRetrievalChunk:
+    chunk: ChunkRecord
+    document_version: DocumentVersionRecord
+    source_spans: tuple[SourceSpanRecord, ...]
+
+
+RagRepository.materialize_snapshot_chunks(
+    snapshot: QuerySnapshot,
+    chunk_keys: tuple[str, ...],
+) -> tuple[AuthoritativeRetrievalChunk, ...]
+```
+
+  The returned tuple is ordered exactly like `chunk_keys`. `QuerySnapshot` and
+  all returned record types are repository-owned, avoiding a circular import.
 
 **Requirements**
 - Score `sum(1 / (rrf_k + rank))`, rank from one, combine no raw cosine/BM25 values, break ties by best component rank then deterministic chunk key.
-- Every candidate must resolve through authoritative SQLite and meet generation, READY, scope, current/history, and provenance checks; any detected stale/inconsistent hit fails the query safely.
+- `materialize_snapshot_chunks()` returns `()` for an empty key tuple without re-resolving the snapshot. Otherwise it uses one short read-only SQLite transaction for the complete deduplicated key tuple. It validates unique nonblank requested keys; the pinned generation row's ID/fingerprint/embedding dimensions; ACTIVE-or-RETIRED but never BUILDING generation status; exact authoritative chunk identity and pinned-generation membership; frozen authorized document-version membership; READY index state in that pinned generation; exact generation-scoped FTS membership; immutable Phase 3 document-version identity; and ordered page/character provenance whose relationships reproduce the authoritative chunk text. Missing, duplicate, ambiguous, corrupted, unauthorized, cross-generation, or persistence failures are translated to `RETRIEVAL_INCONSISTENCY` without backend text.
+- Materialization is integrity-only. It must not require the repository's current `content_revision` to equal the snapshot revision, require the snapshot generation to remain ACTIVE, ask whether a frozen document version is still latest, perform another ACTIVE-generation lookup, or re-resolve scope. Chroma metadata, dense-hit metadata, and lexical-hit document IDs are never authoritative.
+- Remove the same mutable revision/ACTIVE revalidation from snapshot-scoped `RagRepository.lexical_search()`. Its short FTS transaction must use only the pinned generation ID and frozen authorized document-version IDs while retaining READY-index and generation-scoped FTS joins. This is not a new lexical policy; it makes the existing Task 14 search honor the durable snapshot capability.
+- Every fused candidate must correspond one-to-one with the authoritative tuple returned in fused candidate order. A candidate from another generation or outside `snapshot.document_version_ids` fails the whole query safely. No long SQLite transaction spans embedding, dense/lexical search, RRF, selection, or generation.
 
-- [ ] **Step 1 — Write failing tests:** both-list, dense-only, lexical-only, ties, config change, duplicate hits, stale key, wrong generation/scope, missing provenance, and deterministic rerun. Representative assertion: `assert reciprocal_rank_fusion(dense, lexical, rrf_k=60)[0].chunk_key == shared_key`.
+- [ ] **Step 1 — Write failing tests:** preserve both-list, dense-only, lexical-only, ties, config change, duplicate hits, stale key, wrong generation/scope, missing provenance, and deterministic rerun coverage. Add repository materialization tests for exact requested order, malformed/duplicate/missing keys, BUILDING rejection, ACTIVE and RETIRED acceptance, READY/FTS/provenance integrity, wrong generation, and unauthorized version. Add two deterministic full-retrieval race regressions with explicit state transitions rather than sleeps: (a) create S1 at G1/R/{V1}, publish V2 with Task 12 semantics to G1/R+1, prove S1's FTS search and materialization still use V1 without scope/revision revalidation and a later S2 pins R+1/new IDs; (b) create S1 at G1, activate G2 with Task 13 semantics, prove S1's FTS search and materialization still use only G1 after retirement, reject G2 candidates, and a later S2 pins G2. Representative assertions: `assert reciprocal_rank_fusion(dense, lexical, rrf_k=60)[0].chunk_key == shared_key`, `assert materialized[0].chunk.chunk_key == requested_keys[0]`, and `assert s1.generation.content_revision == revision_r` after publication to `revision_r_plus_1`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -k "rrf or candidate" -v`; expect missing fusion/verification.
-- [ ] **Step 3 — Minimal implementation:** add pure `reciprocal_rank_fusion()` and verification before returning fused candidates.
+- [ ] **Step 3 — Minimal implementation:** preserve the pure `reciprocal_rank_fusion()` work, make existing snapshot-scoped lexical retrieval independent of mutable current revision/ACTIVE status, add `AuthoritativeRetrievalChunk` and the exact repository materialization method above, then make retrieval verify/materialize fused chunk keys through that method before returning candidates. The method reads all requested keys and provenance in one short transaction, preserves requested order, and translates every integrity failure to `RETRIEVAL_INCONSISTENCY`; neither read path calls revision-sensitive current-state repository APIs.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
-- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_retrieval.py -v`.
-- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`.
-- [ ] **Step 7 — Commit:** `git add src/aaos/rag/retrieval.py tests/test_rag_retrieval.py`; `git commit -m "feat(rag): add deterministic hybrid fusion"`.
+- [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_repository.py tests/test_rag_retrieval.py tests/test_rag_indexing.py tests/test_rag_rebuild.py -v`.
+- [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/repository.py src/aaos/rag/retrieval.py tests/test_rag_repository.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/repository.py src/aaos/rag/retrieval.py tests/test_rag_repository.py tests/test_rag_retrieval.py`.
+- [ ] **Step 7 — Commit:** `git add src/aaos/rag/repository.py src/aaos/rag/retrieval.py tests/test_rag_repository.py tests/test_rag_retrieval.py`; `git commit -m "feat(rag): add deterministic hybrid fusion"`.
 
 ### Task 16: Implement Evidence Selection and Deterministic Sufficiency
 
