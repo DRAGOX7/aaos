@@ -80,6 +80,13 @@ def _nonblank_text(value: object, name: str) -> str:
     return normalized
 
 
+def _answer_language(value: object, name: str) -> str:
+    normalized = _nonblank_text(value, name).casefold()
+    if normalized not in {"en", "ar"}:
+        raise ValueError(f"{name} must be 'en' or 'ar'")
+    return normalized
+
+
 def _finite_float(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
         raise ValueError(f"{name} must be finite")
@@ -302,6 +309,113 @@ class RagClaim:
             raise ValueError("evidence_ids must be a non-empty tuple")
         for evidence_id in self.evidence_ids:
             _nonblank_text(evidence_id, "evidence_ids")
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedAnswerRequest:
+    """Bounded input supplied to the grounded answer generator."""
+
+    question: str
+    answer_language: str
+    generation_id: int
+    content_revision: int
+    evidence: tuple[RetrievedEvidence, ...]
+    policy_version: str
+
+    @classmethod
+    def from_query(
+        cls,
+        query: RagQuery,
+        *,
+        generation_id: int,
+        content_revision: int,
+        evidence: tuple[RetrievedEvidence, ...],
+        policy_version: str,
+    ) -> "GroundedAnswerRequest":
+        """Bind a stateless query to pinned identity and detected language."""
+        if not isinstance(query, RagQuery):
+            raise ValueError("query must be a RagQuery")
+        answer_language = query.answer_language
+        if answer_language is None:
+            answer_language = (
+                "ar"
+                if any("\u0600" <= character <= "\u06ff" for character in query.question)
+                else "en"
+            )
+        return cls(
+            question=query.question,
+            answer_language=answer_language,
+            generation_id=generation_id,
+            content_revision=content_revision,
+            evidence=evidence,
+            policy_version=policy_version,
+        )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "question", _nonblank_text(self.question, "question"))
+        object.__setattr__(
+            self,
+            "answer_language",
+            _answer_language(self.answer_language, "answer_language"),
+        )
+        _positive_int(self.generation_id, "generation_id")
+        _nonnegative_int(self.content_revision, "content_revision")
+        object.__setattr__(
+            self,
+            "policy_version",
+            _nonblank_text(self.policy_version, "policy_version"),
+        )
+        if not isinstance(self.evidence, tuple) or not all(
+            isinstance(item, RetrievedEvidence) for item in self.evidence
+        ):
+            raise ValueError("evidence must be a tuple of RetrievedEvidence")
+        evidence_ids = tuple(item.evidence_id for item in self.evidence)
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise ValueError("evidence IDs must be unique")
+        if any(
+            item.generation_id != self.generation_id
+            or item.content_revision != self.content_revision
+            for item in self.evidence
+        ):
+            raise ValueError("evidence must match the pinned generation and revision")
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedModelOutput:
+    """Strict model output before Task 18 citation validation/rendering."""
+
+    status: RagAnswerStatus
+    answer_text: str
+    language: str
+    claims: tuple[RagClaim, ...]
+    generation_id: int
+    content_revision: int
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, RagAnswerStatus):
+            raise ValueError("status must be a RagAnswerStatus")
+        object.__setattr__(self, "answer_text", _nonblank_text(self.answer_text, "answer_text"))
+        object.__setattr__(self, "language", _answer_language(self.language, "language"))
+        if not isinstance(self.claims, tuple) or not all(
+            isinstance(claim, RagClaim) for claim in self.claims
+        ):
+            raise ValueError("claims must be a tuple of RagClaim")
+        _positive_int(self.generation_id, "generation_id")
+        _nonnegative_int(self.content_revision, "content_revision")
+        object.__setattr__(
+            self,
+            "policy_version",
+            _nonblank_text(self.policy_version, "policy_version"),
+        )
+        claim_ids = tuple(claim.claim_id for claim in self.claims)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise ValueError("claim IDs must be unique")
+        if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
+            if self.claims:
+                raise ValueError("insufficient output must not contain claims")
+        elif not self.claims:
+            raise ValueError("answer output must contain claims")
 
 
 @dataclass(frozen=True, slots=True)
