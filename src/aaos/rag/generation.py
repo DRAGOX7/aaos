@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from aaos.inference import (
@@ -16,13 +17,19 @@ from aaos.inference import (
 )
 
 from .contracts import (
+    _RAG_ANSWER_VALIDATION_MARKER,
     MAX_RAG_TEXT_CHARACTERS,
+    Citation,
     GroundedAnswerRequest,
     GroundedModelOutput,
+    RagAnswer,
     RagAnswerStatus,
+    RagChunkSourceSpanValue,
     RagClaim,
     RagErrorCode,
     RagOperationalError,
+    RenderedRagResponse,
+    RetrievedEvidence,
 )
 from .retrieval import SufficiencyDecision, SufficiencyStatus
 
@@ -48,6 +55,14 @@ unknown fields, invented evidence IDs, tools, actions, or sources.
 
 _SCHEMA_KEYS = frozenset({"status", "answer_text", "language", "claims"})
 _CLAIM_KEYS = frozenset({"claim_id", "text", "evidence_ids"})
+_PARTIAL_NOTICES = {
+    "en": "Some unsupported requested portions are not answered.",
+    "ar": "بعض الأجزاء المطلوبة غير مدعومة ولم تتم الإجابة عنها.",
+}
+_INSUFFICIENT_NOTICES = {
+    "en": "Insufficient evidence.",
+    "ar": "لا تتوفر أدلة كافية.",
+}
 
 
 class _SchemaInvalid(ValueError):
@@ -123,6 +138,326 @@ class GroundedAnswerGenerator:
         if not isinstance(response, ChatResponse):
             raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
         return response
+
+
+class CitationValidator:
+    """Validate model claims against one request-local evidence universe.
+
+    ``GroundedModelOutput`` is a proposal from the model boundary.  This
+    validator is the deterministic trust boundary: citation metadata is
+    derived exclusively from the already materialized ``RetrievedEvidence``
+    values, never from model text or model-supplied source fields.
+    """
+
+    def validate(
+        self,
+        output: GroundedModelOutput,
+        request_evidence: GroundedAnswerRequest
+        | Mapping[str, RetrievedEvidence]
+        | tuple[RetrievedEvidence, ...],
+    ) -> RagAnswer:
+        if not isinstance(output, GroundedModelOutput):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+
+        try:
+            evidence, expected_request = _resolve_request_evidence(request_evidence)
+            _validate_output_identity(output, expected_request, evidence)
+        except RagOperationalError:
+            raise
+        except (AttributeError, TypeError, ValueError):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
+        for item in evidence:
+            _validate_evidence_provenance_safe(item, output)
+        by_id = {item.evidence_id: item for item in evidence}
+
+        if output.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
+            if output.claims:
+                raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+            return _build_answer(output, ())
+
+        citations: list[Citation] = []
+        for claim in output.claims:
+            if not isinstance(claim, RagClaim):
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+            _validate_claim_text_safe(claim)
+            evidence_ids = claim.evidence_ids
+            if not isinstance(evidence_ids, tuple) or not evidence_ids:
+                raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+            if not all(
+                isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence_ids
+            ):
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+            if len(set(evidence_ids)) != len(evidence_ids):
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+            for evidence_id in evidence_ids:
+                resolved_item = by_id.get(evidence_id)
+                if resolved_item is None:
+                    raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+                citations.append(_citation_for_claim(claim.claim_id, resolved_item, output))
+
+        return _build_answer(output, tuple(citations))
+
+
+def _resolve_request_evidence(
+    request_evidence: GroundedAnswerRequest
+    | Mapping[str, RetrievedEvidence]
+    | tuple[RetrievedEvidence, ...],
+) -> tuple[tuple[RetrievedEvidence, ...], GroundedAnswerRequest | None]:
+    if isinstance(request_evidence, GroundedAnswerRequest):
+        try:
+            evidence = request_evidence.evidence
+        except (AttributeError, TypeError):
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+        expected_request: GroundedAnswerRequest | None = request_evidence
+    elif isinstance(request_evidence, tuple):
+        evidence = request_evidence
+        expected_request = None
+    elif isinstance(request_evidence, Mapping):
+        try:
+            entries = tuple(request_evidence.items())
+        except Exception:
+            # Caller-provided evidence containers are an untrusted boundary;
+            # contain accessor failures behind the fixed safe error contract.
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+        values: list[RetrievedEvidence] = []
+        for key, item in entries:
+            if not isinstance(key, str) or not isinstance(item, RetrievedEvidence):
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+            try:
+                item_id = item.evidence_id
+            except (AttributeError, TypeError):
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+            if not key.strip() or key != item_id:
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+            values.append(item)
+        evidence = tuple(values)
+        expected_request = None
+    else:
+        raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+
+    if not isinstance(evidence, tuple) or not all(
+        isinstance(item, RetrievedEvidence) for item in evidence
+    ):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+    try:
+        evidence_ids = tuple(item.evidence_id for item in evidence)
+    except (AttributeError, TypeError):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+    if not all(
+        isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence_ids
+    ):
+        raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+    if len(set(evidence_ids)) != len(evidence_ids):
+        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+    return evidence, expected_request
+
+
+def _validate_output_identity(
+    output: GroundedModelOutput,
+    request: GroundedAnswerRequest | None,
+    evidence: tuple[RetrievedEvidence, ...],
+) -> None:
+    if request is not None and (
+        output.generation_id != request.generation_id
+        or output.content_revision != request.content_revision
+        or output.language != request.answer_language
+        or output.policy_version != request.policy_version
+    ):
+        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+    for item in evidence:
+        if (
+            not isinstance(item.generation_id, int)
+            or isinstance(item.generation_id, bool)
+            or item.generation_id <= 0
+            or not isinstance(item.content_revision, int)
+            or isinstance(item.content_revision, bool)
+            or item.content_revision < 0
+            or item.generation_id != output.generation_id
+            or item.content_revision != output.content_revision
+        ):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+
+def _citation_for_claim(
+    claim_id: str,
+    evidence: RetrievedEvidence,
+    output: GroundedModelOutput,
+) -> Citation:
+    try:
+        _validate_evidence_provenance_safe(evidence, output)
+        page_numbers = tuple(span.page_number for span in evidence.source_spans)
+        return Citation(
+            claim_id=claim_id,
+            document_version_id=evidence.document_version_id,
+            document_title=evidence.document_title,
+            page_start=min(page_numbers),
+            page_end=max(page_numbers),
+        )
+    except RagOperationalError:
+        raise
+    except (TypeError, ValueError, AttributeError):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+
+
+def _validate_evidence_provenance_safe(
+    evidence: RetrievedEvidence,
+    output: GroundedModelOutput,
+) -> None:
+    try:
+        _validate_evidence_provenance(evidence, output)
+    except RagOperationalError:
+        raise
+    except (TypeError, ValueError, AttributeError):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+
+
+def _validate_evidence_provenance(
+    evidence: RetrievedEvidence,
+    output: GroundedModelOutput,
+) -> None:
+    if (
+        not isinstance(evidence.evidence_id, str)
+        or not evidence.evidence_id.strip()
+        or not isinstance(evidence.chunk_key, str)
+        or not evidence.chunk_key.strip()
+        or not isinstance(evidence.exact_text, str)
+        or not evidence.exact_text.strip()
+        or not isinstance(evidence.document_version_id, int)
+        or isinstance(evidence.document_version_id, bool)
+        or evidence.document_version_id <= 0
+        or not isinstance(evidence.course_id, int)
+        or isinstance(evidence.course_id, bool)
+        or evidence.course_id <= 0
+        or not isinstance(evidence.document_title, str)
+        or not evidence.document_title.strip()
+        or evidence.generation_id != output.generation_id
+        or evidence.content_revision != output.content_revision
+        or not isinstance(evidence.source_spans, tuple)
+        or not evidence.source_spans
+        or not isinstance(evidence.fused_rank, int)
+        or isinstance(evidence.fused_rank, bool)
+        or evidence.fused_rank <= 0
+        or not isinstance(evidence.token_count, int)
+        or isinstance(evidence.token_count, bool)
+        or evidence.token_count <= 0
+        or (evidence.dense_rank is None and evidence.lexical_rank is None)
+    ):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+    previous_page = 0
+    for span in evidence.source_spans:
+        if not isinstance(span, RagChunkSourceSpanValue):
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+        if (
+            isinstance(span.document_page_id, bool)
+            or not isinstance(span.document_page_id, int)
+            or span.document_page_id <= 0
+            or isinstance(span.page_number, bool)
+            or not isinstance(span.page_number, int)
+            or span.page_number <= 0
+            or span.page_number < previous_page
+            or span.source_char_end <= span.source_char_start
+            or span.chunk_char_end <= span.chunk_char_start
+        ):
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+        previous_page = span.page_number
+
+
+def _build_answer(
+    output: GroundedModelOutput,
+    citations: tuple[Citation, ...],
+) -> RagAnswer:
+    try:
+        # ``answer_text`` is model-authored and may contain factual material
+        # outside the claim list.  Build the trusted answer solely from the
+        # claim-bearing segments that have passed citation validation.
+        if output.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
+            try:
+                trusted_answer_text = _INSUFFICIENT_NOTICES[output.language]
+            except KeyError:
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
+        else:
+            trusted_answer_text = "\n".join(
+                _validate_claim_text_safe(claim) for claim in output.claims
+            )
+        answer = RagAnswer(
+            status=output.status,
+            answer_text=trusted_answer_text,
+            language=output.language,
+            claims=output.claims,
+            citations=citations,
+            generation_id=output.generation_id,
+            content_revision=output.content_revision,
+        )
+    except (TypeError, ValueError):
+        raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
+    object.__setattr__(answer, "_validation_marker", _RAG_ANSWER_VALIDATION_MARKER)
+    return answer
+
+
+def _validate_claim_text_safe(claim: RagClaim) -> str:
+    if (
+        not isinstance(claim.text, str)
+        or not claim.text.strip()
+        or len(claim.text) > MAX_RAG_TEXT_CHARACTERS
+    ):
+        raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+    return claim.text.strip()
+
+
+def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
+    """Render only trusted answer/citation values in deterministic order."""
+    if (
+        not isinstance(answer, RagAnswer)
+        or getattr(answer, "_validation_marker", None) is not _RAG_ANSWER_VALIDATION_MARKER
+    ):
+        raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+    try:
+        lines = [answer.answer_text]
+        if answer.status is RagAnswerStatus.PARTIAL_ANSWER:
+            # The current typed contract has no request decomposition from
+            # which to name individual unsupported portions.  This fixed,
+            # language-matched notice identifies the category without
+            # inventing details.
+            try:
+                lines.append(_PARTIAL_NOTICES[answer.language])
+            except KeyError:
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
+        if answer.citations:
+            lines.append("")
+            for citation in answer.citations:
+                if not isinstance(citation, Citation):
+                    raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+                if (
+                    isinstance(citation.page_start, bool)
+                    or not isinstance(citation.page_start, int)
+                    or citation.page_start <= 0
+                    or isinstance(citation.page_end, bool)
+                    or not isinstance(citation.page_end, int)
+                    or citation.page_end < citation.page_start
+                ):
+                    raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+                claim_id = _safe_render_label(citation.claim_id)
+                document_title = _safe_render_label(citation.document_title)
+                if citation.page_start == citation.page_end:
+                    page_label = f"page {citation.page_start}"
+                else:
+                    page_label = f"pages {citation.page_start}-{citation.page_end}"
+                lines.append(f"[{claim_id}] {document_title} ({page_label})")
+        return RenderedRagResponse(answer=answer, rendered_text="\n".join(lines))
+    except RagOperationalError:
+        raise
+    except (TypeError, ValueError, AttributeError):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
+
+
+def _safe_render_label(value: str) -> str:
+    if not isinstance(value, str):
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+    normalized = " ".join(value.split())
+    if not normalized:
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+    return normalized[:MAX_RAG_TEXT_CHARACTERS]
 
 
 def _validate_generation_inputs(
@@ -291,9 +626,11 @@ def _parse_claim(raw_claim: Any, allowed_ids: frozenset[str]) -> RagClaim:
 
 
 __all__ = [
+    "CitationValidator",
     "GROUNDED_SYSTEM_PROMPT",
     "REPAIR_PROMPT",
     "GroundedAnswerRequest",
     "GroundedAnswerGenerator",
     "GroundedModelOutput",
+    "render_rag_answer",
 ]

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from math import isfinite
 from typing import Protocol, TypeAlias
 
 MAX_RAG_TEXT_CHARACTERS = 16_384
+_RAG_ANSWER_VALIDATION_MARKER = object()
 
 
 class GenerationStatus(StrEnum):
@@ -447,6 +448,7 @@ class RagAnswer:
     citations: tuple[Citation, ...]
     generation_id: int
     content_revision: int
+    _validation_marker: object = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, RagAnswerStatus):
@@ -461,6 +463,13 @@ class RagAnswer:
             isinstance(citation, Citation) for citation in self.citations
         ):
             raise ValueError("citations must be a tuple of Citation")
+        claim_ids = {claim.claim_id for claim in self.claims}
+        citation_claim_ids = {citation.claim_id for citation in self.citations}
+        if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
+            if self.claims or self.citations:
+                raise ValueError("insufficient answer must not contain claims or citations")
+        elif not self.claims or citation_claim_ids != claim_ids:
+            raise ValueError("every answer claim must have a citation")
         _positive_int(self.generation_id, "generation_id")
         _nonnegative_int(self.content_revision, "content_revision")
 
@@ -473,6 +482,8 @@ class RenderedRagResponse:
     def __post_init__(self) -> None:
         if not isinstance(self.answer, RagAnswer):
             raise ValueError("answer must be a RagAnswer")
+        if self.answer._validation_marker is not _RAG_ANSWER_VALIDATION_MARKER:
+            raise ValueError("answer must pass citation validation")
         object.__setattr__(
             self, "rendered_text", _nonblank_text(self.rendered_text, "rendered_text")
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -13,7 +14,9 @@ from aaos.inference import (
     ModelAvailability,
 )
 from aaos.rag.contracts import (
+    Citation,
     GlobalScope,
+    RagAnswer,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
     RagClaim,
@@ -24,9 +27,11 @@ from aaos.rag.contracts import (
     RetrievedEvidence,
 )
 from aaos.rag.generation import (
+    CitationValidator,
     GroundedAnswerGenerator,
     GroundedAnswerRequest,
     GroundedModelOutput,
+    render_rag_answer,
 )
 from aaos.rag.retrieval import (
     SufficiencyDecision,
@@ -405,3 +410,301 @@ def test_non_strict_json_is_schema_failure(payload: str) -> None:
 
     assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
     assert len(gateway.requests) == 2
+
+
+def _model_output(
+    claims: tuple[RagClaim, ...],
+    *,
+    status: RagAnswerStatus = RagAnswerStatus.ANSWER,
+) -> GroundedModelOutput:
+    return GroundedModelOutput(
+        status=status,
+        answer_text="Friday.",
+        language="en",
+        claims=claims,
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+        policy_version="grounded-v1",
+    )
+
+
+def test_citation_validator_maps_authoritative_spans_and_renderer_is_deterministic() -> None:
+    output = _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),))
+    answer = CitationValidator().validate(output, _request())
+
+    assert answer.status is RagAnswerStatus.ANSWER
+    assert answer.citations == (Citation("claim-1", 101, "source.pdf", 1, 1),)
+    rendered = render_rag_answer(answer)
+    assert rendered.answer is answer
+    assert rendered.rendered_text == "Friday.\n\n[claim-1] source.pdf (page 1)"
+    assert render_rag_answer(answer) == rendered
+
+
+def test_validator_derives_answer_text_only_from_cited_claims() -> None:
+    output = replace(
+        _model_output((RagClaim("claim-1", "The deadline is Friday.", ("ev-1",)),)),
+        answer_text="The deadline is Friday. An uncited fact must not escape.",
+    )
+
+    answer = CitationValidator().validate(output, _request())
+
+    assert answer.answer_text == "The deadline is Friday."
+    rendered = render_rag_answer(answer).rendered_text
+    assert "An uncited fact must not escape" not in rendered
+
+
+def test_citation_validator_renders_multi_page_range_from_source_spans() -> None:
+    evidence = replace(
+        EVIDENCE[0],
+        source_spans=(
+            RagChunkSourceSpanValue(1, 1, 0, 10, 0, 10),
+            RagChunkSourceSpanValue(2, 2, 0, 10, 10, 20),
+        ),
+    )
+    request = _request((evidence,))
+    answer = CitationValidator().validate(
+        _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),)),
+        request,
+    )
+
+    assert answer.citations[0] == Citation("claim-1", 101, "source.pdf", 1, 2)
+    assert "pages 1-2" in render_rag_answer(answer).rendered_text
+
+
+def test_unknown_or_cross_request_evidence_id_fails_closed_without_partial_answer() -> None:
+    output = _model_output((RagClaim("claim-1", "Friday.", ("ev-1", "ev-2")),))
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, (EVIDENCE[0],))
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+
+
+def test_duplicate_evidence_id_within_claim_fails_closed() -> None:
+    output = _model_output((RagClaim("claim-1", "Friday.", ("ev-1", "ev-1")),))
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, _request())
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+
+
+def test_output_identity_mismatch_fails_before_citation_mapping() -> None:
+    output = replace(_model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),)), generation_id=4)
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, _request())
+
+    assert error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_conflicting_claims_keep_distinct_trusted_citations() -> None:
+    output = _model_output(
+        (
+            RagClaim("claim-1", "Friday is reported.", ("ev-1",)),
+            RagClaim("claim-2", "Monday is also reported.", ("ev-2",)),
+        )
+    )
+    answer = CitationValidator().validate(output, _request())
+
+    assert tuple(citation.claim_id for citation in answer.citations) == ("claim-1", "claim-2")
+    assert tuple(citation.document_version_id for citation in answer.citations) == (101, 101)
+
+
+def test_partial_status_is_preserved_and_insufficient_has_no_citations() -> None:
+    partial = CitationValidator().validate(
+        _model_output(
+            (RagClaim("claim-1", "Friday.", ("ev-1",)),),
+            status=RagAnswerStatus.PARTIAL_ANSWER,
+        ),
+        _request(),
+    )
+    insufficient = CitationValidator().validate(
+        _model_output((), status=RagAnswerStatus.INSUFFICIENT_EVIDENCE),
+        _request(()),
+    )
+
+    assert partial.status is RagAnswerStatus.PARTIAL_ANSWER
+    assert len(partial.citations) == 1
+    assert insufficient.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert insufficient.citations == ()
+
+
+def test_malformed_evidence_map_fails_as_provenance_error() -> None:
+    output = _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),))
+    malformed_map: dict[str, object] = {"ev-1": object()}
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, malformed_map)  # type: ignore[arg-type]
+
+    assert error.value.code is RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+
+
+def test_uncited_claim_fails_closed_without_partial_rendering() -> None:
+    claim = object.__new__(RagClaim)
+    object.__setattr__(claim, "claim_id", "claim-1")
+    object.__setattr__(claim, "text", "Friday.")
+    object.__setattr__(claim, "evidence_ids", ())
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(_model_output((claim,)), _request())
+
+    assert error.value.code is RagErrorCode.UNCITED_CLAIM
+
+
+def test_missing_page_provenance_fails_closed() -> None:
+    evidence = object.__new__(RetrievedEvidence)
+    for name, value in (
+        ("evidence_id", "ev-1"),
+        ("chunk_key", "chunk-ev-1"),
+        ("exact_text", "The deadline is Friday."),
+        ("heading", None),
+        ("document_version_id", 101),
+        ("document_title", "source.pdf"),
+        ("course_id", 11),
+        ("source_spans", ()),
+        ("dense_rank", 1),
+        ("lexical_rank", None),
+        ("fused_rank", 1),
+        ("generation_id", GENERATION.generation_id),
+        ("content_revision", GENERATION.content_revision),
+        ("token_count", 3),
+    ):
+        object.__setattr__(evidence, name, value)
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(
+            _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),)),
+            (evidence,),
+        )
+
+    assert error.value.code is RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+
+
+def test_evidence_generation_mismatch_fails_before_claim_mapping() -> None:
+    evidence = replace(EVIDENCE[0], generation_id=4)
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(
+            _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),)),
+            (evidence,),
+        )
+
+    assert error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_output_policy_mismatch_fails_closed() -> None:
+    output = replace(
+        _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),)),
+        policy_version="other-policy",
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, _request())
+
+    assert error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_mapping_key_must_match_authoritative_evidence_id() -> None:
+    output = _model_output((RagClaim("claim-1", "Friday.", ("ev-1",)),))
+
+    with pytest.raises(RagOperationalError) as error:
+        CitationValidator().validate(output, {"alias": EVIDENCE[0]})
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+
+
+def test_renderer_sanitizes_trusted_labels_without_accepting_model_metadata() -> None:
+    answer = CitationValidator().validate(
+        _model_output((RagClaim("claim\n1", "Friday.", ("ev-1",)),)),
+        _request((replace(EVIDENCE[0], document_title="source\n.pdf"),)),
+    )
+
+    rendered = render_rag_answer(answer)
+
+    assert rendered.rendered_text == "Friday.\n\n[claim 1] source .pdf (page 1)"
+
+
+def test_renderer_rejects_unvalidated_answer() -> None:
+    answer = RagAnswer(
+        status=RagAnswerStatus.ANSWER,
+        answer_text="Friday.",
+        language="en",
+        claims=(RagClaim("claim-1", "Friday.", ("ev-1",)),),
+        citations=(Citation("claim-1", 101, "source.pdf", 1, 1),),
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        render_rag_answer(answer)
+
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+
+
+def test_rag_answer_contract_rejects_uncited_success_and_cited_insufficiency() -> None:
+    claim = RagClaim("claim-1", "Friday.", ("ev-1",))
+
+    with pytest.raises(ValueError, match="every answer claim"):
+        RagAnswer(
+            status=RagAnswerStatus.ANSWER,
+            answer_text="Friday.",
+            language="en",
+            claims=(claim,),
+            citations=(),
+            generation_id=GENERATION.generation_id,
+            content_revision=GENERATION.content_revision,
+        )
+
+    with pytest.raises(ValueError, match="insufficient answer"):
+        RagAnswer(
+            status=RagAnswerStatus.INSUFFICIENT_EVIDENCE,
+            answer_text="Insufficient evidence.",
+            language="en",
+            claims=(),
+            citations=(Citation("claim-1", 101, "source.pdf", 1, 1),),
+            generation_id=GENERATION.generation_id,
+            content_revision=GENERATION.content_revision,
+        )
+
+
+def test_partial_renderer_identifies_unsupported_requested_portions() -> None:
+    answer = CitationValidator().validate(
+        _model_output(
+            (RagClaim("claim-1", "Friday.", ("ev-1",)),),
+            status=RagAnswerStatus.PARTIAL_ANSWER,
+        ),
+        _request(),
+    )
+
+    rendered = render_rag_answer(answer)
+
+    assert "unsupported requested portions" in rendered.rendered_text
+
+
+def test_partial_renderer_uses_answer_language_for_fixed_notice() -> None:
+    output = replace(
+        _model_output(
+            (RagClaim("claim-1", "الموعد الجمعة.", ("ev-1",)),),
+            status=RagAnswerStatus.PARTIAL_ANSWER,
+        ),
+        answer_text="الموعد الجمعة.",
+        language="ar",
+    )
+    answer = CitationValidator().validate(output, _request(answer_language="ar"))
+
+    rendered = render_rag_answer(answer).rendered_text
+
+    assert "بعض الأجزاء المطلوبة غير مدعومة ولم تتم الإجابة عنها." in rendered
+
+
+def test_insufficient_answer_uses_answer_language_for_fixed_notice() -> None:
+    output = replace(
+        _model_output((), status=RagAnswerStatus.INSUFFICIENT_EVIDENCE),
+        answer_text="لا تتوفر أدلة كافية.",
+        language="ar",
+    )
+
+    answer = CitationValidator().validate(output, _request((), answer_language="ar"))
+
+    assert answer.answer_text == "لا تتوفر أدلة كافية."
