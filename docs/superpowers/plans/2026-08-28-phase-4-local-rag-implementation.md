@@ -709,7 +709,7 @@ Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection
 
 - [ ] **Step 1 — Write failing tests:** no ACTIVE, invalid scope, course isolation, global current-only, explicit history, mixed unauthorized history, atomic generation/revision/version-universe pinning, stale vector, PREPARING/FAILED exclusion, V1 READY plus V2 PREPARING/FAILED selecting V1, V1 READY plus V2 NOT_SEARCHABLE selecting no searchable ID, publication between two queries producing separate consistent snapshots, and query normalization. Representative assertions: `assert snapshot.document_version_ids == (authorized_current_version_id,)` and `assert (q1.generation.content_revision, q1.document_version_ids) == (revision_r, old_ids)` while a later `q2` equals `(revision_r_plus_1, new_ids)`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -v`; expect missing retrieval service.
-- [ ] **Step 3 — Minimal implementation:** add one repository snapshot method that resolves generation, revision, scope, latest-published selection, and authorized IDs inside one read transaction; then add `HybridRetriever.retrieve_candidates(query) -> RetrievalCandidateSet` with injected embedding/dense/repository/lexical services. Pass the immutable snapshot's authorized document-version IDs into `DenseIndex.search(...)` and its SQL predicates into lexical search before either rank list is produced.
+- [ ] **Step 3 — Minimal implementation:** add one repository snapshot method that resolves generation, revision, scope, latest-published selection, and authorized IDs inside one read transaction; then add `HybridRetriever.retrieve_candidates(query) -> RetrievalCandidateSet` with injected embedding/`DenseIndexFactory`/repository/lexical services. After resolving the immutable snapshot, open the dense handle for exactly `snapshot.generation`, pass only `snapshot.document_version_ids` into `DenseIndex.search(...)`, close that query-owned handle in `finally`, and pass the snapshot's SQL predicates into lexical search before either rank list is produced. Never bind a construction-time ACTIVE-generation handle.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_repository.py tests/test_rag_lexical.py tests/test_rag_dense.py tests/test_rag_retrieval.py -v`.
 - [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py src/aaos/rag/repository.py tests/test_rag_retrieval.py`; `uv run mypy src/aaos/rag/retrieval.py src/aaos/rag/repository.py`.
@@ -724,8 +724,14 @@ Require all Tasks 7–13 tests, Checkpoint A tests, disposable Chroma inspection
 - Modify: `tests/test_rag_repository.py`
 
 **Interfaces**
-- Consumes: ranked `DenseSearchHit`/`LexicalSearchHit` lists and pinned authorized universe.
+- Consumes: ranked `DenseSearchHit`/`LexicalSearchHit` lists, pinned authorized universe, and a generation-capable `DenseIndexFactory`.
 - Produces: ordered `FusedCandidate` tuples with dense/lexical/fused ranks.
+- `HybridRetriever` accepts `dense_index_factory: DenseIndexFactory` rather than a
+  generation-specific `dense_index`. After `QuerySnapshot` resolution it calls
+  `dense_index_factory.open(snapshot.generation)`, constrains the search to
+  `snapshot.document_version_ids`, and closes that query-owned handle in a
+  `finally` boundary. The factory is generation-independent and callers never
+  share ownership of an opened handle.
 - Repository materialization boundary:
 
 ```python
@@ -751,6 +757,7 @@ RagRepository.materialize_snapshot_chunks(
 - Materialization is integrity-only. It must not require the repository's current `content_revision` to equal the snapshot revision, require the snapshot generation to remain ACTIVE, ask whether a frozen document version is still latest, perform another ACTIVE-generation lookup, or re-resolve scope. Chroma metadata, dense-hit metadata, and lexical-hit document IDs are never authoritative.
 - Remove the same mutable revision/ACTIVE revalidation from snapshot-scoped `RagRepository.lexical_search()`. Its short FTS transaction must use only the pinned generation ID and frozen authorized document-version IDs while retaining READY-index and generation-scoped FTS joins. This is not a new lexical policy; it makes the existing Task 14 search honor the durable snapshot capability.
 - Every fused candidate must correspond one-to-one with the authoritative tuple returned in fused candidate order. A candidate from another generation or outside `snapshot.document_version_ids` fails the whole query safely. No long SQLite transaction spans embedding, dense/lexical search, RRF, selection, or generation.
+- Dense retrieval is selected by the pinned snapshot, not by runtime construction or a later ACTIVE lookup: G1 snapshots use G1 dense state, G2 snapshots use G2 state, explicitly authorized RETIRED historical snapshots use their RETIRED dense state, and BUILDING generations are rejected. A G1 snapshot can finish after G1 is retired and a later G2 query can run through the same runtime. The query owns and closes only its own opened dense handle; the runtime owns the generation-independent factory.
 
 - [ ] **Step 1 — Write failing tests:** preserve both-list, dense-only, lexical-only, ties, config change, duplicate hits, stale key, wrong generation/scope, missing provenance, and deterministic rerun coverage. Add repository materialization tests for exact requested order, malformed/duplicate/missing keys, BUILDING rejection, ACTIVE and RETIRED acceptance, READY/FTS/provenance integrity, wrong generation, and unauthorized version. Add two deterministic full-retrieval race regressions with explicit state transitions rather than sleeps: (a) create S1 at G1/R/{V1}, publish V2 with Task 12 semantics to G1/R+1, prove S1's FTS search and materialization still use V1 without scope/revision revalidation and a later S2 pins R+1/new IDs; (b) create S1 at G1, activate G2 with Task 13 semantics, prove S1's FTS search and materialization still use only G1 after retirement, reject G2 candidates, and a later S2 pins G2. Representative assertions: `assert reciprocal_rank_fusion(dense, lexical, rrf_k=60)[0].chunk_key == shared_key`, `assert materialized[0].chunk.chunk_key == requested_keys[0]`, and `assert s1.generation.content_revision == revision_r` after publication to `revision_r_plus_1`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_retrieval.py -k "rrf or candidate" -v`; expect missing fusion/verification.
@@ -847,6 +854,7 @@ Require deterministic dense/lexical/RRF tests, current/historical/course-isolati
 
 **Requirements**
 - Preserve scope/snapshot/evidence/citation gates in one mandatory path usable by Phase 5; no lower-level public bypass, chat history, tools, or fallback. Require the retriever's verified embedding-release boundary before any `ModelGateway.generate()` call.
+- The facade is agnostic to dense-generation lifetime. It relies on `HybridRetriever` to resolve each query's `QuerySnapshot` and to own/close the matching generation-specific dense handle; it does not cache an ACTIVE generation or dense index itself. The embedding release verification remains mandatory before generation.
 
 - [ ] **Step 1 — Write failing tests:** successful/partial/insufficient, no gateway call when insufficient, dense/lexical/model failure propagation, exact one query snapshot, embedding release before gateway generation, no history/tools, and facade exports only intended types. Representative assertion: `assert (await service.ask(unsupported_query)).answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_service.py -v`; expect missing facade.
@@ -869,13 +877,16 @@ Require all fake-ModelGateway tests, strict public status review, exact one-repa
 
 **Interfaces**
 - Consumes: injected paths/config/gateway, database constructors, repository, dense factory, embedding factory, services.
-- Produces: `build_phase4_runtime(...) -> Phase4RagRuntime` owning Engine, dense resources, embedding lifecycle and services.
+- Produces: `build_phase4_runtime(...) -> Phase4RagRuntime` owning Engine, the generation-independent `DenseIndexFactory`, embedding lifecycle, and services. Query-scoped generation-specific dense handles remain owned and closed by `HybridRetriever`.
 
 **Requirements**
 - Idempotent close order: services stop -> dense indexes close -> embedding closes/releases GPU -> SQLAlchemy engine disposes. Construction failures close only owned resources.
 - Import/construction without explicit command must not migrate/create normal DB/Chroma, load BGE-M3, contact LM Studio/network, or index.
+- Runtime construction creates a generation-independent `DenseIndexFactory` and does not resolve or require an ACTIVE generation or open a dense handle. It injects that factory into `HybridRetriever`; each query opens the exact `snapshot.generation` handle and owns its close. The runtime must never bind one construction-time ACTIVE handle, and it must not close query-owned handles.
+- Construction uses an explicit ownership ledger: every acquired resource is registered immediately and failures unwind all registered resources in reverse acquisition order. Meaningful stages are engine/session/repository, dense-factory, embedding service, lock/chunker/indexer, indexing coordinator, retriever, selector/gate/generator/validator, and facade construction; tests inject failures at each stage that can occur after an owned resource is acquired.
+- Cleanup attempts every owned resource even when an earlier close fails. The original construction failure remains primary where possible; any cleanup failure is retained as a sanitized `RagOperationalError` (using the existing safe code, such as `DENSE_INDEX_UNAVAILABLE`) and never rendered with backend text, paths, SQL, model-cache details, or secrets. A successfully built runtime has deterministic idempotent close semantics and never double-closes a query-owned dense handle.
 
-- [ ] **Step 1 — Write failing tests:** ownership/close order, double close, context manager, each construction-failure point, engine disposal, side-effect-free imports, no Phase3 runtime dependency, and no normal path artifacts. Representative assertion: `assert events == ["dense.close", "embedding.close", "engine.dispose"]`.
+- [ ] **Step 1 — Write failing tests:** generation-independent construction with no ACTIVE generation, snapshot-selected dense handles for G1/G2/RETIRED historical scopes, no BUILDING access, runtime race/relaunch behavior, ownership/close order, double close, context manager, every meaningful construction-failure point, cleanup-failure observability, engine disposal, side-effect-free imports, no Phase3 runtime dependency, and no normal path artifacts. Representative assertions include that `open(snapshot.generation)` receives the pinned identity, each handle closes once before lexical/generation work completes, and `assert events == ["dense.close", "embedding.close", "engine.dispose"]` for runtime-owned resources.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_runtime.py tests/test_rag_imports.py -v`; expect import failures.
 - [ ] **Step 3 — Minimal implementation:** compose explicit factories and track ownership with deterministic cleanup.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
@@ -909,7 +920,7 @@ Require all fake-ModelGateway tests, strict public status review, exact one-repa
 
 ## Checkpoint E — Runtime and CLI
 
-Require runtime construction/cleanup/import tests, exact CLI grammar/privacy/negative-surface tests, all earlier checkpoints, full Ruff/strict mypy/lock checks, and review that no normal path is touched without an explicit command and no Phase 5 capability exists before Task 22.
+Require generation-aware runtime construction/cleanup/import tests (including G1/G2/RETIRED snapshot switching and reverse rollback), exact CLI grammar/privacy/negative-surface tests, all earlier checkpoints, full Ruff/strict mypy/lock checks, and review that no normal path is touched without an explicit command and no Phase 5 capability exists before Task 22.
 
 ### Task 22: Add Evaluation Dataset, Classical IR Metrics, and Ablations
 

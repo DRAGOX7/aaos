@@ -406,6 +406,20 @@ evaluation evidence.
 If the dense index or embedding service is unavailable, production retrieval
 returns an explicit safe failure. It does not silently become BM25-only.
 
+`DenseIndexFactory.open(generation_identity)` is the generation-capable dense
+boundary. `HybridRetriever` receives that factory, not a dense handle opened for
+the generation that happened to be ACTIVE when the runtime was constructed. For
+each query it first resolves the immutable `QuerySnapshot`, opens a dense handle
+for exactly `snapshot.generation`, searches it with only
+`snapshot.document_version_ids`, and closes that query-owned handle in a
+`finally` boundary. The factory remains generation-independent; it may retain
+only the adapter's internal bookkeeping needed by its existing `remove()`
+contract. A query never uses a runtime-global ACTIVE-generation handle, and a
+G1 snapshot therefore cannot receive G2 candidates. BUILDING generations are
+rejected by snapshot authorization/materialization before dense results can be
+accepted. Explicit historical snapshots use the corresponding RETIRED
+generation's dense state without requiring runtime reconstruction.
+
 After RRF deduplication, the repository performs snapshot-safe authoritative
 materialization through this public boundary:
 
@@ -570,14 +584,43 @@ or unauthorized-source behavior occurs.
 ## 25. Runtime and service boundaries
 
 Phase 4 uses explicit composition and deterministic lifecycle ownership. A
-runtime owns its SQLite session/engine, FTS access, dense index, embedding
-service, and grounded gateway adapter, and supports idempotent `close()` plus a
-context manager. Services do not own resources created by their caller.
+runtime owns its SQLite session/engine, FTS access, generation-independent
+`DenseIndexFactory`, embedding service, and grounded gateway adapter, and
+supports idempotent `close()` plus a context manager. Services do not own
+resources created by their caller. Generation-specific dense handles are
+query-owned by `HybridRetriever` for the duration of one retrieval and are not
+closed again by the runtime. The injected `ModelGateway` is the sole answer
+boundary; the composition root must retain an explicit close/async-close
+obligation for any gateway implementation that owns a client, while the
+runtime owns the grounded adapter that invokes it.
+
+Runtime construction does not resolve or require an ACTIVE generation merely to
+bind retrieval. It constructs the repository, embedding infrastructure, dense
+factory, lexical/retrieval services, grounded adapter, and facade without
+opening a generation-specific dense handle. Query execution resolves
+`snapshot.generation` and obtains the matching dense state through the factory.
+Thus one long-lived runtime can serve a G1 snapshot after G1 is RETIRED, serve a
+later G2 snapshot after activation without restart, and serve an explicitly
+authorized historical RETIRED snapshot. BUILDING generations remain
+query-invisible.
+
+Construction uses an explicit ownership ledger: each successfully acquired
+resource is registered immediately, and a failed build closes all registered
+resources exactly once in reverse acquisition order. Cleanup attempts every
+resource even after one close fails. The original construction failure remains
+primary, while any cleanup failure is surfaced only through the existing
+sanitized `RagOperationalError` boundary (for example,
+`DENSE_INDEX_UNAVAILABLE`); raw backend exceptions, paths, SQL, model-cache
+details, and secrets are never rendered or logged. A successfully built runtime
+uses the same deterministic, idempotent close rule and never double-closes a
+query-owned dense handle.
 
 No import or default application startup creates a database, Chroma directory,
 index, model, migration, or LM Studio connection. No Phase 4 module imports
 Moodle browser/authentication code. Test and acceptance composition injects
-disposable SQLite and Chroma roots.
+disposable SQLite and Chroma roots. BGE-M3 remains lazy at construction, keeps
+the approved identity, and releases material embedding resources before any
+answer-model generation.
 
 ## 26. CLI surface
 
