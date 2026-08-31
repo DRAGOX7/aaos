@@ -75,6 +75,7 @@ class RetrievalCandidateSet:
     snapshot: QuerySnapshot
     dense_hits: tuple[DenseSearchHit, ...]
     lexical_result: LexicalSearchResult
+    embedding_release_verified: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, QuerySnapshot):
@@ -85,6 +86,8 @@ class RetrievalCandidateSet:
             raise ValueError("dense_hits must be a tuple of DenseSearchHit")
         if not isinstance(self.lexical_result, LexicalSearchResult):
             raise ValueError("lexical_result must be a LexicalSearchResult")
+        if not isinstance(self.embedding_release_verified, bool):
+            raise ValueError("embedding_release_verified must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -730,6 +733,7 @@ class HybridRetriever:
                 snapshot=snapshot,
                 dense_hits=(),
                 lexical_result=LexicalSearchResult(snapshot.normalized_query, ()),
+                embedding_release_verified=True,
             )
 
         try:
@@ -773,7 +777,12 @@ class HybridRetriever:
             raise
         except Exception:
             raise RagOperationalError(RagErrorCode.LEXICAL_INDEX_FAILED) from None
-        return RetrievalCandidateSet(snapshot, tuple(dense_hits), lexical_result)
+        return RetrievalCandidateSet(
+            snapshot,
+            tuple(dense_hits),
+            lexical_result,
+            embedding_release_verified=True,
+        )
 
     def retrieve_fused_candidates(self, query: RagQuery) -> tuple[FusedCandidate, ...]:
         """Search, fuse, and admit candidates through authoritative SQLite."""

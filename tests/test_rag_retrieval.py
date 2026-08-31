@@ -555,6 +555,7 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         assert dense.allowed == (versions["course0_v1"],)
         assert lexical_calls == [("course", (versions["course0_v1"],), 30)]
         assert embedding.released is True
+        assert candidates.embedding_release_verified is True
 
 
 def test_rrf_combines_channel_ranks_without_using_raw_scores() -> None:

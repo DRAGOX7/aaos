@@ -37,6 +37,7 @@ from .contracts import (
     RenderedRagResponse,
     RetrievedEvidence,
 )
+from .service import GuardedLocalRagService
 
 __all__ = [
     "MAX_RAG_TEXT_CHARACTERS",
@@ -68,6 +69,7 @@ __all__ = [
     "RagRuntimePaths",
     "RagScope",
     "LocalRagService",
+    "GuardedLocalRagService",
     "RenderedRagResponse",
     "RetrievedEvidence",
     "compute_config_fingerprint",
