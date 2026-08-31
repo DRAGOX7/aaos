@@ -67,6 +67,9 @@ class RagIndexConfig:
     embedding_model_identifier: str
     embedding_model_revision: str
     embedding_dimensions: int
+    sufficiency_min_chunks: int = 2
+    sufficiency_min_tokens: int = 32
+    sufficiency_max_fused_rank: int = 30
 
     def __post_init__(self) -> None:
         for name in (
@@ -93,6 +96,16 @@ class RagIndexConfig:
             raise ValueError("chunk_hard_max_tokens must be at least chunk_target_tokens")
         if self.chunk_overlap_tokens >= self.chunk_target_tokens:
             raise ValueError("chunk_overlap_tokens must be less than chunk_target_tokens")
+        for name in (
+            "sufficiency_min_chunks",
+            "sufficiency_min_tokens",
+            "sufficiency_max_fused_rank",
+        ):
+            _positive_int(getattr(self, name), name)
+        if self.sufficiency_min_chunks > self.max_evidence_chunks:
+            raise ValueError("sufficiency_min_chunks must not exceed max_evidence_chunks")
+        if self.sufficiency_min_tokens > self.max_evidence_tokens:
+            raise ValueError("sufficiency_min_tokens must not exceed max_evidence_tokens")
         for name in (
             "chunker_version",
             "lexical_normalizer_version",

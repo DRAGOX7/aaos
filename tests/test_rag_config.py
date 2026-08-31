@@ -79,6 +79,9 @@ def test_runtime_paths_are_side_effect_free_and_reject_path_escapes(tmp_path: Pa
         ({"rrf_k": 0}, "rrf_k"),
         ({"max_evidence_chunks": 0}, "max_evidence_chunks"),
         ({"max_evidence_tokens": 0}, "max_evidence_tokens"),
+        ({"sufficiency_min_chunks": 0}, "sufficiency_min_chunks"),
+        ({"sufficiency_min_tokens": 0}, "sufficiency_min_tokens"),
+        ({"sufficiency_max_fused_rank": 0}, "sufficiency_max_fused_rank"),
         ({"chunker_version": " "}, "chunker_version"),
         ({"lexical_normalizer_version": " "}, "lexical_normalizer_version"),
         ({"sufficiency_policy_version": " "}, "sufficiency_policy_version"),
@@ -125,6 +128,9 @@ def test_equivalent_configurations_have_the_same_canonical_fingerprint() -> None
         "embedding_model_identifier": "BAAI/bge-m3",
         "embedding_model_revision": "v1",
         "embedding_dimensions": 1024,
+        "sufficiency_min_chunks": 2,
+        "sufficiency_min_tokens": 32,
+        "sufficiency_max_fused_rank": 30,
     }
     config_a = RagIndexConfig(**cast(Any, fields))
     config_b = RagIndexConfig(**cast(Any, dict(reversed(tuple(fields.items())))))
@@ -146,6 +152,9 @@ def test_equivalent_configurations_have_the_same_canonical_fingerprint() -> None
         "rrf_k",
         "max_evidence_chunks",
         "max_evidence_tokens",
+        "sufficiency_min_chunks",
+        "sufficiency_min_tokens",
+        "sufficiency_max_fused_rank",
         "chunker_version",
         "lexical_normalizer_version",
         "sufficiency_policy_version",

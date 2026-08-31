@@ -264,6 +264,9 @@ class RetrievedEvidence:
     fused_rank: int
     generation_id: int
     content_revision: int
+    # Legacy positional callers may omit this trailing field; selector output
+    # always supplies the authoritative persisted count.
+    token_count: int = 1
 
     def __post_init__(self) -> None:
         for name in ("evidence_id", "chunk_key", "exact_text", "document_title"):
@@ -273,6 +276,7 @@ class RetrievedEvidence:
         for name in ("document_version_id", "course_id", "fused_rank", "generation_id"):
             _positive_int(getattr(self, name), name)
         _nonnegative_int(self.content_revision, "content_revision")
+        _positive_int(self.token_count, "token_count")
         if not isinstance(self.source_spans, tuple) or not self.source_spans:
             raise ValueError("source_spans must be a non-empty tuple")
         if not all(isinstance(span, RagChunkSourceSpanValue) for span in self.source_spans):
@@ -281,6 +285,8 @@ class RetrievedEvidence:
             rank = getattr(self, name)
             if rank is not None:
                 _positive_int(rank, name)
+        if self.dense_rank is None and self.lexical_rank is None:
+            raise ValueError("at least one retrieval rank is required")
 
 
 @dataclass(frozen=True, slots=True)
