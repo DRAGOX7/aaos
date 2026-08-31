@@ -36,6 +36,8 @@ def main() -> int:
         from aaos.documents.cli import run_documents_command
 
         return run_documents_command(sys.argv[2:])
+    if sys.argv[1:2] == ["rag"]:
+        return _run_configured_rag(sys.argv[2:])
     if sys.argv[1:] == ["moodle", "bootstrap"]:
         return _run_configured_moodle_bootstrap()
     if sys.argv[1:] == ["moodle", "bootstrap", "--auth-host", "system"]:
@@ -61,6 +63,13 @@ def main() -> int:
     if sys.argv[1:] == ["moodle", "diagnose-final-bootstrap-script"]:
         return _run_configured_final_bootstrap_script_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
+
+
+def _run_configured_rag(argv: Sequence[str]) -> int:
+    """Run the explicit local RAG command surface lazily."""
+    from aaos.rag.cli import run_rag_command
+
+    return run_rag_command(argv)
 
 
 def _run_configured_doctor() -> DoctorReport:
