@@ -284,6 +284,16 @@ Exact technical tokens such as `BERT`, `YOLOv11`, `mAP50-95`, `CNN`, `SAHI`,
 and `DBSCAN` must remain searchable. FTS rows contain stable chunk identities
 that resolve back to authoritative SQLite rows before evidence is trusted.
 
+Lexical query compilation is deterministic and literal. After the existing
+Unicode-aware normalization, empty tokens are discarded and repeated tokens
+are deduplicated in stable order. Each remaining token is quoted and escaped
+as one literal FTS5 term, then the terms are joined with explicit `OR`
+semantics. An empty usable-token query returns no lexical candidates safely.
+User text is never executable FTS syntax: operators, column filters, `NEAR`,
+wildcards, parentheses, quotes, and malformed punctuation remain data inside
+literal terms. There is no query rewrite, semantic expansion, stemming,
+translation, or hidden lexical fallback in this policy.
+
 ## 13. Chroma architecture
 
 Chroma is an embedded/local persistent derived index. No Chroma server,
@@ -393,13 +403,18 @@ versions remain preserved and are excluded unless explicitly requested.
 ## 17. Hybrid retrieval and RRF
 
 Retrieval combines BGE-M3 dense candidates with SQLite FTS5/BM25 candidates.
-The question's original semantic text is used for dense embedding, while a
-conservatively normalized representation is used for lexical search. Automatic
-translation before dense retrieval is not required.
+The question's original semantic text is used for dense embedding, while the
+deterministic literal-term compiler above is used for lexical search. English,
+Arabic, and mixed-language tokens follow the same policy; no English-only
+stopword removal is applied. Automatic translation before dense retrieval is
+not required.
 
-Candidate depths, RRF constant, and related settings are configuration. Scores
-from dense and BM25 retrieval are never compared directly. Reciprocal Rank
-Fusion combines ranks deterministically, with stable chunk-key tie-breaking.
+Candidate depths, RRF constant, and related settings are configuration. The
+lexical candidate depth remains 30 and the RRF constant remains `k=60`.
+Scores from dense and BM25 retrieval are never compared directly. Reciprocal
+Rank Fusion combines ranks deterministically, with stable chunk-key
+tie-breaking. A hybrid query may benefit from either channel, but no reranker
+or dynamic channel switch is introduced.
 No reranker is included in v1; added complexity must later be justified by
 evaluation evidence.
 
@@ -781,6 +796,13 @@ and conflicting evidence, partial and unsupported questions, current versus
 historical scope, course isolation, and the English, Arabic, Arabic-to-English,
 and English-to-Arabic subgroups. The exact corpus-constrained count is recorded
 in the evaluation manifest rather than silently weakening held-out separation.
+
+Any benchmark whose retrieval output informed a policy diagnosis or correction
+is a diagnostic version, not a pristine final held-out set. It remains in the
+audit history, but final acceptance must prepare a new benchmark version and
+fingerprint, obtain human review of its qrels, and lock a new unseen held-out
+split before retrieval output is inspected. The final unseen set may not be
+used for further tuning or policy selection.
 
 Sufficiency labels are `SUPPORTED`, `PARTIALLY_SUPPORTED`, and `UNSUPPORTED`.
 Evaluation reports supported acceptance, unsupported rejection, false

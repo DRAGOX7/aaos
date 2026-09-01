@@ -492,8 +492,10 @@ All public constructors validate positive internal IDs, nonblank bounded text, t
 **Requirements**
 - Normalize Unicode width/case/whitespace conservatively while retaining Arabic, digits, course codes, formulas, punctuation-bearing technical tokens, and original exact text in SQLite.
 - FTS writes share the chunk transaction; BM25 results must join to READY authoritative rows and the pinned scope before ranking is accepted.
+- Compile normalized natural-language queries deterministically: discard empty tokens, deduplicate repeated tokens in stable order, quote/escape every token as a literal FTS5 term, and join terms with explicit `OR` semantics. Empty usable-token queries return zero safely. Operators, column filters, `NEAR`, wildcards, parentheses, quotes, and malformed punctuation are data, never executable FTS syntax; no rewrite, stemming, translation, semantic expansion, or hidden fallback is allowed.
+- The lexical candidate depth remains 30. This query compiler is multilingual (including Arabic and mixed Arabic/Latin) and does not apply an English-only stopword policy.
 
-- [ ] **Step 1 — Write failing tests:** technical tokens/Arabic preservation, deterministic versioning, pure normalization, FTS insert/delete parity, BM25 ranks, course/history/generation filtering, and stale row rejection. Representative assertion: `assert lexical_search(query, snapshot).hits == (expected_authorized_hit,)`.
+- [ ] **Step 1 — Write failing tests:** technical tokens/Arabic preservation, deterministic versioning, pure normalization, literal escaping, natural-language English/Arabic/mixed-language subset matching, repeated-token deduplication, empty-query safety, FTS insert/delete parity, BM25 ranks, course/history/generation filtering, and stale row rejection. Include syntax-like data (`OR`, `AND`, `NOT`, `NEAR`, parentheses, column syntax, wildcards, quotes, and malformed punctuation) and prove it cannot alter the query. Representative assertion: `assert lexical_search(query, snapshot).hits == (expected_authorized_hit,)`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_lexical.py tests/test_rag_repository.py -v`; expect missing lexical/FTS behavior.
 - [ ] **Step 3 — Minimal implementation:** add pure normalizer and parameterized FTS SQL owned by repository transactions.
 - [ ] **Step 4 — Run GREEN:** rerun the RED command; expect PASS.
@@ -753,6 +755,7 @@ RagRepository.materialize_snapshot_chunks(
 
 **Requirements**
 - Score `sum(1 / (rrf_k + rank))`, rank from one, combine no raw cosine/BM25 values, break ties by best component rank then deterministic chunk key.
+- Preserve lexical depth 30 and RRF `k=60`; add a regression where a natural-language query produces authorized lexical candidates and hybrid fusion receives both dense and lexical ranked lists without combining raw scores.
 - `materialize_snapshot_chunks()` returns `()` for an empty key tuple without re-resolving the snapshot. Otherwise it uses one short read-only SQLite transaction for the complete deduplicated key tuple. It validates unique nonblank requested keys; the pinned generation row's ID/fingerprint/embedding dimensions; ACTIVE-or-RETIRED but never BUILDING generation status; exact authoritative chunk identity and pinned-generation membership; frozen authorized document-version membership; READY index state in that pinned generation; exact generation-scoped FTS membership; immutable Phase 3 document-version identity; and ordered page/character provenance whose relationships reproduce the authoritative chunk text. Missing, duplicate, ambiguous, corrupted, unauthorized, cross-generation, or persistence failures are translated to `RETRIEVAL_INCONSISTENCY` without backend text.
 - Materialization is integrity-only. It must not require the repository's current `content_revision` to equal the snapshot revision, require the snapshot generation to remain ACTIVE, ask whether a frozen document version is still latest, perform another ACTIVE-generation lookup, or re-resolve scope. Chroma metadata, dense-hit metadata, and lexical-hit document IDs are never authoritative.
 - Remove the same mutable revision/ACTIVE revalidation from snapshot-scoped `RagRepository.lexical_search()`. Its short FTS transaction must use only the pinned generation ID and frozen authorized document-version IDs while retaining READY-index and generation-scoped FTS joins. This is not a new lexical policy; it makes the existing Task 14 search honor the durable snapshot capability.
@@ -938,6 +941,7 @@ Require generation-aware runtime construction/cleanup/import tests (including G1
 - Validate 80–120 target cases with question language, answer language, expected status, scope, supporting internal document versions/pages, and category; keep real private questions/content untracked.
 - Deterministically split about 70/30 calibration/held-out by stable case ID, lock held-out before tuning, and cover English, Arabic, cross-language, lexical, semantic, multi-source, conflicting, partial, unsupported, current/history, and course isolation.
 - Compare dense-only, FTS-only, hybrid RRF and a controlled ~300/~500/~700 chunk ablation; no giant search. If hybrid has no meaningful benefit, checkpoint pauses for design review.
+- A benchmark used to diagnose or choose a lexical-policy correction is labeled `BENCHMARK_V1_DIAGNOSTIC` and retained only as historical evidence. Its held-out cases are not pristine after influencing the correction. Final acceptance must prepare a new fingerprinted benchmark version with human-reviewed qrels, create a new unseen held-out split, lock that split before retrieval output is inspected, and prohibit post-lock tuning.
 
 - [ ] **Step 1 — Write failing tests:** schema/privacy, duplicate IDs, subgroup coverage, deterministic split/no leakage, hand-calculated recall/MRR/nDCG, sufficiency false acceptance/refusal, baseline labels, and fingerprinted run manifests. Representative assertion: `assert calibration_ids.isdisjoint(held_out_ids)`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_evaluation.py -v`; expect missing evaluation modules.
@@ -1037,6 +1041,7 @@ Require deterministic dataset/split/metric tests, no held-out leakage, dense/lex
 **Requirements**
 - Default pytest skips before any model/storage/network action. Explicit acceptance separately verifies BGE-M3 model identity/dimension, indexing, GPU/RAM lifecycle on RTX 4050 6 GB, embedding release before local generation, local LM Studio availability, answer/citation behavior, held-out IR/RAGAS/human/safety/performance results, and no normal-path use unless that exact run is human-authorized.
 - If BGE-M3 cannot run/release safely, local ModelGateway unavailable, hybrid benefit absent, or held-out/security gates fail, stop for architecture/human review. Do not auto-switch model, worker process, cloud evaluator, or simpler retrieval.
+- The final acceptance uses the post-correction benchmark version and its newly locked unseen held-out split. The diagnostic V1 benchmark and its previously observed held-out results remain historical and must not be presented as the final post-correction held-out evidence.
 
 - [ ] **Step 1 — Write failing/default-skip tests:** prove no opt-in means skip with zero side effects, exact required environment/authorization fields, safe output schema, model/GPU lifecycle markers, and no freeze tag operation. Representative assertion: `assert not normal_database_path.exists() and not normal_chroma_path.exists()` after the default-skipped test collection.
 - [ ] **Step 2 — Run RED:** run the isolated acceptance test with fake acceptance dependencies enabled; expect missing acceptance wiring, while ordinary `uv run pytest tests/live/test_phase4_local_rag_acceptance.py -v` remains safely skipped.
@@ -1057,7 +1062,7 @@ Require fresh full deterministic verification, migration upgrade/downgrade, disp
 3. Freeze deterministic 70/30 calibration/held-out split by case ID.
 4. On calibration only, compare chunk sizes near 300/500/700, candidate depths, RRF constant, evidence budgets and sufficiency thresholds; record config fingerprints.
 5. Compare dense-only, FTS5-only and hybrid RRF. If hybrid lacks meaningful useful benefit, stop for design review.
-6. Lock config/policy versions, rebuild a fresh generation, and run held-out Recall@1/3/5/10, MRR, nDCG, subgroup and sufficiency metrics.
+6. Lock config/policy versions, rebuild a fresh generation, and run the new unseen held-out Recall@1/3/5/10, MRR, nDCG, subgroup and sufficiency metrics. Do not reuse a diagnostic benchmark's held-out split after it informed a retrieval-policy correction.
 7. Run explicit local-only RAGAS supplementary metrics; unavailable local evaluator is a failure, never a cloud fallback.
 8. Perform held-out human claim/evidence/citation/completeness/Arabic/partial/conflict/unsupported review.
 9. Run injection and no-tools/no-secret/no-cross-scope safety evaluation.
