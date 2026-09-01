@@ -20,6 +20,7 @@ from aaos.rag.evaluation.local_phase3 import (
     LocalAcceptancePdfFetcher,
     LocalCorpusFile,
     build_local_acceptance_snapshot,
+    classify_acceptance_language,
     copy_local_corpus,
     ingest_local_corpus,
 )
@@ -277,6 +278,18 @@ def test_invalid_pdf_stays_owned_by_phase3_validation(tmp_path: Path) -> None:
     assert result.failed_count == 1
 
 
+def test_acceptance_language_uses_script_dominance_not_any_latin_term() -> None:
+    text = ("أعراض المريض تشمل شرح عربي طويل ومفصل للحالة الطبية. " * 20) + (
+        "Aphasia Numbness Diplopia"
+    )
+
+    assert classify_acceptance_language(text) == "ARABIC_DOMINANT"
+
+
+def test_acceptance_language_reports_empty_or_other_without_letters() -> None:
+    assert classify_acceptance_language("123 !!!") == "EMPTY_OR_OTHER"
+
+
 def test_ingest_local_corpus_uses_phase3_validation_and_disposable_paths(tmp_path: Path) -> None:
     source = tmp_path / "source"
     acceptance = tmp_path / "acceptance"
@@ -293,3 +306,11 @@ def test_ingest_local_corpus_uses_phase3_validation_and_disposable_paths(tmp_pat
     assert result.failed_count == 0
     assert result.database_path == acceptance / "database" / "acceptance.sqlite3"
     assert result.document_store_root == acceptance / "documents"
+    assert (
+        sum(count for _label, count in result.document_language_counts)
+        == result.document_version_count
+    )
+    assert sum(count for _label, count in result.course_language_counts[0][1]) == result.page_count
+    assert result.total_arabic_letters >= 0
+    assert result.total_latin_letters >= 0
+    assert 0.0 <= result.corpus_arabic_ratio <= 1.0

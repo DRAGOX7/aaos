@@ -101,6 +101,11 @@ class LocalPhase3IngestionResult:
     empty_page_count: int
     provenance_ok: bool
     source_hashes_match: bool
+    document_language_counts: tuple[tuple[str, int], ...] = ()
+    course_language_counts: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = ()
+    total_arabic_letters: int = 0
+    total_latin_letters: int = 0
+    corpus_arabic_ratio: float = 0.0
 
 
 def build_local_acceptance_snapshot(corpus_root: Path) -> CompleteSourceSnapshot:
@@ -428,6 +433,24 @@ def _result_from_database(
                 .order_by(DocumentPageORM.id)
             )
         )
+        page_profile_rows = tuple(
+            session.execute(
+                select(
+                    DocumentPageORM.id,
+                    DocumentPageORM.document_version_id,
+                    CourseORM.source_id,
+                    DocumentPageORM.text,
+                )
+                .join(
+                    DocumentVersionORM,
+                    DocumentVersionORM.id == DocumentPageORM.document_version_id,
+                )
+                .join(DocumentORM, DocumentORM.id == DocumentVersionORM.document_id)
+                .join(RemoteFileORM, RemoteFileORM.id == DocumentORM.remote_file_id)
+                .join(CourseORM, CourseORM.id == RemoteFileORM.course_id)
+                .where(RemoteFileORM.source_system == ACCEPTANCE_SOURCE_SYSTEM)
+            ).tuples()
+        )
         versions = tuple(session.scalars(version_query))
         remote_rows = tuple(
             session.scalars(
@@ -436,7 +459,24 @@ def _result_from_database(
         )
         provenance_ok = _provenance_ok(session, remote_rows)
     status_counts = Counter(version.extraction_status for version in versions)
-    page_counts = Counter(_page_language(page.text) for page in page_rows)
+    page_counts: Counter[str] = Counter()
+    document_totals: dict[int, list[int]] = {}
+    course_counts: dict[str, Counter[str]] = {}
+    total_arabic_letters = 0
+    total_latin_letters = 0
+    for _page_id, version_id, course_source_id, text in page_profile_rows:
+        arabic, latin = _language_counts(text)
+        total_arabic_letters += arabic
+        total_latin_letters += latin
+        page_class = _classify_language(arabic, latin)
+        page_counts[page_class] += 1
+        totals = document_totals.setdefault(version_id, [0, 0])
+        totals[0] += arabic
+        totals[1] += latin
+        course_counts.setdefault(course_source_id, Counter())[page_class] += 1
+    document_counts = Counter(_classify_language(*totals) for totals in document_totals.values())
+    denominator = total_arabic_letters + total_latin_letters
+    corpus_arabic_ratio = total_arabic_letters / denominator if denominator else 0.0
     source_hashes_match = all(
         hashlib.sha256((manifest.corpus_root / entry.relative_path).read_bytes()).hexdigest()
         == entry.sha256
@@ -453,12 +493,20 @@ def _result_from_database(
         partial_count=status_counts[ExtractionStatus.PARTIAL.value],
         no_text_count=status_counts[ExtractionStatus.NO_TEXT.value],
         failed_count=batch_failed,
-        english_dominant_page_count=page_counts["ENGLISH"],
-        arabic_dominant_page_count=page_counts["ARABIC"],
+        english_dominant_page_count=page_counts["ENGLISH_DOMINANT"],
+        arabic_dominant_page_count=page_counts["ARABIC_DOMINANT"],
         mixed_page_count=page_counts["MIXED"],
-        empty_page_count=page_counts["EMPTY"],
+        empty_page_count=page_counts["EMPTY_OR_OTHER"],
         provenance_ok=provenance_ok,
         source_hashes_match=source_hashes_match,
+        document_language_counts=_language_distribution(document_counts),
+        course_language_counts=tuple(
+            (course_id, _language_distribution(counts))
+            for course_id, counts in sorted(course_counts.items())
+        ),
+        total_arabic_letters=total_arabic_letters,
+        total_latin_letters=total_latin_letters,
+        corpus_arabic_ratio=corpus_arabic_ratio,
     )
 
 
@@ -480,11 +528,13 @@ def _provenance_ok(session: Session, remote_rows: tuple[RemoteFileORM, ...]) -> 
     return True
 
 
-def _page_language(text: str) -> str:
+def _language_counts(text: str) -> tuple[int, int]:
+    if not isinstance(text, str):
+        raise ValueError("page text must be a string")
     arabic = latin = 0
     for char in text:
         codepoint = ord(char)
-        if (
+        if char.isalpha() and (
             0x0600 <= codepoint <= 0x06FF
             or 0x0750 <= codepoint <= 0x077F
             or 0x08A0 <= codepoint <= 0x08FF
@@ -494,13 +544,31 @@ def _page_language(text: str) -> str:
             arabic += 1
         elif char.isalpha() and "LATIN" in unicodedata.name(char, ""):
             latin += 1
-    if arabic and latin:
-        return "MIXED"
-    if arabic:
-        return "ARABIC"
-    if latin:
-        return "ENGLISH"
-    return "EMPTY"
+    return arabic, latin
+
+
+def _classify_language(arabic: int, latin: int) -> str:
+    denominator = arabic + latin
+    if denominator == 0:
+        return "EMPTY_OR_OTHER"
+    ratio = arabic / denominator
+    if ratio >= 0.70:
+        return "ARABIC_DOMINANT"
+    if ratio <= 0.30:
+        return "ENGLISH_DOMINANT"
+    return "MIXED"
+
+
+def classify_acceptance_language(text: str) -> str:
+    """Classify acceptance text by Arabic/Latin alphabetic dominance."""
+    return _classify_language(*_language_counts(text))
+
+
+def _language_distribution(counts: Counter[str]) -> tuple[tuple[str, int], ...]:
+    return tuple(
+        (label, counts[label])
+        for label in ("ARABIC_DOMINANT", "ENGLISH_DOMINANT", "MIXED", "EMPTY_OR_OTHER")
+    )
 
 
 def _validated_source_system(value: object) -> str:
