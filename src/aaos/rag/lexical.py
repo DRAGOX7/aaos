@@ -72,10 +72,12 @@ def normalize_lexical_text(text_value: str) -> str:
 
 def _fts_match_expression(normalized_query: str) -> str:
     """Build a parameterized FTS expression from normalized word tokens."""
-    words = tuple(match.group(0) for match in _WORD_PATTERN.finditer(normalized_query))
+    words = tuple(
+        dict.fromkeys(match.group(0) for match in _WORD_PATTERN.finditer(normalized_query))
+    )
     if not words:
         return ""
-    return " AND ".join(f'"{word.replace(chr(34), chr(34) * 2)}"' for word in words)
+    return " OR ".join(f'"{word.replace(chr(34), chr(34) * 2)}"' for word in words)
 
 
 def insert_fts_row(

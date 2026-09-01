@@ -559,6 +559,7 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         dense = _DenseStub()
         dense_factory = _DenseFactoryStub(dense)
         lexical_calls: list[tuple[str, tuple[int, ...], int]] = []
+        lexical_key = "f" * 64
 
         def lexical_search(query: str, snapshot: object, limit: int) -> object:
             assert hasattr(snapshot, "document_version_ids")
@@ -567,7 +568,10 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
             lexical_calls.append((query, ids, limit))
             from aaos.rag.lexical import LexicalSearchResult
 
-            return LexicalSearchResult(query, ())
+            return LexicalSearchResult(
+                query,
+                (LexicalSearchHit(lexical_key, ids[0], 1, -1.0),),
+            )
 
         retriever = HybridRetriever(
             repository,
@@ -586,6 +590,7 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
         assert embedding.released is True
         assert candidates.embedding_release_verified is True
         assert dense.closed == 1
+        assert tuple(hit.chunk_key for hit in candidates.lexical_result.hits) == (lexical_key,)
 
 
 def test_hybrid_retrieval_opens_and_closes_the_snapshot_generation_handle() -> None:

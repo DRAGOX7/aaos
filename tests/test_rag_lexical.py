@@ -33,6 +33,7 @@ from aaos.rag.contracts import (
 from aaos.rag.lexical import (
     LEXICAL_NORMALIZER_VERSION,
     LexicalSearchResult,
+    _fts_match_expression,
     normalize_lexical_text,
 )
 from aaos.rag.repository import ChunkRecord, GenerationBuild, QuerySnapshot, RagRepository
@@ -347,3 +348,98 @@ def test_lexical_search_rejects_invalid_snapshot_and_limit(tmp_path: Path) -> No
         with pytest.raises(RagOperationalError) as caught:
             repository.lexical_search("query", snapshot, limit=0)
         assert caught.value.code is RagErrorCode.LEXICAL_INDEX_FAILED
+
+
+def test_natural_language_english_query_matches_subset_terms(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        (version_id,) = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        _ready_index(repository, generation, version_id)
+        chunk = _insert_chunk(
+            repository,
+            generation,
+            version_id,
+            "5" * 64,
+            "retrieval quality matters",
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(1))
+
+        result = repository.lexical_search(
+            "How can retrieval quality be measured in practice?",
+            snapshot,
+        )
+
+        assert tuple(hit.chunk_key for hit in result.hits) == (chunk.chunk_key,)
+
+
+def test_natural_language_arabic_query_matches_subset_terms(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        (version_id,) = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        _ready_index(repository, generation, version_id)
+        chunk = _insert_chunk(
+            repository,
+            generation,
+            version_id,
+            "6" * 64,
+            "تحليل البيانات مهم",
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(1))
+
+        result = repository.lexical_search("كيف يتم تحليل البيانات بسرعة؟", snapshot)
+
+        assert tuple(hit.chunk_key for hit in result.hits) == (chunk.chunk_key,)
+
+
+def test_natural_language_mixed_query_matches_subset_terms(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        (version_id,) = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        _ready_index(repository, generation, version_id)
+        chunk = _insert_chunk(
+            repository,
+            generation,
+            version_id,
+            "7" * 64,
+            "تحليل data مهم",
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(1))
+
+        result = repository.lexical_search("كيف تحليل data بسرعة؟", snapshot)
+
+        assert tuple(hit.chunk_key for hit in result.hits) == (chunk.chunk_key,)
+
+
+def test_literal_source_phrase_query_remains_retrievable(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        (version_id,) = _seed_phase3(sessions)
+        generation = _create_generation(repository)
+        repository.activate_generation(generation.identity, expected_revision=0)
+        _ready_index(repository, generation, version_id)
+        chunk = _insert_chunk(
+            repository,
+            generation,
+            version_id,
+            "8" * 64,
+            "exact source phrase",
+        )
+        snapshot = repository.pin_query_snapshot(CourseScope(1))
+
+        result = repository.lexical_search("exact source phrase", snapshot)
+
+        assert tuple(hit.chunk_key for hit in result.hits) == (chunk.chunk_key,)
+
+
+def test_fts_query_terms_are_deduplicated_in_stable_order() -> None:
+    normalized = normalize_lexical_text("Alpha alpha beta beta")
+    assert _fts_match_expression(normalized) == '"alpha" OR "beta"'
+
+
+def test_fts_syntax_like_input_remains_literal_data() -> None:
+    normalized = normalize_lexical_text('OR AND NOT NEAR title:(secret) * "quoted')
+    expression = _fts_match_expression(normalized)
+
+    assert expression == ('"or" OR "and" OR "not" OR "near" OR "title" OR "secret" OR "quoted"')
