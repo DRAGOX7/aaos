@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 
 import pytest
@@ -149,6 +150,28 @@ def test_valid_structured_first_response_is_parsed() -> None:
     assert output.language == "en"
     assert output.claims == (RagClaim("claim-1", "The deadline is Friday.", ("ev-1",)),)
     assert len(gateway.requests) == 1
+
+
+def test_default_completion_budget_supports_long_strict_repair() -> None:
+    long_text = " ".join(f"fact-{index}" for index in range(600))
+    payload = json.dumps(
+        {
+            "status": "ANSWER",
+            "answer_text": long_text,
+            "language": "en",
+            "claims": [{"claim_id": "claim-1", "text": long_text, "evidence_ids": ["ev-1"]}],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    gateway = FakeGateway([_response("incomplete"), _response(payload)])
+
+    output = _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert output.answer_text == long_text
+    assert len(payload.split()) > 512
+    assert len(gateway.requests) == 2
+    assert all(request.max_output_tokens == 1024 for request in gateway.requests)
 
 
 def test_malformed_then_valid_response_uses_one_constrained_repair() -> None:

@@ -20,6 +20,7 @@ import aaos.inference
 import aaos.inference.models
 import aaos.inference.gateway
 import aaos.inference.lm_studio
+import aaos.inference.lm_studio_lifecycle
 import aaos.main
 """
     source_root = Path(__file__).resolve().parents[1] / "src"

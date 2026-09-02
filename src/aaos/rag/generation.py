@@ -33,7 +33,7 @@ from .contracts import (
 )
 from .retrieval import SufficiencyDecision, SufficiencyStatus
 
-_MAX_GENERATION_TOKENS = 512
+_MAX_GENERATION_TOKENS = 1024
 
 GROUNDED_SYSTEM_PROMPT = """You are the AAOS grounded academic answer formatter.
 Return exactly one JSON object with these keys and no others:

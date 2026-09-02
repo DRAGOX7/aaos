@@ -9,7 +9,12 @@ from typing import Any, cast
 
 from sqlalchemy import Engine
 
-from aaos.inference import ModelGateway
+from aaos.inference import ChatRequest, ChatResponse, ModelAvailability, ModelGateway
+from aaos.inference.lm_studio_lifecycle import (
+    LmStudioModelLifecycle,
+    ModelLifecycle,
+    ModelLifecycleError,
+)
 from aaos.persistence.database import create_database_engine, create_session_factory
 
 from .chroma import ChromaDenseIndexFactory
@@ -17,6 +22,7 @@ from .chunking import DeterministicChunker
 from .config import RagIndexConfig, RagRuntimePaths
 from .contracts import (
     DenseIndexFactory,
+    EmbeddingModelMetadata,
     EmbeddingService,
     LocalRagService,
     RagErrorCode,
@@ -37,10 +43,93 @@ RepositoryFactory = Callable[[Callable[[], Any]], RagRepository]
 EmbeddingFactory = Callable[[RagIndexConfig], EmbeddingService]
 ChunkerFactory = Callable[[RagIndexConfig], DeterministicChunker]
 IndexLockFactory = Callable[[Any], RagIndexLock]
+ModelLifecycleFactory = Callable[[], ModelLifecycle]
 
 
 def _default_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
     return BgeM3EmbeddingService(device="cuda")
+
+
+class _ManagedEmbeddingService:
+    """Keep answer-model residency out of every BGE acquisition."""
+
+    def __init__(self, inner: EmbeddingService, lifecycle: ModelLifecycle) -> None:
+        self._inner = inner
+        self._lifecycle = lifecycle
+        self._released = True
+
+    def model_metadata(self) -> EmbeddingModelMetadata:
+        return self._inner.model_metadata()
+
+    def embed_documents(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        self._ensure_answer_unloaded()
+        self._released = False
+        return self._inner.embed_documents(texts)
+
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        self._ensure_answer_unloaded()
+        self._released = False
+        return self._inner.embed_query(text)
+
+    def release_model(self) -> None:
+        try:
+            self._inner.release_model()
+        except Exception:
+            self._released = False
+            raise
+        self._released = True
+
+    def close(self) -> None:
+        self._inner.close()
+
+    @property
+    def release_verified(self) -> bool:
+        return self._released
+
+    def _ensure_answer_unloaded(self) -> None:
+        try:
+            self._lifecycle.ensure_answer_model_unloaded()
+        except ModelLifecycleError:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+        except Exception:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+
+
+class _ManagedModelGateway:
+    """Keep the existing ModelGateway boundary while controlling residency."""
+
+    def __init__(
+        self,
+        inner: ModelGateway,
+        lifecycle: ModelLifecycle,
+        embedding: _ManagedEmbeddingService,
+    ) -> None:
+        self._inner = inner
+        self._lifecycle = lifecycle
+        self._embedding = embedding
+
+    async def check_availability(self) -> ModelAvailability:
+        return await self._inner.check_availability()
+
+    async def generate(self, request: ChatRequest) -> ChatResponse:
+        if not self._embedding.release_verified:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
+        try:
+            self._lifecycle.ensure_answer_model_loaded()
+        except ModelLifecycleError:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+        except Exception:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+        try:
+            response = await self._inner.generate(request)
+        finally:
+            try:
+                self._lifecycle.ensure_answer_model_unloaded()
+            except ModelLifecycleError:
+                raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+            except Exception:
+                raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+        return response
 
 
 def _close_error() -> RagOperationalError:
@@ -105,6 +194,7 @@ def build_phase4_runtime(
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
     indexing_factory: Callable[..., RagIndexingService] | None = None,
+    model_lifecycle_factory: ModelLifecycleFactory | None = None,
 ) -> Phase4RagRuntime:
     """Compose one runtime from explicit paths and injectable dependencies.
 
@@ -132,6 +222,7 @@ def build_phase4_runtime(
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
     selected_indexing_factory = indexing_factory or RagIndexingCoordinator
+    selected_model_lifecycle_factory = model_lifecycle_factory or LmStudioModelLifecycle
     for factory, name in (
         (selected_engine_factory, "database_engine_factory"),
         (selected_session_factory, "session_factory_factory"),
@@ -146,6 +237,7 @@ def build_phase4_runtime(
         (selected_validator_factory, "citation_validator_factory"),
         (selected_service_factory, "service_factory"),
         (selected_indexing_factory, "indexing_factory"),
+        (selected_model_lifecycle_factory, "model_lifecycle_factory"),
     ):
         if not callable(factory):
             raise ValueError(f"{name} must be callable")
@@ -177,6 +269,11 @@ def build_phase4_runtime(
         _require_embedding_service(embedding_service)
         _validate_embedding_identity(embedding_service, config)
 
+        model_lifecycle = selected_model_lifecycle_factory()
+        _register_closer(owned_closers, model_lifecycle, "close", "model_lifecycle")
+        _require_model_lifecycle(model_lifecycle)
+        managed_embedding = _ManagedEmbeddingService(embedding_service, model_lifecycle)
+
         index_lock = selected_lock_factory(paths.index_lock_path)
         _register_optional_closer(owned_closers, index_lock, "close")
         chunker = selected_chunker_factory(config)
@@ -184,7 +281,7 @@ def build_phase4_runtime(
         document_indexer = RagDocumentIndexer(
             repository,
             chunker,
-            embedding_service,
+            managed_embedding,
             selected_dense_factory,
             index_lock,
         )
@@ -196,7 +293,7 @@ def build_phase4_runtime(
         _register_optional_closer(owned_closers, indexing, "close")
         retriever = selected_retriever_factory(
             repository=repository,
-            embedding_service=embedding_service,
+            embedding_service=managed_embedding,
             dense_index_factory=selected_dense_factory,
             dense_candidate_limit=config.dense_candidate_limit,
             lexical_candidate_limit=config.lexical_candidate_limit,
@@ -207,7 +304,8 @@ def build_phase4_runtime(
         _register_optional_closer(owned_closers, evidence_selector, "close")
         sufficiency_gate = selected_gate_factory(config)
         _register_optional_closer(owned_closers, sufficiency_gate, "close")
-        answer_generator = selected_generator_factory(gateway)
+        managed_gateway = _ManagedModelGateway(gateway, model_lifecycle, managed_embedding)
+        answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
         _register_optional_closer(owned_closers, citation_validator, "close")
@@ -265,6 +363,11 @@ def _validate_runtime_paths(paths: RagRuntimePaths) -> None:
 def _require_embedding_service(embedding_service: EmbeddingService) -> None:
     for method in ("model_metadata", "embed_documents", "embed_query", "release_model", "close"):
         _require_callable(embedding_service, method, "embedding_service")
+
+
+def _require_model_lifecycle(model_lifecycle: ModelLifecycle) -> None:
+    for method in ("ensure_answer_model_unloaded", "ensure_answer_model_loaded", "close"):
+        _require_callable(model_lifecycle, method, "model_lifecycle")
 
 
 def _require_callable(component: object, attribute: str, name: str) -> None:

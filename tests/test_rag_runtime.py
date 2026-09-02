@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from aaos.inference import ChatRequest, ChatResponse, ModelAvailability
+from aaos.inference import ChatMessage, ChatRequest, ChatResponse, ModelAvailability
 from aaos.rag.config import RagIndexConfig, RagRuntimePaths, compute_config_fingerprint
 from aaos.rag.contracts import (
     EmbeddingModelMetadata,
@@ -148,6 +149,47 @@ class _Gateway:
 
     async def generate(self, _request: ChatRequest) -> ChatResponse:
         return ChatResponse(content="{}", model_identifier="fake")
+
+
+class _Lifecycle:
+    def __init__(
+        self, events: list[str], *, fail_unload: bool = False, fail_load: bool = False
+    ) -> None:
+        self.events = events
+        self.fail_unload = fail_unload
+        self.fail_load = fail_load
+
+    def ensure_answer_model_unloaded(self) -> None:
+        self.events.append("model.unload")
+        if self.fail_unload:
+            raise RuntimeError("unload failure")
+
+    def ensure_answer_model_loaded(self) -> None:
+        self.events.append("model.load")
+        if self.fail_load:
+            raise RuntimeError("load failure")
+
+    def close(self) -> None:
+        self.events.append("model.close")
+
+
+class _EventEmbedding(_Embedding):
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        self.events.append("bge.embed")
+        return super().embed_query(text)
+
+    def release_model(self) -> None:
+        self.events.append("bge.release")
+        super().release_model()
+
+
+class _EventGateway(_Gateway):
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def generate(self, request: ChatRequest) -> ChatResponse:
+        self.events.append("gateway.generate")
+        return await super().generate(request)
 
 
 class _BrokenDenseFactory:
@@ -456,3 +498,88 @@ def test_builder_composes_the_approved_services_without_reimplementing_them(
     assert runtime.service._generation_policy_version == "grounded-v1"
     assert runtime.indexing.__class__.__name__ == "RagIndexingCoordinator"
     runtime.close()
+
+
+def test_runtime_lifecycle_orders_model_residency_around_embedding_and_generation() -> None:
+    from aaos.rag.runtime import _ManagedEmbeddingService, _ManagedModelGateway
+
+    events: list[str] = []
+    lifecycle = _Lifecycle(events)
+    embedding = _ManagedEmbeddingService(_EventEmbedding(events), lifecycle)
+    gateway = _ManagedModelGateway(_EventGateway(events), lifecycle, embedding)
+
+    embedding.embed_query("question")
+    embedding.release_model()
+    asyncio.run(
+        gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content="question"),)))
+    )
+
+    assert events == [
+        "model.unload",
+        "bge.embed",
+        "bge.release",
+        "model.load",
+        "gateway.generate",
+        "model.unload",
+    ]
+
+
+def test_unload_failure_blocks_bge_acquisition() -> None:
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+    from aaos.rag.runtime import _ManagedEmbeddingService
+
+    events: list[str] = []
+    embedding = _ManagedEmbeddingService(
+        _EventEmbedding(events), _Lifecycle(events, fail_unload=True)
+    )
+
+    with pytest.raises(RagOperationalError) as caught:
+        embedding.embed_query("question")
+
+    assert caught.value.code is RagErrorCode.MODEL_UNAVAILABLE
+    assert "bge.embed" not in events
+
+
+def test_release_failure_blocks_generation() -> None:
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+    from aaos.rag.runtime import _ManagedEmbeddingService, _ManagedModelGateway
+
+    events: list[str] = []
+
+    class _FailingRelease(_EventEmbedding):
+        def release_model(self) -> None:
+            self.events.append("bge.release")
+            raise RuntimeError("release failure")
+
+    embedding = _ManagedEmbeddingService(_FailingRelease(events), _Lifecycle(events))
+    gateway = _ManagedModelGateway(_EventGateway(events), _Lifecycle(events), embedding)
+    embedding.embed_query("question")
+    with pytest.raises(RuntimeError, match="release failure"):
+        embedding.release_model()
+
+    with pytest.raises(RagOperationalError) as caught:
+        asyncio.run(
+            gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content="question"),)))
+        )
+
+    assert caught.value.code is RagErrorCode.MODEL_UNAVAILABLE
+    assert "gateway.generate" not in events
+
+
+def test_load_failure_blocks_generation() -> None:
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+    from aaos.rag.runtime import _ManagedEmbeddingService, _ManagedModelGateway
+
+    events: list[str] = []
+    lifecycle = _Lifecycle(events, fail_load=True)
+    embedding = _ManagedEmbeddingService(_EventEmbedding(events), lifecycle)
+    gateway = _ManagedModelGateway(_EventGateway(events), lifecycle, embedding)
+    embedding.release_model()
+
+    with pytest.raises(RagOperationalError) as caught:
+        asyncio.run(
+            gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content="question"),)))
+        )
+
+    assert caught.value.code is RagErrorCode.MODEL_UNAVAILABLE
+    assert "gateway.generate" not in events

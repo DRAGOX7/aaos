@@ -95,6 +95,17 @@ class _GroundingGateway:
         )
 
 
+class _FakeModelLifecycle:
+    def ensure_answer_model_unloaded(self) -> None:
+        return None
+
+    def ensure_answer_model_loaded(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 def _migration_config(database_path: Path) -> Config:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     config.set_main_option("aaos.database_path", str(database_path))
@@ -262,6 +273,7 @@ def _seeded_runtime(tmp_path: Path) -> Iterator[tuple[Phase4RagRuntime, dict[str
         gateway=gateway,
         dense_factory=ChromaDenseIndexFactory(paths),
         embedding_factory=lambda _config: FakeEmbeddingService(dimensions=3),
+        model_lifecycle_factory=lambda: _FakeModelLifecycle(),
     )
     try:
         yield runtime, {**course_ids, **version_ids}, paths.database_path
