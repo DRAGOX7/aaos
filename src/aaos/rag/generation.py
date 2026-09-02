@@ -33,7 +33,7 @@ from .contracts import (
 )
 from .retrieval import SufficiencyDecision, SufficiencyStatus
 
-_MAX_GENERATION_TOKENS = 1024
+_MAX_GENERATION_TOKENS = 2048
 
 GROUNDED_SYSTEM_PROMPT = """You are the AAOS grounded academic answer formatter.
 Return exactly one JSON object with these keys and no others:
@@ -107,6 +107,7 @@ class GroundedAnswerGenerator:
             messages=_build_messages(request),
             max_output_tokens=self._max_output_tokens,
             reasoning=False,
+            structured_output="json_schema",
         )
         response = await self._call_gateway(initial_request)
         try:
@@ -116,6 +117,7 @@ class GroundedAnswerGenerator:
                 messages=_build_messages(request, repair=True, invalid_output=response.content),
                 max_output_tokens=self._max_output_tokens,
                 reasoning=False,
+                structured_output="json_schema",
             )
             repaired_response = await self._call_gateway(repair_request)
             try:

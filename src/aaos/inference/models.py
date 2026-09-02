@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
+StructuredOutputMode = Literal["plain", "json_schema"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,7 @@ class ChatRequest:
     messages: tuple[ChatMessage, ...]
     max_output_tokens: int | None = None
     reasoning: bool = False
+    structured_output: StructuredOutputMode = "plain"
 
     def __post_init__(self) -> None:
         if not isinstance(self.messages, tuple):
@@ -43,6 +45,8 @@ class ChatRequest:
             raise ValueError("max_output_tokens must be positive")
         if not isinstance(self.reasoning, bool):
             raise ValueError("reasoning must be a bool")
+        if self.structured_output not in {"plain", "json_schema"}:
+            raise ValueError("structured_output must be plain or json_schema")
 
 
 @dataclass(frozen=True, slots=True)

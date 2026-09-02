@@ -30,6 +30,10 @@ class InferenceTimeoutError(InferenceError):
     """Raised when an inference operation exceeds its configured timeout."""
 
 
+class InferenceContextLimitError(InferenceError):
+    """Raised when a request cannot fit its prompt and completion allowance."""
+
+
 class ModelUnavailableError(InferenceError):
     """Raised when the configured model is unavailable for inference."""
 

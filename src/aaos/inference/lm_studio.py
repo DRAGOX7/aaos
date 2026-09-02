@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
+from math import ceil
 from typing import Any, TypeVar
 
 import httpx2
@@ -12,6 +14,7 @@ from aaos.config import AppSettings
 from .gateway import (
     InferenceBackendError,
     InferenceConnectionError,
+    InferenceContextLimitError,
     InferenceError,
     InferenceProtocolError,
     InferenceTimeoutError,
@@ -22,6 +25,45 @@ from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
 
 _SUPPORTED_MODEL_TYPES = frozenset({"llm", "embedding"})
 _ParsedResponse = TypeVar("_ParsedResponse")
+
+_GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_grounded_rag_answer_v1",
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"],
+                },
+                "answer_text": {"type": "string", "minLength": 1},
+                "language": {"type": "string", "enum": ["en", "ar"]},
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "claim_id": {"type": "string", "minLength": 1},
+                            "text": {"type": "string", "minLength": 1},
+                            "evidence_ids": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                                "minItems": 1,
+                            },
+                        },
+                        "required": ["claim_id", "text", "evidence_ids"],
+                    },
+                },
+            },
+            "required": ["status", "answer_text", "language", "claims"],
+        },
+    },
+}
+
+_SCHEMA_PROMPT_TOKEN_RESERVE = 128
 
 
 class LMStudioGateway:
@@ -84,6 +126,16 @@ class LMStudioGateway:
         }
         if request.max_output_tokens is not None:
             request_payload["max_tokens"] = request.max_output_tokens
+            estimated_prompt_tokens = _estimate_prompt_tokens(request)
+            if (
+                estimated_prompt_tokens + request.max_output_tokens
+                > self._settings.lm_studio_context_length
+            ):
+                raise InferenceContextLimitError(
+                    "LM Studio request exceeds the configured context window"
+                )
+        if request.structured_output == "json_schema":
+            request_payload["response_format"] = deepcopy(_GROUNDED_RAG_RESPONSE_FORMAT)
 
         response = await self._send(
             method="POST",
@@ -142,6 +194,16 @@ class LMStudioGateway:
             return
         self._closed = True
         await self._client.aclose()
+
+
+def _estimate_prompt_tokens(request: ChatRequest) -> int:
+    """Estimate prompt usage conservatively without model/tokenizer activity."""
+    content_bytes = sum(len(message.content.encode("utf-8")) for message in request.messages)
+    message_overhead = 16 * len(request.messages)
+    schema_overhead = (
+        _SCHEMA_PROMPT_TOKEN_RESERVE if request.structured_output == "json_schema" else 0
+    )
+    return ceil(content_bytes / 4) + message_overhead + schema_overhead
 
 
 def _raise_backend_error(

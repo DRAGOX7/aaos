@@ -3,6 +3,7 @@
 from .gateway import (
     InferenceBackendError,
     InferenceConnectionError,
+    InferenceContextLimitError,
     InferenceError,
     InferenceProtocolError,
     InferenceTimeoutError,
@@ -16,6 +17,7 @@ from .models import (
     ChatResponse,
     ChatRole,
     ModelAvailability,
+    StructuredOutputMode,
     TokenUsage,
 )
 
@@ -24,8 +26,10 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "ChatRole",
+    "StructuredOutputMode",
     "InferenceBackendError",
     "InferenceConnectionError",
+    "InferenceContextLimitError",
     "InferenceError",
     "InferenceProtocolError",
     "InferenceTimeoutError",

@@ -16,6 +16,7 @@ from aaos.inference import (
     ChatResponse,
     InferenceBackendError,
     InferenceConnectionError,
+    InferenceContextLimitError,
     InferenceError,
     InferenceProtocolError,
     InferenceTimeoutError,
@@ -212,6 +213,87 @@ def test_generate_sends_one_direct_non_reasoning_request() -> None:
     }
 
 
+def test_generate_serializes_the_owned_grounded_json_schema() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Return the answer."),),
+            max_output_tokens=2048,
+            structured_output="json_schema",
+        ),
+        handler,
+    )
+
+    payload = json.loads(requests[0].content)
+    assert payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_grounded_rag_answer_v1",
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"],
+                    },
+                    "answer_text": {"type": "string", "minLength": 1},
+                    "language": {"type": "string", "enum": ["en", "ar"]},
+                    "claims": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "claim_id": {"type": "string", "minLength": 1},
+                                "text": {"type": "string", "minLength": 1},
+                                "evidence_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                    "minItems": 1,
+                                },
+                            },
+                            "required": ["claim_id", "text", "evidence_ids"],
+                        },
+                    },
+                },
+                "required": ["status", "answer_text", "language", "claims"],
+            },
+        },
+    }
+
+
+def test_generate_rejects_prompt_plus_completion_over_context_before_transport() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(500)
+
+    request = ChatRequest(
+        messages=(ChatMessage(role="user", content="x" * 100_000),),
+        max_output_tokens=2048,
+        structured_output="json_schema",
+    )
+
+    with pytest.raises(InferenceContextLimitError) as caught:
+        _generate(request, handler)
+
+    assert str(caught.value) == "LM Studio request exceeds the configured context window"
+    assert requests == []
+
+
 @pytest.mark.parametrize("reasoning_content", ("", None))
 def test_generate_accepts_empty_lm_studio_reasoning_and_tool_metadata(
     reasoning_content: object,
@@ -291,9 +373,9 @@ def test_generate_preserves_optional_max_tokens() -> None:
     assert json.loads(requests[0].content)["max_tokens"] == 137
 
 
-def test_generate_accepts_context_length_output_limit_without_inspecting_input() -> None:
+def test_generate_accepts_output_limit_when_prompt_and_completion_fit_context() -> None:
     requests: list[httpx2.Request] = []
-    long_message = "x" * 50_000
+    message = "x" * 100
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
@@ -306,15 +388,15 @@ def test_generate_accepts_context_length_output_limit_without_inspecting_input()
         )
 
     request = ChatRequest(
-        messages=(ChatMessage(role="user", content=long_message),),
-        max_output_tokens=8192,
+        messages=(ChatMessage(role="user", content=message),),
+        max_output_tokens=8000,
     )
 
     _generate(request, handler)
 
     payload = json.loads(requests[0].content)
-    assert payload["messages"] == [{"role": "user", "content": long_message}]
-    assert payload["max_tokens"] == 8192
+    assert payload["messages"] == [{"role": "user", "content": message}]
+    assert payload["max_tokens"] == 8000
 
 
 def test_generate_rejects_output_limit_above_context_before_transport() -> None:
