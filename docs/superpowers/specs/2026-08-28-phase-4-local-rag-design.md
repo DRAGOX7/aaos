@@ -17,8 +17,12 @@ question
   -> explicit scope resolution
   -> hybrid retrieval
   -> deterministic evidence selection
-  -> deterministic sufficiency gate
-  -> existing local ModelGateway
+  -> deterministic structural sufficiency gate
+  -> local semantic coverage classifier (only for structurally eligible evidence)
+       -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
+       -> PARTIAL: grounded answer under a partial-support constraint
+       -> SUPPORTED: grounded answer
+  -> existing local ModelGateway for factual answer generation
   -> typed grounded answer
   -> claim-level citation validation
   -> deterministic rendering
@@ -100,7 +104,9 @@ The following are absolute invariants:
 - every factual claim has valid citation(s) from the supplied evidence IDs;
 - no unseen citation ID, fabricated source, or structurally uncited factual claim
   is accepted;
-- insufficient evidence prevents any factual answer-generation request; and
+- structural insufficiency and semantic `UNSUPPORTED` prevent any factual
+  answer-generation request; the semantic classifier itself may use the
+  approved local model; and
 - all failures are represented by fixed safe categories without raw content.
 
 ## 6. End-to-end architecture
@@ -115,10 +121,13 @@ RagQuery (question + RagScope)
   -> DenseIndex.search + SQLite FTS5/BM25 search
   -> deterministic RRF fusion
   -> EvidenceSelector
-  -> SufficiencyGate
-       -> INSUFFICIENT_EVIDENCE
-       -> GroundedAnswerGenerator (existing ModelGateway)
-  -> RagAnswer parser
+  -> StructuralSufficiencyGate
+       -> structural INSUFFICIENT_EVIDENCE
+  -> SemanticCoverageClassifier (local Qwen; structurally eligible evidence only)
+       -> UNSUPPORTED -> INSUFFICIENT_EVIDENCE
+       -> PARTIAL -> GroundedAnswerGenerator under PARTIAL constraint
+       -> SUPPORTED -> GroundedAnswerGenerator
+  -> strict RagAnswer parser
   -> CitationValidator
   -> safe renderer
 ```
@@ -499,17 +508,35 @@ An initial engineering expectation is roughly 4–8 chunks, subject to evaluatio
 and context limits. Selection output is immutable for the query and carries
 the generation and content revision pinned at query start.
 
-## 19. Sufficiency gate
+## 19. Sufficiency gates
 
-The sufficiency gate is deterministic and conservative. It considers retrieval
-coverage, rank/fusion evidence, scope, and labeled threshold policy. The LLM
-cannot declare evidence sufficient, and no answer-generation request is made
-when the gate returns insufficient evidence.
+The first gate is deterministic and conservative. The structural gate considers
+retrieval coverage, rank/fusion evidence, scope, evidence identity, and the
+labeled threshold policy. It is responsible for authorization, integrity, and
+minimum structural evidence conditions; it never asks a model to decide whether
+evidence is sufficient. A structural failure returns
+`INSUFFICIENT_EVIDENCE` and skips both semantic classification and factual
+answer generation.
 
-The result is `INSUFFICIENT_EVIDENCE`, with no pretrained-knowledge fallback.
-Thresholds are calibrated on a development set, then locked before held-out
-acceptance. Unsupported false acceptance is weighted as more serious than a
-false refusal.
+For structurally eligible evidence, a separately scoped
+`SemanticCoverageClassifier` may use the approved local Qwen model to classify
+whether the selected evidence supports all, part, or none of the requested
+information. Its output is a narrow, strictly parsed internal status:
+`SUPPORTED`, `PARTIAL`, or `UNSUPPORTED`. It is model output and remains
+untrusted until deterministic validation. It cannot broaden scope, select new
+evidence, provide citations, or produce the user-facing answer.
+`UNSUPPORTED` maps to deterministic `INSUFFICIENT_EVIDENCE` and skips factual
+answer generation; `PARTIAL` enters grounded generation with an explicit
+partial-support constraint; `SUPPORTED` enters the normal grounded generation
+path.
+
+Structural thresholds remain calibrated on development data and locked before
+held-out acceptance. Semantic-classifier calibration is a separate, local-only
+calibration gate and must report `SUPPORTED`, `PARTIAL`, and `UNSUPPORTED`
+confusion, including false support, false refusal, and
+partial-to-supported or partial-to-unsupported errors. Neither gate permits
+pretrained-knowledge or unbounded retrieval fallback. Unsupported false
+acceptance remains weighted as more serious than a false refusal.
 
 Conflicting evidence is preserved rather than silently resolved. The generator
 may state both supported positions with distinct citations unless a trusted
@@ -541,6 +568,13 @@ tool, filesystem, network, source-selection, or policy authority to it. Only
 the supplied evidence IDs may be cited. No model call receives credentials,
 browser state, arbitrary URLs, or an unbounded corpus.
 
+The semantic coverage classifier is a separate typed adapter over the same
+approved local model boundary. It runs only after structural evidence checks,
+receives the original question plus the bounded selected evidence, and returns
+only its closed coverage status. It is never a second retrieval path and never
+replaces the grounded factual-answer adapter. A classifier call is not a
+factual-answer call and cannot be rendered to the user.
+
 ## 22. Typed `RagAnswer`
 
 The public result is a validated immutable value, conceptually:
@@ -561,7 +595,9 @@ evidence and every factual academic claim satisfies the citation contract.
 portions may be returned with valid claim-level citations, while unsupported
 requested portions must be explicitly identified as unsupported and never
 invented. `INSUFFICIENT_EVIDENCE` means no useful factual answer can be
-grounded; no unsupported generation or pretrained-knowledge fallback occurs.
+grounded; no factual answer generation or pretrained-knowledge fallback occurs.
+The semantic classifier may have run before this status was selected, but its
+classification is not itself user-facing factual content.
 
 Operational failures are not public answer-status variants. They remain typed
 error outcomes such as `MODEL_UNAVAILABLE`, `MODEL_TIMEOUT`,
@@ -1041,7 +1077,168 @@ postcondition is a blocker, even if a run happens to fit in available VRAM.
 Normal tests use injected fakes and never invoke LM Studio, CUDA, or model
 downloads.
 
-## 41. Design self-review checklist
+## 41. Architecture amendment — model-assisted semantic sufficiency
+
+**Status:** design-only proposal pending explicit human approval. This section
+does not authorize production implementation, dependency changes, calibration
+execution, held-out answer execution, RAGAS, Checkpoint G, tagging, or Phase 5.
+
+### Decision and rationale
+
+The 56-case calibration spike did not prove a deterministic three-way semantic
+coverage boundary. Dense similarity, lexical coverage, question-part signals,
+rank/fusion features, and source diversity overlap materially across supported,
+partial, and unsupported cases. Further threshold tuning is therefore rejected
+as an evidence-poor way to change refusal behavior. Structural authorization
+and integrity checks remain deterministic; semantic coverage is isolated behind
+one bounded local classifier before factual answer generation.
+
+### Placement and typed contract
+
+The amended query path is:
+
+```text
+RagQuery + immutable QuerySnapshot
+  -> hybrid retrieval and deterministic EvidenceSelector
+  -> existing deterministic structural sufficiency gate
+  -> SemanticCoverageClassifier (only if structural checks pass)
+  -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
+  -> PARTIAL: grounded generation with a partial-support constraint
+  -> SUPPORTED: normal grounded generation
+  -> strict RagAnswer parsing, citation validation, provenance resolution,
+     and deterministic rendering
+```
+
+The classifier consumes only the original question, answer-language policy,
+the pinned generation/revision metadata, and the already selected bounded
+evidence. Its infrastructure-owned JSON Schema is intentionally minimal:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["SUPPORTED", "PARTIAL", "UNSUPPORTED"]
+    },
+    "unsupported_aspects": {
+      "type": "array",
+      "items": {"type": "string"},
+      "maxItems": 4
+    }
+  },
+  "required": ["status", "unsupported_aspects"],
+  "additionalProperties": false
+}
+```
+
+The parsed result is an internal semantic decision, not a public `RagAnswer`
+status. `unsupported_aspects` is a bounded advisory list: it is required to be
+empty for `SUPPORTED`, may describe unsupported requested portions for
+`PARTIAL` or `UNSUPPORTED`, and is never trusted as factual content, evidence,
+citation provenance, or authorization metadata. Each entry is nonblank,
+bounded, and treated as model-authored data. The classifier returns no evidence
+IDs, citations, source metadata, confidence score, chain-of-thought, or free-
+form rationale.
+
+The classifier is not a retrieval path, source selector, or answer renderer.
+It cannot broaden the snapshot, add evidence, resolve citations, or produce
+user-facing factual text. Structural failure skips the classifier as well as
+factual generation. A semantic `UNSUPPORTED` result maps to deterministic
+`INSUFFICIENT_EVIDENCE` and sets
+`FACTUAL_ANSWER_GENERATION_INVOKED=NO`; the classifier call itself may have
+used Qwen. A `PARTIAL` result passes an explicit partial-support constraint to
+`GroundedAnswerGenerator`, which may state only supported portions, must
+identify unsupported requested portions, and must cite every factual claim.
+
+### Model, bounds, and failure behavior
+
+The classifier uses only the approved local `qwen/qwen3.5-4b` through the
+existing loopback `ModelGateway` boundary. No cloud provider, external network,
+tool, agent, memory, or fallback is permitted. Classification uses the local
+JSON-Schema response-format mechanism plus strict application parsing; endpoint
+schema enforcement never replaces deterministic validation. The proposed
+classifier completion bound is **256 tokens**, subject to calibration and
+explicit approval before implementation. Before each call, the prompt allowance
+plus that bound must fit the configured model context; otherwise fail closed
+without truncating evidence or changing models/configuration.
+
+Only one bounded repair is permitted, using the same schema and bound. A
+transport/model/lifecycle failure is not retried. Malformed classification
+after the allowed repair fails closed with a typed operational error and never
+falls through to factual generation. There is no third call, prose stripping,
+regex extraction, schema relaxation, or silent threshold fallback.
+
+### Prompt-injection and trust boundary
+
+Retrieved document text is untrusted data. Classifier instructions explicitly
+separate system policy from evidence and grant the evidence no authority to
+alter the schema, scope, tools, secrets, model/runtime configuration, or
+network behavior. No tools are exposed. Classifier output remains untrusted
+until strict parsing and status validation; it never supplies citation or
+provenance metadata. The existing SQLite-backed evidence and citation boundary
+remains authoritative.
+
+### VRAM lifecycle
+
+Per request, the runtime ensures Qwen is not resident, performs BGE-M3
+embedding/retrieval, releases and verifies BGE, then loads/verifies Qwen for
+semantic classification. Qwen remains loaded for any subsequent factual
+generation and is unloaded during deterministic cleanup. The classifier must
+not run while BGE remains GPU-resident, and a lifecycle/postcondition failure
+stops the request with the existing safe model-unavailable error. The runtime
+remains the sole lifecycle owner; no model-management surface is exposed to
+the classifier or factual model.
+
+### Calibration and held-out protection
+
+Calibration may use only the already-consumed 56 cases. It must report the
+three-way confusion matrix for `SUPPORTED`, `PARTIAL`, and `UNSUPPORTED`,
+including false support, false refusal, partial-to-supported, and
+partial-to-unsupported errors, with English/Arabic breakdowns. It must also
+prove the local-only model boundary, strict schema/parse behavior, the bounded
+repair count, and BGE-before-Qwen non-overlapping residency. Poor calibration
+results are reported rather than hidden or repaired by changing production
+retrieval thresholds.
+
+The final 24 answer-heldout cases remain pristine:
+`HELDOUT_ANSWER_CASES_EXECUTED=0` and
+`ANSWER_HELDOUT_RESULTS_VISIBLE=NO` during this amendment. No held-out answer,
+RAGAS, Checkpoint G, or Phase 5 action is authorized until the classifier is
+implemented, calibrated, reviewed, and the existing pre-heldout gates pass.
+
+### Proposed implementation surface (not authorized by this amendment)
+
+Production files proposed for a later implementation task:
+
+- `src/aaos/rag/contracts.py`: closed `SemanticCoverageStatus` and typed
+  classifier result/error contracts;
+- `src/aaos/rag/semantic_coverage.py`: local-only classifier adapter, schema,
+  strict parsing, context-budget check, and one-repair bound;
+- `src/aaos/rag/service.py`: invoke the classifier after structural gating and
+  propagate `PARTIAL`/`UNSUPPORTED` without duplicating retrieval or citation
+  logic;
+- `src/aaos/rag/generation.py`: accept the explicit partial-support constraint
+  while preserving the strict `RagAnswer` contract; and
+- `src/aaos/rag/runtime.py`: compose classifier ownership with the existing
+  Qwen/BGE lifecycle without adding a second model boundary.
+
+Proposed test surface:
+
+- `tests/test_rag_semantic_coverage.py` for schema, statuses, bounded repair,
+  context limits, injection data, no-tools/no-network, and fail-closed output;
+- extensions to `tests/test_rag_service.py`, `tests/test_rag_generation.py`,
+  and `tests/test_rag_runtime.py` for structural/semantic ordering, partial
+  propagation, unsupported no-factual-call behavior, lifecycle ordering, and
+  cleanup; and
+- acceptance-only calibration coverage under the existing guarded Task 26
+  harness, with no held-out execution.
+
+Phase 3 remains read-only and unchanged. No schema, storage, retrieval scope,
+citation authority, public answer status, or persistence contract is changed by
+this design amendment.
+
+## 42. Design self-review checklist
 
 This specification was checked for:
 
