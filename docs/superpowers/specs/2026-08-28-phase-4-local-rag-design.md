@@ -958,6 +958,77 @@ change the trust, lifecycle, persistence, scope, citation, or phase-boundary
 invariants above. Any issue that would require such a change is an architecture
 review gate, not an implementation detail.
 
+### Phase 4 runtime amendment — bounded completion and non-overlapping model residency
+
+The following narrow amendment records the correction required by target-hardware
+calibration. It changes neither the answer schema nor the `ModelGateway`
+boundary, and it must be implemented and re-verified before any held-out answer
+cases are executed.
+
+#### Bounded structured completion
+
+The current grounded generator limit of 512 completion tokens is insufficient:
+the calibration reproduction reached the limit on both the initial response and
+the single permitted repair, with incomplete JSON. The fixed Phase 4 limit is
+therefore proposed as 1024 completion tokens for both attempts. This is a
+bounded value below the configured 8192-token context and within the generator's
+existing maximum; it does not change the prompt, closed JSON schema, model, or
+one-repair maximum. Calibration must prove that the strict object completes at
+this bound before held-out execution. Malformed output remains rejected; no
+regex extraction, prose stripping, extra retry, or schema relaxation is allowed.
+
+The calibration evidence used for this amendment is the already-consumed
+production-path case: `CURRENT_MAX_TOKENS=512`, two model calls, and both
+responses classified `TRUNCATED_OR_INCOMPLETE_JSON`. The maximum observed
+completion usage is therefore the 512-token cap; backend raw output is not
+retained as an acceptance artifact.
+
+#### Deterministic local model lifecycle
+
+The target machine's installed LM Studio CLI exposes `ps --json`, `load`, and
+`unload`; `load` supports fixed GPU and context options, and an optional TTL.
+No supported model-management REST endpoint or JIT/on-demand guarantee has been
+confirmed locally. Phase 4 therefore uses a narrowly scoped deterministic local
+model-runtime controller, owned by `Phase4RagRuntime`, rather than extending
+`ModelGateway` or granting any model/tool capability to the answer model.
+
+For the configured answer model only, the controller may inspect residency with
+`ps --json`, unload it with the fixed `unload <configured-model>` command, and
+load it with the fixed `load <configured-model> --gpu max --context-length
+<configured-context> -y` command. The model identifier and context are taken
+from validated application settings; callers cannot supply a command, model,
+URL, or arbitrary arguments. The controller never uses `--all`, starts or
+reconfigures the server, downloads a model, or manages unrelated user models.
+Command output is discarded and translated to fixed local error codes.
+
+The request lifecycle is:
+
+```text
+ensure configured answer model unloaded and verify
+  -> BGE-M3 load/embed/retrieve
+  -> BGE-M3 release and verify
+  -> ensure configured answer model loaded and verify
+  -> one bounded generation request (plus at most one schema repair)
+  -> typed validation and trusted rendering
+  -> unload before a later embedding request or runtime close
+```
+
+An unload, load, or postcondition-verification failure is a typed
+`MODEL_UNAVAILABLE` failure. The request fails closed: it does not proceed with
+uncertain residency, change device/model, invoke a cloud endpoint, or retry the
+operation. The controller is idempotent and closes deterministically; process
+termination is not the cleanup mechanism. Existing embedding release and
+retriever ordering remain mandatory, and no generation call may occur before
+that release boundary.
+
+Acceptance on the RTX 4050 Laptop GPU (6 GB) must record safe aggregate memory
+observations proving that the configured answer model is not resident before
+BGE work, BGE resources are released before answer-model load/generation, and
+the two models are never simultaneously GPU-resident. A failed or unmeasurable
+postcondition is a blocker, even if a run happens to fit in available VRAM.
+Normal tests use injected fakes and never invoke LM Studio, CUDA, or model
+downloads.
+
 ## 41. Design self-review checklist
 
 This specification was checked for:

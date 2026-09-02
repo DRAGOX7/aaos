@@ -70,6 +70,7 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 | `src/aaos/rag/dense.py` | Create | `DenseIndex`/factory protocols and typed vector records/hits. | Generation vectors and query vector -> keys/ranks. | 7 |
 | `src/aaos/rag/chroma.py` | Create | Embedded Chroma per-generation implementation. | Disposable/persistent generation path. | 8 |
 | `src/aaos/rag/embeddings.py` | Create | `EmbeddingService`, deterministic fake boundary, and BGE-M3 lifecycle adapter. | Text batches -> vectors/model metadata. | 9 |
+| `src/aaos/inference/lm_studio_lifecycle.py` | Create | Fixed-command local answer-model residency controller; no generic model-management surface. | Validated settings -> typed load/unload lifecycle. | 17, 20, 26 amendment |
 | `src/aaos/rag/lock.py` | Create | Ownership-safe Phase 4 single-writer lease. | Absolute lock path -> lease. | 10 |
 | `src/aaos/rag/indexing.py` | Create | Per-document indexing, `index-new`, rebuild, verification, activation, recovery. | Repository/chunker/embedding/dense/lock -> typed results. | 11–13 |
 | `src/aaos/rag/retrieval.py` | Create | Scope resolution, pinned query snapshot, dense/lexical retrieval, RRF, evidence selection/sufficiency. | `RagQuery` -> trusted selected evidence. | 14–16 |
@@ -96,6 +97,7 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 | `tests/test_rag_lexical.py` | Create | Conservative normalization and BM25 behavior. | 6 |
 | `tests/test_rag_dense.py`, `tests/test_rag_chroma.py` | Create | Protocol/fake behavior and disposable Chroma isolation. | 7–8 |
 | `tests/test_rag_embeddings.py` | Create | Fake and BGE-M3 adapter metadata/lifecycle without model download. | 9 |
+| `tests/test_lm_studio_lifecycle.py` | Create | Deterministic answer-model unload/load ordering and fail-closed postconditions. | 17, 20, 26 amendment |
 | `tests/test_rag_lock.py` | Create | Exclusive ownership and safe release. | 10 |
 | `tests/test_rag_indexing.py`, `tests/test_rag_rebuild.py` | Create | Per-document state, publication, rebuild, integrity, recovery. | 11–13 |
 | `tests/test_rag_retrieval.py` | Create | Scope/current/history, snapshot, candidate verification, RRF. | 14–15 |
@@ -562,7 +564,7 @@ Require `uv run pytest tests/test_rag_contracts.py tests/test_rag_config.py test
 
 **Requirements**
 - Lazily load only on first embed, validate model/revision/dimension, batch within 6 GB VRAM, and implement idempotent `release_model()` that drops model/tokenizer references, runs Python GC, calls CUDA cache release when available, and permits a later explicit lazy reload. `close()` permanently closes the adapter and calls `release_model()` once.
-- Ordinary tests monkeypatch the backend and never download a model; no simultaneous LM Studio requirement is introduced.
+- Ordinary tests monkeypatch the backend and never download a model or contact LM Studio. The runtime amendment below adds a deterministic lifecycle controller only to explicit Phase 4 runtime/acceptance composition; it does not make simultaneous LM Studio residency a requirement.
 
 - [ ] **Step 1 — Write failing tests:** lazy load, metadata fingerprint inputs, deterministic fake, batch/dimension checks, `release_model()`/reload, close sequence/idempotence, construction failure cleanup, CPU-safe behavior, and no import-time model/cache/network action. Representative assertion: `assert backend_factory.calls == 0` immediately after service construction.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_embeddings.py -v`; expect import failure.
@@ -1050,6 +1052,91 @@ Require deterministic dataset/split/metric tests, no held-out leakage, dense/lex
 - [ ] **Step 5 — Controlled real acceptance:** only after separate human authorization, run the exact opted-in command recorded by the implementation review, then complete held-out human review and capture sanitized aggregates.
 - [ ] **Step 6 — Final verification:** `uv run pytest`; `uv run ruff format --check .`; `uv run ruff check .`; `uv run mypy src tests`; `uv lock --check`; `git diff --check`; verify `data/database/aaos.db` and `data/rag/chroma/` were untouched unless explicitly authorized.
 - [ ] **Step 7 — Commit:** after human review of safe acceptance evidence, `git add tests/live/test_phase4_local_rag_acceptance.py src/aaos/rag/evaluation/reports.py tests/test_rag_reports.py`; `git commit -m "test(rag): add controlled phase4 acceptance"`. Do not create `phase-04-passed`.
+
+## Phase 4 runtime amendment — Qwen completion budget and non-overlapping GPU lifecycle
+
+This amendment is documentation-only until human approval. It applies only to
+the already-scoped generation/runtime/acceptance work in Tasks 17, 20, and 26;
+it does not authorize held-out answer execution, RAGAS, Checkpoint G, or Phase 5.
+
+### Amendment A — bounded structured completion
+
+The calibration reproduction showed both the initial grounded response and the
+single permitted repair terminating as incomplete JSON at the existing
+`_MAX_GENERATION_TOKENS = 512` cap. Change only that fixed default to **1024**
+completion tokens. Both the initial and repair `ChatRequest` must carry the same
+bound. Keep the existing closed schema, prompt, model, reasoning-off setting,
+and maximum of one repair attempt. A malformed or incomplete response remains a
+fixed `INVALID_STRUCTURED_OUTPUT` failure; do not extract partial JSON, strip
+prose, or add retries. Calibration must prove strict completion at 1024 before
+the protected 24-case held-out set is eligible for execution.
+
+**Files:** modify `src/aaos/rag/generation.py`; extend
+`tests/test_rag_generation.py` with a realistic response exceeding the old
+512-token bound, strict parsing, malformed-output rejection, and exactly-one
+repair assertions. No prompt/schema/model change is authorized.
+
+### Amendment B — deterministic local answer-model residency
+
+Create `src/aaos/inference/lm_studio_lifecycle.py` with a narrow typed
+controller and no public model-management command. Its production adapter may
+use only the locally confirmed LM Studio CLI operations:
+
+```text
+lms ps --json
+lms unload <validated-configured-model>
+lms load <validated-configured-model> --gpu max --context-length <validated-context> -y
+```
+
+The executable is resolved through the approved local installation; model and
+context values come only from validated `AppSettings`. Do not accept caller
+commands, arbitrary model identifiers, URLs, or arguments; never use `lms
+unload --all`; never start/reconfigure the server, download a model, or assume
+JIT/on-demand loading. Command output is discarded and converted to the
+existing safe `MODEL_UNAVAILABLE` error boundary. A successful command is not
+enough: `ps --json` must verify the configured model's postcondition.
+
+`Phase4RagRuntime` owns the controller and composes it through private
+wrappers, without changing `ModelGateway` or exposing lifecycle controls to the
+LLM:
+
+1. Before any BGE-M3 acquisition, ensure the configured answer model is absent
+   and verify the postcondition.
+2. Run the existing BGE embed/retrieve path and its mandatory release/verification
+   boundary.
+3. Immediately before each `ModelGateway.generate()` call, ensure/load the
+   configured answer model and verify it is available.
+4. If unload, BGE release verification, load, or postcondition verification
+   fails, stop with typed `MODEL_UNAVAILABLE`; do not generate, retrieve, switch
+   devices/models, or use a cloud/network fallback.
+5. Unload the answer model before a later embedding request and during
+   deterministic runtime cleanup. Close is idempotent, bounded, and does not
+   rely on process termination.
+
+The runtime remains the sole lifecycle owner. The gateway remains the sole
+answer-generation boundary; retrieval, evidence, citation, and rendering logic
+are not duplicated or broadened. The existing short transaction and embedding
+release ordering remain unchanged.
+
+**Files:** create `src/aaos/inference/lm_studio_lifecycle.py` and
+`tests/test_lm_studio_lifecycle.py`; modify `src/aaos/rag/runtime.py` only for
+explicit ownership/composition and the private lifecycle wrappers. Update
+`tests/test_rag_runtime.py` for construction/cleanup ordering. Extend
+`tests/live/test_phase4_local_rag_acceptance.py` only with safe aggregate
+markers for model absence before BGE, BGE release before generation, and no
+simultaneous residency. Normal tests inject fakes and never invoke `lms`, CUDA,
+LM Studio, or model downloads.
+
+### Amendment verification and acceptance gate
+
+Run the generation and lifecycle tests with fake gateways/controllers first.
+Then, in a separately human-authorized calibration-only run, record the fixed
+model/config identity, completion usage/finish status, and aggregate GPU memory
+observations. Acceptance must show Qwen not GPU-resident before BGE work, BGE
+released before Qwen load/generation, and no simultaneous BGE+Qwen GPU
+residency. A missing/unmeasurable postcondition is a blocker even if the run
+happens to fit within 6 GB. No held-out answer cases, RAGAS, or Checkpoint G may
+run until this amendment is approved and the calibration gate passes.
 
 ## Checkpoint G — Controlled Acceptance
 
