@@ -1061,20 +1061,36 @@ it does not authorize held-out answer execution, RAGAS, Checkpoint G, or Phase 5
 
 ### Amendment A — bounded structured completion
 
-The calibration reproduction showed both the initial grounded response and the
-single permitted repair terminating as incomplete JSON at the existing
-`_MAX_GENERATION_TOKENS = 512` cap. Change only that fixed default to **1024**
-completion tokens. Both the initial and repair `ChatRequest` must carry the same
-bound. Keep the existing closed schema, prompt, model, reasoning-off setting,
-and maximum of one repair attempt. A malformed or incomplete response remains a
-fixed `INVALID_STRUCTURED_OUTPUT` failure; do not extract partial JSON, strip
-prose, or add retries. Calibration must prove strict completion at 1024 before
-the protected 24-case held-out set is eligible for execution.
+The calibration reproduction showed the initial grounded response consuming the
+existing 1024-token cap and ending with incomplete JSON. The one repair stopped
+below that cap but returned markdown-fenced invalid JSON, so increasing the
+budget alone is insufficient. The approved fixed default is **2048 completion
+tokens** for both the initial and repair `ChatRequest`. This remains below the
+configured 8192-token context and the generator's existing 4096-token maximum.
+Before each request, the prompt-token allowance plus 2048 completion tokens must
+fit the configured context; fail closed rather than silently truncating evidence
+or requirements, enlarging context, switching models, or using a cloud fallback.
+
+Both calls must set LM Studio's locally confirmed `response_format` JSON Schema
+mode. The deterministic infrastructure-owned schema represents exactly the
+existing strict `RagAnswer` contract (`status`, `answer_text`, `language`, and
+`claims`; each claim has exactly `claim_id`, `text`, and `evidence_ids`). The
+schema is not influenced by question/evidence data. JSON Schema constrains
+syntax but does not replace the strict application parser, request-local
+evidence-ID checks, provenance/citation validator, or trusted renderer;
+additional fields, malformed claims, unknown IDs, markdown/prose, and incomplete
+output remain rejected. The maximum remains one repair attempt; no extraction,
+prose stripping, third attempt, schema relaxation, or automatic increase to
+3072/4096 is allowed. Calibration must prove strict completion, schema-mode
+success, and trusted validation at 2048 before held-out execution. A response
+that reaches 2048 and truncates, or fails schema/strict validation after repair,
+is a human review gate.
 
 **Files:** modify `src/aaos/rag/generation.py`; extend
 `tests/test_rag_generation.py` with a realistic response exceeding the old
 512-token bound, strict parsing, malformed-output rejection, and exactly-one
-repair assertions. No prompt/schema/model change is authorized.
+repair assertions. Extend the local LM Studio adapter tests for the exact JSON
+Schema request contract and keep the existing strict parser authoritative.
 
 ### Amendment B — deterministic local answer-model residency
 
