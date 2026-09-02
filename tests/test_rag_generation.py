@@ -26,6 +26,7 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RagQuery,
     RetrievedEvidence,
+    SemanticCoverageStatus,
 )
 from aaos.rag.generation import (
     CitationValidator,
@@ -203,6 +204,49 @@ def test_malformed_twice_fails_without_a_third_call() -> None:
 
     with pytest.raises(RagOperationalError) as error:
         _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+    assert len(gateway.requests) == 2
+
+
+def test_partial_semantic_constraint_is_forwarded_and_requires_partial_status() -> None:
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"status":"PARTIAL_ANSWER","answer_text":"Friday.","language":"en",'
+                '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+                '"evidence_ids":["ev-1"]}]}'
+            )
+        ]
+    )
+    request = replace(
+        _request(),
+        semantic_status=SemanticCoverageStatus.PARTIAL,
+        unsupported_aspects=("exam location",),
+    )
+
+    output = _run(GroundedAnswerGenerator(gateway), request, _decision())
+
+    assert output.status is RagAnswerStatus.PARTIAL_ANSWER
+    assert "exam location" in gateway.requests[0].messages[1].content
+    assert "semantic_status" in gateway.requests[0].messages[1].content
+
+
+def test_partial_semantic_model_answer_status_is_repaired_or_rejected() -> None:
+    payload = (
+        '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
+        '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+        '"evidence_ids":["ev-1"]}]}'
+    )
+    gateway = FakeGateway([_response(payload), _response(payload)])
+    request = replace(
+        _request(),
+        semantic_status=SemanticCoverageStatus.PARTIAL,
+        unsupported_aspects=("exam location",),
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        _run(GroundedAnswerGenerator(gateway), request, _decision())
 
     assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
     assert len(gateway.requests) == 2

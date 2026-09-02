@@ -58,6 +58,11 @@ class _GroundingGateway:
     async def generate(self, request: ChatRequest) -> ChatResponse:
         self.calls += 1
         self.requests.append(request)
+        if any("<semantic-input>" in message.content for message in request.messages):
+            return ChatResponse(
+                content='{"status":"SUPPORTED","unsupported_aspects":[]}',
+                model_identifier="qwen/qwen3.5-4b",
+            )
         payload = next(
             message.content.split("<grounded-input>", 1)[1].split("</grounded-input>", 1)[0]
             for message in request.messages

@@ -63,6 +63,34 @@ _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     },
 }
 
+_SEMANTIC_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_semantic_coverage_v1",
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["SUPPORTED", "PARTIAL", "UNSUPPORTED"],
+                },
+                "unsupported_aspects": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "maxItems": 4,
+                },
+            },
+            "required": ["status", "unsupported_aspects"],
+        },
+    },
+}
+
+_STRUCTURED_RESPONSE_FORMATS = {
+    "grounded_answer": _GROUNDED_RAG_RESPONSE_FORMAT,
+    "semantic_coverage": _SEMANTIC_COVERAGE_RESPONSE_FORMAT,
+}
+
 _SCHEMA_PROMPT_TOKEN_RESERVE = 128
 
 
@@ -135,7 +163,9 @@ class LMStudioGateway:
                     "LM Studio request exceeds the configured context window"
                 )
         if request.structured_output == "json_schema":
-            request_payload["response_format"] = deepcopy(_GROUNDED_RAG_RESPONSE_FORMAT)
+            request_payload["response_format"] = deepcopy(
+                _STRUCTURED_RESPONSE_FORMATS[request.structured_output_schema]
+            )
 
         response = await self._send(
             method="POST",

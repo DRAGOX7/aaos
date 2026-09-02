@@ -36,6 +36,9 @@ from .contracts import (
     RagScope,
     RenderedRagResponse,
     RetrievedEvidence,
+    SemanticCoverageDecision,
+    SemanticCoverageRequest,
+    SemanticCoverageStatus,
 )
 from .service import GuardedLocalRagService
 
@@ -72,6 +75,9 @@ __all__ = [
     "GuardedLocalRagService",
     "RenderedRagResponse",
     "RetrievedEvidence",
+    "SemanticCoverageDecision",
+    "SemanticCoverageRequest",
+    "SemanticCoverageStatus",
     "compute_config_fingerprint",
     "resolve_rag_runtime_paths",
 ]

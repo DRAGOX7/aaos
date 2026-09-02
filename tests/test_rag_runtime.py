@@ -513,6 +513,9 @@ def test_runtime_lifecycle_orders_model_residency_around_embedding_and_generatio
     asyncio.run(
         gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content="question"),)))
     )
+    asyncio.run(
+        gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content="question 2"),)))
+    )
 
     assert events == [
         "model.unload",
@@ -520,7 +523,7 @@ def test_runtime_lifecycle_orders_model_residency_around_embedding_and_generatio
         "bge.release",
         "model.load",
         "gateway.generate",
-        "model.unload",
+        "gateway.generate",
     ]
 
 

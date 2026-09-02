@@ -274,6 +274,54 @@ def test_generate_serializes_the_owned_grounded_json_schema() -> None:
     }
 
 
+def test_generate_serializes_the_owned_semantic_coverage_json_schema() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Classify coverage."),),
+            max_output_tokens=256,
+            structured_output="json_schema",
+            structured_output_schema="semantic_coverage",
+        ),
+        handler,
+    )
+
+    payload = json.loads(requests[0].content)
+    assert payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_semantic_coverage_v1",
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["SUPPORTED", "PARTIAL", "UNSUPPORTED"],
+                    },
+                    "unsupported_aspects": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 4,
+                    },
+                },
+                "required": ["status", "unsupported_aspects"],
+            },
+        },
+    }
+
+
 def test_generate_rejects_prompt_plus_completion_over_context_before_transport() -> None:
     requests: list[httpx2.Request] = []
 

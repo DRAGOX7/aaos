@@ -35,6 +35,7 @@ from .indexing import RagDocumentIndexer, RagIndexingCoordinator
 from .lock import RagIndexLock
 from .repository import RagRepository
 from .retrieval import EvidenceSelector, EvidenceSufficiencyGate, HybridRetriever
+from .semantic_coverage import SemanticCoverageClassifier
 from .service import GuardedLocalRagService
 
 DatabaseEngineFactory = Callable[[Any], Engine]
@@ -46,6 +47,11 @@ IndexLockFactory = Callable[[Any], RagIndexLock]
 ModelLifecycleFactory = Callable[[], ModelLifecycle]
 
 
+@dataclass(slots=True)
+class _ModelResidencyState:
+    answer_loaded: bool = False
+
+
 def _default_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
     return BgeM3EmbeddingService(device="cuda")
 
@@ -53,9 +59,15 @@ def _default_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
 class _ManagedEmbeddingService:
     """Keep answer-model residency out of every BGE acquisition."""
 
-    def __init__(self, inner: EmbeddingService, lifecycle: ModelLifecycle) -> None:
+    def __init__(
+        self,
+        inner: EmbeddingService,
+        lifecycle: ModelLifecycle,
+        residency: _ModelResidencyState | None = None,
+    ) -> None:
         self._inner = inner
         self._lifecycle = lifecycle
+        self._residency = residency or _ModelResidencyState()
         self._released = True
 
     def model_metadata(self) -> EmbeddingModelMetadata:
@@ -89,6 +101,7 @@ class _ManagedEmbeddingService:
     def _ensure_answer_unloaded(self) -> None:
         try:
             self._lifecycle.ensure_answer_model_unloaded()
+            self._residency.answer_loaded = False
         except ModelLifecycleError:
             raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
         except Exception:
@@ -103,10 +116,12 @@ class _ManagedModelGateway:
         inner: ModelGateway,
         lifecycle: ModelLifecycle,
         embedding: _ManagedEmbeddingService,
+        residency: _ModelResidencyState | None = None,
     ) -> None:
         self._inner = inner
         self._lifecycle = lifecycle
         self._embedding = embedding
+        self._residency = residency or embedding._residency
 
     async def check_availability(self) -> ModelAvailability:
         return await self._inner.check_availability()
@@ -114,22 +129,15 @@ class _ManagedModelGateway:
     async def generate(self, request: ChatRequest) -> ChatResponse:
         if not self._embedding.release_verified:
             raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
-        try:
-            self._lifecycle.ensure_answer_model_loaded()
-        except ModelLifecycleError:
-            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
-        except Exception:
-            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
-        try:
-            response = await self._inner.generate(request)
-        finally:
+        if not self._residency.answer_loaded:
             try:
-                self._lifecycle.ensure_answer_model_unloaded()
+                self._lifecycle.ensure_answer_model_loaded()
             except ModelLifecycleError:
                 raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
             except Exception:
                 raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
-        return response
+            self._residency.answer_loaded = True
+        return await self._inner.generate(request)
 
 
 def _close_error() -> RagOperationalError:
@@ -190,6 +198,7 @@ def build_phase4_runtime(
     retriever_factory: Callable[..., HybridRetriever] | None = None,
     evidence_selector_factory: Callable[..., EvidenceSelector] | None = None,
     sufficiency_gate_factory: Callable[..., EvidenceSufficiencyGate] | None = None,
+    semantic_classifier_factory: Callable[..., SemanticCoverageClassifier] | None = None,
     answer_generator_factory: Callable[..., GroundedAnswerGenerator] | None = None,
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
@@ -218,6 +227,7 @@ def build_phase4_runtime(
     selected_retriever_factory = retriever_factory or HybridRetriever
     selected_selector_factory = evidence_selector_factory or EvidenceSelector
     selected_gate_factory = sufficiency_gate_factory or EvidenceSufficiencyGate
+    selected_classifier_factory = semantic_classifier_factory or SemanticCoverageClassifier
     selected_generator_factory = answer_generator_factory or GroundedAnswerGenerator
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
@@ -233,6 +243,7 @@ def build_phase4_runtime(
         (selected_retriever_factory, "retriever_factory"),
         (selected_selector_factory, "evidence_selector_factory"),
         (selected_gate_factory, "sufficiency_gate_factory"),
+        (selected_classifier_factory, "semantic_classifier_factory"),
         (selected_generator_factory, "answer_generator_factory"),
         (selected_validator_factory, "citation_validator_factory"),
         (selected_service_factory, "service_factory"),
@@ -272,7 +283,8 @@ def build_phase4_runtime(
         model_lifecycle = selected_model_lifecycle_factory()
         _register_closer(owned_closers, model_lifecycle, "close", "model_lifecycle")
         _require_model_lifecycle(model_lifecycle)
-        managed_embedding = _ManagedEmbeddingService(embedding_service, model_lifecycle)
+        residency = _ModelResidencyState()
+        managed_embedding = _ManagedEmbeddingService(embedding_service, model_lifecycle, residency)
 
         index_lock = selected_lock_factory(paths.index_lock_path)
         _register_optional_closer(owned_closers, index_lock, "close")
@@ -304,7 +316,12 @@ def build_phase4_runtime(
         _register_optional_closer(owned_closers, evidence_selector, "close")
         sufficiency_gate = selected_gate_factory(config)
         _register_optional_closer(owned_closers, sufficiency_gate, "close")
-        managed_gateway = _ManagedModelGateway(gateway, model_lifecycle, managed_embedding)
+        managed_gateway = _ManagedModelGateway(
+            gateway, model_lifecycle, managed_embedding, residency
+        )
+        semantic_classifier = selected_classifier_factory(managed_gateway)
+        _register_optional_closer(owned_closers, semantic_classifier, "close")
+        _require_callable(semantic_classifier, "classify", "semantic_classifier")
         answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
@@ -315,6 +332,7 @@ def build_phase4_runtime(
             sufficiency_gate=sufficiency_gate,
             answer_generator=answer_generator,
             citation_validator=citation_validator,
+            semantic_classifier=semantic_classifier,
             rrf_k=config.rrf_k,
         )
         _register_optional_closer(owned_closers, service, "close")

@@ -21,6 +21,8 @@ from aaos.rag.contracts import (
     RagQuery,
     RenderedRagResponse,
     RetrievedEvidence,
+    SemanticCoverageDecision,
+    SemanticCoverageStatus,
 )
 from aaos.rag.generation import (
     CitationValidator,
@@ -163,6 +165,29 @@ class FakeGenerator:
         return self.output
 
 
+class FakeSemanticClassifier:
+    def __init__(self, status: SemanticCoverageStatus = SemanticCoverageStatus.SUPPORTED) -> None:
+        self.status = status
+        self.calls = 0
+        self.seen_request: GroundedAnswerRequest | None = None
+        self.error: BaseException | None = None
+
+    async def classify(self, request: GroundedAnswerRequest) -> SemanticCoverageDecision:
+        self.calls += 1
+        self.seen_request = request
+        if self.error is not None:
+            raise self.error
+        return SemanticCoverageDecision(
+            status=self.status,
+            unsupported_aspects=("unsupported portion",)
+            if self.status is SemanticCoverageStatus.PARTIAL
+            else (),
+            generation_id=request.generation_id,
+            content_revision=request.content_revision,
+            policy_version=request.policy_version,
+        )
+
+
 class FakeGateway:
     def __init__(self) -> None:
         self.calls = 0
@@ -188,6 +213,7 @@ def _service(
     selector: FakeSelector | None = None,
     gate: FakeGate | None = None,
     generator: FakeGenerator | None = None,
+    semantic_classifier: FakeSemanticClassifier | None = None,
 ) -> tuple[GuardedLocalRagService, FakeRetriever, FakeSelector, FakeGate, FakeGenerator]:
     selected_retriever = retriever or FakeRetriever()
     selected_selector = selector or FakeSelector()
@@ -199,6 +225,7 @@ def _service(
         sufficiency_gate=selected_gate,
         answer_generator=selected_generator,
         citation_validator=CitationValidator(),
+        semantic_classifier=semantic_classifier or FakeSemanticClassifier(),
     )
     return service, selected_retriever, selected_selector, selected_gate, selected_generator
 
@@ -251,6 +278,81 @@ def test_unsupported_sufficiency_never_calls_answer_gateway() -> None:
 
     assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
     assert gateway.calls == 0
+
+
+def test_structural_unsupported_bypasses_semantic_classifier() -> None:
+    retriever = FakeRetriever()
+    selector = FakeSelector(())
+    gate = FakeGate(SufficiencyStatus.UNSUPPORTED)
+
+    class MustNotClassify:
+        async def classify(self, _request: GroundedAnswerRequest) -> SemanticCoverageDecision:
+            raise AssertionError("semantic classifier must not run after structural refusal")
+
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=selector,
+        sufficiency_gate=gate,
+        answer_generator=FakeGenerator(retriever, _output()),
+        citation_validator=CitationValidator(),
+        semantic_classifier=MustNotClassify(),
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+
+
+def test_semantic_unsupported_skips_factual_generation() -> None:
+    retriever = FakeRetriever()
+    classifier = FakeSemanticClassifier(SemanticCoverageStatus.UNSUPPORTED)
+    generator = FakeGenerator(retriever, _output())
+    service, *_ = _service(
+        retriever=retriever,
+        generator=generator,
+        semantic_classifier=classifier,
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert classifier.calls == 1
+    assert generator.calls == 0
+
+
+def test_semantic_partial_status_reaches_generator_as_constraint() -> None:
+    retriever = FakeRetriever()
+    classifier = FakeSemanticClassifier(SemanticCoverageStatus.PARTIAL)
+    generator = FakeGenerator(retriever, _output(status=RagAnswerStatus.PARTIAL_ANSWER))
+    service, *_ = _service(
+        retriever=retriever,
+        generator=generator,
+        semantic_classifier=classifier,
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.PARTIAL_ANSWER
+    assert generator.seen_request is not None
+    assert generator.seen_request.unsupported_aspects == ("unsupported portion",)
+
+
+def test_semantic_classifier_failure_stops_before_factual_generation() -> None:
+    retriever = FakeRetriever()
+    classifier = FakeSemanticClassifier()
+    classifier.error = RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
+    generator = FakeGenerator(retriever, _output())
+    service, *_ = _service(
+        retriever=retriever,
+        generator=generator,
+        semantic_classifier=classifier,
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        _ask(service)
+
+    assert error.value.code is RagErrorCode.MODEL_UNAVAILABLE
+    assert generator.calls == 0
 
 
 def test_retriever_error_is_preserved_without_generation_fallback() -> None:
@@ -342,6 +444,7 @@ def test_citation_validation_failure_is_safe() -> None:
         sufficiency_gate=FakeGate(),
         answer_generator=FakeGenerator(retriever, _output()),
         citation_validator=FailingValidator(),  # type: ignore[arg-type]
+        semantic_classifier=FakeSemanticClassifier(),
     )
 
     with pytest.raises(RagOperationalError) as error:

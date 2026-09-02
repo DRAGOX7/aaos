@@ -18,6 +18,7 @@ from .models import (
     ChatRole,
     ModelAvailability,
     StructuredOutputMode,
+    StructuredOutputSchema,
     TokenUsage,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "ChatResponse",
     "ChatRole",
     "StructuredOutputMode",
+    "StructuredOutputSchema",
     "InferenceBackendError",
     "InferenceConnectionError",
     "InferenceContextLimitError",

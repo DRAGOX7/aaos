@@ -36,6 +36,14 @@ class RagAnswerStatus(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
+class SemanticCoverageStatus(StrEnum):
+    """Internal model-assisted coverage status, never a public answer status."""
+
+    SUPPORTED = "SUPPORTED"
+    PARTIAL = "PARTIAL"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
 class RagErrorCode(StrEnum):
     RAG_INDEX_LOCKED = "RAG_INDEX_LOCKED"
     NO_ELIGIBLE_DOCUMENTS = "NO_ELIGIBLE_DOCUMENTS"
@@ -322,6 +330,8 @@ class GroundedAnswerRequest:
     content_revision: int
     evidence: tuple[RetrievedEvidence, ...]
     policy_version: str
+    semantic_status: SemanticCoverageStatus | None = None
+    unsupported_aspects: tuple[str, ...] = ()
 
     @classmethod
     def from_query(
@@ -332,10 +342,21 @@ class GroundedAnswerRequest:
         content_revision: int,
         evidence: tuple[RetrievedEvidence, ...],
         policy_version: str,
+        semantic_decision: SemanticCoverageDecision | None = None,
     ) -> "GroundedAnswerRequest":
         """Bind a stateless query to pinned identity and detected language."""
         if not isinstance(query, RagQuery):
             raise ValueError("query must be a RagQuery")
+        if semantic_decision is not None and not isinstance(
+            semantic_decision, SemanticCoverageDecision
+        ):
+            raise ValueError("semantic_decision must be a SemanticCoverageDecision or None")
+        if semantic_decision is not None and (
+            semantic_decision.generation_id != generation_id
+            or semantic_decision.content_revision != content_revision
+            or semantic_decision.policy_version != policy_version
+        ):
+            raise ValueError("semantic_decision must match the pinned request identity")
         answer_language = query.answer_language
         if answer_language is None:
             answer_language = (
@@ -350,6 +371,10 @@ class GroundedAnswerRequest:
             content_revision=content_revision,
             evidence=evidence,
             policy_version=policy_version,
+            semantic_status=(semantic_decision.status if semantic_decision is not None else None),
+            unsupported_aspects=(
+                semantic_decision.unsupported_aspects if semantic_decision is not None else ()
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -379,6 +404,56 @@ class GroundedAnswerRequest:
             for item in self.evidence
         ):
             raise ValueError("evidence must match the pinned generation and revision")
+        object.__setattr__(
+            self, "unsupported_aspects", _validate_unsupported_aspects(self.unsupported_aspects)
+        )
+        if self.semantic_status is not None and not isinstance(
+            self.semantic_status, SemanticCoverageStatus
+        ):
+            raise ValueError("semantic_status must be a SemanticCoverageStatus or None")
+        if self.semantic_status is SemanticCoverageStatus.SUPPORTED and self.unsupported_aspects:
+            raise ValueError("SUPPORTED semantic coverage must have no unsupported aspects")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticCoverageDecision:
+    """Request-bound, advisory semantic coverage classification."""
+
+    status: SemanticCoverageStatus
+    unsupported_aspects: tuple[str, ...]
+    generation_id: int
+    content_revision: int
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, SemanticCoverageStatus):
+            raise ValueError("status must be a SemanticCoverageStatus")
+        object.__setattr__(
+            self, "unsupported_aspects", _validate_unsupported_aspects(self.unsupported_aspects)
+        )
+        if self.status is SemanticCoverageStatus.SUPPORTED and self.unsupported_aspects:
+            raise ValueError("SUPPORTED semantic coverage must have no unsupported aspects")
+        _positive_int(self.generation_id, "generation_id")
+        _nonnegative_int(self.content_revision, "content_revision")
+        object.__setattr__(
+            self, "policy_version", _nonblank_text(self.policy_version, "policy_version")
+        )
+
+
+# The classifier consumes the same bounded, request-local data as generation.
+# Keep this alias for callers that want to name that boundary explicitly.
+SemanticCoverageRequest = GroundedAnswerRequest
+
+
+def _validate_unsupported_aspects(value: object) -> tuple[str, ...]:
+    if not isinstance(value, tuple) or len(value) > 4:
+        raise ValueError("unsupported_aspects must be a tuple with at most four entries")
+    normalized: list[str] = []
+    for item in value:
+        normalized.append(_nonblank_text(item, "unsupported_aspects"))
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("unsupported_aspects must be unique")
+    return tuple(normalized)
 
 
 @dataclass(frozen=True, slots=True)
