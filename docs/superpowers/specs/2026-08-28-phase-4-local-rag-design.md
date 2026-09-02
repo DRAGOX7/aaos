@@ -967,21 +967,33 @@ cases are executed.
 
 #### Bounded structured completion
 
-The current grounded generator limit of 512 completion tokens is insufficient:
-the calibration reproduction reached the limit on both the initial response and
-the single permitted repair, with incomplete JSON. The fixed Phase 4 limit is
-therefore proposed as 1024 completion tokens for both attempts. This is a
-bounded value below the configured 8192-token context and within the generator's
-existing maximum; it does not change the prompt, closed JSON schema, model, or
-one-repair maximum. Calibration must prove that the strict object completes at
-this bound before held-out execution. Malformed output remains rejected; no
-regex extraction, prose stripping, extra retry, or schema relaxation is allowed.
+The earlier 1024-token plain-JSON bound was insufficient in calibration: the
+initial response consumed all 1024 completion tokens and ended with incomplete
+JSON. The single repair stopped below that bound but returned markdown-fenced
+invalid JSON, so a larger budget alone is not sufficient. The approved bounded
+Phase 4 contract is **2048 completion tokens** for both the initial response and
+the one permitted repair. This remains below the configured 8192-token context
+and the generator's 4096-token maximum. Before each request, the composed prompt
+token allowance plus 2048 completion tokens must fit the configured context;
+the implementation must fail closed rather than silently truncate evidence or
+requirements, enlarge context, switch models, or fall back to a cloud service.
 
-The calibration evidence used for this amendment is the already-consumed
-production-path case: `CURRENT_MAX_TOKENS=512`, two model calls, and both
-responses classified `TRUNCATED_OR_INCOMPLETE_JSON`. The maximum observed
-completion usage is therefore the 512-token cap; backend raw output is not
-retained as an acceptance artifact.
+Both calls use LM Studio's locally confirmed `response_format` JSON Schema mode
+with a deterministic strict schema representing exactly the existing
+`RagAnswer` shape: `status`, `answer_text`, `language`, and `claims`, where each
+claim contains exactly `claim_id`, `text`, and `evidence_ids`. The schema is
+infrastructure-owned and cannot be changed by question or evidence text. JSON
+Schema constrains syntax only; the existing strict application parser,
+request-local evidence-ID checks, provenance/citation validator, and trusted
+renderer remain authoritative. Additional fields, malformed claims, unknown
+evidence IDs, markdown/prose, and incomplete output remain failures.
+
+Calibration must prove strict completion and schema-mode success at 2048 before
+held-out execution. The maximum remains one repair attempt; no regex extraction,
+prose stripping, third attempt, schema relaxation, or automatic increase to
+3072/4096 is allowed. If a legitimate calibration response reaches 2048 and
+truncates, or JSON Schema mode or strict validation fails after the one repair,
+the result is a human review gate.
 
 #### Deterministic local model lifecycle
 
