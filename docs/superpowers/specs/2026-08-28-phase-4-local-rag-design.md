@@ -18,7 +18,10 @@ question
   -> hybrid retrieval
   -> deterministic evidence selection
   -> deterministic structural sufficiency gate
-  -> local semantic coverage classifier (only for structurally eligible evidence)
+  -> requirement decomposition (question/context only)
+  -> requirement-level coverage classifier (only for structurally eligible
+     evidence)
+       -> deterministic aggregation
        -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
        -> PARTIAL: grounded answer under a partial-support constraint
        -> SUPPORTED: grounded answer
@@ -104,9 +107,9 @@ The following are absolute invariants:
 - every factual claim has valid citation(s) from the supplied evidence IDs;
 - no unseen citation ID, fabricated source, or structurally uncited factual claim
   is accepted;
-- structural insufficiency and semantic `UNSUPPORTED` prevent any factual
-  answer-generation request; the semantic classifier itself may use the
-  approved local model; and
+- structural insufficiency and deterministically aggregated semantic
+  `UNSUPPORTED` prevent any factual answer-generation request; the
+  requirement-level classifier itself may use the approved local model; and
 - all failures are represented by fixed safe categories without raw content.
 
 ## 6. End-to-end architecture
@@ -123,7 +126,10 @@ RagQuery (question + RagScope)
   -> EvidenceSelector
   -> StructuralSufficiencyGate
        -> structural INSUFFICIENT_EVIDENCE
-  -> SemanticCoverageClassifier (local Qwen; structurally eligible evidence only)
+  -> RequirementDecomposer (local Qwen; question/context only)
+  -> RequirementCoverageClassifier (local Qwen; fixed requirements + selected
+     evidence)
+  -> deterministic requirement validation and status aggregation
        -> UNSUPPORTED -> INSUFFICIENT_EVIDENCE
        -> PARTIAL -> GroundedAnswerGenerator under PARTIAL constraint
        -> SUPPORTED -> GroundedAnswerGenerator
@@ -518,23 +524,29 @@ evidence is sufficient. A structural failure returns
 `INSUFFICIENT_EVIDENCE` and skips both semantic classification and factual
 answer generation.
 
-For structurally eligible evidence, a separately scoped
-`SemanticCoverageClassifier` may use the approved local Qwen model to classify
-whether the selected evidence supports all, part, or none of the requested
-information. Its output is a narrow, strictly parsed internal status:
-`SUPPORTED`, `PARTIAL`, or `UNSUPPORTED`. It is model output and remains
-untrusted until deterministic validation. It cannot broaden scope, select new
-evidence, provide citations, or produce the user-facing answer.
+For structurally eligible evidence, a separately scoped question-only
+`RequirementDecomposer` first identifies the bounded material factual
+requirements. Deterministic code assigns canonical IDs and freezes that set.
+Then `RequirementCoverageClassifier` judges each fixed requirement as
+`SUPPORTED` or `UNSUPPORTED` against the selected evidence. Its response is a
+strictly parsed, closed internal judgment set and remains untrusted until
+deterministic validation. It cannot broaden scope, select new evidence,
+provide citations, or produce the user-facing answer. Deterministic code
+aggregates the validated judgments: zero supported requirements is
+`UNSUPPORTED`, every requirement supported is `SUPPORTED`, and a non-empty
+mixture is `PARTIAL`.
 `UNSUPPORTED` maps to deterministic `INSUFFICIENT_EVIDENCE` and skips factual
 answer generation; `PARTIAL` enters grounded generation with an explicit
 partial-support constraint; `SUPPORTED` enters the normal grounded generation
-path.
+path. The model does not own the final aggregate status.
 
 Structural thresholds remain calibrated on development data and locked before
-held-out acceptance. Semantic-classifier calibration is a separate, local-only
-calibration gate and must report `SUPPORTED`, `PARTIAL`, and `UNSUPPORTED`
-confusion, including false support, false refusal, and
-partial-to-supported or partial-to-unsupported errors. Neither gate permits
+held-out acceptance. Requirement decomposition and coverage calibration are
+separate, local-only gates: decomposition must report omitted, spurious,
+over-split, and under-split requirements, while coverage must report
+`SUPPORTED`, `PARTIAL`, and `UNSUPPORTED` confusion, including false support,
+false refusal, and partial-to-supported or partial-to-unsupported errors.
+Neither gate permits
 pretrained-knowledge or unbounded retrieval fallback. Unsupported false
 acceptance remains weighted as more serious than a false refusal.
 
@@ -568,12 +580,15 @@ tool, filesystem, network, source-selection, or policy authority to it. Only
 the supplied evidence IDs may be cited. No model call receives credentials,
 browser state, arbitrary URLs, or an unbounded corpus.
 
-The semantic coverage classifier is a separate typed adapter over the same
-approved local model boundary. It runs only after structural evidence checks,
-receives the original question plus the bounded selected evidence, and returns
-only its closed coverage status. It is never a second retrieval path and never
-replaces the grounded factual-answer adapter. A classifier call is not a
-factual-answer call and cannot be rendered to the user.
+The requirement-level semantic stage is a separate typed adapter over the same
+approved local model boundary. After structural evidence checks,
+`RequirementDecomposer` receives only the original question and relevant
+language/context; then `RequirementCoverageClassifier` receives the immutable
+canonical requirement set plus bounded selected evidence. Deterministic code
+validates every requirement and evidence ID before aggregating the internal
+status. These calls are never a second retrieval path and never replace the
+grounded factual-answer adapter. Semantic outputs are not factual-answer
+content and cannot be rendered to the user.
 
 ## 22. Typed `RagAnswer`
 
@@ -596,8 +611,9 @@ portions may be returned with valid claim-level citations, while unsupported
 requested portions must be explicitly identified as unsupported and never
 invented. `INSUFFICIENT_EVIDENCE` means no useful factual answer can be
 grounded; no factual answer generation or pretrained-knowledge fallback occurs.
-The semantic classifier may have run before this status was selected, but its
-classification is not itself user-facing factual content.
+The requirement coverage classifier may have run before this status was
+selected, but its judgments and aggregate are not themselves user-facing
+factual content.
 
 Operational failures are not public answer-status variants. They remain typed
 error outcomes such as `MODEL_UNAVAILABLE`, `MODEL_TIMEOUT`,
@@ -841,10 +857,13 @@ split before retrieval output is inspected. The final unseen set may not be
 used for further tuning or policy selection.
 
 Sufficiency labels are `SUPPORTED`, `PARTIALLY_SUPPORTED`, and `UNSUPPORTED`.
-Evaluation reports supported acceptance, unsupported rejection, false
-acceptance, and false refusal rates. Generation reports factual correctness,
-answer completeness, citation correctness/completeness, partial-answer
-behavior, and unsupported expansion separately from retrieval scores.
+The requirement-coverage classifier's internal `PARTIAL` aggregate maps to the
+existing evaluation label `PARTIALLY_SUPPORTED`; it must not replace the
+public `RagAnswer` status contract. Evaluation reports supported acceptance,
+unsupported rejection, false acceptance, and false refusal rates. Generation
+reports factual correctness, answer completeness, citation
+correctness/completeness, partial-answer behavior, and unsupported expansion
+separately from retrieval scores.
 
 ## 32. RAGAS evaluation policy
 
@@ -1077,23 +1096,30 @@ postcondition is a blocker, even if a run happens to fit in available VRAM.
 Normal tests use injected fakes and never invoke LM Studio, CUDA, or model
 downloads.
 
-## 41. Architecture amendment — model-assisted semantic sufficiency
+## 41. Architecture amendment — requirement-level semantic sufficiency
 
-**Status:** design-only proposal pending explicit human approval. This section
-does not authorize production implementation, dependency changes, calibration
-execution, held-out answer execution, RAGAS, Checkpoint G, tagging, or Phase 5.
+**Status:** revised design-only proposal pending explicit human approval of the
+two-step contract. The requirement-level direction is approved, but this
+revision does not authorize production implementation, dependency changes,
+calibration execution, held-out answer execution, RAGAS, Checkpoint G, tagging,
+or Phase 5. It supersedes both the earlier whole-question classifier and the
+rejected combined decomposition/coverage proposal; the existing implementation
+remains unchanged until this revision is approved and scheduled.
 
-### Decision and rationale
+### Decision and evidence
 
-The 56-case calibration spike did not prove a deterministic three-way semantic
-coverage boundary. Dense similarity, lexical coverage, question-part signals,
-rank/fusion features, and source diversity overlap materially across supported,
-partial, and unsupported cases. Further threshold tuning is therefore rejected
-as an evidence-poor way to change refusal behavior. Structural authorization
-and integrity checks remain deterministic; semantic coverage is isolated behind
-one bounded local classifier before factual answer generation.
+The completed 56-case calibration was mechanically healthy (temperature zero,
+all calls complete, no malformed outputs, no repairs, and no status variance)
+but unsafe as a whole-question decision boundary. The observed confusion
+included false support and recognized none of the expected partial cases.
+Dense similarity, lexical coverage, question-part signals, rank/fusion
+features, and source diversity overlap materially across the three classes.
+Further threshold or prompt tuning of that abstraction is therefore rejected.
+Structural authorization and integrity remain deterministic; semantic coverage
+is replaced by bounded requirement-level judgments followed by code-owned
+aggregation.
 
-### Placement and typed contract
+### Placement and responsibility
 
 The amended query path is:
 
@@ -1101,157 +1127,260 @@ The amended query path is:
 RagQuery + immutable QuerySnapshot
   -> hybrid retrieval and deterministic EvidenceSelector
   -> existing deterministic structural sufficiency gate
-  -> SemanticCoverageClassifier (only if structural checks pass)
-  -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
-  -> PARTIAL: grounded generation with a partial-support constraint
-  -> SUPPORTED: normal grounded generation
+  -> RequirementDecomposer (question/context only)
+  -> RequirementCoverageClassifier (fixed requirements + selected evidence)
+  -> strict typed requirement validation
+  -> deterministic status aggregation
+       -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
+       -> PARTIAL: grounded generation with a partial-support constraint
+       -> SUPPORTED: grounded generation
   -> strict RagAnswer parsing, citation validation, provenance resolution,
      and deterministic rendering
 ```
 
-The classifier consumes only the original question, answer-language policy,
-the pinned generation/revision metadata, and the already selected bounded
-evidence. Its infrastructure-owned JSON Schema is intentionally minimal:
+The decomposer consumes only the original question and language/context needed
+to understand user intent; retrieved evidence is not visible. Deterministic
+code assigns canonical IDs (`r1` through `rN`) and freezes the resulting
+requirement set. The coverage classifier then consumes only that immutable set,
+answer-language policy, pinned generation/revision metadata, and the already
+selected bounded evidence. It may not add, remove, merge, rewrite, or reorder
+requirements. Neither step is a retrieval path, source selector, citation
+resolver, or answer renderer. The LLM produces bounded data; trusted code owns
+requirement identity, validation, final status, and every authorization
+decision.
+
+### Requirement identification decision
+
+The approved approach is **two bounded structured calls** within one loaded
+Qwen lifecycle: a question-only `RequirementDecomposer`, followed by a
+`RequirementCoverageClassifier` that sees the frozen requirements and selected
+evidence. Separating decomposition from coverage prevents evidence availability
+from silently redefining the requirement universe. A single combined call is
+rejected because it can omit an unsupported requested portion and then appear
+fully supported. Deterministic extraction remains limited to narrow,
+already-defined forms and is not the general English/Arabic contract.
+
+### Requirement decomposition contract
+
+The question-only decomposition schema is closed and contains no evidence or
+coverage fields:
 
 ```json
 {
   "type": "object",
   "properties": {
-    "status": {
-      "type": "string",
-      "enum": ["SUPPORTED", "PARTIAL", "UNSUPPORTED"]
-    },
-    "unsupported_aspects": {
+    "requirements": {
       "type": "array",
-      "items": {"type": "string"},
-      "maxItems": 4
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": ["requirement_text"],
+        "additionalProperties": false
+      }
     }
   },
-  "required": ["status", "unsupported_aspects"],
+  "required": ["requirements"],
   "additionalProperties": false
 }
 ```
 
-The parsed result is an internal semantic decision, not a public `RagAnswer`
-status. `unsupported_aspects` is a bounded advisory list: it is required to be
-empty for `SUPPORTED`, may describe unsupported requested portions for
-`PARTIAL` or `UNSUPPORTED`, and is never trusted as factual content, evidence,
-citation provenance, or authorization metadata. Each entry is nonblank,
-bounded, and treated as model-authored data. The classifier returns no evidence
-IDs, citations, source metadata, confidence score, chain-of-thought, or free-
-form rationale.
+The decomposer receives no retrieved evidence. It must preserve every material
+requested fact, retain explicit multi-part requests, avoid artificial
+over-splitting, and add nothing not requested. After strict parsing,
+deterministic code assigns canonical contiguous IDs (`r1` through `rN`) and
+normalizes/validates bounded nonblank text. Model-supplied IDs are neither
+accepted nor trusted. The immutable requirement set is the only requirement
+universe for the remainder of the request.
 
-The classifier is not a retrieval path, source selector, or answer renderer.
-It cannot broaden the snapshot, add evidence, resolve citations, or produce
-user-facing factual text. Structural failure skips the classifier as well as
-factual generation. A semantic `UNSUPPORTED` result maps to deterministic
-`INSUFFICIENT_EVIDENCE` and sets
-`FACTUAL_ANSWER_GENERATION_INVOKED=NO`; the classifier call itself may have
-used Qwen. A `PARTIAL` result passes an explicit partial-support constraint to
-`GroundedAnswerGenerator`, which may state only supported portions, must
-identify unsupported requested portions, and must cite every factual claim.
+### Requirement coverage contract
+
+The coverage call receives the immutable requirement IDs/text plus selected
+request-local evidence. Its closed schema contains exactly one judgment for
+each fixed requirement:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_id": {
+            "type": "string",
+            "pattern": "^r[1-6]$"
+          },
+          "support": {
+            "type": "string",
+            "enum": ["SUPPORTED", "UNSUPPORTED"]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": ["requirement_id", "support", "evidence_ids"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["requirements"],
+  "additionalProperties": false
+}
+```
+
+The coverage response may not add, remove, merge, reorder, or rewrite the
+requirements. It has no requirement text, confidence, rationale, citation
+string, source metadata, tool request, chain-of-thought, or answer field.
+Evidence IDs remain opaque request-local control identifiers; the schema does
+not invent their format.
+
+### Deterministic validation and aggregation
+
+Before judging coverage, deterministic code requires the returned requirement
+count to equal the immutable requirement count and the returned ID set to equal
+the immutable ID set exactly. Missing, duplicate, unknown, reordered, or
+rewritten requirements are integrity errors and fail closed. For every
+`SUPPORTED` requirement, deterministic code verifies that each evidence ID
+exists in the current request, was selected for the pinned `QuerySnapshot`, and
+resolves through authoritative SQLite provenance. A missing, duplicate,
+cross-request, out-of-snapshot, or unresolved evidence ID is an integrity error
+and is never downgraded into trusted support. For every `UNSUPPORTED`
+requirement, `evidence_ids` must be empty. Any schema deviation is a typed
+semantic-coverage failure.
+
+After validation, code derives the internal status and the model cannot
+override it:
+
+- zero supported requirements (with a valid non-empty requirement list) ->
+  `UNSUPPORTED`;
+- every material requirement supported -> `SUPPORTED`;
+- at least one supported and at least one unsupported -> `PARTIAL`.
+
+`UNSUPPORTED` maps to deterministic `INSUFFICIENT_EVIDENCE` and sets
+`FACTUAL_ANSWER_GENERATION_INVOKED=NO`. `SUPPORTED` and `PARTIAL` continue to
+the existing grounded answer boundary. Internal coverage statuses remain
+distinct from public `RagAnswer` statuses.
+
+### Partial propagation
+
+For deterministic `PARTIAL`, `GroundedAnswerGenerator` receives the original
+question, the supported requirement subset, only the validated evidence IDs and
+text for those supported requirements, and bounded descriptions/identities of
+the unsupported requirements. Unsupported requirements are constraints to be
+identified as unanswered, never factual source material. The generator may
+answer supported portions only, must explicitly mark unsupported requested
+portions, must not infer missing facts, and must cite every factual claim using
+the existing strict citation/provenance validator. The renderer remains fully
+trusted and deterministic.
 
 ### Model, bounds, and failure behavior
 
-The classifier uses only the approved local `qwen/qwen3.5-4b` through the
-existing loopback `ModelGateway` boundary. No cloud provider, external network,
-tool, agent, memory, or fallback is permitted. Classification uses the local
-JSON-Schema response-format mechanism plus strict application parsing; endpoint
-schema enforcement never replaces deterministic validation. The proposed
-classifier completion bound is **256 tokens**, subject to calibration and
-explicit approval before implementation. Before each call, the prompt allowance
-plus that bound must fit the configured model context; otherwise fail closed
-without truncating evidence or changing models/configuration.
+Use only the approved local `qwen/qwen3.5-4b` through the existing loopback
+`ModelGateway`; no cloud provider, external network, tool, agent, memory, or
+fallback is permitted. The proposed completion bounds are **512 tokens for
+decomposition** and **512 tokens for coverage**: decomposition is materially
+above the old 256-token whole-question bound, while coverage remains small and
+bounded. Both remain below the existing 4096 maximum and must be calibrated
+before implementation approval. Before each call, its prompt allowance plus
+the corresponding bound must fit the configured model context; otherwise fail
+closed without truncating evidence, changing models, or enlarging context. Use
+local JSON-Schema response-format mode and strict application parsing for both
+steps.
 
-Only one bounded repair is permitted, using the same schema and bound. A
-transport/model/lifecycle failure is not retried. Malformed classification
-after the allowed repair fails closed with a typed operational error and never
-falls through to factual generation. There is no third call, prose stripping,
-regex extraction, schema relaxation, or silent threshold fallback.
+Each semantic step permits only one bounded same-schema repair. Transport,
+model, lifecycle, and policy errors are not retried. Malformed or semantically
+invalid output after a step's repair fails closed with a typed operational
+error and never falls through to factual generation. There is no third call,
+prose stripping, regex extraction, schema relaxation, or silent threshold
+fallback. `temperature=0` applies to both steps.
+The approved factual grounded-answer timeout remains 60 seconds and the
+2048-token factual completion contract is unchanged.
 
-### Prompt-injection and trust boundary
+### Prompt-injection, provenance, and lifecycle boundaries
 
-Retrieved document text is untrusted data. Classifier instructions explicitly
-separate system policy from evidence and grant the evidence no authority to
-alter the schema, scope, tools, secrets, model/runtime configuration, or
-network behavior. No tools are exposed. Classifier output remains untrusted
-until strict parsing and status validation; it never supplies citation or
-provenance metadata. The existing SQLite-backed evidence and citation boundary
-remains authoritative.
-
-### VRAM lifecycle
+For decomposition, only the question/request context is interpreted as user
+intent; retrieved evidence is absent. For coverage, retrieved document text
+and the fixed requirement text remain untrusted data. Instructions explicitly
+separate policy from data; evidence cannot add, remove, rewrite, or reorder
+requirements, alter schema, scope, tools, secrets, model/runtime configuration,
+or network behavior. No tools are exposed. Evidence IDs are supplied only by
+trusted request-local context and are validated against authoritative SQLite
+provenance.
 
 Per request, the runtime ensures Qwen is not resident, performs BGE-M3
 embedding/retrieval, releases and verifies BGE, then loads/verifies Qwen for
-semantic classification. Qwen remains loaded for any subsequent factual
-generation and is unloaded during deterministic cleanup. The classifier must
-not run while BGE remains GPU-resident, and a lifecycle/postcondition failure
+decomposition. Qwen remains loaded for coverage and any subsequent factual
+generation; it is unloaded only during deterministic cleanup. There is no
+unload/reload boundary between semantic steps or before factual generation.
+BGE and Qwen may never overlap on the GPU. Any lifecycle/postcondition failure
 stops the request with the existing safe model-unavailable error. The runtime
-remains the sole lifecycle owner; no model-management surface is exposed to
-the classifier or factual model.
+remains the sole lifecycle owner.
 
 ### Calibration and held-out protection
 
-Calibration may use only the already-consumed 56 cases. It must report the
-three-way confusion matrix for `SUPPORTED`, `PARTIAL`, and `UNSUPPORTED`,
-including false support, false refusal, partial-to-supported, and
-partial-to-unsupported errors, with English/Arabic breakdowns. It must also
-prove the local-only model boundary, strict schema/parse behavior, the bounded
-repair count, and BGE-before-Qwen non-overlapping residency. Poor calibration
-results are reported rather than hidden or repaired by changing production
-retrieval thresholds.
+Calibration may use only the already-consumed 56 cases with expected classes
+`SUPPORTED=40`, `PARTIAL=4`, and `UNSUPPORTED=12`. First evaluate decomposition
+quality against the human-reviewed request intent, especially all four partial
+and twelve unsupported cases. Report `MATERIAL_REQUIREMENT_OMITTED`,
+`SPURIOUS_REQUIREMENT_ADDED`, `OVER_SPLIT`, and `UNDER_SPLIT` errors without
+changing benchmark labels. Then evaluate coverage and deterministic
+aggregation, reporting requirement counts, judgments, aggregate statuses,
+false support, false refusal, partial-to-supported, and partial-to-unsupported
+outcomes with English/Arabic breakdowns. Require zero false support across all
+12 unsupported cases and materially functional partial behavior across all four
+partial cases, without benchmark-specific exceptions. Also prove local-only
+model use, strict schema/parse behavior, one-repair maximum per semantic step,
+and BGE-before-Qwen non-overlapping residency. Poor calibration results are
+reported, never hidden by changing retrieval or normalizing labels.
 
 The final 24 answer-heldout cases remain pristine:
 `HELDOUT_ANSWER_CASES_EXECUTED=0` and
 `ANSWER_HELDOUT_RESULTS_VISIBLE=NO` during this amendment. No held-out answer,
-RAGAS, Checkpoint G, or Phase 5 action is authorized until the classifier is
-implemented, calibrated, reviewed, and the existing pre-heldout gates pass.
-
-### Calibration refinement — deterministic classification and bounded factual timeout
-
-The approved calibration refinement keeps the semantic classifier model,
-256-token completion bound, strict JSON Schema, and one-repair maximum
-unchanged. Where supported by the local gateway, classifier requests use
-deterministic decoding with `temperature=0`; this setting is classifier-only
-and must not alter factual-answer generation. Prompt clarification is limited
-to general rules distinguishing direct material support from topical relevance,
-partial coverage, and unsupported requests. No benchmark IDs, qrels, or
-source-specific exceptions enter production behavior.
-
-The factual grounded-answer HTTP timeout is **60 seconds**, replacing the
-previous 30-second bound. This remains a bounded local-only timeout and does
-not change the 2048-token completion limit, model identity, schema, retry
-count, or lifecycle ordering. The semantic classifier retains the existing
-request timeout. Calibration must prove zero classifier timeouts and malformed
-outputs, zero false support across expected `UNSUPPORTED` cases, and zero
-status variance in the approved repeatability check before any held-out answer
-execution. A failed calibration requirement remains a human review gate; no
-automatic retuning or held-out fallback is permitted.
+RAGAS, Checkpoint G, or Phase 5 action is authorized until this design is
+approved, implemented, calibrated, reviewed, and all existing pre-heldout
+gates pass.
 
 ### Proposed implementation surface (not authorized by this amendment)
 
 Production files proposed for a later implementation task:
 
-- `src/aaos/rag/contracts.py`: closed `SemanticCoverageStatus` and typed
-  classifier result/error contracts;
-- `src/aaos/rag/semantic_coverage.py`: local-only classifier adapter, schema,
-  strict parsing, context-budget check, and one-repair bound;
-- `src/aaos/rag/service.py`: invoke the classifier after structural gating and
-  propagate `PARTIAL`/`UNSUPPORTED` without duplicating retrieval or citation
-  logic;
-- `src/aaos/rag/generation.py`: accept the explicit partial-support constraint
-  while preserving the strict `RagAnswer` contract; and
-- `src/aaos/rag/runtime.py`: compose classifier ownership with the existing
-  Qwen/BGE lifecycle without adding a second model boundary.
+- `src/aaos/rag/contracts.py`: add immutable requirement and coverage-judgment
+  types while retaining the existing public `RagAnswer` statuses;
+- `src/aaos/rag/semantic_coverage.py`: replace whole-question parsing with the
+  local-only `RequirementCoverageClassifier`, schema, strict validation,
+  context-budget check, and one-repair bound;
+- `src/aaos/rag/service.py`: perform deterministic validation/aggregation after
+  structural gating and propagate `PARTIAL`/`UNSUPPORTED` without duplicating
+  retrieval or citation logic; and
+- `src/aaos/rag/generation.py`: accept the typed partial-support constraint
+  while preserving the strict `RagAnswer` contract and existing citation
+  boundary.
 
 Proposed test surface:
 
-- `tests/test_rag_semantic_coverage.py` for schema, statuses, bounded repair,
-  context limits, injection data, no-tools/no-network, and fail-closed output;
-- extensions to `tests/test_rag_service.py`, `tests/test_rag_generation.py`,
-  and `tests/test_rag_runtime.py` for structural/semantic ordering, partial
-  propagation, unsupported no-factual-call behavior, lifecycle ordering, and
-  cleanup; and
+- `tests/test_rag_semantic_coverage.py` for schema, requirement decomposition,
+  evidence-ID/provenance validation, aggregation, context limits, injection
+  data, no-tools/no-network, and one-repair behavior;
+- extensions to `tests/test_rag_service.py` and `tests/test_rag_generation.py`
+  for structural/semantic ordering, partial propagation, unsupported
+  no-factual-call behavior, and strict public status preservation; and
 - acceptance-only calibration coverage under the existing guarded Task 26
   harness, with no held-out execution.
 
