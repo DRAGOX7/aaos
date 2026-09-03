@@ -22,6 +22,7 @@ from aaos.inference import (
     InferenceTimeoutError,
     ModelAvailability,
     ModelUnavailableError,
+    StructuredOutputSchema,
     TokenUsage,
     UnsupportedInferenceFeatureError,
 )
@@ -382,6 +383,52 @@ def test_generate_serializes_the_owned_semantic_coverage_json_schema() -> None:
             },
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("schema", "name", "item_required"),
+    (
+        ("requirement_decomposition", "aaos_requirement_decomposition_v1", ["requirement_text"]),
+        (
+            "requirement_coverage",
+            "aaos_requirement_coverage_v1",
+            ["requirement_id", "support", "evidence_ids"],
+        ),
+    ),
+)
+def test_generate_serializes_requirement_json_schema_contract(
+    schema: StructuredOutputSchema, name: str, item_required: list[str]
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Classify requirements."),),
+            max_output_tokens=512,
+            structured_output="json_schema",
+            structured_output_schema=schema,
+        ),
+        handler,
+    )
+
+    response_format = json.loads(requests[0].content)["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == name
+    assert response_format["json_schema"]["strict"] is True
+    schema_body = response_format["json_schema"]["schema"]
+    assert schema_body["additionalProperties"] is False
+    assert schema_body["required"] == ["requirements"]
+    assert schema_body["properties"]["requirements"]["items"]["required"] == item_required
 
 
 def test_generate_rejects_prompt_plus_completion_over_context_before_transport() -> None:

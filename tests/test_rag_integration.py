@@ -58,6 +58,31 @@ class _GroundingGateway:
     async def generate(self, request: ChatRequest) -> ChatResponse:
         self.calls += 1
         self.requests.append(request)
+        if request.structured_output_schema == "requirement_decomposition":
+            return ChatResponse(
+                content='{"requirements":[{"requirement_text":"Answer the question"}]}',
+                model_identifier="qwen/qwen3.5-4b",
+            )
+        if request.structured_output_schema == "requirement_coverage":
+            payload = next(
+                message.content.split("<coverage-input>", 1)[1].split("</coverage-input>", 1)[0]
+                for message in request.messages
+                if "<coverage-input>" in message.content
+            )
+            coverage = json.loads(payload)
+            evidence_ids = [item["evidence_id"] for item in coverage["evidence"][:1]]
+            judgments = [
+                {
+                    "requirement_id": item["requirement_id"],
+                    "support": "SUPPORTED" if evidence_ids else "UNSUPPORTED",
+                    "evidence_ids": evidence_ids,
+                }
+                for item in coverage["requirements"]
+            ]
+            return ChatResponse(
+                content=json.dumps({"requirements": judgments}),
+                model_identifier="qwen/qwen3.5-4b",
+            )
         if any("<semantic-input>" in message.content for message in request.messages):
             return ChatResponse(
                 content='{"status":"SUPPORTED","unsupported_aspects":[]}',

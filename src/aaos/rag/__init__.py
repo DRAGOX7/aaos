@@ -8,6 +8,8 @@ from .config import (
 )
 from .contracts import (
     MAX_RAG_TEXT_CHARACTERS,
+    CanonicalRequirement,
+    CanonicalRequirementSet,
     Citation,
     CourseScope,
     CoverageStatus,
@@ -35,10 +37,21 @@ from .contracts import (
     RagQuery,
     RagScope,
     RenderedRagResponse,
+    Requirement,
+    RequirementCoverage,
+    RequirementCoverageDecision,
+    RequirementCoverageJudgment,
+    RequirementSet,
+    RequirementSupport,
     RetrievedEvidence,
     SemanticCoverageDecision,
     SemanticCoverageRequest,
     SemanticCoverageStatus,
+)
+from .semantic_coverage import (
+    RequirementCoverageClassifier,
+    RequirementDecomposer,
+    aggregate_requirement_coverage,
 )
 from .service import GuardedLocalRagService
 
@@ -75,6 +88,17 @@ __all__ = [
     "GuardedLocalRagService",
     "RenderedRagResponse",
     "RetrievedEvidence",
+    "Requirement",
+    "CanonicalRequirement",
+    "CanonicalRequirementSet",
+    "RequirementCoverage",
+    "RequirementCoverageDecision",
+    "RequirementCoverageJudgment",
+    "RequirementSet",
+    "RequirementSupport",
+    "RequirementCoverageClassifier",
+    "RequirementDecomposer",
+    "aggregate_requirement_coverage",
     "SemanticCoverageDecision",
     "SemanticCoverageRequest",
     "SemanticCoverageStatus",

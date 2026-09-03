@@ -13,6 +13,8 @@ from .contracts import (
     RagOperationalError,
     RagQuery,
     RenderedRagResponse,
+    RequirementCoverageDecision,
+    RequirementSet,
     RetrievedEvidence,
     SemanticCoverageDecision,
     SemanticCoverageStatus,
@@ -34,6 +36,7 @@ from .retrieval import (
     SufficiencyStatus,
     reciprocal_rank_fusion,
 )
+from .semantic_coverage import RequirementCoverageClassifier, RequirementDecomposer
 
 _DEFAULT_RRF_K = 60
 _DEFAULT_GENERATION_POLICY_VERSION = "grounded-v1"
@@ -67,6 +70,24 @@ class _SemanticClassifier(Protocol):
     async def classify(self, request: GroundedAnswerRequest) -> SemanticCoverageDecision: ...
 
 
+class _RequirementDecomposer(Protocol):
+    async def decompose(self, query: RagQuery) -> RequirementSet: ...
+
+
+class _RequirementCoverageClassifier(Protocol):
+    async def classify(
+        self,
+        requirements: RequirementSet,
+        *,
+        question: str,
+        answer_language: str,
+        generation_id: int,
+        content_revision: int,
+        policy_version: str,
+        evidence: tuple[RetrievedEvidence, ...],
+    ) -> RequirementCoverageDecision: ...
+
+
 class _Validator(Protocol):
     def validate(
         self, output: GroundedModelOutput, request: GroundedAnswerRequest
@@ -90,6 +111,10 @@ class LocalRagService:
         answer_generator: GroundedAnswerGenerator | _Generator,
         citation_validator: CitationValidator | _Validator | None = None,
         semantic_classifier: _SemanticClassifier | None = None,
+        requirement_decomposer: _RequirementDecomposer | RequirementDecomposer | None = None,
+        requirement_coverage_classifier: (
+            _RequirementCoverageClassifier | RequirementCoverageClassifier | None
+        ) = None,
         rrf_k: int = _DEFAULT_RRF_K,
         generation_policy_version: str = _DEFAULT_GENERATION_POLICY_VERSION,
     ) -> None:
@@ -115,6 +140,8 @@ class LocalRagService:
         self._answer_generator = answer_generator
         self._citation_validator = citation_validator or CitationValidator()
         self._semantic_classifier = semantic_classifier
+        self._requirement_decomposer = requirement_decomposer
+        self._requirement_coverage_classifier = requirement_coverage_classifier
         self._rrf_k = rrf_k
         self._generation_policy_version = generation_policy_version.strip()
         _require_callable(self._retriever, "retrieve_candidates", "retriever")
@@ -124,6 +151,23 @@ class LocalRagService:
         _require_callable(self._citation_validator, "validate", "citation_validator")
         if self._semantic_classifier is not None:
             _require_callable(self._semantic_classifier, "classify", "semantic_classifier")
+        if (self._requirement_decomposer is None) != (
+            self._requirement_coverage_classifier is None
+        ):
+            raise ValueError(
+                "requirement_decomposer and requirement_coverage_classifier must be provided together"
+            )
+        if self._requirement_decomposer is not None:
+            if self._semantic_classifier is not None:
+                raise ValueError(
+                    "semantic_classifier cannot be combined with requirement classifiers"
+                )
+            _require_callable(self._requirement_decomposer, "decompose", "requirement_decomposer")
+            _require_callable(
+                self._requirement_coverage_classifier,
+                "classify",
+                "requirement_coverage_classifier",
+            )
 
     async def ask(self, query: RagQuery) -> RenderedRagResponse:
         """Run the mandatory snapshot → evidence → answer path exactly once."""
@@ -135,12 +179,31 @@ class LocalRagService:
         evidence = self._select(candidate_set, fused_candidates)
         sufficiency = self._evaluate(evidence, candidate_set)
         request = self._build_request(query, candidate_set, evidence)
-        semantic_decision = await self._classify(request, sufficiency)
-        if semantic_decision is not None:
+        requirement_decision = await self._classify_requirements(
+            query, request, evidence, candidate_set, sufficiency
+        )
+        semantic_decision = None
+        if requirement_decision is None:
+            semantic_decision = await self._classify(request, sufficiency)
+        if requirement_decision is not None:
+            request = self._build_request(
+                query,
+                candidate_set,
+                evidence,
+                requirement_coverage=requirement_decision,
+            )
+        elif semantic_decision is not None:
             request = self._build_request(query, candidate_set, evidence, semantic_decision)
-        if sufficiency.status is SufficiencyStatus.UNSUPPORTED or (
-            semantic_decision is not None
-            and semantic_decision.status is SemanticCoverageStatus.UNSUPPORTED
+        if (
+            sufficiency.status is SufficiencyStatus.UNSUPPORTED
+            or (
+                requirement_decision is not None
+                and requirement_decision.status is SemanticCoverageStatus.UNSUPPORTED
+            )
+            or (
+                semantic_decision is not None
+                and semantic_decision.status is SemanticCoverageStatus.UNSUPPORTED
+            )
         ):
             output = build_insufficient_model_output(request)
         else:
@@ -215,6 +278,7 @@ class LocalRagService:
         candidate_set: RetrievalCandidateSet,
         evidence: tuple[RetrievedEvidence, ...],
         semantic_decision: SemanticCoverageDecision | None = None,
+        requirement_coverage: RequirementCoverageDecision | None = None,
     ) -> GroundedAnswerRequest:
         try:
             request_evidence = tuple(evidence)
@@ -225,6 +289,7 @@ class LocalRagService:
                 evidence=request_evidence,
                 policy_version=self._generation_policy_version,
                 semantic_decision=semantic_decision,
+                requirement_coverage=requirement_coverage,
             )
         except RagOperationalError:
             raise
@@ -256,6 +321,45 @@ class LocalRagService:
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
         if decision.status is SemanticCoverageStatus.SUPPORTED and decision.unsupported_aspects:
             raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        return decision
+
+    async def _classify_requirements(
+        self,
+        query: RagQuery,
+        request: GroundedAnswerRequest,
+        evidence: tuple[RetrievedEvidence, ...],
+        candidate_set: RetrievalCandidateSet,
+        sufficiency: SufficiencyDecision,
+    ) -> RequirementCoverageDecision | None:
+        if sufficiency.status is SufficiencyStatus.UNSUPPORTED:
+            return None
+        if self._requirement_decomposer is None or self._requirement_coverage_classifier is None:
+            return None
+        try:
+            requirements = await self._requirement_decomposer.decompose(query)
+            if not isinstance(requirements, RequirementSet):
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+            decision = await self._requirement_coverage_classifier.classify(
+                requirements,
+                question=request.question,
+                answer_language=request.answer_language,
+                generation_id=candidate_set.snapshot.generation.generation_id,
+                content_revision=candidate_set.snapshot.generation.content_revision,
+                policy_version=request.policy_version,
+                evidence=evidence,
+            )
+        except RagOperationalError:
+            raise
+        except Exception:
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
+        if not isinstance(decision, RequirementCoverageDecision):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        if (
+            decision.generation_id != request.generation_id
+            or decision.content_revision != request.content_revision
+            or decision.policy_version != request.policy_version
+        ):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
         return decision
 
     async def _generate(

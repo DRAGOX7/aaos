@@ -86,9 +86,87 @@ _SEMANTIC_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
     },
 }
 
+_REQUIREMENT_DECOMPOSITION_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_requirement_decomposition_v1",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "requirements": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "requirement_text": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240,
+                            }
+                        },
+                        "required": ["requirement_text"],
+                    },
+                }
+            },
+            "required": ["requirements"],
+        },
+    },
+}
+
+_REQUIREMENT_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_requirement_coverage_v1",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "requirements": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "requirement_id": {
+                                "type": "string",
+                                "pattern": "^r[1-6]$",
+                            },
+                            "support": {
+                                "type": "string",
+                                "enum": ["SUPPORTED", "UNSUPPORTED"],
+                            },
+                            "evidence_ids": {
+                                "type": "array",
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                },
+                            },
+                        },
+                        "required": ["requirement_id", "support", "evidence_ids"],
+                    },
+                }
+            },
+            "required": ["requirements"],
+        },
+    },
+}
+
 _STRUCTURED_RESPONSE_FORMATS = {
     "grounded_answer": _GROUNDED_RAG_RESPONSE_FORMAT,
     "semantic_coverage": _SEMANTIC_COVERAGE_RESPONSE_FORMAT,
+    "requirement_decomposition": _REQUIREMENT_DECOMPOSITION_RESPONSE_FORMAT,
+    "requirement_coverage": _REQUIREMENT_COVERAGE_RESPONSE_FORMAT,
 }
 
 _SCHEMA_PROMPT_TOKEN_RESERVE = 128

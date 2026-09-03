@@ -6,7 +6,12 @@ from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
 StructuredOutputMode = Literal["plain", "json_schema"]
-StructuredOutputSchema = Literal["grounded_answer", "semantic_coverage"]
+StructuredOutputSchema = Literal[
+    "grounded_answer",
+    "semantic_coverage",
+    "requirement_decomposition",
+    "requirement_coverage",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +57,12 @@ class ChatRequest:
             raise ValueError("reasoning must be a bool")
         if self.structured_output not in {"plain", "json_schema"}:
             raise ValueError("structured_output must be plain or json_schema")
-        if self.structured_output_schema not in {"grounded_answer", "semantic_coverage"}:
+        if self.structured_output_schema not in {
+            "grounded_answer",
+            "semantic_coverage",
+            "requirement_decomposition",
+            "requirement_coverage",
+        }:
             raise ValueError("structured_output_schema is not supported")
         if self.structured_output == "plain" and self.structured_output_schema != "grounded_answer":
             raise ValueError("structured_output_schema requires json_schema output")

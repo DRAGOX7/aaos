@@ -35,7 +35,11 @@ from .indexing import RagDocumentIndexer, RagIndexingCoordinator
 from .lock import RagIndexLock
 from .repository import RagRepository
 from .retrieval import EvidenceSelector, EvidenceSufficiencyGate, HybridRetriever
-from .semantic_coverage import SemanticCoverageClassifier
+from .semantic_coverage import (
+    RequirementCoverageClassifier,
+    RequirementDecomposer,
+    SemanticCoverageClassifier,
+)
 from .service import GuardedLocalRagService
 
 DatabaseEngineFactory = Callable[[Any], Engine]
@@ -45,6 +49,8 @@ EmbeddingFactory = Callable[[RagIndexConfig], EmbeddingService]
 ChunkerFactory = Callable[[RagIndexConfig], DeterministicChunker]
 IndexLockFactory = Callable[[Any], RagIndexLock]
 ModelLifecycleFactory = Callable[[], ModelLifecycle]
+RequirementDecomposerFactory = Callable[[ModelGateway], RequirementDecomposer]
+RequirementCoverageFactory = Callable[[ModelGateway], RequirementCoverageClassifier]
 
 
 @dataclass(slots=True)
@@ -199,6 +205,8 @@ def build_phase4_runtime(
     evidence_selector_factory: Callable[..., EvidenceSelector] | None = None,
     sufficiency_gate_factory: Callable[..., EvidenceSufficiencyGate] | None = None,
     semantic_classifier_factory: Callable[..., SemanticCoverageClassifier] | None = None,
+    requirement_decomposer_factory: RequirementDecomposerFactory | None = None,
+    requirement_coverage_factory: RequirementCoverageFactory | None = None,
     answer_generator_factory: Callable[..., GroundedAnswerGenerator] | None = None,
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
@@ -227,13 +235,19 @@ def build_phase4_runtime(
     selected_retriever_factory = retriever_factory or HybridRetriever
     selected_selector_factory = evidence_selector_factory or EvidenceSelector
     selected_gate_factory = sufficiency_gate_factory or EvidenceSufficiencyGate
-    selected_classifier_factory = semantic_classifier_factory or SemanticCoverageClassifier
+    if semantic_classifier_factory is not None and (
+        requirement_decomposer_factory is not None or requirement_coverage_factory is not None
+    ):
+        raise ValueError("legacy and requirement semantic factories cannot be combined")
+    selected_classifier_factory = semantic_classifier_factory
+    selected_decomposer_factory = requirement_decomposer_factory or RequirementDecomposer
+    selected_coverage_factory = requirement_coverage_factory or RequirementCoverageClassifier
     selected_generator_factory = answer_generator_factory or GroundedAnswerGenerator
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
     selected_indexing_factory = indexing_factory or RagIndexingCoordinator
     selected_model_lifecycle_factory = model_lifecycle_factory or LmStudioModelLifecycle
-    for factory, name in (
+    factories: list[tuple[object, str]] = [
         (selected_engine_factory, "database_engine_factory"),
         (selected_session_factory, "session_factory_factory"),
         (selected_repository_factory, "repository_factory"),
@@ -243,13 +257,22 @@ def build_phase4_runtime(
         (selected_retriever_factory, "retriever_factory"),
         (selected_selector_factory, "evidence_selector_factory"),
         (selected_gate_factory, "sufficiency_gate_factory"),
-        (selected_classifier_factory, "semantic_classifier_factory"),
         (selected_generator_factory, "answer_generator_factory"),
         (selected_validator_factory, "citation_validator_factory"),
         (selected_service_factory, "service_factory"),
         (selected_indexing_factory, "indexing_factory"),
         (selected_model_lifecycle_factory, "model_lifecycle_factory"),
-    ):
+    ]
+    if selected_classifier_factory is not None:
+        factories.append((selected_classifier_factory, "semantic_classifier_factory"))
+    else:
+        factories.extend(
+            [
+                (selected_decomposer_factory, "requirement_decomposer_factory"),
+                (selected_coverage_factory, "requirement_coverage_factory"),
+            ]
+        )
+    for factory, name in factories:
         if not callable(factory):
             raise ValueError(f"{name} must be callable")
 
@@ -319,22 +342,48 @@ def build_phase4_runtime(
         managed_gateway = _ManagedModelGateway(
             gateway, model_lifecycle, managed_embedding, residency
         )
-        semantic_classifier = selected_classifier_factory(managed_gateway)
-        _register_optional_closer(owned_closers, semantic_classifier, "close")
-        _require_callable(semantic_classifier, "classify", "semantic_classifier")
+        semantic_classifier: SemanticCoverageClassifier | None = None
+        requirement_decomposer: RequirementDecomposer | None = None
+        requirement_coverage_classifier: RequirementCoverageClassifier | None = None
+        if selected_classifier_factory is not None:
+            semantic_classifier = selected_classifier_factory(managed_gateway)
+            _register_optional_closer(owned_closers, semantic_classifier, "close")
+            _require_callable(semantic_classifier, "classify", "semantic_classifier")
+        else:
+            requirement_decomposer = selected_decomposer_factory(managed_gateway)
+            _register_optional_closer(owned_closers, requirement_decomposer, "close")
+            _require_callable(requirement_decomposer, "decompose", "requirement_decomposer")
+            requirement_coverage_classifier = selected_coverage_factory(managed_gateway)
+            _register_optional_closer(owned_closers, requirement_coverage_classifier, "close")
+            _require_callable(
+                requirement_coverage_classifier,
+                "classify",
+                "requirement_coverage_classifier",
+            )
         answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
         _register_optional_closer(owned_closers, citation_validator, "close")
-        service = selected_service_factory(
-            retriever=retriever,
-            evidence_selector=evidence_selector,
-            sufficiency_gate=sufficiency_gate,
-            answer_generator=answer_generator,
-            citation_validator=citation_validator,
-            semantic_classifier=semantic_classifier,
-            rrf_k=config.rrf_k,
-        )
+        service_kwargs: dict[str, object] = {
+            "retriever": retriever,
+            "evidence_selector": evidence_selector,
+            "sufficiency_gate": sufficiency_gate,
+            "answer_generator": answer_generator,
+            "citation_validator": citation_validator,
+            "rrf_k": config.rrf_k,
+        }
+        service_factory_callable = cast(Any, selected_service_factory)
+        if semantic_classifier is not None:
+            service = service_factory_callable(
+                **service_kwargs,
+                semantic_classifier=semantic_classifier,
+            )
+        else:
+            service = service_factory_callable(
+                **service_kwargs,
+                requirement_decomposer=requirement_decomposer,
+                requirement_coverage_classifier=requirement_coverage_classifier,
+            )
         _register_optional_closer(owned_closers, service, "close")
         _require_callable(service, "ask", "service")
         for method in ("index_new", "rebuild", "status"):
