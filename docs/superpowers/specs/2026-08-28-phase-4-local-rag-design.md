@@ -1141,8 +1141,8 @@ to understand user intent; retrieved evidence is not visible. Deterministic
 code assigns canonical IDs (`r1` through `rN`) and freezes the resulting
 requirement set. The coverage classifier then consumes only that immutable set,
 answer-language policy, pinned generation/revision metadata, and the already
-selected bounded evidence. It may not add, remove, merge, rewrite, or reorder
-requirements. Neither step is a retrieval path, source selector, citation
+selected bounded evidence. It may not add, remove, merge, or rewrite the
+immutable requirement universe. Neither step is a retrieval path, source selector, citation
 resolver, or answer renderer. The LLM produces bounded data; trusted code owns
 requirement identity, validation, final status, and every authorization
 decision.
@@ -1320,7 +1320,7 @@ The approved factual grounded-answer timeout remains 60 seconds and the
 For decomposition, only the question/request context is interpreted as user
 intent; retrieved evidence is absent. For coverage, retrieved document text
 and the fixed requirement text remain untrusted data. Instructions explicitly
-separate policy from data; evidence cannot add, remove, rewrite, or reorder
+separate policy from data; evidence cannot add, remove, or rewrite
 requirements, alter schema, scope, tools, secrets, model/runtime configuration,
 or network behavior. No tools are exposed. Evidence IDs are supplied only by
 trusted request-local context and are validated against authoritative SQLite

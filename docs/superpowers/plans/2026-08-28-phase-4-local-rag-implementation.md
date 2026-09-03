@@ -1218,7 +1218,7 @@ before any factual answer call. The decomposer sees no selected evidence;
 deterministic code assigns canonical IDs and freezes its requirement set. The
 coverage classifier consumes only that immutable set, answer-language policy,
 pinned generation/revision metadata, and selected bounded evidence. It cannot
-add, remove, merge, rewrite, or reorder requirements, broaden the
+add, remove, merge, or rewrite the immutable requirement universe, broaden the
 `QuerySnapshot`, retrieve more data, choose citations, call tools, or render an
 answer.
 
@@ -1357,7 +1357,7 @@ factual generation. The approved factual timeout remains 60 seconds and the
 For decomposition, only the question/request context is interpreted as user
 intent; retrieved evidence is absent. For coverage, retrieved document text
 and fixed requirement text remain untrusted data. Prompts separate policy from
-data and expose no tools. Evidence cannot add, remove, rewrite, or reorder
+data and expose no tools. Evidence cannot add, remove, or rewrite
 requirements, alter schema, scope, secrets, model/runtime configuration, or
 network behavior. The existing SQLite-backed evidence/provenance and citation
 validator remain authoritative.
