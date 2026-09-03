@@ -49,6 +49,16 @@ class RequirementSupport(StrEnum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class AtomicDecompositionStatus(StrEnum):
+    OK = "OK"
+    TOO_MANY_REQUIREMENTS = "TOO_MANY_REQUIREMENTS"
+
+
+class EntailmentResult(StrEnum):
+    ENTAILED = "ENTAILED"
+    NOT_ENTAILED = "NOT_ENTAILED"
+
+
 class RagErrorCode(StrEnum):
     RAG_INDEX_LOCKED = "RAG_INDEX_LOCKED"
     NO_ELIGIBLE_DOCUMENTS = "NO_ELIGIBLE_DOCUMENTS"
@@ -352,6 +362,54 @@ class RequirementSet:
         actual = tuple(item.requirement_id for item in self.requirements)
         if actual != expected:
             raise ValueError("requirements must have contiguous canonical IDs")
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicRequirementDecomposition:
+    """Closed decomposition result, including the non-exceptional overflow refusal."""
+
+    status: AtomicDecompositionStatus
+    requirements: tuple[Requirement, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, AtomicDecompositionStatus):
+            raise ValueError("status must be an AtomicDecompositionStatus")
+        if not isinstance(self.requirements, tuple) or not all(
+            isinstance(item, Requirement) for item in self.requirements
+        ):
+            raise ValueError("requirements must be a tuple of Requirement values")
+        if self.status is AtomicDecompositionStatus.OK:
+            RequirementSet(self.requirements)
+        elif self.requirements:
+            raise ValueError("overflow decomposition must not expose requirements")
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceSpan:
+    evidence_id: str
+    quote: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence_id", _nonblank_text(self.evidence_id, "evidence_id"))
+        object.__setattr__(self, "quote", _nonblank_text(self.quote, "quote"))
+        if len(self.evidence_id) > 128 or len(self.quote) > 400:
+            raise ValueError("evidence span fields exceed their bounds")
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementEvidenceSpans:
+    requirement_id: str
+    spans: tuple[EvidenceSpan, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.requirement_id, str) or self.requirement_id not in {
+            "r1", "r2", "r3", "r4", "r5", "r6"
+        }:
+            raise ValueError("requirement_id must be r1 through r6")
+        if not isinstance(self.spans, tuple) or len(self.spans) > 4 or not all(
+            isinstance(span, EvidenceSpan) for span in self.spans
+        ):
+            raise ValueError("spans must contain at most four EvidenceSpan values")
 
 
 @dataclass(frozen=True, slots=True)

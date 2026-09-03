@@ -36,6 +36,9 @@ from .lock import RagIndexLock
 from .repository import RagRepository
 from .retrieval import EvidenceSelector, EvidenceSufficiencyGate, HybridRetriever
 from .semantic_coverage import (
+    AtomicRequirementDecomposer,
+    EvidenceSpanExtractor,
+    IndependentEntailmentVerifier,
     RequirementCoverageClassifier,
     RequirementDecomposer,
     SemanticCoverageClassifier,
@@ -51,6 +54,9 @@ IndexLockFactory = Callable[[Any], RagIndexLock]
 ModelLifecycleFactory = Callable[[], ModelLifecycle]
 RequirementDecomposerFactory = Callable[[ModelGateway], RequirementDecomposer]
 RequirementCoverageFactory = Callable[[ModelGateway], RequirementCoverageClassifier]
+AtomicRequirementDecomposerFactory = Callable[[ModelGateway], AtomicRequirementDecomposer]
+EvidenceSpanExtractorFactory = Callable[[ModelGateway], EvidenceSpanExtractor]
+EntailmentVerifierFactory = Callable[[ModelGateway], IndependentEntailmentVerifier]
 
 
 @dataclass(slots=True)
@@ -207,6 +213,9 @@ def build_phase4_runtime(
     semantic_classifier_factory: Callable[..., SemanticCoverageClassifier] | None = None,
     requirement_decomposer_factory: RequirementDecomposerFactory | None = None,
     requirement_coverage_factory: RequirementCoverageFactory | None = None,
+    atomic_requirement_decomposer_factory: AtomicRequirementDecomposerFactory | None = None,
+    evidence_span_extractor_factory: EvidenceSpanExtractorFactory | None = None,
+    entailment_verifier_factory: EntailmentVerifierFactory | None = None,
     answer_generator_factory: Callable[..., GroundedAnswerGenerator] | None = None,
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
@@ -240,8 +249,11 @@ def build_phase4_runtime(
     ):
         raise ValueError("legacy and requirement semantic factories cannot be combined")
     selected_classifier_factory = semantic_classifier_factory
-    selected_decomposer_factory = requirement_decomposer_factory or RequirementDecomposer
-    selected_coverage_factory = requirement_coverage_factory or RequirementCoverageClassifier
+    selected_decomposer_factory = requirement_decomposer_factory
+    selected_coverage_factory = requirement_coverage_factory
+    selected_atomic_factory = atomic_requirement_decomposer_factory or AtomicRequirementDecomposer
+    selected_span_factory = evidence_span_extractor_factory or EvidenceSpanExtractor
+    selected_entailment_factory = entailment_verifier_factory or IndependentEntailmentVerifier
     selected_generator_factory = answer_generator_factory or GroundedAnswerGenerator
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
@@ -265,13 +277,15 @@ def build_phase4_runtime(
     ]
     if selected_classifier_factory is not None:
         factories.append((selected_classifier_factory, "semantic_classifier_factory"))
-    else:
+    elif selected_decomposer_factory is not None or selected_coverage_factory is not None:
         factories.extend(
             [
                 (selected_decomposer_factory, "requirement_decomposer_factory"),
                 (selected_coverage_factory, "requirement_coverage_factory"),
             ]
         )
+    else:
+        factories.extend([(selected_atomic_factory, "atomic_requirement_decomposer_factory"), (selected_span_factory, "evidence_span_extractor_factory"), (selected_entailment_factory, "entailment_verifier_factory")])
     for factory, name in factories:
         if not callable(factory):
             raise ValueError(f"{name} must be callable")
@@ -345,11 +359,14 @@ def build_phase4_runtime(
         semantic_classifier: SemanticCoverageClassifier | None = None
         requirement_decomposer: RequirementDecomposer | None = None
         requirement_coverage_classifier: RequirementCoverageClassifier | None = None
+        atomic_decomposer: AtomicRequirementDecomposer | None = None
+        span_extractor: EvidenceSpanExtractor | None = None
+        entailment_verifier: IndependentEntailmentVerifier | None = None
         if selected_classifier_factory is not None:
             semantic_classifier = selected_classifier_factory(managed_gateway)
             _register_optional_closer(owned_closers, semantic_classifier, "close")
             _require_callable(semantic_classifier, "classify", "semantic_classifier")
-        else:
+        elif selected_decomposer_factory is not None and selected_coverage_factory is not None:
             requirement_decomposer = selected_decomposer_factory(managed_gateway)
             _register_optional_closer(owned_closers, requirement_decomposer, "close")
             _require_callable(requirement_decomposer, "decompose", "requirement_decomposer")
@@ -360,6 +377,10 @@ def build_phase4_runtime(
                 "classify",
                 "requirement_coverage_classifier",
             )
+        else:
+            atomic_decomposer = selected_atomic_factory(managed_gateway)
+            span_extractor = selected_span_factory(managed_gateway)
+            entailment_verifier = selected_entailment_factory(managed_gateway)
         answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
@@ -378,12 +399,14 @@ def build_phase4_runtime(
                 **service_kwargs,
                 semantic_classifier=semantic_classifier,
             )
-        else:
+        elif requirement_decomposer is not None:
             service = service_factory_callable(
                 **service_kwargs,
                 requirement_decomposer=requirement_decomposer,
                 requirement_coverage_classifier=requirement_coverage_classifier,
             )
+        else:
+            service = service_factory_callable(**service_kwargs, atomic_requirement_decomposer=atomic_decomposer, evidence_span_extractor=span_extractor, entailment_verifier=entailment_verifier)
         _register_optional_closer(owned_closers, service, "close")
         _require_callable(service, "ask", "service")
         for method in ("index_new", "rebuild", "status"):

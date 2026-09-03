@@ -49,6 +49,9 @@ from .contracts import (
     SemanticCoverageStatus,
 )
 from .semantic_coverage import (
+    AtomicRequirementDecomposer,
+    EvidenceSpanExtractor,
+    IndependentEntailmentVerifier,
     RequirementCoverageClassifier,
     RequirementDecomposer,
     aggregate_requirement_coverage,
@@ -60,6 +63,9 @@ __all__ = [
     "Citation",
     "CourseScope",
     "CoverageStatus",
+    "AtomicRequirementDecomposer",
+    "EvidenceSpanExtractor",
+    "IndependentEntailmentVerifier",
     "DenseIndex",
     "DenseIndexFactory",
     "DenseSearchHit",

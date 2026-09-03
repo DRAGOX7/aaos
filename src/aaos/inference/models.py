@@ -11,6 +11,9 @@ StructuredOutputSchema = Literal[
     "semantic_coverage",
     "requirement_decomposition",
     "requirement_coverage",
+    "atomic_requirement_decomposition",
+    "evidence_spans",
+    "requirement_entailment",
 ]
 
 
@@ -62,6 +65,9 @@ class ChatRequest:
             "semantic_coverage",
             "requirement_decomposition",
             "requirement_coverage",
+            "atomic_requirement_decomposition",
+            "evidence_spans",
+            "requirement_entailment",
         }:
             raise ValueError("structured_output_schema is not supported")
         if self.structured_output == "plain" and self.structured_output_schema != "grounded_answer":

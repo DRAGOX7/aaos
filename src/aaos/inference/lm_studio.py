@@ -167,6 +167,9 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "semantic_coverage": _SEMANTIC_COVERAGE_RESPONSE_FORMAT,
     "requirement_decomposition": _REQUIREMENT_DECOMPOSITION_RESPONSE_FORMAT,
     "requirement_coverage": _REQUIREMENT_COVERAGE_RESPONSE_FORMAT,
+    "atomic_requirement_decomposition": {"type": "json_schema", "json_schema": {"name": "aaos_atomic_requirement_decomposition_v1", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"status": {"type": "string", "enum": ["OK", "TOO_MANY_REQUIREMENTS"]}, "requirements": {"type": "array", "maxItems": 6, "items": {"type": "object", "additionalProperties": False, "properties": {"requirement_text": {"type": "string", "minLength": 1, "maxLength": 240}}, "required": ["requirement_text"]}}}, "required": ["status", "requirements"]}}},
+    "evidence_spans": {"type": "json_schema", "json_schema": {"name": "aaos_evidence_spans_v1", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"requirements": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "object", "additionalProperties": False, "properties": {"requirement_id": {"type": "string", "pattern": "^r[1-6]$"}, "spans": {"type": "array", "maxItems": 4, "items": {"type": "object", "additionalProperties": False, "properties": {"evidence_id": {"type": "string", "minLength": 1, "maxLength": 128}, "quote": {"type": "string", "minLength": 1, "maxLength": 400}}, "required": ["evidence_id", "quote"]}}}, "required": ["requirement_id", "spans"]}}}, "required": ["requirements"]}}},
+    "requirement_entailment": {"type": "json_schema", "json_schema": {"name": "aaos_requirement_entailment_v1", "strict": True, "schema": {"type": "object", "additionalProperties": False, "properties": {"result": {"type": "string", "enum": ["ENTAILED", "NOT_ENTAILED"]}}, "required": ["result"]}}},
 }
 
 _SCHEMA_PROMPT_TOKEN_RESERVE = 128

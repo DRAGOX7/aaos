@@ -14,7 +14,9 @@ from .contracts import (
     RagQuery,
     RenderedRagResponse,
     RequirementCoverageDecision,
+    RequirementCoverageJudgment,
     RequirementSet,
+    RequirementSupport,
     RetrievedEvidence,
     SemanticCoverageDecision,
     SemanticCoverageStatus,
@@ -36,7 +38,13 @@ from .retrieval import (
     SufficiencyStatus,
     reciprocal_rank_fusion,
 )
-from .semantic_coverage import RequirementCoverageClassifier, RequirementDecomposer
+from .semantic_coverage import (
+    AtomicRequirementDecomposer,
+    EvidenceSpanExtractor,
+    IndependentEntailmentVerifier,
+    RequirementCoverageClassifier,
+    RequirementDecomposer,
+)
 
 _DEFAULT_RRF_K = 60
 _DEFAULT_GENERATION_POLICY_VERSION = "grounded-v1"
@@ -115,6 +123,9 @@ class LocalRagService:
         requirement_coverage_classifier: (
             _RequirementCoverageClassifier | RequirementCoverageClassifier | None
         ) = None,
+        atomic_requirement_decomposer: AtomicRequirementDecomposer | None = None,
+        evidence_span_extractor: EvidenceSpanExtractor | None = None,
+        entailment_verifier: IndependentEntailmentVerifier | None = None,
         rrf_k: int = _DEFAULT_RRF_K,
         generation_policy_version: str = _DEFAULT_GENERATION_POLICY_VERSION,
     ) -> None:
@@ -142,6 +153,9 @@ class LocalRagService:
         self._semantic_classifier = semantic_classifier
         self._requirement_decomposer = requirement_decomposer
         self._requirement_coverage_classifier = requirement_coverage_classifier
+        self._atomic_requirement_decomposer = atomic_requirement_decomposer
+        self._evidence_span_extractor = evidence_span_extractor
+        self._entailment_verifier = entailment_verifier
         self._rrf_k = rrf_k
         self._generation_policy_version = generation_policy_version.strip()
         _require_callable(self._retriever, "retrieve_candidates", "retriever")
@@ -168,6 +182,17 @@ class LocalRagService:
                 "classify",
                 "requirement_coverage_classifier",
             )
+        atomic_components = (
+            self._atomic_requirement_decomposer,
+            self._evidence_span_extractor,
+            self._entailment_verifier,
+        )
+        if any(component is not None for component in atomic_components):
+            if any(component is None for component in atomic_components) or self._semantic_classifier is not None or self._requirement_decomposer is not None:
+                raise ValueError("atomic semantic components must be provided together and cannot be combined")
+            _require_callable(self._atomic_requirement_decomposer, "decompose", "atomic_requirement_decomposer")
+            _require_callable(self._evidence_span_extractor, "extract", "evidence_span_extractor")
+            _require_callable(self._entailment_verifier, "verify", "entailment_verifier")
 
     async def ask(self, query: RagQuery) -> RenderedRagResponse:
         """Run the mandatory snapshot → evidence → answer path exactly once."""
@@ -179,11 +204,20 @@ class LocalRagService:
         evidence = self._select(candidate_set, fused_candidates)
         sufficiency = self._evaluate(evidence, candidate_set)
         request = self._build_request(query, candidate_set, evidence)
-        requirement_decision = await self._classify_requirements(
+        atomic_decision = await self._classify_atomic_requirements(
             query, request, evidence, candidate_set, sufficiency
         )
-        semantic_decision = None
-        if requirement_decision is None:
+        requirement_decision = (
+            atomic_decision if isinstance(atomic_decision, RequirementCoverageDecision) else None
+        )
+        semantic_decision = (
+            atomic_decision if isinstance(atomic_decision, SemanticCoverageDecision) else None
+        )
+        if requirement_decision is None and semantic_decision is None:
+            requirement_decision = await self._classify_requirements(
+            query, request, evidence, candidate_set, sufficiency
+        )
+        if requirement_decision is None and semantic_decision is None:
             semantic_decision = await self._classify(request, sufficiency)
         if requirement_decision is not None:
             request = self._build_request(
@@ -271,6 +305,39 @@ class LocalRagService:
         if not isinstance(decision, SufficiencyDecision):
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
         return decision
+
+    async def _classify_atomic_requirements(
+        self, query: RagQuery, request: GroundedAnswerRequest, evidence: tuple[RetrievedEvidence, ...],
+        candidate_set: RetrievalCandidateSet, sufficiency: SufficiencyDecision,
+    ) -> RequirementCoverageDecision | SemanticCoverageDecision | None:
+        if sufficiency.status is SufficiencyStatus.UNSUPPORTED or self._atomic_requirement_decomposer is None:
+            return None
+        assert self._evidence_span_extractor is not None
+        assert self._entailment_verifier is not None
+        try:
+            decomposition = await self._atomic_requirement_decomposer.decompose(query)
+            if decomposition.status.value == "TOO_MANY_REQUIREMENTS":
+                return SemanticCoverageDecision(
+                    SemanticCoverageStatus.UNSUPPORTED,
+                    (),
+                    request.generation_id,
+                    request.content_revision,
+                    request.policy_version,
+                )
+            requirements = RequirementSet(decomposition.requirements)
+            spans = await self._evidence_span_extractor.extract(requirements, evidence=evidence)
+            judgments: list[RequirementCoverageJudgment] = []
+            for requirement, requirement_spans in zip(requirements.requirements, spans, strict=True):
+                result = await self._entailment_verifier.verify(requirement, requirement_spans)
+                evidence_ids = tuple(dict.fromkeys(span.evidence_id for span in requirement_spans.spans))
+                support = RequirementSupport.SUPPORTED if result.value == "ENTAILED" else RequirementSupport.UNSUPPORTED
+                judgments.append(RequirementCoverageJudgment(requirement.requirement_id, support, evidence_ids if support is RequirementSupport.SUPPORTED else ()))
+            status = SemanticCoverageStatus.UNSUPPORTED if not any(j.support is RequirementSupport.SUPPORTED for j in judgments) else SemanticCoverageStatus.SUPPORTED if all(j.support is RequirementSupport.SUPPORTED for j in judgments) else SemanticCoverageStatus.PARTIAL
+            return RequirementCoverageDecision(requirements, tuple(judgments), status, request.generation_id, request.content_revision, request.policy_version)
+        except RagOperationalError:
+            raise
+        except (AttributeError, TypeError, ValueError):
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE) from None
 
     def _build_request(
         self,
