@@ -1094,6 +1094,26 @@ is a human review gate.
 repair assertions. Extend the local LM Studio adapter tests for the exact JSON
 Schema request contract and keep the existing strict parser authoritative.
 
+### Approved calibration refinement — deterministic classifier and factual timeout
+
+The semantic coverage classifier remains local Qwen with its 256-token bound,
+strict `semantic_coverage` JSON Schema, and at most one repair. Its request
+configuration uses `temperature=0` when supported by the existing
+`ModelGateway` path. This classifier-only setting must not silently change the
+factual answer request configuration. Prompt clarification is limited to the
+general meanings of direct support, partial coverage, and unsupported requests;
+no benchmark IDs, qrels, or source-specific rules may be introduced.
+
+The factual grounded-answer request timeout is the approved bounded **60
+seconds**. The classifier keeps the existing request timeout, and the 2048
+completion bound, model, schema, repair count, and lifecycle ordering remain
+unchanged. Tests must prove the separate timeout settings, strict parsing, and
+the unchanged one-repair behavior. Calibration must show zero classifier
+timeouts/malformed outputs, zero false support for expected `UNSUPPORTED`, and
+zero status variance in the fixed repeatability check before held-out answers.
+Any failed requirement stops for human review rather than triggering automatic
+retuning.
+
 ### Amendment B — deterministic local answer-model residency
 
 Create `src/aaos/inference/lm_studio_lifecycle.py` with a narrow typed

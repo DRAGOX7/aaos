@@ -1207,6 +1207,27 @@ The final 24 answer-heldout cases remain pristine:
 RAGAS, Checkpoint G, or Phase 5 action is authorized until the classifier is
 implemented, calibrated, reviewed, and the existing pre-heldout gates pass.
 
+### Calibration refinement — deterministic classification and bounded factual timeout
+
+The approved calibration refinement keeps the semantic classifier model,
+256-token completion bound, strict JSON Schema, and one-repair maximum
+unchanged. Where supported by the local gateway, classifier requests use
+deterministic decoding with `temperature=0`; this setting is classifier-only
+and must not alter factual-answer generation. Prompt clarification is limited
+to general rules distinguishing direct material support from topical relevance,
+partial coverage, and unsupported requests. No benchmark IDs, qrels, or
+source-specific exceptions enter production behavior.
+
+The factual grounded-answer HTTP timeout is **60 seconds**, replacing the
+previous 30-second bound. This remains a bounded local-only timeout and does
+not change the 2048-token completion limit, model identity, schema, retry
+count, or lifecycle ordering. The semantic classifier retains the existing
+request timeout. Calibration must prove zero classifier timeouts and malformed
+outputs, zero false support across expected `UNSUPPORTED` cases, and zero
+status variance in the approved repeatability check before any held-out answer
+execution. A failed calibration requirement remains a human review gate; no
+automatic retuning or held-out fallback is permitted.
+
 ### Proposed implementation surface (not authorized by this amendment)
 
 Production files proposed for a later implementation task:
