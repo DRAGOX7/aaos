@@ -152,6 +152,8 @@ class LMStudioGateway:
             "stream": False,
             "reasoning_effort": "none",
         }
+        if request.temperature is not None:
+            request_payload["temperature"] = request.temperature
         if request.max_output_tokens is not None:
             request_payload["max_tokens"] = request.max_output_tokens
             estimated_prompt_tokens = _estimate_prompt_tokens(request)
@@ -172,6 +174,7 @@ class LMStudioGateway:
             path="/v1/chat/completions",
             operation=operation,
             request_payload=request_payload,
+            timeout_seconds=request.request_timeout_seconds,
         )
         return _parse_success_response(
             response,
@@ -187,6 +190,7 @@ class LMStudioGateway:
         path: str,
         operation: str,
         request_payload: dict[str, object] | None = None,
+        timeout_seconds: float | None = None,
     ) -> httpx2.Response:
         """Execute one request and expose only fixed AAOS failures."""
         model = self._settings.lm_studio_model
@@ -196,9 +200,20 @@ class LMStudioGateway:
         translated_error: InferenceError
         try:
             if request_payload is None:
-                response = await self._client.request(method, path)
+                if timeout_seconds is None:
+                    response = await self._client.request(method, path)
+                else:
+                    response = await self._client.request(method, path, timeout=timeout_seconds)
             else:
-                response = await self._client.request(method, path, json=request_payload)
+                if timeout_seconds is None:
+                    response = await self._client.request(method, path, json=request_payload)
+                else:
+                    response = await self._client.request(
+                        method,
+                        path,
+                        json=request_payload,
+                        timeout=timeout_seconds,
+                    )
         except httpx2.TimeoutException:
             translated_error = InferenceTimeoutError(
                 f"LM Studio request timed out during {operation} for model '{model}'"

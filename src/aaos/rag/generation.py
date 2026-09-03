@@ -35,6 +35,7 @@ from .contracts import (
 from .retrieval import SufficiencyDecision, SufficiencyStatus
 
 _MAX_GENERATION_TOKENS = 2048
+FACTUAL_GENERATION_TIMEOUT_SECONDS = 60.0
 
 GROUNDED_SYSTEM_PROMPT = """You are the AAOS grounded academic answer formatter.
 Return exactly one JSON object with these keys and no others:
@@ -104,6 +105,7 @@ class GroundedAnswerGenerator:
             messages=_build_messages(request),
             max_output_tokens=self._max_output_tokens,
             reasoning=False,
+            request_timeout_seconds=FACTUAL_GENERATION_TIMEOUT_SECONDS,
             structured_output="json_schema",
             structured_output_schema="grounded_answer",
         )
@@ -115,6 +117,7 @@ class GroundedAnswerGenerator:
                 messages=_build_messages(request, repair=True, invalid_output=response.content),
                 max_output_tokens=self._max_output_tokens,
                 reasoning=False,
+                request_timeout_seconds=FACTUAL_GENERATION_TIMEOUT_SECONDS,
                 structured_output="json_schema",
                 structured_output_schema="grounded_answer",
             )
@@ -650,6 +653,7 @@ def _parse_claim(raw_claim: Any, allowed_ids: frozenset[str]) -> RagClaim:
 
 __all__ = [
     "CitationValidator",
+    "FACTUAL_GENERATION_TIMEOUT_SECONDS",
     "GROUNDED_SYSTEM_PROMPT",
     "REPAIR_PROMPT",
     "GroundedAnswerRequest",

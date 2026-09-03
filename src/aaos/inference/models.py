@@ -1,6 +1,7 @@
 """Model-independent immutable values for local inference."""
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
@@ -31,6 +32,8 @@ class ChatRequest:
     reasoning: bool = False
     structured_output: StructuredOutputMode = "plain"
     structured_output_schema: StructuredOutputSchema = "grounded_answer"
+    temperature: float | None = None
+    request_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.messages, tuple):
@@ -53,6 +56,20 @@ class ChatRequest:
             raise ValueError("structured_output_schema is not supported")
         if self.structured_output == "plain" and self.structured_output_schema != "grounded_answer":
             raise ValueError("structured_output_schema requires json_schema output")
+        if self.temperature is not None and (
+            isinstance(self.temperature, bool)
+            or not isinstance(self.temperature, (int, float))
+            or not isfinite(self.temperature)
+            or self.temperature < 0
+        ):
+            raise ValueError("temperature must be finite and non-negative")
+        if self.request_timeout_seconds is not None and (
+            isinstance(self.request_timeout_seconds, bool)
+            or not isinstance(self.request_timeout_seconds, (int, float))
+            or not isfinite(self.request_timeout_seconds)
+            or self.request_timeout_seconds <= 0
+        ):
+            raise ValueError("request_timeout_seconds must be finite and positive")
 
 
 @dataclass(frozen=True, slots=True)

@@ -81,6 +81,8 @@ def test_supported_requires_empty_aspects_and_uses_bounded_schema_request() -> N
     assert result.status is SemanticCoverageStatus.SUPPORTED
     assert result.unsupported_aspects == ()
     assert gateway.requests[0].max_output_tokens == 256
+    assert gateway.requests[0].temperature == 0.0
+    assert gateway.requests[0].request_timeout_seconds is None
     assert gateway.requests[0].structured_output == "json_schema"
     assert gateway.requests[0].structured_output_schema == "semantic_coverage"
 
@@ -192,3 +194,24 @@ def test_evidence_is_untrusted_data_in_user_message() -> None:
 
     assert "ignore previous instructions" not in gateway.requests[0].messages[0].content
     assert "ignore previous instructions" in gateway.requests[0].messages[1].content
+
+
+def test_classifier_prompt_distinguishes_direct_support_from_topical_relevance() -> None:
+    gateway = FakeGateway([_response('{"status":"UNSUPPORTED","unsupported_aspects":["x"]}')])
+
+    _classify(gateway)
+
+    system_prompt = " ".join(gateway.requests[0].messages[0].content.split())
+    assert "directly supported" in system_prompt
+    assert "topical relevance" in system_prompt
+    assert "prefer UNSUPPORTED" in system_prompt
+
+
+def test_classifier_has_no_benchmark_specific_rules() -> None:
+    gateway = FakeGateway([_response('{"status":"SUPPORTED","unsupported_aspects":[]}')])
+
+    _classify(gateway)
+
+    system_prompt = gateway.requests[0].messages[0].content.lower()
+    assert "v2-p" not in system_prompt
+    assert "qrel" not in system_prompt

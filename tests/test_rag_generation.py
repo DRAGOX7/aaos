@@ -173,6 +173,8 @@ def test_default_completion_budget_supports_long_strict_repair() -> None:
     assert len(payload.split()) > 512
     assert len(gateway.requests) == 2
     assert all(request.max_output_tokens == 2048 for request in gateway.requests)
+    assert all(request.temperature is None for request in gateway.requests)
+    assert all(request.request_timeout_seconds == 60.0 for request in gateway.requests)
     assert all(request.structured_output == "json_schema" for request in gateway.requests)
 
 
@@ -196,6 +198,8 @@ def test_malformed_then_valid_response_uses_one_constrained_repair() -> None:
     assert "repair" in gateway.requests[1].messages[-1].content.lower()
     assert "not json" in gateway.requests[1].messages[-1].content
     assert all(request.max_output_tokens == 2048 for request in gateway.requests)
+    assert all(request.temperature is None for request in gateway.requests)
+    assert all(request.request_timeout_seconds == 60.0 for request in gateway.requests)
     assert all(request.structured_output == "json_schema" for request in gateway.requests)
 
 

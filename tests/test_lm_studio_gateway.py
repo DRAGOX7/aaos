@@ -274,6 +274,68 @@ def test_generate_serializes_the_owned_grounded_json_schema() -> None:
     }
 
 
+def test_generate_serializes_classifier_temperature_without_changing_default_timeout() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Classify."),),
+            max_output_tokens=256,
+            temperature=0.0,
+        ),
+        handler,
+    )
+
+    payload = json.loads(requests[0].content)
+    assert payload["temperature"] == 0.0
+
+
+def test_generate_applies_request_specific_timeout() -> None:
+    captured: dict[str, object] = {}
+
+    class ClientProbe:
+        async def request(self, *args: object, **kwargs: object) -> httpx2.Response:
+            captured.update(kwargs)
+            return httpx2.Response(
+                200,
+                json={
+                    "model": "qwen/qwen3.5-4b",
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                },
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    def client_factory(**_kwargs: object) -> ClientProbe:
+        return ClientProbe()
+
+    original_client = httpx2.AsyncClient
+    try:
+        httpx2.AsyncClient = client_factory  # type: ignore[assignment, misc]
+        _generate(
+            ChatRequest(
+                messages=(ChatMessage(role="user", content="Answer."),),
+                request_timeout_seconds=60.0,
+            ),
+            lambda _request: httpx2.Response(200),
+        )
+    finally:
+        httpx2.AsyncClient = original_client  # type: ignore[misc]
+
+    assert captured["timeout"] == 60.0
+
+
 def test_generate_serializes_the_owned_semantic_coverage_json_schema() -> None:
     requests: list[httpx2.Request] = []
 

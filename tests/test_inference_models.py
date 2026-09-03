@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from math import inf, nan
 from typing import cast
 
 import pytest
@@ -83,6 +84,24 @@ def test_chat_request_accepts_boolean_reasoning(reasoning: bool) -> None:
     )
 
     assert request.reasoning is reasoning
+
+
+@pytest.mark.parametrize("temperature", [-1.0, inf, nan, True])
+def test_chat_request_rejects_invalid_temperature(temperature: float | bool) -> None:
+    with pytest.raises(ValueError, match="temperature"):
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Hello"),),
+            temperature=temperature,
+        )
+
+
+@pytest.mark.parametrize("timeout_seconds", [0.0, -1.0, inf, nan, True])
+def test_chat_request_rejects_invalid_request_timeout(timeout_seconds: float | bool) -> None:
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Hello"),),
+            request_timeout_seconds=timeout_seconds,
+        )
 
 
 @pytest.mark.parametrize(
