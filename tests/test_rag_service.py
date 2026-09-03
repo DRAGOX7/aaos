@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
 from aaos.inference import ChatRequest, ChatResponse, ModelAvailability
 from aaos.rag import GuardedLocalRagService
 from aaos.rag.contracts import (
+    AtomicDecompositionStatus,
+    AtomicRequirementDecomposition,
     Citation,
     DenseSearchHit,
+    EntailmentResult,
+    EvidenceSpan,
     GlobalScope,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
@@ -20,6 +25,9 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RagQuery,
     RenderedRagResponse,
+    Requirement,
+    RequirementEvidenceSpans,
+    RequirementSet,
     RetrievedEvidence,
     SemanticCoverageDecision,
     SemanticCoverageStatus,
@@ -188,6 +196,43 @@ class FakeSemanticClassifier:
         )
 
 
+class FakeAtomicDecomposer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def decompose(self, _query: RagQuery) -> AtomicRequirementDecomposition:
+        self.calls += 1
+        return AtomicRequirementDecomposition(
+            AtomicDecompositionStatus.OK,
+            (Requirement("r1", "Give the deadline"),),
+        )
+
+
+class FakeSpanExtractor:
+    def __init__(self, quote: str = "The deadline") -> None:
+        self.calls = 0
+        self.quote = quote
+
+    async def extract(
+        self, _requirements: RequirementSet, *, evidence: tuple[RetrievedEvidence, ...]
+    ) -> tuple[RequirementEvidenceSpans, ...]:
+        self.calls += 1
+        return (
+            RequirementEvidenceSpans("r1", (EvidenceSpan(evidence[0].evidence_id, self.quote),)),
+        )
+
+
+class FakeEntailmentVerifier:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def verify(
+        self, _requirement: Requirement, _spans: RequirementEvidenceSpans
+    ) -> EntailmentResult:
+        self.calls += 1
+        return EntailmentResult.ENTAILED
+
+
 class FakeGateway:
     def __init__(self) -> None:
         self.calls = 0
@@ -232,6 +277,60 @@ def _service(
 
 def _ask(service: GuardedLocalRagService, query: RagQuery = QUERY) -> RenderedRagResponse:
     return asyncio.run(service.ask(query))
+
+
+def test_atomic_path_requires_snapshot_authorized_evidence_and_passes_validated_spans() -> None:
+    retriever = FakeRetriever()
+    selector = FakeSelector()
+    gate = FakeGate()
+    generator = FakeGenerator(retriever, _output())
+    decomposer = FakeAtomicDecomposer()
+    extractor = FakeSpanExtractor()
+    verifier = FakeEntailmentVerifier()
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=selector,
+        sufficiency_gate=gate,
+        answer_generator=generator,
+        citation_validator=CitationValidator(),
+        atomic_requirement_decomposer=decomposer,
+        evidence_span_extractor=extractor,
+        entailment_verifier=verifier,
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert decomposer.calls == extractor.calls == verifier.calls == 1
+    assert generator.seen_request is not None
+    assert generator.seen_request.validated_requirement_spans
+
+    selector.evidence = (replace(_evidence(), document_version_id=999),)
+    with pytest.raises(RagOperationalError) as error:
+        _ask(service)
+    assert error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+
+
+def test_atomic_path_rejects_forged_span_quote_before_entailment() -> None:
+    retriever = FakeRetriever()
+    selector = FakeSelector()
+    verifier = FakeEntailmentVerifier()
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=selector,
+        sufficiency_gate=FakeGate(),
+        answer_generator=FakeGenerator(retriever, _output()),
+        citation_validator=CitationValidator(),
+        atomic_requirement_decomposer=FakeAtomicDecomposer(),
+        evidence_span_extractor=FakeSpanExtractor("fabricated quote"),
+        entailment_verifier=verifier,
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        _ask(service)
+
+    assert error.value.code is RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+    assert verifier.calls == 0
 
 
 def test_success_composes_one_snapshot_and_trusted_rendering() -> None:

@@ -250,7 +250,9 @@ print('LOCAL_RAGAS_IMPORT_SAFE')
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        # RAGAS imports are intentionally isolated in a subprocess and can
+        # exceed thirty seconds on a cold Windows dependency load.
+        timeout=60,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "LOCAL_RAGAS_IMPORT_SAFE\n"
@@ -295,7 +297,9 @@ asyncio.run(main())
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        # Keep the telemetry probe bounded while allowing the isolated RAGAS
+        # import to complete on a cold Windows dependency load.
+        timeout=60,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "BOUNDED_GENERATIONS_PASS\n"
@@ -337,7 +341,9 @@ print('RAGAS_TELEMETRY_DISABLED')
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        # Keep the telemetry probe bounded while allowing the isolated RAGAS
+        # import to complete on a cold Windows dependency load.
+        timeout=60,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "RAGAS_TELEMETRY_DISABLED\n"

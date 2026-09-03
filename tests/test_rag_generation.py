@@ -16,6 +16,7 @@ from aaos.inference import (
 )
 from aaos.rag.contracts import (
     Citation,
+    EvidenceSpan,
     GlobalScope,
     RagAnswer,
     RagAnswerStatus,
@@ -25,6 +26,12 @@ from aaos.rag.contracts import (
     RagGenerationIdentity,
     RagOperationalError,
     RagQuery,
+    Requirement,
+    RequirementCoverageDecision,
+    RequirementCoverageJudgment,
+    RequirementEvidenceSpans,
+    RequirementSet,
+    RequirementSupport,
     RetrievedEvidence,
     SemanticCoverageStatus,
 )
@@ -234,6 +241,44 @@ def test_partial_semantic_constraint_is_forwarded_and_requires_partial_status() 
     assert output.status is RagAnswerStatus.PARTIAL_ANSWER
     assert "exam location" in gateway.requests[0].messages[1].content
     assert "semantic_status" in gateway.requests[0].messages[1].content
+
+
+def test_atomic_generation_forwards_only_validated_span_quotes() -> None:
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
+                '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+                '"evidence_ids":["ev-1"]}]}'
+            )
+        ]
+    )
+    requirements = RequirementSet((Requirement("r1", "Give the deadline"),))
+    coverage = RequirementCoverageDecision(
+        requirement_set=requirements,
+        judgments=(RequirementCoverageJudgment("r1", RequirementSupport.SUPPORTED, ("ev-1",)),),
+        status=SemanticCoverageStatus.SUPPORTED,
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+        policy_version="grounded-v1",
+    )
+    request = GroundedAnswerRequest.from_query(
+        RagQuery("What is the deadline?", GlobalScope()),
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+        evidence=EVIDENCE,
+        policy_version="grounded-v1",
+        requirement_coverage=coverage,
+        validated_requirement_spans=(
+            RequirementEvidenceSpans("r1", (EvidenceSpan("ev-1", "The deadline"),)),
+        ),
+    )
+
+    _run(GroundedAnswerGenerator(gateway), request, _decision())
+
+    prompt = gateway.requests[0].messages[1].content
+    assert "The deadline" in prompt
+    assert "The deadline is Friday." not in prompt
 
 
 def test_partial_semantic_model_answer_status_is_repaired_or_rejected() -> None:

@@ -403,11 +403,18 @@ class RequirementEvidenceSpans:
 
     def __post_init__(self) -> None:
         if not isinstance(self.requirement_id, str) or self.requirement_id not in {
-            "r1", "r2", "r3", "r4", "r5", "r6"
+            "r1",
+            "r2",
+            "r3",
+            "r4",
+            "r5",
+            "r6",
         }:
             raise ValueError("requirement_id must be r1 through r6")
-        if not isinstance(self.spans, tuple) or len(self.spans) > 4 or not all(
-            isinstance(span, EvidenceSpan) for span in self.spans
+        if (
+            not isinstance(self.spans, tuple)
+            or len(self.spans) > 4
+            or not all(isinstance(span, EvidenceSpan) for span in self.spans)
         ):
             raise ValueError("spans must contain at most four EvidenceSpan values")
 
@@ -550,6 +557,7 @@ class GroundedAnswerRequest:
     semantic_status: SemanticCoverageStatus | None = None
     unsupported_aspects: tuple[str, ...] = ()
     requirement_coverage: RequirementCoverageDecision | None = None
+    validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = ()
 
     @classmethod
     def from_query(
@@ -562,6 +570,7 @@ class GroundedAnswerRequest:
         policy_version: str,
         semantic_decision: SemanticCoverageDecision | None = None,
         requirement_coverage: RequirementCoverageDecision | None = None,
+        validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
     ) -> "GroundedAnswerRequest":
         """Bind a stateless query to pinned identity and detected language."""
         if not isinstance(query, RagQuery):
@@ -615,6 +624,7 @@ class GroundedAnswerRequest:
                 )
             ),
             requirement_coverage=requirement_coverage,
+            validated_requirement_spans=validated_requirement_spans,
         )
 
     def __post_init__(self) -> None:
@@ -674,6 +684,33 @@ class GroundedAnswerRequest:
                     raise ValueError("requirement coverage evidence must be request-local")
             if self.unsupported_aspects != self.requirement_coverage.unsupported_aspects:
                 raise ValueError("unsupported_aspects must match requirement_coverage")
+        if not isinstance(self.validated_requirement_spans, tuple) or not all(
+            isinstance(item, RequirementEvidenceSpans) for item in self.validated_requirement_spans
+        ):
+            raise ValueError("validated_requirement_spans must be a tuple of spans")
+        if self.validated_requirement_spans and self.requirement_coverage is None:
+            raise ValueError("validated_requirement_spans require requirement_coverage")
+        if self.validated_requirement_spans and self.requirement_coverage is not None:
+            expected_requirement_ids = tuple(
+                item.requirement_id
+                for item in self.requirement_coverage.requirement_set.requirements
+            )
+            actual_requirement_ids = tuple(
+                item.requirement_id for item in self.validated_requirement_spans
+            )
+            if set(actual_requirement_ids) != set(expected_requirement_ids) or len(
+                actual_requirement_ids
+            ) != len(set(actual_requirement_ids)):
+                raise ValueError(
+                    "validated_requirement_spans must cover each requirement exactly once"
+                )
+            request_evidence_ids = frozenset(evidence_ids)
+            if any(
+                span.evidence_id not in request_evidence_ids
+                for requirement_spans in self.validated_requirement_spans
+                for span in requirement_spans.spans
+            ):
+                raise ValueError("validated requirement spans must be request-local")
 
 
 @dataclass(frozen=True, slots=True)

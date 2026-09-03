@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from aaos.inference import (
@@ -523,6 +524,21 @@ def _build_messages(
         unsupported_requirements = tuple(
             item.requirement_text for item in request.requirement_coverage.unsupported_requirements
         )
+        if request.validated_requirement_spans:
+            quotes_by_evidence: dict[str, list[str]] = {}
+            for requirement_spans in request.validated_requirement_spans:
+                if any(
+                    judgment.requirement_id == requirement_spans.requirement_id
+                    and judgment.support is RequirementSupport.SUPPORTED
+                    for judgment in request.requirement_coverage.judgments
+                ):
+                    for span in requirement_spans.spans:
+                        quotes_by_evidence.setdefault(span.evidence_id, []).append(span.quote)
+            evidence = tuple(
+                replace(item, exact_text=" ".join(quotes_by_evidence[item.evidence_id]))
+                for item in evidence
+                if item.evidence_id in quotes_by_evidence
+            )
     evidence_payload = tuple(
         {
             "evidence_id": item.evidence_id,

@@ -24,18 +24,13 @@ def test_atomic_decomposition_overflow_is_a_non_exceptional_closed_result() -> N
     """A seven-item proposal must refuse before span or entailment work."""
     from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
 
-    gateway = FakeGateway(
-        [
-            _response(
-                '{"status":"TOO_MANY_REQUIREMENTS","requirements":[]}'
-            )
-        ]
-    )
+    gateway = FakeGateway([_response('{"status":"TOO_MANY_REQUIREMENTS","requirements":[]}')])
 
     result = asyncio.run(
         AtomicRequirementDecomposer(gateway).decompose(
             __import__("aaos.rag.contracts", fromlist=["RagQuery"]).RagQuery(
-                "Give a through g", __import__("aaos.rag.contracts", fromlist=["GlobalScope"]).GlobalScope()
+                "Give a through g",
+                __import__("aaos.rag.contracts", fromlist=["GlobalScope"]).GlobalScope(),
             )
         )
     )
@@ -51,14 +46,26 @@ def test_span_extraction_rejects_paraphrase_and_entailment_skips_empty_span() ->
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor, IndependentEntailmentVerifier
 
     requirements = RequirementSet((Requirement("r1", "Give the deadline"),))
-    invalid = FakeGateway([_response('{"requirements":[{"requirement_id":"r1","spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}]}'), _response("bad")])
+    invalid = FakeGateway(
+        [
+            _response(
+                '{"requirements":[{"requirement_id":"r1","spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}]}'
+            ),
+            _response("bad"),
+        ]
+    )
 
     with pytest.raises(RagOperationalError) as error:
         asyncio.run(EvidenceSpanExtractor(invalid).extract(requirements, evidence=(_evidence(),)))
 
     assert error.value.code is RagErrorCode.PROVENANCE_RESOLUTION_FAILED
     verifier = IndependentEntailmentVerifier(FakeGateway([]))
-    assert asyncio.run(verifier.verify(requirements.requirements[0], RequirementEvidenceSpans("r1", ()))) .value == "NOT_ENTAILED"
+    assert (
+        asyncio.run(
+            verifier.verify(requirements.requirements[0], RequirementEvidenceSpans("r1", ()))
+        ).value
+        == "NOT_ENTAILED"
+    )
 
 
 def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
@@ -70,8 +77,51 @@ def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
     asyncio.run(EvidenceSpanExtractor(span_gateway).extract(requirements, evidence=(_evidence(),)))
     assert span_gateway.requests[0].structured_output_schema == "evidence_spans"
     entailment_gateway = FakeGateway([])
-    asyncio.run(IndependentEntailmentVerifier(entailment_gateway).verify(requirements.requirements[0], __import__("aaos.rag.contracts", fromlist=["RequirementEvidenceSpans"]).RequirementEvidenceSpans("r1", ())))
+    asyncio.run(
+        IndependentEntailmentVerifier(entailment_gateway).verify(
+            requirements.requirements[0],
+            __import__(
+                "aaos.rag.contracts", fromlist=["RequirementEvidenceSpans"]
+            ).RequirementEvidenceSpans("r1", ()),
+        )
+    )
     assert entailment_gateway.requests == []
+
+
+def test_span_entries_are_canonicalized_and_duplicate_evidence_is_rejected() -> None:
+    from aaos.rag.contracts import Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"), Requirement("r2", "second")))
+    out_of_order = FakeGateway(
+        [
+            _response(
+                '{"requirements":['
+                '{"requirement_id":"r2","spans":[]},'
+                '{"requirement_id":"r1","spans":[]}]}'
+            )
+        ]
+    )
+    result = asyncio.run(
+        EvidenceSpanExtractor(out_of_order).extract(requirements, evidence=(_evidence(),))
+    )
+    assert tuple(item.requirement_id for item in result) == ("r1", "r2")
+
+    duplicate = FakeGateway(
+        [
+            _response(
+                '{"requirements":[{"requirement_id":"r1","spans":['
+                '{"evidence_id":"ev-1","quote":"The deadline"},'
+                '{"evidence_id":"ev-1","quote":"The deadline"}]}'
+                ',{"requirement_id":"r2","spans":[]}]}'
+            ),
+            _response("bad"),
+        ]
+    )
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(EvidenceSpanExtractor(duplicate).extract(requirements, evidence=(_evidence(),)))
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+
 
 GENERATION = RagGenerationIdentity(2, "a" * 64, 4, 1024)
 

@@ -63,6 +63,35 @@ class _GroundingGateway:
                 content='{"requirements":[{"requirement_text":"Answer the question"}]}',
                 model_identifier="qwen/qwen3.5-4b",
             )
+        if request.structured_output_schema == "atomic_requirement_decomposition":
+            return ChatResponse(
+                content=(
+                    '{"status":"OK","requirements":[{"requirement_text":"Answer the question"}]}'
+                ),
+                model_identifier="qwen/qwen3.5-4b",
+            )
+        if request.structured_output_schema == "evidence_spans":
+            payload = next(
+                message.content.split("<span-input>", 1)[1].split("</span-input>", 1)[0]
+                for message in request.messages
+                if "<span-input>" in message.content
+            )
+            span_input = json.loads(payload)
+            evidence = span_input["evidence"]
+            spans = (
+                [{"evidence_id": evidence[0]["evidence_id"], "quote": evidence[0]["text"][:400]}]
+                if evidence
+                else []
+            )
+            return ChatResponse(
+                content=json.dumps({"requirements": [{"requirement_id": "r1", "spans": spans}]}),
+                model_identifier="qwen/qwen3.5-4b",
+            )
+        if request.structured_output_schema == "requirement_entailment":
+            return ChatResponse(
+                content='{"result":"ENTAILED"}',
+                model_identifier="qwen/qwen3.5-4b",
+            )
         if request.structured_output_schema == "requirement_coverage":
             payload = next(
                 message.content.split("<coverage-input>", 1)[1].split("</coverage-input>", 1)[0]

@@ -285,7 +285,13 @@ def build_phase4_runtime(
             ]
         )
     else:
-        factories.extend([(selected_atomic_factory, "atomic_requirement_decomposer_factory"), (selected_span_factory, "evidence_span_extractor_factory"), (selected_entailment_factory, "entailment_verifier_factory")])
+        factories.extend(
+            [
+                (selected_atomic_factory, "atomic_requirement_decomposer_factory"),
+                (selected_span_factory, "evidence_span_extractor_factory"),
+                (selected_entailment_factory, "entailment_verifier_factory"),
+            ]
+        )
     for factory, name in factories:
         if not callable(factory):
             raise ValueError(f"{name} must be callable")
@@ -406,7 +412,12 @@ def build_phase4_runtime(
                 requirement_coverage_classifier=requirement_coverage_classifier,
             )
         else:
-            service = service_factory_callable(**service_kwargs, atomic_requirement_decomposer=atomic_decomposer, evidence_span_extractor=span_extractor, entailment_verifier=entailment_verifier)
+            service = service_factory_callable(
+                **service_kwargs,
+                atomic_requirement_decomposer=atomic_decomposer,
+                evidence_span_extractor=span_extractor,
+                entailment_verifier=entailment_verifier,
+            )
         _register_optional_closer(owned_closers, service, "close")
         _require_callable(service, "ask", "service")
         for method in ("index_new", "rebuild", "status"):
