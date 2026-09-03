@@ -18,10 +18,12 @@ question
   -> hybrid retrieval
   -> deterministic evidence selection
   -> deterministic structural sufficiency gate
-  -> requirement decomposition (question/context only)
-  -> requirement-level coverage classifier (only for structurally eligible
-     evidence)
-       -> deterministic aggregation
+  -> atomic requirement decomposition (question/context only)
+  -> deterministic canonical requirement set
+  -> extractive evidence-span identification (selected evidence only)
+  -> deterministic span/provenance validation
+  -> independent per-requirement entailment verification
+  -> deterministic support aggregation
        -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
        -> PARTIAL: grounded answer under a partial-support constraint
        -> SUPPORTED: grounded answer
@@ -108,8 +110,9 @@ The following are absolute invariants:
 - no unseen citation ID, fabricated source, or structurally uncited factual claim
   is accepted;
 - structural insufficiency and deterministically aggregated semantic
-  `UNSUPPORTED` prevent any factual answer-generation request; the
-  requirement-level classifier itself may use the approved local model; and
+  `UNSUPPORTED` prevent any factual answer-generation request; atomic
+  decomposition, span extraction, and entailment outputs remain untrusted
+  model data and cannot override code-owned support; and
 - all failures are represented by fixed safe categories without raw content.
 
 ## 6. End-to-end architecture
@@ -126,10 +129,12 @@ RagQuery (question + RagScope)
   -> EvidenceSelector
   -> StructuralSufficiencyGate
        -> structural INSUFFICIENT_EVIDENCE
-  -> RequirementDecomposer (local Qwen; question/context only)
-  -> RequirementCoverageClassifier (local Qwen; fixed requirements + selected
-     evidence)
-  -> deterministic requirement validation and status aggregation
+  -> AtomicRequirementDecomposer (local Qwen; question/context only)
+  -> deterministic canonical requirement set
+  -> EvidenceSpanExtractor (local Qwen; fixed requirements + selected evidence)
+  -> deterministic span and provenance validation
+  -> IndependentEntailmentVerifier (one atomic requirement at a time)
+  -> deterministic per-requirement support and status aggregation
        -> UNSUPPORTED -> INSUFFICIENT_EVIDENCE
        -> PARTIAL -> GroundedAnswerGenerator under PARTIAL constraint
        -> SUPPORTED -> GroundedAnswerGenerator
@@ -524,28 +529,30 @@ evidence is sufficient. A structural failure returns
 `INSUFFICIENT_EVIDENCE` and skips both semantic classification and factual
 answer generation.
 
-For structurally eligible evidence, a separately scoped question-only
-`RequirementDecomposer` first identifies the bounded material factual
-requirements. Deterministic code assigns canonical IDs and freezes that set.
-Then `RequirementCoverageClassifier` judges each fixed requirement as
-`SUPPORTED` or `UNSUPPORTED` against the selected evidence. Its response is a
-strictly parsed, closed internal judgment set and remains untrusted until
-deterministic validation. It cannot broaden scope, select new evidence,
-provide citations, or produce the user-facing answer. Deterministic code
-aggregates the validated judgments: zero supported requirements is
-`UNSUPPORTED`, every requirement supported is `SUPPORTED`, and a non-empty
-mixture is `PARTIAL`.
+For structurally eligible evidence, the amended semantic path first runs a
+question-only atomic requirement decomposer. Deterministic code assigns
+canonical IDs and freezes that set. An extractive span step then proposes
+bounded quotes tied to those fixed requirements and selected evidence;
+deterministic code verifies request-local IDs, exact quote occurrence, pinned
+snapshot membership, and authoritative SQLite provenance. Only validated
+spans reach an independent entailment verifier, one atomic requirement at a
+time. Its narrow `ENTAILED`/`NOT_ENTAILED` result is untrusted until
+deterministic validation. Code maps validated entailment to per-requirement
+support and aggregates zero/all/mixed support to `UNSUPPORTED`/`SUPPORTED`/
+`PARTIAL`.
 `UNSUPPORTED` maps to deterministic `INSUFFICIENT_EVIDENCE` and skips factual
 answer generation; `PARTIAL` enters grounded generation with an explicit
 partial-support constraint; `SUPPORTED` enters the normal grounded generation
 path. The model does not own the final aggregate status.
 
 Structural thresholds remain calibrated on development data and locked before
-held-out acceptance. Requirement decomposition and coverage calibration are
-separate, local-only gates: decomposition must report omitted, spurious,
-over-split, and under-split requirements, while coverage must report
-`SUPPORTED`, `PARTIAL`, and `UNSUPPORTED` confusion, including false support,
-false refusal, and partial-to-supported or partial-to-unsupported errors.
+held-out acceptance. Atomic decomposition, span extraction, entailment, and
+aggregation are separate local-only gates. Calibration reports omitted,
+spurious, over-split, and under-split requirements; span
+validation/provenance failures; entailment false acceptance (especially
+topical-only or partial-as-full evidence); and `SUPPORTED`, `PARTIAL`, and
+`UNSUPPORTED` confusion, including false support, false refusal, and
+partial-to-supported or partial-to-unsupported errors.
 Neither gate permits
 pretrained-knowledge or unbounded retrieval fallback. Unsupported false
 acceptance remains weighted as more serious than a false refusal.
@@ -582,13 +589,15 @@ browser state, arbitrary URLs, or an unbounded corpus.
 
 The requirement-level semantic stage is a separate typed adapter over the same
 approved local model boundary. After structural evidence checks,
-`RequirementDecomposer` receives only the original question and relevant
-language/context; then `RequirementCoverageClassifier` receives the immutable
-canonical requirement set plus bounded selected evidence. Deterministic code
-validates every requirement and evidence ID before aggregating the internal
-status. These calls are never a second retrieval path and never replace the
-grounded factual-answer adapter. Semantic outputs are not factual-answer
-content and cannot be rendered to the user.
+`AtomicRequirementDecomposer` receives only the original question and relevant
+language/context. `EvidenceSpanExtractor` receives the immutable requirement
+set plus bounded selected evidence, and `IndependentEntailmentVerifier`
+receives one requirement plus only its deterministically validated spans.
+Deterministic code validates every requirement, evidence ID, quote, provenance
+link, and entailment result before aggregating internal support. These calls
+are never a second retrieval path and never replace the grounded factual-answer
+adapter. Semantic outputs are not factual-answer content and cannot be rendered
+to the user.
 
 ## 22. Typed `RagAnswer`
 
@@ -611,9 +620,9 @@ portions may be returned with valid claim-level citations, while unsupported
 requested portions must be explicitly identified as unsupported and never
 invented. `INSUFFICIENT_EVIDENCE` means no useful factual answer can be
 grounded; no factual answer generation or pretrained-knowledge fallback occurs.
-The requirement coverage classifier may have run before this status was
-selected, but its judgments and aggregate are not themselves user-facing
-factual content.
+The atomic decomposition, span, and entailment steps may have run before this
+status was selected, but their outputs and aggregate are not themselves
+user-facing factual content.
 
 Operational failures are not public answer-status variants. They remain typed
 error outcomes such as `MODEL_UNAVAILABLE`, `MODEL_TIMEOUT`,
@@ -857,7 +866,7 @@ split before retrieval output is inspected. The final unseen set may not be
 used for further tuning or policy selection.
 
 Sufficiency labels are `SUPPORTED`, `PARTIALLY_SUPPORTED`, and `UNSUPPORTED`.
-The requirement-coverage classifier's internal `PARTIAL` aggregate maps to the
+The atomic entailment pipeline's internal `PARTIAL` aggregate maps to the
 existing evaluation label `PARTIALLY_SUPPORTED`; it must not replace the
 public `RagAnswer` status contract. Evaluation reports supported acceptance,
 unsupported rejection, false acceptance, and false refusal rates. Generation
@@ -1098,11 +1107,14 @@ downloads.
 
 ## 41. Architecture amendment — requirement-level semantic sufficiency
 
-**Status:** human-approved two-step contract. This amendment authorizes the
-production implementation and calibration gates described below, but does not
+**Status:** historical human-approved two-step contract retained for audit.
+The atomic/extractive/entailment amendment in Section 42 supersedes this
+two-step decomposition/coverage design for future implementation. Existing
+Tasks 14–19 remain the current baseline until a separately authorized
+implementation task applies Section 42; this documentation amendment does not
 authorize held-out answer execution, RAGAS, Checkpoint G, tagging, or Phase 5.
-It supersedes both the earlier whole-question classifier and the rejected
-combined decomposition/coverage proposal.
+All schemas, bounds, and ordering stated below are historical and are not
+normative for the amended implementation.
 
 ### Decision and evidence
 
@@ -1390,7 +1402,274 @@ Phase 3 remains read-only and unchanged. No schema, storage, retrieval scope,
 citation authority, public answer status, or persistence contract is changed by
 this design amendment.
 
-## 42. Design self-review checklist
+## 42. Architecture amendment — atomic requirements, extractive evidence, and independent entailment
+
+**Status:** human-approved in principle for design and later implementation
+planning only. This narrow amendment addresses the audited semantic failures;
+it does not authorize production changes, retrieval/selector changes,
+held-out answer execution, RAGAS, Checkpoint G, tagging, or Phase 5.
+
+### Confirmed failure boundary
+
+The audited calibration cases were `v2-p005`, `v2-p020`, `v2-p021`,
+`v2-p022`, `v2-p035`, `v2-p041`, and `v2-p047`. Evidence showed four
+under-split decompositions, zero omitted requirements, two coverage false
+entailments, two topical-similarity false entailments, two partial-evidence-as-
+full-support decisions, and one separate selector/retrieval boundary issue.
+The persistent dangerous false-support cases were `v2-p022` and `v2-p047`.
+The dominant diagnosis is topical similarity being treated as entailment at the
+coverage boundary, compounded by under-split decomposition. The production
+model remains `qwen/qwen3.5-4b`.
+
+The current two-step coverage model is insufficient because a valid,
+request-local evidence ID does not prove that its text entails the requested
+fact. Retrieval and deterministic selection remain frozen; this amendment adds
+semantic checks after the existing structural gate without changing the
+retrieval or selector configuration.
+
+### Amended pipeline
+
+The semantic section is replaced by this ordered, single-retrieval path:
+
+```text
+RagQuery -> QuerySnapshot -> hybrid retrieval -> deterministic selector
+  -> deterministic structural sufficiency gate
+  -> release BGE-M3 and verify release
+  -> load qwen/qwen3.5-4b
+  -> atomic requirement decomposition (question/context only)
+  -> deterministic canonical requirement IDs and immutable requirement set
+  -> extractive evidence-span identification
+  -> deterministic span/request/snapshot/provenance validation
+  -> independent entailment verification (one atomic requirement at a time)
+  -> deterministic per-requirement support
+  -> deterministic SUPPORTED / PARTIAL / UNSUPPORTED aggregation
+  -> UNSUPPORTED: deterministic INSUFFICIENT_EVIDENCE
+  -> PARTIAL or SUPPORTED: constrained factual generation
+  -> strict RagAnswer validation -> citation/provenance validation -> rendering
+  -> Qwen cleanup
+```
+
+No step performs another retrieval. The model outputs bounded proposals only;
+trusted code owns IDs, immutability, validation, support, aggregate status,
+citations, and rendering.
+
+### Atomic requirement schema and contract
+
+The question-only decomposition output is a closed object with no evidence,
+coverage, citation, confidence, rationale, or chain-of-thought fields:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": ["requirement_text"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["requirements"],
+  "additionalProperties": false
+}
+```
+
+Each requirement is the smallest materially answerable factual portion of the
+request. Explicit independent aspects, `and`-joined facts, comparison
+dimensions, and named factual categories are split when each can be supported
+or unsupported independently. Independently verifiable facts are not combined;
+an indivisible proposition is not artificially fragmented; no requested fact
+may be added or omitted. Retrieved evidence is invisible to decomposition.
+The model proposes text only. Deterministic code assigns contiguous `r1`...
+`rN` IDs, validates the closed schema and bounded count, and freezes the
+immutable requirement set. Code does not claim to semantically prove
+atomicity; atomicity quality is a calibration metric.
+
+### Extractive span schema and validation
+
+The span step receives only the immutable requirements and selected bounded
+evidence. It does not decide support or render citations. Its closed schema is:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_id": {
+            "type": "string",
+            "pattern": "^r[1-6]$"
+          },
+          "spans": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                }
+              },
+              "required": ["evidence_id", "quote"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["requirement_id", "spans"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["requirements"],
+  "additionalProperties": false
+}
+```
+
+There must be exactly one entry for every immutable requirement ID, while zero
+spans is valid when no candidate support exists. Evidence IDs must be selected,
+request-local IDs in the pinned snapshot. Deterministic code rejects missing,
+duplicate, unknown, cross-request, or out-of-snapshot requirement/evidence IDs;
+unresolved SQLite provenance; and quotes that do not occur in the corresponding
+selected evidence text (prefer exact normalized substring matching). A model
+paraphrase is never accepted as an extractive quote. Any span or provenance
+failure fails closed and cannot become support. A valid span may combine a small
+number of short quotes only when the proposition genuinely requires them.
+
+### Independent entailment schema and contract
+
+For each immutable requirement, the verifier receives only that requirement,
+its validated span text, and minimal fixed instructions. It receives no
+unrelated chunks and cannot perform retrieval. Its closed output is:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "result": {
+      "type": "string",
+      "enum": ["ENTAILED", "NOT_ENTAILED"]
+    }
+  },
+  "required": ["result"],
+  "additionalProperties": false
+}
+```
+
+No requirement-level `PARTIAL`, confidence, rationale, evidence IDs,
+chain-of-thought, or citation text is permitted. If no validated span exists,
+deterministic code assigns `NOT_ENTAILED` without a model call. Otherwise the
+preferred implementation performs one bounded request per requirement while
+keeping Qwen loaded; it must not silently batch unrelated requirements.
+`ENTAILED` requires the span to directly establish the complete atomic
+proposition. Topic/entity overlap, headings, contextual similarity, related
+prognosis for a treatment request, partial evidence for a broad proposition,
+plausible inference, and outside knowledge are `NOT_ENTAILED`.
+
+### Support, aggregation, and partial propagation
+
+Trusted code maps a validated entailment result to per-requirement support:
+`ENTAILED` -> `SUPPORTED`; `NOT_ENTAILED` -> `UNSUPPORTED`. Neither the span
+extractor nor factual generator can override this mapping. The aggregate is
+code-owned: all supported -> `SUPPORTED`, all unsupported -> `UNSUPPORTED`,
+and any mixture -> `PARTIAL`. `UNSUPPORTED` deterministically becomes public
+`INSUFFICIENT_EVIDENCE` and skips factual generation. Internal statuses remain
+distinct from public `RagAnswer` statuses.
+
+For `PARTIAL`, factual generation receives the original question, supported
+immutable requirements, validated entailing spans/chunks for those requirements,
+and descriptions of unsupported requirements. It answers supported portions
+only, explicitly identifies unavailable portions, never infers unsupported
+facts, and cites every factual claim through the existing trusted validator.
+This makes partial behavior a mechanical consequence of support judgments.
+
+### Bounds, repair, model, and failure behavior
+
+The model remains `qwen/qwen3.5-4b` with `temperature=0`. Proposed bounded
+completion limits for calibration are **512 tokens for atomic decomposition**
+(retaining the existing proven bound), **384 tokens for span extraction**, and
+**64 tokens for entailment**. These are separate limits and must fit the
+configured context with prompt allowance; they are not permission to truncate
+requirements/evidence or enlarge context. Each step permits at most one
+same-schema repair; no third call, prose stripping, schema relaxation, or
+fallback model/cloud path is allowed. Any malformed/transport output,
+context overflow, invalid requirement set, invalid ID/quote/provenance,
+entailment failure, lifecycle failure, or failed repair fails closed before
+factual generation.
+
+### Prompt-injection, retrieval, and lifecycle boundaries
+
+Retrieved evidence and extracted spans are untrusted data. They cannot modify
+requirements, schemas, scope, model/runtime configuration, tools, network
+behavior, or secrets. No tools, agents, memory, or external fallback are
+exposed. The retrieval and selector configuration is unchanged. In particular,
+`v2-p035` remains a documented recall/selector limitation: if useful evidence
+was not selected, the semantic path returns `UNSUPPORTED` rather than broadening
+retrieval. The `v2-p022`/`v2-p047` observations motivate the generic
+topical-similarity-versus-entailment rule only; no case-specific production
+rules are introduced.
+
+The accepted GPU lifecycle is unchanged: Qwen absent during BGE work; BGE
+released and verified; Qwen loaded once for decomposition, span extraction,
+independent entailment checks, and any allowed factual generation; Qwen cleaned
+up deterministically. BGE and Qwen must never be simultaneously resident, and
+an unverifiable postcondition fails closed.
+
+### Calibration and held-out protection
+
+After a separate implementation authorization, evaluate only the already-
+consumed 56 calibration cases (`SUPPORTED=40`, `PARTIAL=4`, `UNSUPPORTED=12`)
+before touching the pristine 24 answer-heldout cases. Report decomposition
+timeouts, truncations, malformed outputs, repairs, under/over-split, omitted,
+and spurious requirements; span cases, validation/provenance failures,
+invalid/nonlocal IDs, quote-not-found, and average/max spans; entailment checks,
+timeouts, malformed/repair counts, topical-only acceptance, and
+partial-as-full acceptance; and the deterministic aggregate confusion matrix
+with English/Arabic breakdowns. The hard pre-heldout safety gate is
+`FALSE_SUPPORT_COUNT=0`, with materially functional `PARTIAL` behavior. Poor
+recall or false refusal is reported, not hidden by changing retrieval, labels,
+or thresholds. Held-out answer cases remain unexecuted and invisible until all
+implementation, calibration, lifecycle, citation, and other pre-heldout gates
+pass.
+
+### Proposed future implementation surface (not authorized here)
+
+The smallest expected production change is to evolve the existing
+`src/aaos/rag/semantic_coverage.py` boundary into typed atomic decomposition,
+span extraction/validation, and independent entailment adapters; extend
+`src/aaos/rag/contracts.py` with immutable requirement/span/entailment values;
+update `src/aaos/rag/service.py` for deterministic support aggregation and
+partial/unsupported propagation; and update `src/aaos/rag/generation.py` only
+for the typed partial-support input. No retrieval or selector file changes are
+expected. Proposed tests are
+`tests/test_rag_semantic_coverage.py` (or a narrowly renamed replacement) for
+the three schemas, exact validation, fail-closed behavior, and one-repair
+bounds, plus focused service/generation/runtime/import and guarded calibration
+tests using fakes. No code or tests are changed by this documentation task.
+
+## 43. Design self-review checklist
 
 This specification was checked for:
 

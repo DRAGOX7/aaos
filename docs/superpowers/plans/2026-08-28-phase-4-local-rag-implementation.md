@@ -74,7 +74,7 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 | `src/aaos/rag/lock.py` | Create | Ownership-safe Phase 4 single-writer lease. | Absolute lock path -> lease. | 10 |
 | `src/aaos/rag/indexing.py` | Create | Per-document indexing, `index-new`, rebuild, verification, activation, recovery. | Repository/chunker/embedding/dense/lock -> typed results. | 11–13 |
 | `src/aaos/rag/retrieval.py` | Create | Scope resolution, pinned query snapshot, dense/lexical retrieval, RRF, evidence selection/sufficiency. | `RagQuery` -> trusted selected evidence. | 14–16 |
-| `src/aaos/rag/semantic_coverage.py` | Proposed later amendment | Local-only question-only requirement decomposition plus fixed-set coverage judgments after structural gating; strict bounded output, deterministic validation/aggregation, and no-fallback behavior. | Question/context and then selected evidence + `ModelGateway` -> immutable requirements + validated judgments -> internal `SUPPORTED`/`PARTIAL`/`UNSUPPORTED`. | Pending human approval |
+| `src/aaos/rag/semantic_coverage.py` | Proposed amended semantic boundary | Evolve the local-only semantic stage into atomic requirement decomposition, extractive span identification/validation, independent entailment checks, and deterministic support aggregation after structural gating; strict bounded output and no-fallback behavior. | Question/context, then selected evidence, then one requirement with validated spans + `ModelGateway` -> immutable requirements, validated spans, entailment results -> internal `SUPPORTED`/`PARTIAL`/`UNSUPPORTED`. | Future amendment authorization |
 | `src/aaos/rag/generation.py` | Create | Grounded prompt, structured parsing/repair, citation validation and deterministic rendering. | Evidence + `ModelGateway` -> `RenderedRagResponse`. | 17–18 |
 | `src/aaos/rag/service.py` | Create | `LocalRagService` facade and no-fallback orchestration. | `RagQuery` -> rendered response. | 19 |
 | `src/aaos/rag/runtime.py` | Create | `Phase4RagRuntime` composition/lifecycle ownership. | Explicit paths/settings/gateway -> services. | 20 |
@@ -103,7 +103,7 @@ Task 1 records the accepted versions and licenses in test assertions plus lockfi
 | `tests/test_rag_indexing.py`, `tests/test_rag_rebuild.py` | Create | Per-document state, publication, rebuild, integrity, recovery. | 11–13 |
 | `tests/test_rag_retrieval.py` | Create | Scope/current/history, snapshot, candidate verification, RRF. | 14–15 |
 | `tests/test_rag_evidence.py` | Create | Selection, budgets, IDs, sufficiency, conflict retention. | 16 |
-| `tests/test_rag_semantic_coverage.py` | Proposed later amendment | Requirement-coverage schema, evidence-ID validation, deterministic aggregation, bounded repair, context/privacy/failure behavior. | Pending human approval |
+| `tests/test_rag_semantic_coverage.py` | Proposed amended semantic boundary | Atomic requirement, span extraction/validation, independent entailment, deterministic aggregation, bounded repair, context/privacy/failure behavior. | Future amendment authorization |
 | `tests/test_rag_generation.py` | Create | Prompt isolation, structured retry, answer/citation contract. | 17–18 |
 | `tests/test_rag_service.py` | Create | End-to-end facade/no-fallback behavior using fakes. | 19 |
 | `tests/test_rag_runtime.py`, `tests/test_rag_imports.py` | Create | Ownership, cleanup, construction failure, side-effect-free imports. | 20 |
@@ -787,11 +787,11 @@ RagRepository.materialize_snapshot_chunks(
 **Requirements**
 - Deduplicate logical evidence, suppress excessive adjacent overlap, preserve useful source diversity while relevance leads, and enforce both chunk and token budgets.
 - Evidence IDs are unpredictable request-local capabilities mapped only to evidence supplied in that request; retain conflicting valid sources.
-- The deterministic structural gate returns sufficient/partially sufficient/insufficient facts; structural insufficiency prevents semantic classification and factual answer generation. Structurally eligible evidence is passed to the separately scoped, local-only requirement-coverage classifier proposed in the pending amendment; deterministic code validates and aggregates its requirement judgments into internal `SUPPORTED`/`PARTIAL`/`UNSUPPORTED` without making that internal status a public answer status.
+- The deterministic structural gate returns sufficient/partially sufficient/insufficient facts; structural insufficiency prevents semantic classification and factual answer generation. Structurally eligible evidence is passed to the separately scoped, local-only atomic decomposition, extractive span, and independent entailment stages defined by the approved amendment; deterministic code validates and aggregates their judgments into internal `SUPPORTED`/`PARTIAL`/`UNSUPPORTED` without making that internal status a public answer status.
 
 - [ ] **Step 1 — Write failing tests:** duplicate/neighbor suppression, multi-document diversity, 4–8 configurable chunk target, token cap, deterministic ordering, query-local ID isolation, conflict retention, and conservative sufficiency/false-accept cases. Representative assertion: `assert sum(item.token_count for item in selected) <= config.max_evidence_tokens`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_evidence.py -v`; expect missing selector/gate.
-- [ ] **Step 3 — Minimal implementation:** add `EvidenceSelector.select()` and versioned `EvidenceSufficiencyGate.evaluate()` pure logic with no LLM decision. A later approved amendment may compose a separate requirement-coverage classifier after this structural gate; it must not change this gate's authorization or integrity responsibilities.
+- [ ] **Step 3 — Minimal implementation:** add `EvidenceSelector.select()` and versioned `EvidenceSufficiencyGate.evaluate()` pure logic with no LLM decision. The later approved semantic amendment composes atomic decomposition, extractive span validation, and independent entailment after this structural gate; it must not change this gate's authorization or integrity responsibilities.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
 - [ ] **Step 5 — Focused regression:** `uv run pytest tests/test_rag_retrieval.py tests/test_rag_evidence.py -v`.
 - [ ] **Step 6 — Static checks:** `uv run ruff check src/aaos/rag/retrieval.py tests/test_rag_evidence.py`; `uv run mypy src/aaos/rag/retrieval.py tests/test_rag_evidence.py`.
@@ -809,11 +809,11 @@ Require deterministic dense/lexical/RRF tests, current/historical/course-isolati
 - Create: `tests/test_rag_generation.py`
 
 **Interfaces**
-- Consumes: existing `ModelGateway`, `ChatMessage`/`ChatRequest`, `RagQuery`, selected evidence, structural sufficiency decision, and (when the later amendment is approved) a validated requirement-coverage decision.
+- Consumes: existing `ModelGateway`, `ChatMessage`/`ChatRequest`, `RagQuery`, selected evidence, structural sufficiency decision, and (after the approved semantic amendment) validated atomic requirements, extractive spans, and per-requirement entailment support.
 - Produces: validated internal `GroundedModelOutput` and safe generation errors.
 
 **Requirements**
-- `GroundedAnswerRequest` contains question, detected/explicit answer language, pinned generation/revision, selected evidence, policy version, and (only after the later amendment is approved) an explicit partial-support constraint. It never accepts model-supplied citations or scope changes.
+- `GroundedAnswerRequest` contains question, detected/explicit answer language, pinned generation/revision, selected evidence, and (after semantic support is deterministically aggregated) an explicit partial-support constraint. It never accepts model-supplied citations or scope changes.
 - System prompt labels evidence as untrusted data and grants no tools/actions; model returns closed JSON with status, claims, and evidence IDs.
 - Retry exactly once only for schema-invalid output using a constrained repair request; do not retry transport/model/citation/policy failures.
 
@@ -856,14 +856,14 @@ Require deterministic dense/lexical/RRF tests, current/historical/course-isolati
 - Create: `tests/test_rag_service.py`
 
 **Interfaces**
-- Consumes: `HybridRetriever`, `EvidenceSelector`, `EvidenceSufficiencyGate`, the later-approved `RequirementDecomposer`/`RequirementCoverageClassifier`, and grounded generator/renderer.
+- Consumes: `HybridRetriever`, `EvidenceSelector`, `EvidenceSufficiencyGate`, the later-approved atomic requirement/span/entailment stages, and grounded generator/renderer.
 - Produces: `LocalRagService.ask(RagQuery) -> RenderedRagResponse` (async).
 
 **Requirements**
-- Preserve scope/snapshot/evidence/citation gates in one mandatory path usable by Phase 5; no lower-level public bypass, chat history, tools, or fallback. After structural gating, invoke only the later-approved requirement-coverage classifier, validate and deterministically aggregate its judgments, and propagate `PARTIAL`/`UNSUPPORTED` without duplicating retrieval or citation logic. Require the retriever's verified embedding-release boundary before any model generation call.
+- Preserve scope/snapshot/evidence/citation gates in one mandatory path usable by Phase 5; no lower-level public bypass, chat history, tools, or fallback. After structural gating, invoke the later-approved atomic decomposition, extractive span validation, and independent entailment stages, then validate and deterministically aggregate their support before propagating `PARTIAL`/`UNSUPPORTED` without duplicating retrieval or citation logic. Require the retriever's verified embedding-release boundary before any model generation call.
 - The facade is agnostic to dense-generation lifetime. It relies on `HybridRetriever` to resolve each query's `QuerySnapshot` and to own/close the matching generation-specific dense handle; it does not cache an ACTIVE generation or dense index itself. The embedding release verification remains mandatory before generation.
 
-- [ ] **Step 1 — Write failing tests:** successful/partial/insufficient, no factual-generation gateway call after structural insufficiency or deterministically aggregated `UNSUPPORTED`, requirement-classifier ordering, dense/lexical/model failure propagation, exact one query snapshot, embedding release before model generation, no history/tools, and facade exports only intended types. Representative assertion: `assert (await service.ask(unsupported_query)).answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE`.
+- [ ] **Step 1 — Write failing tests:** successful/partial/insufficient, no factual-generation gateway call after structural insufficiency or deterministically aggregated `UNSUPPORTED`, atomic decomposition/span/entailment ordering, dense/lexical/model failure propagation, exact one query snapshot, embedding release before model generation, no history/tools, and facade exports only intended types. Representative assertion: `assert (await service.ask(unsupported_query)).answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE`.
 - [ ] **Step 2 — Run RED:** `uv run pytest tests/test_rag_service.py -v`; expect missing facade.
 - [ ] **Step 3 — Minimal implementation:** add narrow orchestration with no catch-all response fallback.
 - [ ] **Step 4 — Run GREEN:** rerun RED command; expect PASS.
@@ -1174,13 +1174,16 @@ residency. A missing/unmeasurable postcondition is a blocker even if the run
 happens to fit within 6 GB. No held-out answer cases, RAGAS, or Checkpoint G may
 run until this amendment is approved and the calibration gate passes.
 
-## Architecture amendment — requirement-level semantic sufficiency (approved)
+## Architecture amendment — requirement-level semantic sufficiency (historical)
 
-This is the human-approved design/plan amendment for implementation and
-calibration. It does not authorize held-out answer execution, RAGAS,
-Checkpoint G, tagging, or Phase 5. The existing Tasks 14–19 implementation
-remains the baseline. This section supersedes the earlier whole-question and
-combined decomposition/coverage proposals.
+This is the earlier human-approved design/plan amendment retained for audit.
+The atomic/extractive/entailment amendment below supersedes its two-step
+decomposition/coverage implementation guidance. The existing Tasks 14–19
+implementation remains the baseline until the new amendment receives a
+separate implementation authorization. Neither section authorizes held-out
+answer execution, RAGAS, Checkpoint G, tagging, or Phase 5 by itself.
+All schemas, bounds, and ordering in this historical section are retained for
+audit only and are not normative for the amended implementation.
 
 ### Why the deterministic gate is not sufficient
 
@@ -1398,6 +1401,144 @@ not execute or inspect the pristine 24 answer-heldout cases until
 implementation, calibration, lifecycle, citation, and all other pre-heldout
 gates pass. `HELDOUT_ANSWER_CASES_EXECUTED=0` and
 `ANSWER_HELDOUT_RESULTS_VISIBLE=NO` remain mandatory during this amendment.
+
+## Architecture amendment — atomic requirements, extractive evidence, and independent entailment
+
+**Status:** human-approved in principle for planning; production
+implementation is not authorized by this documentation amendment. This
+amendment addresses the audited semantic failures without changing retrieval,
+candidate selection, benchmark labels, qrels, split membership, or the public
+`RagAnswer` status contract. The existing Tasks 14–19 code remains the baseline
+until a separately approved implementation task is scheduled.
+
+### Confirmed diagnosis and scope
+
+The audited cases were `v2-p005`, `v2-p020`, `v2-p021`, `v2-p022`, `v2-p035`,
+`v2-p041`, and `v2-p047`. Four decompositions were under-split (zero omitted
+requirements); two coverage decisions were false entailments, two were
+topical-similarity false entailments, two treated partial evidence as full
+support, and one exposed a selector/retrieval boundary limitation. Persistent
+dangerous false support was observed in `v2-p022` and `v2-p047`. The model
+remains `qwen/qwen3.5-4b`.
+
+Do not retune retrieval or selector thresholds. `v2-p035` remains a documented
+recall/selection limitation: if authoritative evidence was not selected, the
+semantic path must refuse rather than broaden retrieval. Case identifiers are
+rationale only and must not become production exceptions.
+
+### Required future query path
+
+Implement the following order with no second retrieval:
+
+```text
+RagQuery -> QuerySnapshot -> hybrid retrieval -> EvidenceSelector
+  -> structural sufficiency gate
+  -> release/verify BGE-M3 -> load qwen/qwen3.5-4b
+  -> AtomicRequirementDecomposer (question/context only)
+  -> deterministic canonical IDs + immutable requirement set
+  -> EvidenceSpanExtractor (selected evidence only)
+  -> deterministic span/request/snapshot/provenance validation
+  -> IndependentEntailmentVerifier (one requirement + its validated spans)
+  -> deterministic per-requirement support and aggregate status
+  -> UNSUPPORTED: INSUFFICIENT_EVIDENCE
+  -> PARTIAL/SUPPORTED: constrained GroundedAnswerGenerator
+  -> strict RagAnswer -> citation/provenance validator -> renderer -> cleanup
+```
+
+### Contracts to implement
+
+1. Atomic decomposition: a closed schema containing only one through six
+   nonblank `requirement_text` values (maximum 240 characters each). Split
+   independent named aspects, `and`-joined facts, comparison dimensions, and
+   named categories when independently answerable; do not add, omit, combine,
+   or artificially fragment facts. The model proposes text, while trusted code
+   assigns contiguous `r1`...`rN` IDs, validates the set, and freezes it. No
+   evidence is visible to this step and code does not claim to prove semantic
+   atomicity.
+
+2. Extractive spans: a closed object containing exactly one entry for every
+   immutable requirement ID; each entry has zero or more bounded spans, each
+   with only `evidence_id` and bounded `quote`. Use a small fixed cap (the
+   design proposal is at most four spans and 400 quote characters per span).
+   No support verdict, rationale, confidence, citation text, or chain of
+   thought is allowed.
+
+3. Span validation: deterministically require known requirement IDs, selected
+   request-local evidence IDs, pinned `QuerySnapshot` membership, authoritative
+   SQLite provenance, and exact normalized substring occurrence of every quote
+   in its selected evidence text. Missing/duplicate/unknown IDs, cross-request
+   evidence, unresolved provenance, or paraphrased/non-occurring quotes fail
+   closed. Invalid spans never contribute support.
+
+4. Independent entailment: for each immutable requirement, pass only that
+   requirement and its validated spans to a narrow local model call. The closed
+   result is exactly `ENTAILED` or `NOT_ENTAILED`; no IDs, confidence,
+   rationale, partial label, citation, or chain of thought. A requirement with
+   no validated span is deterministically `NOT_ENTAILED` without a model call.
+   Prefer one bounded call per requirement; do not silently batch unrelated
+   requirements.
+
+5. Trusted aggregation: code maps `ENTAILED` to `SUPPORTED` and all other
+   outcomes to `UNSUPPORTED`. All supported requirements aggregate to
+   `SUPPORTED`, all unsupported to `UNSUPPORTED`, and a mixture to `PARTIAL`.
+   `UNSUPPORTED` maps to public `INSUFFICIENT_EVIDENCE` and skips factual
+   generation. Internal statuses remain distinct from public statuses.
+
+6. Partial propagation: the factual generator receives the original question,
+   supported immutable requirements, validated entailing spans/chunks, and
+   unsupported requirement descriptions. It answers supported portions only,
+   identifies unavailable portions, never infers unsupported facts, and uses
+   the existing trusted citation validator.
+
+### Model bounds, repair, and failure policy
+
+Use `qwen/qwen3.5-4b` with `temperature=0` and local JSON Schema mode. Proposed
+separate completion bounds for calibration are 512 tokens for decomposition,
+384 for span extraction, and 64 for entailment. Each step permits at most one
+same-schema repair; there is no third call, prose stripping, schema
+relaxation, cloud/network fallback, or automatic budget increase. Prompt plus
+the step bound must fit the configured context; overflow, transport/model or
+lifecycle failure, malformed output, failed repair, invalid requirement set,
+invalid span/ID/quote/provenance, or malformed entailment fails closed before
+factual generation.
+
+### Security and lifecycle invariants
+
+Evidence and extracted spans remain untrusted data and cannot alter schema,
+requirements, scope, tools, model/runtime configuration, network behavior, or
+secrets. No tools, agents, memory, or second retrieval are introduced. The
+accepted lifecycle remains Qwen absent during BGE work, BGE released and
+verified, Qwen loaded once for decomposition/span/entailment/factual generation,
+then deterministically cleaned up; BGE and Qwen never overlap.
+
+### Future implementation surface and TDD gate
+
+When separately authorized, evolve
+`src/aaos/rag/semantic_coverage.py` (or a reviewed replacement) into the
+decomposer, span extractor/validator, and entailment verifier; extend
+`src/aaos/rag/contracts.py`; update `src/aaos/rag/service.py` for aggregation
+and partial/unsupported propagation; and make only the typed partial-support
+input change needed in `src/aaos/rag/generation.py`. No retrieval or selector
+files are in scope. Extend
+`tests/test_rag_semantic_coverage.py` (or a reviewed replacement) plus service,
+generation, runtime/import, and guarded calibration tests.
+
+The RED/GREEN gate must cover evidence-free decomposition, canonical immutable
+IDs, exact span schema and quote/provenance validation, independent entailment,
+all aggregate statuses, partial propagation, unsupported no-generation,
+malformed output and one-repair limits per step, context overflow,
+prompt-injection data, no tools/network fallback, request-local isolation,
+non-overlapping BGE/Qwen lifecycle, and success/failure cleanup. Normal tests
+use fakes only.
+
+Calibration may use only the already-consumed 56 cases (`SUPPORTED=40`,
+`PARTIAL=4`, `UNSUPPORTED=12`). Report decomposition timeouts/truncations/
+malformed/repairs and under/over-split/omitted/spurious counts; span validation,
+ID, quote, and provenance failures; entailment malformed/repair and
+topical-only/partial-as-full acceptance; deterministic aggregate confusion;
+and English/Arabic breakdowns. Require `FALSE_SUPPORT_COUNT=0` and materially
+functional partial behavior before any held-out answer execution. Do not change
+labels, qrels, split, retrieval, or selector based on these results.
 
 ## Checkpoint G — Controlled Acceptance
 
