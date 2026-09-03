@@ -1174,15 +1174,13 @@ residency. A missing/unmeasurable postcondition is a blocker even if the run
 happens to fit within 6 GB. No held-out answer cases, RAGAS, or Checkpoint G may
 run until this amendment is approved and the calibration gate passes.
 
-## Architecture amendment — requirement-level semantic sufficiency (pending approval)
+## Architecture amendment — requirement-level semantic sufficiency (approved)
 
-This is a revised design/plan amendment only. It does not authorize
-implementation, dependency changes, calibration execution, held-out answer
-execution, RAGAS, Checkpoint G, tagging, or Phase 5. The requirement-level
-direction is approved, but the two-step contract remains pending explicit
-approval and scheduling. The existing Tasks 14–19 implementation remains the
-baseline. This section supersedes the earlier whole-question and combined
-decomposition/coverage proposals.
+This is the human-approved design/plan amendment for implementation and
+calibration. It does not authorize held-out answer execution, RAGAS,
+Checkpoint G, tagging, or Phase 5. The existing Tasks 14–19 implementation
+remains the baseline. This section supersedes the earlier whole-question and
+combined decomposition/coverage proposals.
 
 ### Why the deterministic gate is not sufficient
 
@@ -1269,7 +1267,10 @@ remainder of the request.
 
 The coverage call receives the immutable deterministic requirement IDs/text plus
 selected request-local evidence. It must return exactly one judgment for every
-fixed requirement and may not add, remove, merge, reorder, or rewrite them:
+fixed requirement and may not add, remove, merge, or rewrite the requirement
+universe. Response array order is not semantically authoritative; deterministic
+code validates the exact ID set and normalizes valid permutations to canonical
+order:
 
 ```json
 {
@@ -1309,8 +1310,9 @@ not invent their format.
 
 Before aggregation, deterministic code requires the returned requirement count
 to equal the immutable requirement count and the returned ID set to equal the
-immutable ID set exactly. Missing, duplicate, unknown, reordered, or rewritten
-requirements fail closed. For every `SUPPORTED` requirement, every evidence ID
+immutable ID set exactly. Missing, duplicate, unknown, or rewritten
+requirements fail closed; valid permutations are normalized to canonical ID
+order. For every `SUPPORTED` requirement, every evidence ID
 must exist in the current request, belong to the selected pinned
 `QuerySnapshot`, and resolve through authoritative SQLite provenance. Missing,
 duplicate, cross-request, out-of-snapshot, or unresolved evidence IDs fail

@@ -1098,13 +1098,11 @@ downloads.
 
 ## 41. Architecture amendment — requirement-level semantic sufficiency
 
-**Status:** revised design-only proposal pending explicit human approval of the
-two-step contract. The requirement-level direction is approved, but this
-revision does not authorize production implementation, dependency changes,
-calibration execution, held-out answer execution, RAGAS, Checkpoint G, tagging,
-or Phase 5. It supersedes both the earlier whole-question classifier and the
-rejected combined decomposition/coverage proposal; the existing implementation
-remains unchanged until this revision is approved and scheduled.
+**Status:** human-approved two-step contract. This amendment authorizes the
+production implementation and calibration gates described below, but does not
+authorize held-out answer execution, RAGAS, Checkpoint G, tagging, or Phase 5.
+It supersedes both the earlier whole-question classifier and the rejected
+combined decomposition/coverage proposal.
 
 ### Decision and evidence
 
@@ -1245,8 +1243,11 @@ each fixed requirement:
 }
 ```
 
-The coverage response may not add, remove, merge, reorder, or rewrite the
-requirements. It has no requirement text, confidence, rationale, citation
+The coverage response may not add, remove, merge, or rewrite the requirement
+universe. Response array order is not semantically authoritative: deterministic
+code requires exactly one judgment for each expected ID and normalizes valid
+permutations to canonical ID order. The response has no requirement text,
+confidence, rationale, citation
 string, source metadata, tool request, chain-of-thought, or answer field.
 Evidence IDs remain opaque request-local control identifiers; the schema does
 not invent their format.
@@ -1255,8 +1256,9 @@ not invent their format.
 
 Before judging coverage, deterministic code requires the returned requirement
 count to equal the immutable requirement count and the returned ID set to equal
-the immutable ID set exactly. Missing, duplicate, unknown, reordered, or
-rewritten requirements are integrity errors and fail closed. For every
+the immutable ID set exactly. Missing, duplicate, unknown, or rewritten
+requirements are integrity errors and fail closed; a valid permutation of the
+expected IDs is normalized to canonical order. For every
 `SUPPORTED` requirement, deterministic code verifies that each evidence ID
 exists in the current request, was selected for the pinned `QuerySnapshot`, and
 resolves through authoritative SQLite provenance. A missing, duplicate,
