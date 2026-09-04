@@ -1718,6 +1718,215 @@ normalization, Phase 3, held-out execution, or protected data paths. Evidence
 remains untrusted data and cannot alter requirements, schemas, scope, tools,
 network behavior, model configuration, or secrets.
 
+## Architecture amendment — deterministic request-local evidence segments
+
+**Status:** design/specification and implementation-plan amendment only. The
+human-approved segment-ID architecture is not implemented by this document.
+Implementation requires a separate authorization and a separate code commit.
+The corresponding specification is Section 44 of
+`docs/superpowers/specs/2026-08-28-phase-4-local-rag-design.md`.
+
+### Decision and unchanged boundaries
+
+Replace model-generated quote strings with deterministic request-local
+`EvidenceSegment` identifiers after the existing retrieval and evidence
+selection stages. Atomic decomposition remains unchanged. One sequential call
+per immutable requirement supplies only segment IDs; trusted code resolves
+those IDs to exact selected text and authoritative source spans, then hands the
+existing `EvidenceSpan`/`RequirementEvidenceSpans` values to entailment and the
+unchanged answer/citation path.
+
+No retrieval, RRF, selector, snapshot, Chroma, FTS, database schema, persisted
+segment identity, citation contract, public answer status, Phase 3 behavior,
+benchmark/qrels/split, model identity, temperature, or held-out policy changes.
+No tools, agents, memory, cloud fallback, or new dependency is permitted.
+
+### Exact deterministic interface
+
+Create `src/aaos/rag/evidence_segments.py` as a small private, side-effect-free
+module. It owns a versioned `SEGMENTATION_VERSION`,
+`SEGMENT_MAX_CHARACTERS = 400`, and frozen values equivalent to:
+
+```python
+@dataclass(frozen=True, slots=True)
+class EvidenceSegmentSourceSpan:
+    document_page_id: int
+    page_number: int
+    source_char_start: int
+    source_char_end: int
+    segment_char_start: int
+    segment_char_end: int
+
+@dataclass(frozen=True, slots=True)
+class EvidenceSegment:
+    segment_id: str
+    parent_evidence_id: str
+    exact_text: str
+    start_offset: int
+    end_offset: int
+    source_spans: tuple[EvidenceSegmentSourceSpan, ...]
+```
+
+The public surface of this new module remains private to the semantic path:
+
+```python
+def segment_selected_evidence(
+    evidence: tuple[RetrievedEvidence, ...],
+) -> tuple[EvidenceSegment, ...]: ...
+
+def resolve_segment_selection(
+    selected_ids: tuple[str, ...],
+    *,
+    segments: tuple[EvidenceSegment, ...],
+    evidence: tuple[RetrievedEvidence, ...],
+    pinned_generation_id: int,
+    pinned_content_revision: int,
+) -> tuple[EvidenceSpan, ...]: ...
+```
+
+`segment_selected_evidence()` validates selected parent IDs/generation and
+revision, assigns `s001`, `s002`, ... in selected-evidence order and ascending
+parent offsets, and partitions exact text without rewriting or overlap. It
+prefers paragraph, line, and sentence-like punctuation boundaries at or below
+400 characters, then whitespace, then an exact hard split. The delimiter
+whitespace is included in the prior slice so concatenating all slices exactly
+reconstructs every parent. Source spans are derived by interval intersection;
+cross-page segments retain multiple ordered non-empty intersections. A missing
+or invalid authoritative intersection raises the existing typed operational
+failure rather than producing untrusted provenance.
+
+`resolve_segment_selection()` accepts only IDs in the current map, verifies
+request-local parent/snapshot membership and source spans, removes invalid IDs,
+deduplicates valid IDs by first occurrence, and returns code-owned
+`EvidenceSpan(parent_evidence_id, quote=segment.exact_text)` values in stable
+order. It never accepts parent IDs, quotes, offsets, pages, or provenance from
+the model. The initial maximum is four selected segments per requirement, the
+same bound currently enforced for trusted evidence spans. Empty `segment_ids`
+is valid no-evidence; a non-empty response with no valid IDs gets one
+same-schema repair, and a second zero-valid response fails closed.
+
+The resolver receives the already-selected evidence tuple as a trusted
+request-local argument; it verifies each segment's parent ID, generation,
+content revision, exact parent substring, and authoritative source-span
+intersection against that tuple. For a parent span
+`[chunk_char_start, chunk_char_end) -> [source_char_start, source_char_end)`,
+an intersection `[a, b)` maps to source offsets
+`source_char_start + (a - chunk_char_start)` through
+`source_char_start + (b - chunk_char_start)`, and to segment offsets relative to
+the segment start. Thus crossing page spans retain ordered exact intersections
+without accepting model-provided offsets.
+
+### Exact production changes when authorized
+
+Modify only these production boundaries:
+
+- `src/aaos/inference/models.py`: add the typed
+  `evidence_segments_single_requirement` schema key to
+  `StructuredOutputSchema` and `ChatRequest` validation.
+- `src/aaos/inference/lm_studio.py`: register the strict local JSON Schema
+  `aaos_evidence_segments_single_requirement_v1` with root
+  `{"segment_ids": [...]}`, `additionalProperties: false`, string IDs matching
+  `^s[0-9]{3,}$`, and `maxItems: 4`. No quote, evidence, requirement, offset,
+  status, or citation fields are allowed.
+- `src/aaos/rag/semantic_coverage.py`: replace only the quote-producing span
+  call with sequential `_select_segments_one()` calls, one requirement at a
+  time in canonical order. Build an isolated prompt containing that requirement
+  and the same selected segment universe, parse the closed ID response, invoke
+  at most one identical-schema repair, resolve IDs through
+  `evidence_segments.py`, and return the unchanged
+  `RequirementEvidenceSpans` tuple. Keep entailment and aggregate status code
+  unchanged.
+
+`src/aaos/rag/contracts.py`, `src/aaos/rag/service.py`,
+`src/aaos/rag/generation.py`, citation code, retrieval code, and selector code
+are review-only. Change them only if a compile-time contract requires a
+minimal adapter; no semantic redesign is authorized.
+
+### TDD sequence
+
+- [ ] **Step 1 — Write RED tests:** create
+  `tests/test_rag_evidence_segments.py` and extend semantic/gateway integration
+  tests. Cover stable IDs, exact contiguous reconstruction, unique request-local
+  IDs, natural-boundary/whitespace/hard-split behavior, Arabic/English, empty
+  text, source-span and cross-page mapping, and no model/network involvement.
+  Add a fake-gateway test with three requirements proving each request contains
+  exactly one requirement and the identical selected segment tuple.
+- [ ] **Step 2 — Run RED:**
+  `uv run pytest tests/test_rag_evidence_segments.py tests/test_rag_semantic_coverage.py -q`.
+  Expected failure is the missing segment module/schema and the current quote
+  output contract; no production behavior is changed to make the RED pass.
+- [ ] **Step 3 — Add the schema boundary:** update only
+  `src/aaos/inference/models.py` and `src/aaos/inference/lm_studio.py`; add
+  exact serialization tests in `tests/test_lm_studio_gateway.py` for strict
+  `additionalProperties: false`, deterministic schema name, ID pattern, and
+  max-four bound. Verify prompt/evidence text cannot mutate schema metadata.
+- [ ] **Step 4 — Implement deterministic segmentation:** add the pure
+  partitioner and source-span intersection in `evidence_segments.py`. Tests
+  must prove exact text is code-owned, all parent text is covered once, IDs are
+  stable/unique, no overlap exists, and malformed parent/provenance input fails
+  closed.
+- [ ] **Step 5 — Implement selection and resolution:** change only the
+  semantic extractor path to make one sequential request per requirement,
+  attach requirement IDs in trusted code, resolve valid IDs, preserve first-seen
+  order, and leave `RequirementEvidenceSpans` unchanged. Add tests for valid,
+  repeated, unknown, mixed valid/invalid, and zero-valid selections; one repair;
+  failed repair; explicit empty selection; and no automatic rebinding.
+- [ ] **Step 6 — Verify semantic handoff:** test that empty selection skips
+  entailment, invalid IDs never reach entailment, a wrong-but-valid segment still
+  requires independent entailment, only entailing trusted segments reach factual
+  generation, partial/unsupported aggregate semantics remain unchanged, and
+  no model quote text exists in the request or response contract.
+- [ ] **Step 7 — Verify lifecycle and integration:** extend
+  `tests/test_rag_integration.py`, `tests/test_rag_runtime.py`,
+  `tests/test_rag_service.py`, and `tests/test_rag_imports.py` to prove Qwen is
+  reused across sequential selection calls, BGE/Qwen never overlap, cleanup is
+  deterministic on success/failure, no second retrieval occurs, and imports
+  remain side-effect-free. Retain the guarded calibration seam without adding
+  held-out execution.
+- [ ] **Step 8 — Focused verification:** run
+  `uv run pytest tests/test_rag_evidence_segments.py tests/test_rag_semantic_coverage.py tests/test_lm_studio_gateway.py tests/test_rag_integration.py tests/test_rag_service.py tests/test_rag_runtime.py tests/test_rag_imports.py -q`,
+  `uv run ruff format --check .`, `uv run ruff check .`,
+  `uv run mypy src tests`, `uv lock --check`, and `git diff --check`.
+- [ ] **Step 9 — Focused review:** inspect requirement isolation, exact-text
+  ownership, source-span intersection, prompt-injection boundaries, schema
+  closure, four-ID bound, repair count, entailment handoff, lifecycle ordering,
+  and absence of retrieval/Phase 3 changes. Commit implementation separately
+  as `feat(rag): select deterministic evidence segments`; keep any documentation
+  commits separate.
+
+### Calibration gate after implementation
+
+Only after implementation authorization, run consumed cases
+`v2-p002`, `v2-p005`, `v2-p025`, `v2-p004`, `v2-p001`, and `v2-p014`; run p002
+up to three times under the frozen configuration. Record per-requirement calls,
+invalid-ID count, zero-valid selections, repairs, fail-closed outcomes,
+entailment result, and latency. Quote-copy, quote-binding, and quote-not-found
+failures must be zero by construction. Require
+`P002_UNRESOLVED_ATTEMPT_COUNT=0`, no false support, no topical-only entailment,
+no partial-as-full acceptance, no provenance failure, and no lifecycle failure
+before the full consumed 56-case calibration. A truncation, unresolved
+selection, failed repair, or context/lifecycle error stops for human review;
+there is no automatic budget increase or fallback.
+
+If the targeted gate passes, run the existing full 56-case calibration and
+report the four PARTIAL cases and all semantic safety counters. Only after
+that, and under the already-approved governance, may representative consumed
+answers and the final 24 held-out answers be considered. This amendment itself
+must not run retrieval, generation, held-out answers, RAGAS, Checkpoint G,
+tagging, or Phase 5.
+
+### Rollback and stop conditions
+
+Rollback is a documentation/implementation commit revert only; no database
+migration or persisted segment cleanup is needed because segment IDs are
+request-local. Stop immediately if a segment cannot reconstruct exact parent
+text, source intersections are ambiguous, an unknown ID is trusted, an invalid
+selection reaches entailment, the schema accepts extra fields, a third model
+call occurs, BGE/Qwen overlap appears, or any retrieval/selector/Phase 3 path
+changes. Stop for human review if p002 remains unresolved, any calibration case
+truncates or fails structured validation, or a production contract outside this
+amendment must change.
+
 ## Checkpoint G — Controlled Acceptance
 
 Require fresh full deterministic verification, migration upgrade/downgrade, disposable SQLite/Chroma E2E, crash recovery, prompt injection/no-fallback tests, real BGE-M3 lifecycle on the target RTX 4050 6 GB, real local ModelGateway generation, locked held-out classical IR/RAGAS/multilingual/human review, performance/resource report, sanitized artifact review, security review, and explicit human acceptance. Tagging remains a separate future authorization.
