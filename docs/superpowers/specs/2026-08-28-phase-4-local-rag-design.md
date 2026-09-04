@@ -1619,6 +1619,38 @@ context overflow, invalid requirement set, invalid ID/quote/provenance,
 entailment failure, lifecycle failure, or failed repair fails closed before
 factual generation.
 
+#### Atomic decomposition and span-completeness prompt contract amendment
+
+The decomposition contract preserves the closed statuses `OK` and
+`TOO_MANY_REQUIREMENTS`, with a maximum of six requirements. A material
+requirement is the smallest independently answerable factual portion needed to
+satisfy the request. The model must preserve every independently answerable
+material part, but must not split a coherent fact merely because it contains
+descriptive words, qualifiers, examples, attributes, clauses, noun phrases, or
+supporting details. It must prefer the minimum complete set of independently
+supportable/refusable requirements: one coherent fact normally remains one
+requirement; explicit independently answerable parts, comparison dimensions,
+or separately answerable categories may remain separate.
+
+`TOO_MANY_REQUIREMENTS` is valid only when, after applying those
+anti-over-splitting rules, the request genuinely contains more than six
+independently answerable material factual requirements. It is not a length,
+uncertainty, evidence-difficulty, conservative-refusal, or qualifier shortcut.
+When the request fits faithfully within one through six requirements, status
+must be `OK`; `OK` with zero requirements and `TOO_MANY_REQUIREMENTS` with any
+requirements remain invalid combinations.
+
+For every extractive span request, the prompt explicitly states
+`EXPECTED_REQUIREMENT_COUNT=N` and the exact immutable ID set
+`[r1,...,rN]`. The model must return exactly one entry for every listed ID,
+including an entry with `spans=[]` when no usable evidence exists; missing,
+duplicate, or unknown IDs are forbidden. Array order may vary and trusted code
+normalizes by ID. The single permitted span repair repeats the exact count and
+ID set and identifies incomplete coverage explicitly. Prompt compliance does
+not replace deterministic validation: trusted code still enforces exact ID
+coverage, request-local evidence membership, pinned-snapshot membership, quote
+occurrence, and SQLite provenance.
+
 ### Prompt-injection, retrieval, and lifecycle boundaries
 
 Retrieved evidence and extracted spans are untrusted data. They cannot modify
