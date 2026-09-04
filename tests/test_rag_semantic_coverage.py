@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -50,13 +51,14 @@ def test_span_extraction_rejects_paraphrase_and_entailment_skips_empty_span() ->
     invalid = FakeGateway(
         [
             _response('{"spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}'),
+            _response('{"spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}'),
         ]
     )
 
     with pytest.raises(RagOperationalError) as error:
         asyncio.run(EvidenceSpanExtractor(invalid).extract(requirements, evidence=(_evidence(),)))
 
-    assert error.value.code is RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
     verifier = IndependentEntailmentVerifier(FakeGateway([]))
     assert (
         asyncio.run(
@@ -86,8 +88,8 @@ def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
     assert entailment_gateway.requests == []
 
 
-def test_span_duplicate_evidence_is_rejected() -> None:
-    from aaos.rag.contracts import Requirement, RequirementSet
+def test_span_exact_duplicate_pairs_are_deduplicated() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
@@ -97,13 +99,125 @@ def test_span_duplicate_evidence_is_rejected() -> None:
                 '{"spans":['
                 '{"evidence_id":"ev-1","quote":"The deadline"},'
                 '{"evidence_id":"ev-1","quote":"The deadline"}]}'
-            ),
-            _response("bad"),
+            )
         ]
     )
-    with pytest.raises(RagOperationalError) as error:
-        asyncio.run(EvidenceSpanExtractor(duplicate).extract(requirements, evidence=(_evidence(),)))
-    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+    result = asyncio.run(
+        EvidenceSpanExtractor(duplicate).extract(requirements, evidence=(_evidence(),))
+    )
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+
+
+def test_span_candidates_allow_distinct_quotes_for_one_evidence_id() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"spans":['
+                '{"evidence_id":"ev-1","quote":"The deadline"},'
+                '{"evidence_id":"ev-1","quote":"deadline is Friday"}]}'
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
+    )
+
+    assert result[0].spans == (
+        EvidenceSpan("ev-1", "The deadline"),
+        EvidenceSpan("ev-1", "deadline is Friday"),
+    )
+
+
+def test_span_candidates_discard_invalid_and_retain_valid_candidates() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"spans":['
+                '{"evidence_id":"ev-1","quote":"The deadline"},'
+                '{"evidence_id":"ev-1","quote":"not present"},'
+                '{"evidence_id":"unknown","quote":"The deadline"}]}'
+            )
+        ]
+    )
+
+    extractor = EvidenceSpanExtractor(gateway)
+    result = asyncio.run(extractor.extract(requirements, evidence=(_evidence(),)))
+
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+    assert len(gateway.requests) == 1
+    stats = extractor._last_validation_stats["r1"]
+    assert stats.candidate_span_count == 3
+    assert stats.validated_span_count == 1
+    assert stats.invalid_span_count == 2
+    assert stats.invalid_evidence_id_count == 1
+    assert stats.invalid_quote_not_found_count == 1
+
+
+def test_wrong_record_quote_is_discarded_without_rebinding() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    second = replace(_evidence("Other statement."), evidence_id="ev-2")
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"spans":['
+                '{"evidence_id":"ev-1","quote":"Other statement"},'
+                '{"evidence_id":"ev-2","quote":"Other statement"}]}'
+            )
+        ]
+    )
+
+    result = asyncio.run(
+        EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(), second))
+    )
+
+    assert result[0].spans == (EvidenceSpan("ev-2", "Other statement"),)
+
+
+def test_normalized_whitespace_quote_remains_valid() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    gateway = FakeGateway(
+        [_response('{"spans":[{"evidence_id":"ev-1","quote":"The deadline is Friday."}]}')]
+    )
+    evidence = (_evidence("The   deadline is   Friday."),)
+
+    result = asyncio.run(EvidenceSpanExtractor(gateway).extract(requirements, evidence=evidence))
+
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline is Friday."),)
+
+
+def test_zero_valid_span_candidates_trigger_one_repair() -> None:
+    from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import EvidenceSpanExtractor
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    gateway = FakeGateway(
+        [
+            _response('{"spans":[{"evidence_id":"ev-1","quote":"not present"}]}'),
+            _response('{"spans":[{"evidence_id":"ev-1","quote":"The deadline"}]}'),
+        ]
+    )
+
+    result = asyncio.run(
+        EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
+    )
+
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+    assert len(gateway.requests) == 2
 
 
 def test_span_extraction_uses_one_isolated_call_per_requirement() -> None:

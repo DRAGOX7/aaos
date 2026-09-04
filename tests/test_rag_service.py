@@ -333,6 +333,86 @@ def test_atomic_path_rejects_forged_span_quote_before_entailment() -> None:
     assert verifier.calls == 0
 
 
+def test_atomic_path_discards_invalid_span_candidates_before_entailment() -> None:
+    retriever = FakeRetriever()
+    verifier = FakeEntailmentVerifier()
+
+    class MixedSpanExtractor(FakeSpanExtractor):
+        async def extract(
+            self, _requirements: RequirementSet, *, evidence: tuple[RetrievedEvidence, ...]
+        ) -> tuple[RequirementEvidenceSpans, ...]:
+            self.calls += 1
+            return (
+                RequirementEvidenceSpans(
+                    "r1",
+                    (
+                        EvidenceSpan(evidence[0].evidence_id, "The deadline"),
+                        EvidenceSpan(evidence[0].evidence_id, "fabricated"),
+                    ),
+                ),
+            )
+
+    extractor = MixedSpanExtractor()
+    generator = FakeGenerator(retriever, _output())
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=generator,
+        citation_validator=CitationValidator(),
+        atomic_requirement_decomposer=FakeAtomicDecomposer(),
+        evidence_span_extractor=extractor,
+        entailment_verifier=verifier,
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert verifier.calls == 1
+    assert generator.seen_request is not None
+    assert generator.seen_request.validated_requirement_spans[0].spans == (
+        EvidenceSpan("ev-1", "The deadline"),
+    )
+
+
+def test_atomic_path_allows_distinct_spans_with_same_evidence_id() -> None:
+    retriever = FakeRetriever()
+    verifier = FakeEntailmentVerifier()
+
+    class DistinctSpanExtractor(FakeSpanExtractor):
+        async def extract(
+            self, _requirements: RequirementSet, *, evidence: tuple[RetrievedEvidence, ...]
+        ) -> tuple[RequirementEvidenceSpans, ...]:
+            self.calls += 1
+            return (
+                RequirementEvidenceSpans(
+                    "r1",
+                    (
+                        EvidenceSpan(evidence[0].evidence_id, "The deadline"),
+                        EvidenceSpan(evidence[0].evidence_id, "deadline is Friday"),
+                    ),
+                ),
+            )
+
+    generator = FakeGenerator(retriever, _output())
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=generator,
+        citation_validator=CitationValidator(),
+        atomic_requirement_decomposer=FakeAtomicDecomposer(),
+        evidence_span_extractor=DistinctSpanExtractor(),
+        entailment_verifier=verifier,
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert generator.seen_request is not None
+    assert len(generator.seen_request.validated_requirement_spans[0].spans) == 2
+
+
 def test_success_composes_one_snapshot_and_trusted_rendering() -> None:
     service, retriever, selector, gate, generator = _service()
 

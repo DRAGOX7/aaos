@@ -46,14 +46,11 @@ from .retrieval import (
 from .semantic_coverage import (
     RequirementCoverageClassifier,
     RequirementDecomposer,
+    _validate_span_candidates,
 )
 
 _DEFAULT_RRF_K = 60
 _DEFAULT_GENERATION_POLICY_VERSION = "grounded-v1"
-
-
-def _normalize_quote(value: str) -> str:
-    return " ".join(value.split())
 
 
 class _Retriever(Protocol):
@@ -151,7 +148,6 @@ def _validate_atomic_spans(
     if not isinstance(spans, tuple) or len(spans) != len(requirements.requirements):
         raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
     expected = tuple(item.requirement_id for item in requirements.requirements)
-    evidence_by_id = {item.evidence_id: item for item in evidence}
     by_requirement: dict[str, RequirementEvidenceSpans] = {}
     for requirement_spans in spans:
         if (
@@ -160,19 +156,14 @@ def _validate_atomic_spans(
             or requirement_spans.requirement_id in by_requirement
         ):
             raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
-        seen_evidence_ids: set[str] = set()
-        for span in requirement_spans.spans:
-            if not isinstance(span, EvidenceSpan) or span.evidence_id in seen_evidence_ids:
-                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
-            seen_evidence_ids.add(span.evidence_id)
-            selected = evidence_by_id.get(span.evidence_id)
-            if selected is None:
-                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
-            if not selected.source_spans or _normalize_quote(span.quote) not in _normalize_quote(
-                selected.exact_text
-            ):
-                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
-        by_requirement[requirement_spans.requirement_id] = requirement_spans
+        if not all(isinstance(span, EvidenceSpan) for span in requirement_spans.spans):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        validated_spans, _stats = _validate_span_candidates(requirement_spans.spans, evidence)
+        if requirement_spans.spans and not validated_spans:
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+        by_requirement[requirement_spans.requirement_id] = RequirementEvidenceSpans(
+            requirement_spans.requirement_id, validated_spans
+        )
     if set(by_requirement) != set(expected):
         raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
     return tuple(by_requirement[requirement_id] for requirement_id in expected)
