@@ -319,3 +319,69 @@ def test_classifier_has_no_benchmark_specific_rules() -> None:
     system_prompt = gateway.requests[0].messages[0].content.lower()
     assert "v2-p" not in system_prompt
     assert "qrel" not in system_prompt
+
+
+def test_atomic_prompt_balances_completeness_atomicity_and_minimality() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import _build_decomposition_messages
+
+    system_prompt = _build_decomposition_messages(
+        RagQuery("What is X?", GlobalScope()), atomic=True
+    )[0].content
+
+    assert "smallest independently answerable factual portion" in system_prompt
+    assert "do not split a requirement merely" in system_prompt.lower()
+    assert "minimum number of requirements" in system_prompt
+    assert "What is X?" in system_prompt
+    assert "status must be OK" in system_prompt
+
+
+def test_atomic_prompt_defines_explicit_multi_part_and_overflow_boundaries() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import _build_decomposition_messages
+
+    system_prompt = _build_decomposition_messages(
+        RagQuery("What are A and B?", GlobalScope()), atomic=True
+    )[0].content
+
+    normalized_prompt = system_prompt.lower()
+    assert "explicit independently answerable parts" in normalized_prompt
+    assert "comparison dimensions" in normalized_prompt
+    assert "genuinely contains more than six" in normalized_prompt
+    assert "not a length" in normalized_prompt
+    assert "too_many_requirements" in normalized_prompt
+
+
+def test_span_prompt_states_exact_requirement_count_ids_and_empty_span_rule() -> None:
+    from aaos.rag.contracts import Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import _build_span_messages
+
+    requirements = RequirementSet(
+        (Requirement("r1", "first"), Requirement("r2", "second"), Requirement("r3", "third"))
+    )
+    prompt = "\n".join(message.content for message in _build_span_messages(requirements, ()))
+
+    assert "EXPECTED_REQUIREMENT_COUNT=3" in prompt
+    assert "EXPECTED_REQUIREMENT_IDS=[r1,r2,r3]" in prompt
+    assert "exactly one entry for every listed ID" in prompt
+    assert "spans=[]" in prompt
+    assert "no missing ID" in prompt
+    assert "no duplicate ID" in prompt
+    assert "no unknown ID" in prompt
+
+
+def test_span_repair_prompt_restates_exact_completeness_target() -> None:
+    from aaos.rag.contracts import Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import _build_span_messages
+
+    requirements = RequirementSet(
+        (Requirement("r1", "first"), Requirement("r2", "second"), Requirement("r3", "third"))
+    )
+    repair_prompt = _build_span_messages(requirements, (), repair=True, invalid_output="{}")[
+        -1
+    ].content
+
+    assert "EXPECTED_REQUIREMENT_COUNT=3" in repair_prompt
+    assert "EXPECTED_REQUIREMENT_IDS=[r1,r2,r3]" in repair_prompt
+    assert "did not contain exactly one entry for every required ID" in repair_prompt
+    assert "include an entry with spans=[]" in repair_prompt.lower()
