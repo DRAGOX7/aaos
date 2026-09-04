@@ -1578,6 +1578,11 @@ service aggregation already represent one requirement at a time, so
 `src/aaos/rag/contracts.py` and `src/aaos/rag/service.py` are review-only and
 are not expected to change.
 
+Each loop iteration performs exactly one initial extraction attempt and, only
+when that attempt violates the approved structural or validation contract, at
+most one same-schema repair. Thus the maximum is two model calls per
+requirement; there is no second repair or retry loop.
+
 ### Exact future implementation surface
 
 **Modify:**

@@ -1758,6 +1758,11 @@ remains `EvidenceSpanExtractor.extract(RequirementSet, evidence=...) ->
 tuple[RequirementEvidenceSpans, ...]`; its implementation owns the sequential
 loop and returns canonical requirement order.
 
+For each immutable requirement, this means exactly one initial extraction
+attempt followed by at most one same-schema repair when the initial result
+violates the approved structural or validation contract: the maximum is two
+model calls per requirement, never a second repair or a retry loop.
+
 ### Per-requirement input contract
 
 Each call receives exactly:
