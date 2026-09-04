@@ -1545,6 +1545,167 @@ and English/Arabic breakdowns. Require `FALSE_SUPPORT_COUNT=0` and materially
 functional partial behavior before any held-out answer execution. Do not change
 labels, qrels, split, retrieval, or selector based on these results.
 
+## Architecture amendment — per-requirement extractive span extraction
+
+**Status:** human-approved for documentation and later implementation planning
+only. No production implementation is authorized by this amendment. This
+section supersedes the batched span-output sub-contract above while preserving
+the existing retrieval, selector, provenance, entailment, generation,
+citation, public-status, and held-out gates.
+
+### Decision and scope
+
+The consumed-calibration audit established two distinct failure classes in the
+batched extractor: `v2-p005` and `v2-p002` reached the 384-token ceiling with
+truncated JSON on both attempts, while P004 proved that two-requirement output
+can succeed and P001 showed intermittent same-record binding errors. The
+approved correction is one sequential span call per immutable requirement, not
+a larger batch, hybrid batching, retrieval change, or validator relaxation.
+
+The existing caller-facing boundary remains:
+
+```python
+EvidenceSpanExtractor.extract(
+    requirements: RequirementSet,
+    *,
+    evidence: tuple[RetrievedEvidence, ...],
+) -> tuple[RequirementEvidenceSpans, ...]
+```
+
+The implementation owns the loop, calls requirements in canonical `r1`...
+`rN` order, and returns the same typed tuple. `RequirementEvidenceSpans` and
+service aggregation already represent one requirement at a time, so
+`src/aaos/rag/contracts.py` and `src/aaos/rag/service.py` are review-only and
+are not expected to change.
+
+### Exact future implementation surface
+
+**Modify:**
+
+- `src/aaos/inference/models.py`: extend `StructuredOutputSchema` and its
+  validation set with `evidence_spans_single_requirement`.
+- `src/aaos/inference/lm_studio.py`: register the strict schema named
+  `aaos_evidence_spans_single_requirement_v1`, whose root object has only a
+  `spans` array; each item has only `evidence_id` and `quote`, with the existing
+  max-four-span and max-400-character bounds.
+- `src/aaos/rag/semantic_coverage.py`: add a private single-requirement message
+  builder/parser and make `EvidenceSpanExtractor.extract()` call it once per
+  requirement, attaching the already-owned requirement ID in deterministic
+  code. Keep existing quote normalization, provenance checks, repair bound,
+  and typed error behavior.
+
+**Test:**
+
+- `tests/test_rag_semantic_coverage.py`: per-requirement call count, isolated
+  inputs, closed output schema, deterministic assembly, empty spans, one repair,
+  malformed/truncated output, quote/evidence/provenance failures, and no
+  automatic rebinding.
+- `tests/test_lm_studio_gateway.py`: exact schema serialization and strict
+  `additionalProperties: false` behavior for the new schema key.
+- `tests/test_rag_integration.py`: three sequential span calls followed by
+  unchanged entailment ordering and selected-evidence identity.
+- `tests/test_rag_service.py`: aggregate support, unsupported refusal, and
+  partial propagation remain unchanged.
+- `tests/test_rag_runtime.py` and `tests/test_rag_imports.py`: Qwen reuse,
+  BGE/Qwen non-overlap, cleanup on success/failure, and side-effect-free
+  construction.
+- `tests/live/test_phase4_local_rag_acceptance.py`: retain only the existing
+  guarded calibration seam; no held-out or live execution is added by this
+  amendment.
+
+### Interfaces and invariants
+
+The private implementation is planned as:
+
+```python
+async def _extract_one(
+    requirement: Requirement,
+    *,
+    evidence: tuple[RetrievedEvidence, ...],
+) -> RequirementEvidenceSpans: ...
+
+def _parse_single_requirement_spans(
+    response: ChatResponse,
+    requirement: Requirement,
+    evidence: tuple[RetrievedEvidence, ...],
+    model_identifier: str,
+) -> RequirementEvidenceSpans: ...
+```
+
+Each request includes one immutable requirement and the unchanged selected
+request-local evidence tuple. The model output is exactly
+`{"spans":[{"evidence_id":"...","quote":"..."}]}`; it does not contain
+`requirement_id`. Code attaches the requirement ID, validates selected and
+pinned evidence membership, authoritative provenance, same-record normalized
+quote occurrence, and existing bounds. `spans=[]` is valid no-evidence and
+skips entailment for that requirement. Any malformed/truncated output,
+transport failure, invalid ID, wrong-record quote, provenance failure, or
+failed repair fails closed and is never downgraded to `UNSUPPORTED`.
+
+### TDD implementation sequence (future authorization)
+
+- [ ] **Step 1 — Write RED tests:** add a fake gateway test that supplies three
+  requirement responses and asserts three requests, each containing exactly
+  one requirement and the same selected evidence; assert the response schema
+  name is `evidence_spans_single_requirement` and no request payload asks the
+  model to return a requirement ID.
+- [ ] **Step 2 — Run the RED command:**
+  `uv run pytest tests/test_rag_semantic_coverage.py -q`.
+  Expected failure: the current extractor sends one batched request with the
+  `evidence_spans` schema, so the call-count and isolated-input assertions
+  fail.
+- [ ] **Step 3 — Add the inference schema boundary:** update only
+  `src/aaos/inference/models.py` and `src/aaos/inference/lm_studio.py` with the
+  new typed schema key and strict schema registration; add the gateway request
+  serialization regression and rerun its focused test.
+- [ ] **Step 4 — Implement the minimal extractor loop:** replace the batched
+  `_build_span_messages`/`_parse_spans` path with `_extract_one` and
+  `_parse_single_requirement_spans`; iterate sequentially, attach canonical
+  IDs, preserve the existing one-repair-per-requirement behavior, and leave
+  `RequirementEvidenceSpans` unchanged.
+- [ ] **Step 5 — Verify deterministic failure semantics:** add tests for
+  empty spans (no entailment call), malformed/truncated output (at most one
+  same-schema repair), failed repair, unknown evidence IDs, cross-record or
+  paraphrased quotes, provenance failures, normalization-only matches, and
+  failed extraction not becoming `UNSUPPORTED`; rerun the focused semantic
+  suite.
+- [ ] **Step 6 — Verify integration and lifecycle:** add/extend fake integration
+  tests for three sequential calls, canonical assembly, unchanged entailment
+  ordering, Qwen reuse without unload/reload between requirements, no BGE/Qwen
+  overlap, cleanup on every path, unchanged partial propagation, and no second
+  retrieval. No retrieval or selector files may change.
+- [ ] **Step 7 — Focused verification:** run
+  `uv run pytest tests/test_rag_semantic_coverage.py tests/test_lm_studio_gateway.py tests/test_rag_integration.py tests/test_rag_service.py tests/test_rag_runtime.py tests/test_rag_imports.py -q`,
+  then `uv run ruff format --check .`, `uv run ruff check .`,
+  `uv run mypy src tests`, `uv lock --check`, and `git diff --check`.
+- [ ] **Step 8 — Review:** inspect the diff for requirement ownership,
+  request-local evidence isolation, prompt-injection boundaries, schema
+  closure, retry count, lifecycle ordering, and absence of retrieval or
+  Phase 3 changes. Commit documentation separately as
+  `docs(rag): document per-requirement span extraction`; a later authorized
+  implementation is committed separately as
+  `feat(rag): extract spans per requirement`.
+
+### Calibration and held-out gate after implementation
+
+Only after a separate implementation authorization, run consumed calibration
+cases `v2-p005`, `v2-p002`, `v2-p025`, `v2-p004`, `v2-p001`, and `v2-p014` first.
+For every immutable requirement record span-call count, finish reason,
+completion tokens, repair use, span count, and validation result. Require no
+384-token truncation, unresolved quote/provenance failure, false support,
+topical-only entailment, or partial-as-full acceptance before running the full
+consumed 56 cases. Report total calls plus min/median/max calls and latency.
+The 24 held-out answer cases remain unexecuted and invisible; do not run
+RAGAS, Checkpoint G, tagging, or Phase 5 from this amendment.
+
+### Scope exclusions
+
+Do not change retrieval, selector, benchmark/qrels/split, model, temperature,
+entailment semantics, public `RagAnswer` statuses, citation rendering,
+normalization, Phase 3, held-out execution, or protected data paths. Evidence
+remains untrusted data and cannot alter requirements, schemas, scope, tools,
+network behavior, model configuration, or secrets.
+
 ## Checkpoint G — Controlled Acceptance
 
 Require fresh full deterministic verification, migration upgrade/downgrade, disposable SQLite/Chroma E2E, crash recovery, prompt injection/no-fallback tests, real BGE-M3 lifecycle on the target RTX 4050 6 GB, real local ModelGateway generation, locked held-out classical IR/RAGAS/multilingual/human review, performance/resource report, sanitized artifact review, security review, and explicit human acceptance. Tagging remains a separate future authorization.
