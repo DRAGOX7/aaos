@@ -246,6 +246,41 @@ _STRUCTURED_RESPONSE_FORMATS = {
             },
         },
     },
+    "evidence_spans_single_requirement": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_evidence_spans_single_requirement_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "spans": {
+                        "type": "array",
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "evidence_id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                },
+                                "quote": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 400,
+                                },
+                            },
+                            "required": ["evidence_id", "quote"],
+                        },
+                    }
+                },
+                "required": ["spans"],
+            },
+        },
+    },
     "requirement_entailment": {
         "type": "json_schema",
         "json_schema": {

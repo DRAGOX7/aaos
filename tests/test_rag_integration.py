@@ -70,7 +70,7 @@ class _GroundingGateway:
                 ),
                 model_identifier="qwen/qwen3.5-4b",
             )
-        if request.structured_output_schema == "evidence_spans":
+        if request.structured_output_schema == "evidence_spans_single_requirement":
             payload = next(
                 message.content.split("<span-input>", 1)[1].split("</span-input>", 1)[0]
                 for message in request.messages
@@ -84,8 +84,7 @@ class _GroundingGateway:
                 else []
             )
             return ChatResponse(
-                content=json.dumps({"requirements": [{"requirement_id": "r1", "spans": spans}]}),
-                model_identifier="qwen/qwen3.5-4b",
+                content=json.dumps({"spans": spans}), model_identifier="qwen/qwen3.5-4b"
             )
         if request.structured_output_schema == "requirement_entailment":
             return ChatResponse(
