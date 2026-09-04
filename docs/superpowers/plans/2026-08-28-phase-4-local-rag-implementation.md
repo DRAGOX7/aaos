@@ -1628,7 +1628,6 @@ async def _extract_one(
     *,
     evidence: tuple[RetrievedEvidence, ...],
 ) -> RequirementEvidenceSpans: ...
-
 def _parse_single_requirement_spans(
     response: ChatResponse,
     requirement: Requirement,
@@ -1640,12 +1639,18 @@ def _parse_single_requirement_spans(
 Each request includes one immutable requirement and the unchanged selected
 request-local evidence tuple. The model output is exactly
 `{"spans":[{"evidence_id":"...","quote":"..."}]}`; it does not contain
-`requirement_id`. Code attaches the requirement ID, validates selected and
-pinned evidence membership, authoritative provenance, same-record normalized
-quote occurrence, and existing bounds. `spans=[]` is valid no-evidence and
-skips entailment for that requirement. Any malformed/truncated output,
-transport failure, invalid ID, wrong-record quote, provenance failure, or
-failed repair fails closed and is never downgraded to `UNSUPPORTED`.
+`requirement_id`. Code attaches the requirement ID and treats every returned
+span as an untrusted candidate. Candidates are validated independently for
+selected/pinned membership, authoritative provenance, and same-record normalized
+quote occurrence. Invalid candidates are discarded and never reach entailment
+or factual generation; valid candidates remain eligible. The same evidence ID
+may support multiple distinct valid quotes. Exact duplicate
+`(evidence_id, normalized_quote)` pairs are deterministically deduplicated, but
+different quotes are never merged. `spans=[]` is valid no-evidence and skips
+entailment for that requirement. If candidates are present but none validate,
+the existing one-repair/fail-closed path is used and is not downgraded to
+`UNSUPPORTED`. Malformed/truncated output, transport failure, or a failed repair
+still fails closed.
 
 ### TDD implementation sequence (future authorization)
 
@@ -1669,7 +1674,9 @@ failed repair fails closed and is never downgraded to `UNSUPPORTED`.
   IDs, preserve the existing one-repair-per-requirement behavior, and leave
   `RequirementEvidenceSpans` unchanged.
 - [ ] **Step 5 — Verify deterministic failure semantics:** add tests for
-  empty spans (no entailment call), malformed/truncated output (at most one
+  empty spans (no entailment call), independent candidate validation, repeated
+  evidence IDs with distinct valid quotes, exact-pair deduplication, invalid
+  candidates being discarded, malformed/truncated output (at most one
   same-schema repair), failed repair, unknown evidence IDs, cross-record or
   paraphrased quotes, provenance failures, normalization-only matches, and
   failed extraction not becoming `UNSUPPORTED`; rerun the focused semantic

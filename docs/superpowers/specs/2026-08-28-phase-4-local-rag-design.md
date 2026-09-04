@@ -1561,13 +1561,19 @@ evidence. It does not decide support or render citations. Its closed schema is:
 
 There must be exactly one entry for every immutable requirement ID, while zero
 spans is valid when no candidate support exists. Evidence IDs must be selected,
-request-local IDs in the pinned snapshot. Deterministic code rejects missing,
-duplicate, unknown, cross-request, or out-of-snapshot requirement/evidence IDs;
-unresolved SQLite provenance; and quotes that do not occur in the corresponding
-selected evidence text (prefer exact normalized substring matching). A model
-paraphrase is never accepted as an extractive quote. Any span or provenance
-failure fails closed and cannot become support. A valid span may combine a small
-number of short quotes only when the proposition genuinely requires them.
+request-local IDs in the pinned snapshot. Each model-produced span is an
+untrusted candidate: deterministic code validates its ID, selected/pinned
+membership, authoritative SQLite provenance, and same-record exact normalized
+quote occurrence independently. Invalid candidates are discarded and can never
+become support; valid candidates remain eligible for entailment. The same
+evidence ID may support multiple distinct valid quotes. Exact duplicate
+`(evidence_id, normalized_quote)` pairs are deterministically deduplicated, but
+different quotes are never merged. A model paraphrase, wrong-record binding, or
+semantic/fuzzy match is never accepted. If a response contains candidates but
+zero validate, the existing one-repair/fail-closed path is used; it is not
+downgraded to unsupported. An explicit `spans=[]` remains valid no-evidence and
+skips entailment. A valid span may combine a small number of short quotes only
+when the proposition genuinely requires them.
 
 ### Independent entailment schema and contract
 
