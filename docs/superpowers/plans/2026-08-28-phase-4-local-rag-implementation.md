@@ -1460,8 +1460,13 @@ RagQuery -> QuerySnapshot -> hybrid retrieval -> EvidenceSelector
    immutable requirement ID; each entry has zero or more bounded spans, each
    with only `evidence_id` and bounded `quote`. Use a small fixed cap (the
    design proposal is at most four spans and 400 quote characters per span).
-   No support verdict, rationale, confidence, citation text, or chain of
-   thought is allowed.
+   Each quote must be copied verbatim from the same selected evidence record
+   identified by its `evidence_id`; paraphrasing, summarizing, rewriting,
+   model-side normalization, and composition across evidence records are
+   prohibited. If no exact suitable text exists for a requirement, return its
+   required entry with `spans=[]`. The single repair repeats this same-record,
+   verbatim-only contract. No support verdict, rationale, confidence, citation
+   text, or chain of thought is allowed.
 
 3. Span validation: deterministically require known requirement IDs, selected
    request-local evidence IDs, pinned `QuerySnapshot` membership, authoritative
