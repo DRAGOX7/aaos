@@ -1757,6 +1757,7 @@ class EvidenceSegmentSourceSpan:
     segment_char_start: int
     segment_char_end: int
 
+
 @dataclass(frozen=True, slots=True)
 class EvidenceSegment:
     segment_id: str
@@ -1774,6 +1775,7 @@ def segment_selected_evidence(
     evidence: tuple[RetrievedEvidence, ...],
 ) -> tuple[EvidenceSegment, ...]: ...
 
+
 def resolve_segment_selection(
     selected_ids: tuple[str, ...],
     *,
@@ -1787,8 +1789,9 @@ def resolve_segment_selection(
 `segment_selected_evidence()` validates selected parent IDs/generation and
 revision, assigns `s001`, `s002`, ... in selected-evidence order and ascending
 parent offsets, and partitions exact text without rewriting or overlap. It
-prefers paragraph, line, and sentence-like punctuation boundaries at or below
-400 characters, then whitespace, then an exact hard split. The delimiter
+chooses the rightmost eligible boundary at or below 400 characters, preferring
+paragraph, line, and sentence-like punctuation, then whitespace, then an exact
+hard split. The delimiter
 whitespace is included in the prior slice so concatenating all slices exactly
 reconstructs every parent. Source spans are derived by interval intersection;
 cross-page segments retain multiple ordered non-empty intersections. A missing
