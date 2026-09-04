@@ -1872,7 +1872,208 @@ this amendment.
 Retrieved evidence remains untrusted data and cannot alter the requirement,
 schema, scope, tools, network behavior, model configuration, or secrets.
 
-## 44. Design self-review checklist
+## 44. Architecture amendment — deterministic request-local evidence segments
+
+**Status:** human-approved for design and implementation-plan work only. This
+amendment replaces model-generated extractive quote strings with deterministic
+request-local segment identifiers. No production implementation is authorized
+by this section alone. The retrieval, selector, snapshot, provenance,
+entailment, generation, citation, public-status, and held-out governance
+contracts remain unchanged.
+
+### Decision and scope
+
+The per-requirement extractor remains the correct isolation boundary, but its
+model output must no longer reproduce source text. After retrieval and the
+existing deterministic evidence selector, trusted code partitions each
+selected `RetrievedEvidence.exact_text` into immutable request-local
+`EvidenceSegment` values. For each atomic requirement, Qwen selects zero or
+more of those opaque segment IDs. Trusted code resolves the IDs to exact text
+and authoritative provenance before the unchanged entailment and answer path.
+
+This is a representation and reliability correction, not a retrieval layer:
+there is no second retrieval, segment index, Chroma collection, FTS table,
+selector change, or persisted segment identity. The segment map exists only for
+the current request and is discarded with that request.
+
+### Deterministic segmentation contract
+
+The initial implementation uses a pure local partitioner over each selected
+evidence item's exact Unicode string. It never normalizes, rewrites, trims, or
+overlaps text. The partitioner scans forward from the current offset and
+chooses the furthest end at or below **400 characters** that is a safe natural
+boundary, in this order:
+
+1. a paragraph boundary;
+2. a line boundary;
+3. sentence-like terminal punctuation (`.`, `?`, `!`, `。`, `؟`, or `؛`)
+   followed by whitespace or the end of the parent text; then
+4. the furthest whitespace boundary at or below the limit.
+
+The delimiter whitespace belongs to the preceding segment, so adjacent
+half-open slices `[start_offset, end_offset)` reconstruct the parent exactly.
+If no boundary exists before the limit, the partitioner performs an exact
+400-character hard split. A final shorter segment is retained. Empty parent
+text produces no segments. These rules are language-agnostic and preserve the
+current Arabic and English text without a new NLP dependency. They reuse the
+same exact-text model as chunking but do not reuse chunk overlap: the segment
+layer is a request-local bounded view over already-selected chunks.
+
+The 400-character bound is an initial architecture constant, not a tuned
+held-out result. It is anchored to the existing maximum trusted quote size
+(400 characters) and the inspected selected-evidence distribution (typical
+text is below that bound while long chunks are split deterministically). It
+keeps each model-visible item focused without increasing evidence volume. The
+implementation must expose the bound as a versioned constant so a future
+calibration change is explicit and fingerprinted. Segments have **no overlap**
+by default; overlap would duplicate evidence and make deterministic budget and
+diversity reasoning less clear, and no current source-span contract requires
+it.
+
+### Segment identity and provenance
+
+`EvidenceSegment` is a private frozen value with at least:
+
+```python
+EvidenceSegment(
+    segment_id: str,                 # request-local opaque `s001`, `s002`, ...
+    parent_evidence_id: str,
+    exact_text: str,
+    start_offset: int,
+    end_offset: int,
+    source_spans: tuple[EvidenceSegmentSourceSpan, ...],
+)
+```
+
+`EvidenceSegmentSourceSpan` follows the existing
+`RagChunkSourceSpanValue` vocabulary: `document_page_id`, `page_number`,
+`source_char_start`, `source_char_end`, `segment_char_start`, and
+`segment_char_end`.
+
+IDs are assigned in the stable ordered selected-evidence tuple, then by
+ascending parent offset. They are unique and stable for identical ordered
+selected evidence in one request, but are not database identities and never
+cross request boundaries. Only trusted code creates the ID-to-segment map; the
+model cannot reconstruct parent evidence IDs or provenance.
+
+Every segment is an exact contiguous substring of exactly one selected parent.
+Its offsets are checked against the parent length. Parent membership is first
+checked against the immutable pinned `QuerySnapshot`. Source mapping is then
+derived by intersecting the segment's parent-relative interval with each
+authoritative `RetrievedEvidence.source_spans` interval. Each non-empty
+intersection becomes an `EvidenceSegmentSourceSpan` carrying the exact page,
+source, and segment-relative ranges. A segment crossing a page boundary maps
+to multiple ordered trusted spans; no approximate or model-supplied page
+mapping is accepted. A segment with no valid authoritative intersection fails
+closed.
+
+### Model input and output boundary
+
+For one immutable requirement, the model receives only that requirement and
+the complete segment list for the already-selected request-local evidence:
+
+```text
+REQUIREMENT:
+<requirement text>
+
+AVAILABLE SEGMENTS:
+[s001]
+<exact segment text>
+
+[s002]
+<exact segment text>
+```
+
+Retrieved text remains untrusted data and is clearly delimited from fixed
+instructions. The strict closed response schema is exactly:
+
+```json
+{"segment_ids": ["s002", "s007"]}
+```
+
+The schema has no other properties. It permits at most the existing trusted
+evidence/span bound of four selected items per requirement. The model may not
+emit quote text, evidence IDs, requirement IDs, text offsets, provenance,
+status, confidence, rationale, citations, or chain-of-thought. Schema
+validation is defense in depth; the existing application parser and
+request-local validation remain authoritative.
+
+An explicit `{"segment_ids": []}` is valid no-evidence. It deterministically
+becomes `NOT_ENTAILED` and skips the entailment model. For a non-empty result,
+trusted code discards unknown, stale, nonlocal, or provenance-invalid IDs and
+deduplicates repeated valid IDs while preserving first-seen order. A mixture
+of valid and invalid IDs retains only valid IDs. If a non-empty response has
+zero valid IDs, the existing bounded same-schema repair runs once with the
+same requirement and segment universe. A second zero-valid result fails
+closed; it is not silently converted to `UNSUPPORTED`. No third call or
+rebinding is allowed.
+
+### Downstream compatibility and semantic gate
+
+Each validated segment is converted to the existing trusted
+`EvidenceSpan(parent_evidence_id, quote=segment.exact_text)` shape, with the
+segment's exact source mapping retained for provenance resolution. This keeps
+`RequirementEvidenceSpans`, citation validation, and deterministic rendering
+compatible. Citation objects still resolve from authoritative SQLite-backed
+parent evidence and source spans; no model output supplies citation metadata.
+
+Segment selection is not entailment. The unchanged independent entailment call
+receives one requirement and only its deterministically resolved selected
+segments. A wrong-but-valid segment therefore remains subject to the semantic
+`ENTAILED`/`NOT_ENTAILED` gate. Only entailing trusted segments enter factual
+generation. Aggregate `SUPPORTED`/`PARTIAL`/`UNSUPPORTED` behavior and public
+`ANSWER`/`PARTIAL_ANSWER`/`INSUFFICIENT_EVIDENCE` statuses remain unchanged.
+
+### Failure classes and boundaries
+
+Because exact text is code-owned, the following model failure classes are
+impossible by construction: paraphrased quote, non-occurring quote,
+whitespace-copy mismatch, quote/evidence misbinding, cross-evidence quote
+composition, and model-generated source offsets. Remaining bounded model
+failures are wrong or irrelevant segment selection, too few or no segments,
+and invalid/unknown IDs. ID validation, one repair, fail-closed behavior, and
+independent entailment contain those failures.
+
+The model remains `qwen/qwen3.5-4b` at temperature zero. BGE retrieval is
+released and verified before Qwen loads; Qwen remains loaded across sequential
+requirement-selection and entailment calls, with no BGE/Qwen overlap and no
+load/unload between requirements. Segmentation is local and inexpensive; it
+does not call a model or network. No tools, agents, memory, cloud fallback, or
+new dependency are introduced.
+
+### Performance and rejected alternatives
+
+For selected evidence of length `L`, the segment count is deterministically
+`ceil(L / 400)` in the hard-split worst case and normally lower at natural
+boundaries. The inspected corpus suggests roughly 1 segment for typical
+selected evidence, with long evidence producing several and a hard maximum
+of `ceil(L/400)` per parent. A requirement prompt contains all segments from
+the selected tuple and therefore grows by segment labels plus exact text, but
+the text bytes are the same selected evidence bytes rather than duplicated
+quotes. Sequential per-requirement selection adds one bounded local model call
+per requirement; no parallelism is introduced. These are design estimates,
+not held-out measurements.
+
+Continuing to tune quote prompts was rejected because exact-string
+reproduction remains variable. Increasing repair count masks that instability.
+Switching to Qwen 9B increases memory and latency without removing the
+unnecessary free-form copy task. Whole-evidence-ID-only selection is too
+coarse for entailment. A segment Chroma/FTS index would change frozen
+retrieval assumptions for no safety benefit.
+
+### Calibration and governance
+
+After separate implementation authorization, first run consumed calibration
+cases `v2-p002`, `v2-p005`, `v2-p025`, `v2-p004`, `v2-p001`, and `v2-p014`,
+running `v2-p002` up to three times under the frozen configuration. Report
+invalid-ID count, zero-valid selections, repair count, fail-closed count, and
+entailment result. Quote-copy, quote-binding, and quote-not-found failures are
+zero by construction. Require `P002_UNRESOLVED_ATTEMPT_COUNT=0` before the
+full consumed 56 cases. The existing false-support, topical-only, partial-as-
+full, lifecycle, and no-fallback gates remain in force. Held-out answers,
+RAGAS, Checkpoint G, tagging, and Phase 5 remain out of scope.
+
+## 45. Design self-review checklist
 
 This specification was checked for:
 
@@ -1883,6 +2084,8 @@ This specification was checked for:
 - no hidden model, lexical, cloud, browser, or network fallback;
 - no Phase 3 redesign or Phase 5 agent scope leakage;
 - explicit prompt-injection, citation, privacy, and safe-error behavior;
+- deterministic request-local segment IDs with exact text and cross-page
+  provenance mapping;
 - no requirement to add dependencies or run a model in this documentation task;
 - alignment with current `DocumentVersion`/`DocumentPage`, SQLAlchemy/Alembic,
   local `ModelGateway`/`LMStudioGateway`, configuration, and CLI lifecycle
