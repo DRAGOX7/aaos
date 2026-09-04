@@ -281,6 +281,28 @@ _STRUCTURED_RESPONSE_FORMATS = {
             },
         },
     },
+    "evidence_segments_single_requirement": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_evidence_segments_single_requirement_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "segment_ids": {
+                        "type": "array",
+                        "maxItems": 4,
+                        "items": {
+                            "type": "string",
+                            "pattern": "^s[0-9]{3,}$",
+                        },
+                    }
+                },
+                "required": ["segment_ids"],
+            },
+        },
+    },
     "requirement_entailment": {
         "type": "json_schema",
         "json_schema": {

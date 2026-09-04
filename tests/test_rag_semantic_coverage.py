@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
 
 import pytest
 
@@ -42,16 +41,16 @@ def test_atomic_decomposition_overflow_is_a_non_exceptional_closed_result() -> N
     assert len(gateway.requests) == 1
 
 
-def test_span_extraction_rejects_paraphrase_and_entailment_skips_empty_span() -> None:
-    """Only exact quotes reach a one-requirement entailment model call."""
+def test_segment_selection_rejects_unknown_ids_and_entailment_skips_empty_span() -> None:
+    """Unknown non-empty selections fail closed before entailment."""
     from aaos.rag.contracts import Requirement, RequirementEvidenceSpans, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor, IndependentEntailmentVerifier
 
     requirements = RequirementSet((Requirement("r1", "Give the deadline"),))
     invalid = FakeGateway(
         [
-            _response('{"spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}'),
-            _response('{"spans":[{"evidence_id":"ev-1","quote":"Deadline is next week"}]}'),
+            _response('{"segment_ids":["s999"]}'),
+            _response('{"segment_ids":["s998"]}'),
         ]
     )
 
@@ -73,9 +72,11 @@ def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor, IndependentEntailmentVerifier
 
     requirements = RequirementSet((Requirement("r1", "Give the deadline"),))
-    span_gateway = FakeGateway([_response('{"spans":[]}')])
+    span_gateway = FakeGateway([_response('{"segment_ids":[]}')])
     asyncio.run(EvidenceSpanExtractor(span_gateway).extract(requirements, evidence=(_evidence(),)))
-    assert span_gateway.requests[0].structured_output_schema == "evidence_spans_single_requirement"
+    assert (
+        span_gateway.requests[0].structured_output_schema == "evidence_segments_single_requirement"
+    )
     entailment_gateway = FakeGateway([])
     asyncio.run(
         IndependentEntailmentVerifier(entailment_gateway).verify(
@@ -88,135 +89,94 @@ def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
     assert entailment_gateway.requests == []
 
 
-def test_span_exact_duplicate_pairs_are_deduplicated() -> None:
+def test_segment_ids_are_deduplicated() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    duplicate = FakeGateway(
-        [
-            _response(
-                '{"spans":['
-                '{"evidence_id":"ev-1","quote":"The deadline"},'
-                '{"evidence_id":"ev-1","quote":"The deadline"}]}'
-            )
-        ]
-    )
+    duplicate = FakeGateway([_response('{"segment_ids":["s001","s001"]}')])
     result = asyncio.run(
         EvidenceSpanExtractor(duplicate).extract(requirements, evidence=(_evidence(),))
     )
-    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline is Friday."),)
 
 
-def test_span_candidates_allow_distinct_quotes_for_one_evidence_id() -> None:
+def test_distinct_segment_ids_for_one_evidence_are_preserved() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    gateway = FakeGateway(
-        [
-            _response(
-                '{"spans":['
-                '{"evidence_id":"ev-1","quote":"The deadline"},'
-                '{"evidence_id":"ev-1","quote":"deadline is Friday"}]}'
-            )
-        ]
-    )
+    text = "A" * 500
+    gateway = FakeGateway([_response('{"segment_ids":["s001","s002"]}')])
 
     result = asyncio.run(
-        EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
+        EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(text),))
     )
 
-    assert result[0].spans == (
-        EvidenceSpan("ev-1", "The deadline"),
-        EvidenceSpan("ev-1", "deadline is Friday"),
-    )
+    assert result[0].spans == (EvidenceSpan("ev-1", "A" * 400), EvidenceSpan("ev-1", "A" * 100))
 
 
-def test_span_candidates_discard_invalid_and_retain_valid_candidates() -> None:
+def test_segment_candidates_discard_invalid_and_retain_valid_candidates() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    gateway = FakeGateway(
-        [
-            _response(
-                '{"spans":['
-                '{"evidence_id":"ev-1","quote":"The deadline"},'
-                '{"evidence_id":"ev-1","quote":"not present"},'
-                '{"evidence_id":"unknown","quote":"The deadline"}]}'
-            )
-        ]
-    )
+    gateway = FakeGateway([_response('{"segment_ids":["s001","s999","s001"]}')])
 
     extractor = EvidenceSpanExtractor(gateway)
     result = asyncio.run(extractor.extract(requirements, evidence=(_evidence(),)))
 
-    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline is Friday."),)
     assert len(gateway.requests) == 1
     stats = extractor._last_validation_stats["r1"]
-    assert stats.candidate_span_count == 3
-    assert stats.validated_span_count == 1
-    assert stats.invalid_span_count == 2
-    assert stats.invalid_evidence_id_count == 1
-    assert stats.invalid_quote_not_found_count == 1
+    assert stats.candidate_segment_id_count == 3
+    assert stats.validated_segment_id_count == 1
+    assert stats.invalid_segment_id_count == 1
+    assert stats.deduplicated_segment_id_count == 1
 
 
-def test_wrong_record_quote_is_discarded_without_rebinding() -> None:
+def test_valid_segment_id_resolves_only_its_authoritative_parent() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    second = replace(_evidence("Other statement."), evidence_id="ev-2")
-    gateway = FakeGateway(
-        [
-            _response(
-                '{"spans":['
-                '{"evidence_id":"ev-1","quote":"Other statement"},'
-                '{"evidence_id":"ev-2","quote":"Other statement"}]}'
-            )
-        ]
-    )
+    second = _evidence("Other statement.", evidence_id="ev-2")
+    gateway = FakeGateway([_response('{"segment_ids":["s002"]}')])
 
     result = asyncio.run(
         EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(), second))
     )
 
-    assert result[0].spans == (EvidenceSpan("ev-2", "Other statement"),)
+    assert result[0].spans == (EvidenceSpan("ev-2", "Other statement."),)
 
 
-def test_normalized_whitespace_quote_remains_valid() -> None:
+def test_segment_text_is_resolved_without_model_normalization() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    gateway = FakeGateway(
-        [_response('{"spans":[{"evidence_id":"ev-1","quote":"The deadline is Friday."}]}')]
-    )
+    gateway = FakeGateway([_response('{"segment_ids":["s001"]}')])
     evidence = (_evidence("The   deadline is   Friday."),)
 
     result = asyncio.run(EvidenceSpanExtractor(gateway).extract(requirements, evidence=evidence))
 
-    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline is Friday."),)
+    assert result[0].spans == (EvidenceSpan("ev-1", "The   deadline is   Friday."),)
 
 
-def test_zero_valid_span_candidates_trigger_one_repair() -> None:
+def test_zero_valid_segment_candidates_trigger_one_repair() -> None:
     from aaos.rag.contracts import EvidenceSpan, Requirement, RequirementSet
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
     gateway = FakeGateway(
-        [
-            _response('{"spans":[{"evidence_id":"ev-1","quote":"not present"}]}'),
-            _response('{"spans":[{"evidence_id":"ev-1","quote":"The deadline"}]}'),
-        ]
+        [_response('{"segment_ids":["s999"]}'), _response('{"segment_ids":["s001"]}')]
     )
 
     result = asyncio.run(
         EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
     )
 
-    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline"),)
+    assert result[0].spans == (EvidenceSpan("ev-1", "The deadline is Friday."),)
     assert len(gateway.requests) == 2
 
 
@@ -232,7 +192,7 @@ def test_span_extraction_uses_one_isolated_call_per_requirement() -> None:
             Requirement("r3", "third requirement"),
         )
     )
-    gateway = FakeGateway([_response('{"spans":[]}')] * 3)
+    gateway = FakeGateway([_response('{"segment_ids":[]}')] * 3)
 
     result = asyncio.run(
         EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
@@ -241,22 +201,19 @@ def test_span_extraction_uses_one_isolated_call_per_requirement() -> None:
     assert tuple(item.requirement_id for item in result) == ("r1", "r2", "r3")
     assert len(gateway.requests) == 3
     for request, requirement in zip(gateway.requests, requirements.requirements, strict=True):
-        assert request.structured_output_schema == "evidence_spans_single_requirement"
+        assert request.structured_output_schema == "evidence_segments_single_requirement"
         assert request.max_output_tokens == 384
         payload = json.loads(
             next(
-                message.content.split("<span-input>", 1)[1].split("</span-input>", 1)[0]
+                message.content.split("<segment-selection-input>", 1)[1].split(
+                    "</segment-selection-input>", 1
+                )[0]
                 for message in request.messages
-                if "<span-input>" in message.content
+                if "<segment-selection-input>" in message.content
             )
         )
-        assert payload["requirements"] == [
-            {
-                "requirement_id": requirement.requirement_id,
-                "requirement_text": requirement.requirement_text,
-            }
-        ]
-        assert payload["evidence"] == [{"evidence_id": "ev-1", "text": _evidence().exact_text}]
+        assert payload["requirement_text"] == requirement.requirement_text
+        assert payload["segments"] == [{"segment_id": "s001", "text": _evidence().exact_text}]
 
 
 def test_span_extraction_attaches_requirement_identity_in_call_order() -> None:
@@ -264,12 +221,7 @@ def test_span_extraction_attaches_requirement_identity_in_call_order() -> None:
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"), Requirement("r2", "second")))
-    gateway = FakeGateway(
-        [
-            _response('{"spans":[{"evidence_id":"ev-1","quote":"The deadline"}]}'),
-            _response('{"spans":[]}'),
-        ]
-    )
+    gateway = FakeGateway([_response('{"segment_ids":["s001"]}'), _response('{"segment_ids":[]}')])
 
     result = asyncio.run(
         EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
@@ -285,7 +237,7 @@ def test_span_extraction_repairs_once_for_one_requirement() -> None:
     from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
     requirements = RequirementSet((Requirement("r1", "first"),))
-    gateway = FakeGateway([_response("not json"), _response('{"spans":[]}')])
+    gateway = FakeGateway([_response("not json"), _response('{"segment_ids":[]}')])
 
     result = asyncio.run(
         EvidenceSpanExtractor(gateway).extract(requirements, evidence=(_evidence(),))
@@ -294,7 +246,7 @@ def test_span_extraction_repairs_once_for_one_requirement() -> None:
     assert result == (RequirementEvidenceSpans("r1", ()),)
     assert len(gateway.requests) == 2
     assert all(
-        request.structured_output_schema == "evidence_spans_single_requirement"
+        request.structured_output_schema == "evidence_segments_single_requirement"
         for request in gateway.requests
     )
 
@@ -305,8 +257,8 @@ def test_span_output_cannot_supply_requirement_identity_or_batch_shape() -> None
 
     requirements = RequirementSet((Requirement("r1", "first"),))
     invalid_outputs = [
-        '{"requirement_id":"r1","spans":[]}',
-        '{"requirements":[{"requirement_id":"r1","spans":[]}]}',
+        '{"requirement_id":"r1","segment_ids":[]}',
+        '{"segments":[{"segment_id":"s001"}]}',
     ]
     for invalid_output in invalid_outputs:
         gateway = FakeGateway([_response(invalid_output), _response("bad")])
@@ -323,10 +275,14 @@ def test_span_output_cannot_supply_requirement_identity_or_batch_shape() -> None
 GENERATION = RagGenerationIdentity(2, "a" * 64, 4, 1024)
 
 
-def _evidence(text: str = "The deadline is Friday.") -> RetrievedEvidence:
+def _evidence(
+    text: str = "The deadline is Friday.",
+    *,
+    evidence_id: str = "ev-1",
+) -> RetrievedEvidence:
     return RetrievedEvidence(
-        evidence_id="ev-1",
-        chunk_key="chunk-1",
+        evidence_id=evidence_id,
+        chunk_key=f"chunk-{evidence_id}",
         exact_text=text,
         heading=None,
         document_version_id=10,
@@ -549,60 +505,71 @@ def test_atomic_prompt_defines_explicit_multi_part_and_overflow_boundaries() -> 
     assert "too_many_requirements" in normalized_prompt
 
 
-def test_span_prompt_is_single_requirement_and_empty_span_rule() -> None:
+def test_segment_prompt_is_single_requirement_and_empty_selection_rule() -> None:
     from aaos.rag.contracts import Requirement
-    from aaos.rag.semantic_coverage import _build_span_messages
-
-    requirement = Requirement("r1", "first")
-    prompt = "\n".join(message.content for message in _build_span_messages(requirement, ()))
-
-    assert "caller owns the requirement identity" in prompt.lower()
-    assert "do not return a requirement ID" in prompt
-    assert "spans=[]" in prompt
-
-
-def test_span_repair_prompt_restates_single_requirement_target() -> None:
-    from aaos.rag.contracts import Requirement
-    from aaos.rag.semantic_coverage import _build_span_messages
-
-    requirement = Requirement("r1", "first")
-    repair_prompt = _build_span_messages(requirement, (), repair=True, invalid_output="{}")[
-        -1
-    ].content
-
-    assert "caller owns the requirement identity" in repair_prompt.lower()
-    assert "do not return a requirement ID" in repair_prompt
-    assert "return spans=[]" in repair_prompt.lower()
-
-
-def test_span_prompt_binds_each_quote_to_its_same_evidence_record() -> None:
-    from aaos.rag.contracts import Requirement
-    from aaos.rag.semantic_coverage import _build_span_messages
+    from aaos.rag.semantic_coverage import _build_segment_selection_messages
 
     requirement = Requirement("r1", "first")
     prompt = "\n".join(
-        message.content for message in _build_span_messages(requirement, (_evidence(),))
-    ).lower()
+        message.content for message in _build_segment_selection_messages(requirement, ())
+    )
 
-    assert "same evidence record" in prompt
-    assert "evidence_id" in prompt
-    assert "verbatim" in prompt
-    assert "no paraphrase" in prompt
-    assert "do not combine" in prompt
-    assert "spans=[]" in prompt
+    assert "only IDs" in prompt
+    assert "segment_ids=[]" in prompt
+    assert "requirement ID" in prompt
+    assert "quote text" in prompt
+    assert "<segment-selection-input>" in prompt
 
 
-def test_span_repair_prompt_repeats_same_record_verbatim_contract() -> None:
+def test_segment_repair_prompt_restates_single_requirement_target() -> None:
     from aaos.rag.contracts import Requirement
-    from aaos.rag.semantic_coverage import _build_span_messages
+    from aaos.rag.semantic_coverage import _build_segment_selection_messages
 
     requirement = Requirement("r1", "first")
-    repair_prompt = _build_span_messages(
-        requirement, (_evidence(),), repair=True, invalid_output="{}"
+    repair_message = _build_segment_selection_messages(
+        requirement, (), repair=True, invalid_output="{}"
+    )[-1]
+    repair_prompt = repair_message.content
+
+    assert "same closed segment-ID schema" in repair_prompt
+    assert "segment_ids" in repair_prompt
+    assert "do not return text" in repair_prompt.lower()
+
+
+def test_segment_prompt_exposes_only_current_requirement_and_segments() -> None:
+    from aaos.rag.contracts import Requirement
+    from aaos.rag.evidence_segments import segment_selected_evidence
+    from aaos.rag.semantic_coverage import _build_segment_selection_messages
+
+    requirement = Requirement("r1", "first")
+    prompt = "\n".join(
+        message.content
+        for message in _build_segment_selection_messages(
+            requirement, segment_selected_evidence((_evidence(),))
+        )
+    )
+
+    assert '"requirement_text":"first"' in prompt
+    assert '"segment_id":"s001"' in prompt
+    assert '"text":"The deadline is Friday."' in prompt
+    assert "evidence_id" not in prompt
+    assert "quote" in prompt.lower()  # system prompt forbids quote output
+    assert "r1" not in prompt
+
+
+def test_segment_repair_prompt_does_not_restore_quote_generation() -> None:
+    from aaos.rag.contracts import Requirement
+    from aaos.rag.evidence_segments import segment_selected_evidence
+    from aaos.rag.semantic_coverage import _build_segment_selection_messages
+
+    requirement = Requirement("r1", "first")
+    repair_prompt = _build_segment_selection_messages(
+        requirement,
+        segment_selected_evidence((_evidence(),)),
+        repair=True,
+        invalid_output="{}",
     )[-1].content.lower()
 
-    assert "same evidence record" in repair_prompt
-    assert "verbatim" in repair_prompt
-    assert "no paraphrase" in repair_prompt
-    assert "do not combine" in repair_prompt
-    assert "spans=[]" in repair_prompt
+    assert "segment-id schema" in repair_prompt
+    assert "do not return text" in repair_prompt
+    assert "quote" not in repair_prompt

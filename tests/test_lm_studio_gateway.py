@@ -484,6 +484,51 @@ def test_generate_serializes_single_requirement_span_schema() -> None:
     }
 
 
+def test_generate_serializes_single_requirement_segment_schema() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": '{"segment_ids":[]}'}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Select a segment."),),
+            max_output_tokens=384,
+            structured_output="json_schema",
+            structured_output_schema="evidence_segments_single_requirement",
+        ),
+        handler,
+    )
+
+    response_format = json.loads(requests[0].content)["response_format"]
+    assert response_format == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_evidence_segments_single_requirement_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "segment_ids": {
+                        "type": "array",
+                        "maxItems": 4,
+                        "items": {"type": "string", "pattern": "^s[0-9]{3,}$"},
+                    }
+                },
+                "required": ["segment_ids"],
+            },
+        },
+    }
+
+
 def test_generate_rejects_prompt_plus_completion_over_context_before_transport() -> None:
     requests: list[httpx2.Request] = []
 

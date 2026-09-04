@@ -70,21 +70,19 @@ class _GroundingGateway:
                 ),
                 model_identifier="qwen/qwen3.5-4b",
             )
-        if request.structured_output_schema == "evidence_spans_single_requirement":
+        if request.structured_output_schema == "evidence_segments_single_requirement":
             payload = next(
-                message.content.split("<span-input>", 1)[1].split("</span-input>", 1)[0]
+                message.content.split("<segment-selection-input>", 1)[1].split(
+                    "</segment-selection-input>", 1
+                )[0]
                 for message in request.messages
-                if "<span-input>" in message.content
+                if "<segment-selection-input>" in message.content
             )
-            span_input = json.loads(payload)
-            evidence = span_input["evidence"]
-            spans = (
-                [{"evidence_id": evidence[0]["evidence_id"], "quote": evidence[0]["text"][:400]}]
-                if evidence
-                else []
-            )
+            segment_input = json.loads(payload)
+            segments = segment_input["segments"]
+            ids = [segments[0]["segment_id"]] if segments else []
             return ChatResponse(
-                content=json.dumps({"spans": spans}), model_identifier="qwen/qwen3.5-4b"
+                content=json.dumps({"segment_ids": ids}), model_identifier="qwen/qwen3.5-4b"
             )
         if request.structured_output_schema == "requirement_entailment":
             return ChatResponse(

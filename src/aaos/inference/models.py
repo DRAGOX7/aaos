@@ -14,6 +14,7 @@ StructuredOutputSchema = Literal[
     "atomic_requirement_decomposition",
     "evidence_spans",
     "evidence_spans_single_requirement",
+    "evidence_segments_single_requirement",
     "requirement_entailment",
 ]
 
@@ -69,6 +70,7 @@ class ChatRequest:
             "atomic_requirement_decomposition",
             "evidence_spans",
             "evidence_spans_single_requirement",
+            "evidence_segments_single_requirement",
             "requirement_entailment",
         }:
             raise ValueError("structured_output_schema is not supported")
