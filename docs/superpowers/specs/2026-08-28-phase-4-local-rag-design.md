@@ -1712,7 +1712,156 @@ the three schemas, exact validation, fail-closed behavior, and one-repair
 bounds, plus focused service/generation/runtime/import and guarded calibration
 tests using fakes. No code or tests are changed by this documentation task.
 
-## 43. Design self-review checklist
+## 43. Architecture amendment — per-requirement extractive span extraction
+
+**Status:** human-approved for design and implementation-plan work only. This
+amendment supersedes the batched extractive-span response contract in Section
+42; all retrieval, selection, provenance, entailment, generation, citation,
+public-status, and held-out governance rules remain unchanged. Production
+implementation requires a separate explicit authorization.
+
+### Evidence and decision
+
+Consumed-calibration audit evidence showed that the batched span call was
+unstable for ordinary cases. `v2-p005` (three requirements) and `v2-p002`
+(two requirements) both reached the 384-token completion ceiling on their
+initial and repair calls with truncated JSON. Two-requirement extraction could
+still succeed (`v2-p004`), and single-requirement extraction could still show
+intermittent semantic binding failures (`v2-p001`), so a larger batch budget
+alone would not address the whole failure class. Evidence-context size was not
+the sole explanation, and no retrieval, parser, validator, provenance, or
+schema-system defect was established.
+
+The approved correction is to reduce each model call to one immutable
+requirement. This is a task-simplification change, not a retrieval or trust
+boundary change.
+
+### Amended semantic path
+
+After deterministic atomic decomposition freezes `r1` through `rN`, the span
+stage executes sequentially:
+
+```text
+immutable requirement ri + the same selected request-local evidence
+  -> one bounded extractive-span model call
+  -> deterministic quote/evidence/provenance validation
+  -> RequirementEvidenceSpans(ri, validated_spans)
+for i = 1..N
+  -> deterministic r1...rN assembly
+  -> existing independent entailment
+  -> existing support aggregation and answer path
+```
+
+No requirement-specific retrieval, second retrieval, evidence reselection, or
+parallel execution is introduced. The existing public extractor boundary
+remains `EvidenceSpanExtractor.extract(RequirementSet, evidence=...) ->
+tuple[RequirementEvidenceSpans, ...]`; its implementation owns the sequential
+loop and returns canonical requirement order.
+
+### Per-requirement input contract
+
+Each call receives exactly:
+
+1. one immutable `REQUIREMENT_ID` and `REQUIREMENT_TEXT` from the frozen
+   deterministic requirement set; and
+2. the complete already-selected request-local evidence tuple for the pinned
+   query snapshot.
+
+Unrelated requirements are absent from the call. Retrieval, selection,
+generation identity, scope, and runtime configuration are not model-controlled
+inputs.
+
+### Per-requirement output contract
+
+The model returns only this strict closed object:
+
+```json
+{
+  "spans": [
+    {"evidence_id": "...", "quote": "..."}
+  ]
+}
+```
+
+The response contains no `requirement_id`; deterministic code attaches the
+already-owned requirement ID. No support status, entailment result,
+confidence, rationale, citation, offsets, or chain-of-thought is permitted.
+`spans` may be empty when no exact suitable text exists.
+
+### Same-record validation and failure semantics
+
+Every proposed span is checked deterministically for a selected request-local
+evidence ID, pinned-snapshot membership, authoritative SQLite provenance, and
+occurrence of the quote in the exact named evidence record under the existing
+`" ".join(value.split())` normalization. Quotes must be verbatim from that
+same record; paraphrase, summary, rewriting, model-side normalization,
+cross-record composition, fuzzy matching, and automatic rebinding are
+forbidden. Trusted offsets and citations remain code-derived.
+
+`spans=[]` is valid semantic no-evidence: that requirement becomes
+`NOT_ENTAILED` without an entailment model call. Malformed or truncated output,
+transport failure, invalid evidence ID, wrong-record/non-occurring quote,
+provenance failure, or failed repair is an operational/validation failure and
+fails closed; it must never be silently converted to `UNSUPPORTED`.
+
+Each requirement permits exactly one same-schema repair after an eligible
+structural or validation failure. The repair receives the same requirement and
+evidence, repeats the verbatim same-record contract, and cannot introduce a
+third call, schema relaxation, prose stripping, fallback model, or cloud path.
+
+### Bounds, lifecycle, and latency
+
+The model remains `qwen/qwen3.5-4b` at `temperature=0`. The calibration
+candidate remains `SPAN_EXTRACTION_MAX_TOKENS=384` **per requirement**. If an
+individual call returns `finish_reason=length` with 384 completion tokens,
+calibration stops for human review; the bound is not raised automatically.
+
+Qwen is loaded once after verified BGE-M3 release and remains loaded across all
+sequential requirement span calls and subsequent entailment calls. BGE and
+Qwen must never overlap. For `N` requirements the span stage now makes `N`
+calls instead of approximately one batched call. The additional local latency
+is accepted for correctness, failure isolation, and simpler deterministic
+diagnostics; calls are intentionally sequential for the first implementation.
+
+### Rejected alternatives
+
+Simply increasing the batched 384-token limit was rejected because it retains
+model responsibility for a dynamic requirement-ID universe, array
+completeness, multiple evidence bindings, and cross-requirement coordination;
+the audit also showed semantic binding instability independent of truncation.
+
+Hybrid batching (for example, batching two requirements but splitting three or
+more) was rejected as unnecessary complexity: it would create two extraction
+paths and two reliability profiles without evidence that the added branch is
+needed.
+
+### Entailment, aggregation, and partial behavior
+
+After deterministic per-requirement span validation, the unchanged entailment
+step receives one requirement and only that requirement's validated spans.
+`ENTAILED` maps to `SUPPORTED`, `NOT_ENTAILED` maps to `UNSUPPORTED`, and the
+existing all-supported/all-unsupported/mixed aggregation remains
+`SUPPORTED`/`UNSUPPORTED`/`PARTIAL`. Unsupported requirements never become
+factual evidence; partial generation receives only supported requirements and
+their validated entailing evidence.
+
+### Calibration and held-out governance
+
+After implementation authorization, first rerun consumed calibration cases
+`v2-p005`, `v2-p002`, `v2-p025`, `v2-p004`, `v2-p001`, and `v2-p014`. Report
+per-requirement call count, finish reason, completion tokens, repair use,
+span count, and validation result. Require no truncation, unresolved span or
+provenance failure, false support, topical-only entailment, or partial-as-full
+acceptance before the full consumed 56-case calibration. Report total span
+calls and min/median/max calls and latency. Held-out answers remain
+unconsumed (`HELDOUT_ANSWER_CASES_EXECUTED=0`) throughout design and
+calibration; no RAGAS, Checkpoint G, Phase 4 tag, or Phase 5 work is part of
+this amendment.
+
+Retrieved evidence remains untrusted data and cannot alter the requirement,
+schema, scope, tools, network behavior, model configuration, or secrets.
+
+## 44. Design self-review checklist
 
 This specification was checked for:
 
