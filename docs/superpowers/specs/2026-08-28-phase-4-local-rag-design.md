@@ -545,6 +545,17 @@ answer generation; `PARTIAL` enters grounded generation with an explicit
 partial-support constraint; `SUPPORTED` enters the normal grounded generation
 path. The model does not own the final aggregate status.
 
+For each proposed span, the model must bind the `evidence_id` to the same
+selected evidence record whose supplied text contains the quote. Quotes must
+be copied verbatim from that record: no paraphrase, summary, rewriting,
+completion, normalization by the model, or composition across evidence
+records is permitted. If no exact suitable text exists for a requirement, the
+model returns `spans=[]` for that requirement while still returning its
+required ID entry. The single bounded repair repeats this same-record,
+verbatim-only contract. Deterministic validation remains authoritative and
+never silently rebinds a quote to another evidence ID or accepts semantic
+similarity.
+
 Structural thresholds remain calibrated on development data and locked before
 held-out acceptance. Atomic decomposition, span extraction, entailment, and
 aggregation are separate local-only gates. Calibration reports omitted,
