@@ -385,3 +385,36 @@ def test_span_repair_prompt_restates_exact_completeness_target() -> None:
     assert "EXPECTED_REQUIREMENT_IDS=[r1,r2,r3]" in repair_prompt
     assert "did not contain exactly one entry for every required ID" in repair_prompt
     assert "include an entry with spans=[]" in repair_prompt.lower()
+
+
+def test_span_prompt_binds_each_quote_to_its_same_evidence_record() -> None:
+    from aaos.rag.contracts import Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import _build_span_messages
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    prompt = "\n".join(
+        message.content for message in _build_span_messages(requirements, (_evidence(),))
+    ).lower()
+
+    assert "same evidence record" in prompt
+    assert "evidence_id" in prompt
+    assert "verbatim" in prompt
+    assert "no paraphrase" in prompt
+    assert "do not combine" in prompt
+    assert "spans=[]" in prompt
+
+
+def test_span_repair_prompt_repeats_same_record_verbatim_contract() -> None:
+    from aaos.rag.contracts import Requirement, RequirementSet
+    from aaos.rag.semantic_coverage import _build_span_messages
+
+    requirements = RequirementSet((Requirement("r1", "first"),))
+    repair_prompt = _build_span_messages(
+        requirements, (_evidence(),), repair=True, invalid_output="{}"
+    )[-1].content.lower()
+
+    assert "same evidence record" in repair_prompt
+    assert "verbatim" in repair_prompt
+    assert "no paraphrase" in repair_prompt
+    assert "do not combine" in repair_prompt
+    assert "spans=[]" in repair_prompt
