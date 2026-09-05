@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Protocol, cast
 
 from sqlalchemy import Engine
 
@@ -15,6 +16,7 @@ from aaos.inference.lm_studio_lifecycle import (
     ModelLifecycle,
     ModelLifecycleError,
 )
+from aaos.inference.nli import PinnedCpuNliClassifier
 from aaos.persistence.database import create_database_engine, create_session_factory
 
 from .chroma import ChromaDenseIndexFactory
@@ -24,10 +26,13 @@ from .contracts import (
     DenseIndexFactory,
     EmbeddingModelMetadata,
     EmbeddingService,
+    EntailmentResult,
     LocalRagService,
     RagErrorCode,
     RagIndexingService,
     RagOperationalError,
+    Requirement,
+    RequirementEvidenceSpans,
 )
 from .embeddings import BgeM3EmbeddingService
 from .generation import CitationValidator, GroundedAnswerGenerator
@@ -56,7 +61,17 @@ RequirementDecomposerFactory = Callable[[ModelGateway], RequirementDecomposer]
 RequirementCoverageFactory = Callable[[ModelGateway], RequirementCoverageClassifier]
 AtomicRequirementDecomposerFactory = Callable[[ModelGateway], AtomicRequirementDecomposer]
 EvidenceSpanExtractorFactory = Callable[[ModelGateway], EvidenceSpanExtractor]
-EntailmentVerifierFactory = Callable[[ModelGateway], IndependentEntailmentVerifier]
+
+
+class EntailmentVerifierComponent(Protocol):
+    async def verify(
+        self, requirement: Requirement, spans: RequirementEvidenceSpans
+    ) -> EntailmentResult: ...
+
+    def close(self) -> None: ...
+
+
+EntailmentVerifierFactory = Callable[[ModelGateway], EntailmentVerifierComponent]
 
 
 @dataclass(slots=True)
@@ -216,6 +231,7 @@ def build_phase4_runtime(
     atomic_requirement_decomposer_factory: AtomicRequirementDecomposerFactory | None = None,
     evidence_span_extractor_factory: EvidenceSpanExtractorFactory | None = None,
     entailment_verifier_factory: EntailmentVerifierFactory | None = None,
+    nli_snapshot_path: str | Path | None = None,
     answer_generator_factory: Callable[..., GroundedAnswerGenerator] | None = None,
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
@@ -253,7 +269,7 @@ def build_phase4_runtime(
     selected_coverage_factory = requirement_coverage_factory
     selected_atomic_factory = atomic_requirement_decomposer_factory or AtomicRequirementDecomposer
     selected_span_factory = evidence_span_extractor_factory or EvidenceSpanExtractor
-    selected_entailment_factory = entailment_verifier_factory or IndependentEntailmentVerifier
+    selected_entailment_factory = entailment_verifier_factory
     selected_generator_factory = answer_generator_factory or GroundedAnswerGenerator
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
@@ -289,9 +305,10 @@ def build_phase4_runtime(
             [
                 (selected_atomic_factory, "atomic_requirement_decomposer_factory"),
                 (selected_span_factory, "evidence_span_extractor_factory"),
-                (selected_entailment_factory, "entailment_verifier_factory"),
             ]
         )
+        if selected_entailment_factory is not None:
+            factories.append((selected_entailment_factory, "entailment_verifier_factory"))
     for factory, name in factories:
         if not callable(factory):
             raise ValueError(f"{name} must be callable")
@@ -367,7 +384,7 @@ def build_phase4_runtime(
         requirement_coverage_classifier: RequirementCoverageClassifier | None = None
         atomic_decomposer: AtomicRequirementDecomposer | None = None
         span_extractor: EvidenceSpanExtractor | None = None
-        entailment_verifier: IndependentEntailmentVerifier | None = None
+        entailment_verifier: EntailmentVerifierComponent | None = None
         if selected_classifier_factory is not None:
             semantic_classifier = selected_classifier_factory(managed_gateway)
             _register_optional_closer(owned_closers, semantic_classifier, "close")
@@ -385,8 +402,16 @@ def build_phase4_runtime(
             )
         else:
             atomic_decomposer = selected_atomic_factory(managed_gateway)
+            _register_optional_closer(owned_closers, atomic_decomposer, "close")
             span_extractor = selected_span_factory(managed_gateway)
-            entailment_verifier = selected_entailment_factory(managed_gateway)
+            _register_optional_closer(owned_closers, span_extractor, "close")
+            if selected_entailment_factory is None:
+                entailment_verifier = IndependentEntailmentVerifier(
+                    PinnedCpuNliClassifier(snapshot_path=nli_snapshot_path)
+                )
+            else:
+                entailment_verifier = selected_entailment_factory(managed_gateway)
+            _register_optional_closer(owned_closers, entailment_verifier, "close")
         answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()

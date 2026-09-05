@@ -7,7 +7,14 @@ import json
 
 import pytest
 
-from aaos.inference import ChatRequest, ChatResponse, InferenceContextLimitError, ModelAvailability
+from aaos.inference import (
+    ChatRequest,
+    ChatResponse,
+    InferenceContextLimitError,
+    ModelAvailability,
+    NliClassification,
+    NliDecision,
+)
 from aaos.rag.contracts import (
     RagChunkSourceSpanValue,
     RagErrorCode,
@@ -58,7 +65,7 @@ def test_segment_selection_rejects_unknown_ids_and_entailment_skips_empty_span()
         asyncio.run(EvidenceSpanExtractor(invalid).extract(requirements, evidence=(_evidence(),)))
 
     assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
-    verifier = IndependentEntailmentVerifier(FakeGateway([]))
+    verifier = IndependentEntailmentVerifier(FakeNliClassifier())
     assert (
         asyncio.run(
             verifier.verify(requirements.requirements[0], RequirementEvidenceSpans("r1", ()))
@@ -77,16 +84,16 @@ def test_atomic_steps_use_dedicated_gateway_schemas() -> None:
     assert (
         span_gateway.requests[0].structured_output_schema == "evidence_segments_single_requirement"
     )
-    entailment_gateway = FakeGateway([])
+    entailment_classifier = FakeNliClassifier()
     asyncio.run(
-        IndependentEntailmentVerifier(entailment_gateway).verify(
+        IndependentEntailmentVerifier(entailment_classifier).verify(
             requirements.requirements[0],
             __import__(
                 "aaos.rag.contracts", fromlist=["RequirementEvidenceSpans"]
             ).RequirementEvidenceSpans("r1", ()),
         )
     )
-    assert entailment_gateway.requests == []
+    assert entailment_classifier.calls == []
 
 
 def test_segment_ids_are_deduplicated() -> None:
@@ -324,6 +331,19 @@ class FakeGateway:
 
 def _response(payload: str) -> ChatResponse:
     return ChatResponse(content=payload, model_identifier="qwen/qwen3.5-4b")
+
+
+class FakeNliClassifier:
+    def __init__(self, decision: NliDecision = NliDecision.ENTAILED) -> None:
+        self.decision = decision
+        self.calls: list[tuple[str, str]] = []
+
+    def classify(self, premise: str, hypothesis: str) -> NliClassification:
+        self.calls.append((premise, hypothesis))
+        return NliClassification(self.decision, "entailment", 0.8, 0.1, 0.1)
+
+    def close(self) -> None:
+        return None
 
 
 def _classify(gateway: FakeGateway) -> SemanticCoverageDecision:

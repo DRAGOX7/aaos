@@ -29,12 +29,15 @@ from aaos.rag.chroma import ChromaDenseIndexFactory
 from aaos.rag.config import RagIndexConfig, RagRuntimePaths, compute_config_fingerprint
 from aaos.rag.contracts import (
     CourseScope,
+    EntailmentResult,
     GenerationStatus,
     GlobalScope,
     HistoricalScope,
     RagAnswerStatus,
     RagQuery,
     RenderedRagResponse,
+    Requirement,
+    RequirementEvidenceSpans,
 )
 from aaos.rag.embeddings import FakeEmbeddingService
 from aaos.rag.repository import RagRepository
@@ -157,6 +160,16 @@ class _FakeModelLifecycle:
 
     def ensure_answer_model_loaded(self) -> None:
         return None
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeEntailmentVerifier:
+    async def verify(
+        self, _requirement: Requirement, _spans: RequirementEvidenceSpans
+    ) -> EntailmentResult:
+        return EntailmentResult.ENTAILED
 
     def close(self) -> None:
         return None
@@ -330,6 +343,7 @@ def _seeded_runtime(tmp_path: Path) -> Iterator[tuple[Phase4RagRuntime, dict[str
         dense_factory=ChromaDenseIndexFactory(paths),
         embedding_factory=lambda _config: FakeEmbeddingService(dimensions=3),
         model_lifecycle_factory=lambda: _FakeModelLifecycle(),
+        entailment_verifier_factory=lambda _gateway: _FakeEntailmentVerifier(),
     )
     try:
         yield runtime, {**course_ids, **version_ids}, paths.database_path

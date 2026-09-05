@@ -12,8 +12,10 @@ dependencies = [
     "httpx2>=2.10.0",
     "playwright==1.62.0",
     "pypdfium2==5.13.0",
+    "sentencepiece==0.2.2",
     "sqlalchemy>=2,<3",
     "torch==2.13.0+cu130",
+    "transformers==5.16.1",
     "uvicorn>=0.52.1",
 ]
 

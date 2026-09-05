@@ -88,6 +88,9 @@ def test_closed_enums_expose_only_approved_values() -> None:
         "INVALID_EVIDENCE_REFERENCE",
         "UNCITED_CLAIM",
         "PROVENANCE_RESOLUTION_FAILED",
+        "ENTAILMENT_INPUT_OVERFLOW",
+        "NLI_MODEL_UNAVAILABLE",
+        "NLI_INFERENCE_FAILED",
     }
 
 

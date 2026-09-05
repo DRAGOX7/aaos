@@ -21,6 +21,18 @@ from .models import (
     StructuredOutputSchema,
     TokenUsage,
 )
+from .nli import (
+    NLI_MODEL_REPOSITORY,
+    NLI_MODEL_REVISION,
+    NLI_SNAPSHOT_MANIFEST_SHA256,
+    NliClassification,
+    NliDecision,
+    NliError,
+    NliInferenceError,
+    NliInputOverflowError,
+    NliModelUnavailableError,
+    PinnedCpuNliClassifier,
+)
 
 __all__ = [
     "ChatMessage",
@@ -40,4 +52,14 @@ __all__ = [
     "ModelUnavailableError",
     "TokenUsage",
     "UnsupportedInferenceFeatureError",
+    "NLI_MODEL_REPOSITORY",
+    "NLI_MODEL_REVISION",
+    "NLI_SNAPSHOT_MANIFEST_SHA256",
+    "NliClassification",
+    "NliDecision",
+    "NliError",
+    "NliInferenceError",
+    "NliInputOverflowError",
+    "NliModelUnavailableError",
+    "PinnedCpuNliClassifier",
 ]
