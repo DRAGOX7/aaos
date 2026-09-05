@@ -1930,6 +1930,176 @@ changes. Stop for human review if p002 remains unresolved, any calibration case
 truncates or fails structured validation, or a production contract outside this
 amendment must change.
 
+## Architecture amendment — pinned CPU-only mDeBERTa entailment routing
+
+**Status:** human-approved for this documentation/plan amendment. The coding
+work below requires a separate implementation authorization. It supersedes
+only the independent requirement-entailment model choice in the earlier
+semantic-coverage tasks; Tasks 1–26, retrieval, evidence selection,
+generation, citation validation, public statuses, and Phase 3 remain intact.
+
+### Approved contract
+
+Replace only the Qwen requirement-entailment call with a local sequence
+classifier using the pinned snapshot:
+
+- repository: `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli`;
+- revision: `8adb042d524ecd5c26d3e3ba0e3fbcf7e2d0864c`;
+- bakeoff snapshot manifest SHA-256:
+  `04e65c8a1034152d8cc44cfde15631e69fce9c9ac10b6aa8664fb264f8b7ed4d`;
+- `local_files_only=True`, no download, no network, no MiniLM/Qwen/cloud
+  fallback;
+- CPU-only `model.to("cpu")`, `eval()`, and `torch.inference_mode()`; no
+  `.cuda()`, `to("cuda")`, or `device_map="auto"`.
+
+The NLI pair is built by trusted code from one immutable requirement and the
+selected request-local segments: premise is the exact segment texts joined in
+canonical order with `"\\n\\n"`, and hypothesis is the immutable requirement
+text. The order is never reversed, no extra context is supplied, and
+multi-segment evidence is one combined premise rather than per-segment OR.
+Empty selection returns deterministic `NOT_ENTAILED` without model work.
+
+At load time, inspect both `id2label` and `label2id`; require one unambiguous
+entailment, neutral, and contradiction label. Native argmax maps entailment to
+`ENTAILED` and neutral/contradiction to `NOT_ENTAILED`. Probabilities may be
+retained in a typed diagnostic result but never act as thresholds, confidence
+calibration, class weights, or alternate decision rules. Partial support is
+`NOT_ENTAILED`; existing `SUPPORTED`/`PARTIAL`/`UNSUPPORTED` aggregation and
+public `ANSWER`/`PARTIAL_ANSWER`/`INSUFFICIENT_EVIDENCE` statuses are unchanged.
+
+Tokenization must use the supported maximum with truncation disabled. Overflow
+raises typed `ENTAILMENT_INPUT_OVERFLOW` and fails closed; no truncation,
+summarization, sliding window, or dropped evidence is permitted. The model
+and tokenizer are lazy, owned by one verifier, reused across requests while
+alive, and explicitly released with idempotent cleanup. Imports and
+construction must not load the snapshot or contact a network.
+
+Qwen remains only for decomposition, request-local segment selection, and
+factual generation. BGE-M3 retrieval and the existing release-before-Qwen
+GPU lifecycle are unchanged. The initial CPU NLI acceptance records
+`NLI_DEVICE=CPU` and approximately zero CUDA-memory delta without adding a
+simultaneous-residency requirement.
+
+### Dependency decision before implementation
+
+The current `pyproject.toml` declares `torch==2.13.0+cu130` directly. The
+current lock resolves `transformers==5.16.1`, `sentencepiece==0.2.2`,
+`tokenizers`, and `huggingface-hub` transitively through `FlagEmbedding`; none
+of those four is a direct project dependency today. Before production imports
+are added, implementation must make the dependency choice explicit. The
+planned direct pins, if required by packaging review, are
+`transformers==5.16.1` and `sentencepiece==0.2.2`; `tokenizers` and
+`huggingface-hub` remain their compatible transitive resolutions. Do not edit
+`pyproject.toml` or `uv.lock` as part of this documentation amendment; a
+separate dependency authorization and lock update is required if direct pins
+are needed.
+
+### Planned implementation boundary
+
+The smallest production change is:
+
+- `src/aaos/inference/nli.py` (new): typed local snapshot identity/config,
+  manifest verification, lazy `AutoTokenizer`/
+  `AutoModelForSequenceClassification` owner, dynamic label mapping,
+  truncation-disabled pair inference, typed result, and deterministic close;
+- `src/aaos/rag/semantic_coverage.py`: depend on a narrow entailment-verifier
+  protocol/result instead of constructing a Qwen `ModelGateway` request for
+  entailment; keep segment validation, one combined premise, aggregation, and
+  all other semantic stages unchanged;
+- `src/aaos/rag/runtime.py`: wire the default verifier through the existing
+  explicit factory/ownership boundary, while retaining injection for fakes and
+  keeping verifier cleanup in reverse construction order. Any local snapshot
+  path is an explicit non-secret composition input, never inferred from a
+  browser profile or network.
+
+No public generic inference surface, chat schema, retrieval route, benchmark
+artifact, or Phase 3 file is added. `ModelGateway` remains the sole Qwen
+boundary for its retained roles; the NLI verifier is a separate
+sequence-classification boundary and cannot issue chat/tool calls.
+
+### TDD and deterministic regression matrix
+
+The implementation must start with the following RED tests (fakes only; no
+532-MB model or GPU in unit tests), then the minimum GREEN change above. The
+numbered matrix is the complete required contract:
+
+1. exact premise uses selected segment text;
+2. immutable requirement is the hypothesis;
+3. premise/hypothesis order is not reversed;
+4. canonical segment order is preserved;
+5. exactly `"\\n\\n"` separates segments;
+6. multiple segments make one classifier call;
+7. no per-segment OR is performed;
+8. empty segments return `NOT_ENTAILED` and skip the model;
+9. `id2label` maps entailment dynamically;
+10. `label2id` agrees with `id2label`;
+11. missing labels fail closed;
+12. ambiguous/incompatible labels fail closed;
+13. repository identity is pinned;
+14. revision identity is pinned;
+15. snapshot manifest mismatch fails closed;
+16. local-only loading is requested;
+17. absent snapshot does not trigger download;
+18. network/fallback/MiniLM/Qwen loading is impossible;
+19. model is placed on CPU;
+20. model is put in evaluation mode;
+21. inference executes under `torch.inference_mode()`;
+22. CUDA/device-map placement is never requested;
+23. tokenizer overflow is detected with truncation disabled;
+24. overflow raises `ENTAILMENT_INPUT_OVERFLOW`;
+25. typed result contains decision/native label/probabilities;
+26. sequence-classification API receives no chat/tools/actions;
+27. partial evidence maps to `NOT_ENTAILED`;
+28. only trusted selected segments reach NLI;
+29. deterministic all/mixed/none aggregation is unchanged;
+30. unsupported aggregation prevents factual generation;
+31. one model/tokenizer load is reused across requirements;
+32. close releases model/tokenizer deterministically and idempotently;
+33. import does not load the model or contact the network;
+34. construction does not load the model or contact the network;
+35. CPU NLI contributes no material CUDA-memory delta while Qwen lifecycle
+    remains ordered;
+36. guarded consumed calibration records the exact model/revision, CPU,
+    no-overflow, supported/unsupported/partial/Arabic controls, and stops on
+    any false support or runtime failure.
+
+Focused RED command:
+
+```powershell
+uv run pytest tests/test_nli.py tests/test_rag_semantic_coverage.py tests/test_lm_studio_gateway.py -q
+```
+
+Focused GREEN verification must include that command plus
+`tests/test_rag_integration.py`, `tests/test_rag_runtime.py`,
+`tests/test_rag_service.py`, and `tests/test_rag_imports.py`, followed by
+`uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src tests`,
+`uv lock --check`, and `git diff --check`. Review must confirm no retrieval,
+selector, segment, citation, Phase 3, or public-status change.
+
+### Guarded real acceptance after implementation
+
+Only after the implementation and all deterministic gates pass, run the
+consumed six-case calibration (`v2-p002`, `v2-p005`, `v2-p025`, `v2-p004`,
+`v2-p001`, `v2-p014`), with p002 at most three attempts. Require the exact
+snapshot manifest, CPU placement, local-only loading, zero overflow, R1/R2
+oracle controls, supported English/Arabic, topical/unsupported, and partial
+controls. Record NLI decision/native class/probabilities as sanitized
+diagnostics only. Hard gates are false support = 0, topical accepted = 0,
+partial-as-full = 0, runtime failure = 0, and overflow = 0; the known
+cross-language weakness is reported separately and is a human-review stop if
+it persists. Only after a green targeted run may the already-governed consumed
+56-case calibration proceed. Held-out answers, RAGAS, Checkpoint G, tagging,
+and Phase 5 remain prohibited here.
+
+### Rollback and stop conditions
+
+Rollback is a documentation/implementation revert; no persisted NLI state is
+created. Stop for human review if the snapshot cannot be verified, labels are
+ambiguous, any input is truncated, a network/download/fallback occurs, CPU
+placement cannot be proved, NLI changes retrieval or aggregation semantics,
+Qwen is used for entailment, or a dependency/configuration change outside this
+amendment is required.
+
 ## Checkpoint G — Controlled Acceptance
 
 Require fresh full deterministic verification, migration upgrade/downgrade, disposable SQLite/Chroma E2E, crash recovery, prompt injection/no-fallback tests, real BGE-M3 lifecycle on the target RTX 4050 6 GB, real local ModelGateway generation, locked held-out classical IR/RAGAS/multilingual/human review, performance/resource report, sanitized artifact review, security review, and explicit human acceptance. Tagging remains a separate future authorization.
