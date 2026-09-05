@@ -2073,7 +2073,146 @@ full consumed 56 cases. The existing false-support, topical-only, partial-as-
 full, lifecycle, and no-fallback gates remain in force. Held-out answers,
 RAGAS, Checkpoint G, tagging, and Phase 5 remain out of scope.
 
-## 45. Design self-review checklist
+## 45. Architecture amendment — pinned CPU-only mDeBERTa entailment routing
+
+**Status:** human-approved for design and implementation-plan amendment only.
+This amendment changes the independent requirement-entailment implementation
+boundary; it does not authorize implementation, dependency edits, benchmark
+changes, retrieval changes, or acceptance execution. It supersedes only the
+entailment-specific Qwen statements in earlier semantic-coverage sections.
+Qwen remains the approved model for requirement decomposition, request-local
+segment selection, and factual answer generation.
+
+### Decision and unchanged architecture
+
+The frozen Phase 4 path remains BGE-M3 retrieval, deterministic evidence
+selection, request-local segment construction, Qwen requirement decomposition
+and segment selection, deterministic validation/aggregation, Qwen factual
+generation, and trusted citation rendering. The independent entailment step is
+replaced only by a local CPU sequence-classification verifier backed by the
+human-selected model snapshot:
+
+| Property | Approved value |
+| --- | --- |
+| NLI repository | `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` |
+| NLI revision | `8adb042d524ecd5c26d3e3ba0e3fbcf7e2d0864c` |
+| Snapshot manifest | `04e65c8a1034152d8cc44cfde15631e69fce9c9ac10b6aa8664fb264f8b7ed4d` |
+| Device | CPU only |
+| Native task | three-way sequence classification |
+| AAOS result | `ENTAILED` or `NOT_ENTAILED` |
+| Native dimensions | three labels; probabilities are diagnostic only |
+
+The segment architecture is unchanged: `SEGMENT_MAX_SIZE=400`, no overlap,
+maximum four selected segments per requirement, request-local IDs, exact text,
+and existing source-span/provenance mapping. Retrieval, selector behavior,
+aggregation, public answer statuses, citation validation, lifecycle ownership,
+and Phase 3 read-only boundaries remain unchanged.
+
+### NLI semantic input contract
+
+For one immutable requirement, trusted code supplies the NLI sequence pair:
+
+- **premise:** the selected `EvidenceSegment.exact_text` values joined in
+  canonical selected order with exactly `"\\n\\n"`;
+- **hypothesis:** the immutable requirement text;
+- no additional context, explanations, metadata, headings, outside knowledge,
+  or model-generated text;
+- the pair is never reversed.
+
+All selected segments form one combined premise. The verifier never performs a
+per-segment OR, second retrieval, adjacency expansion, or evidence rebinding.
+Empty selected segments deterministically return `NOT_ENTAILED` without loading
+or invoking the NLI model. Partial support remains `NOT_ENTAILED`; only direct
+support for the complete atomic requirement can be `ENTAILED`.
+
+### Native labels and binary decision
+
+At load time, trusted code inspects both `model.config.id2label` and
+`model.config.label2id`. It must find exactly one unambiguous label for each
+of `entailment`, `neutral`, and `contradiction` (case-insensitive canonical
+label matching, with no aliases that create ambiguity). Missing, duplicated,
+incompatible, or otherwise ambiguous mappings fail closed.
+
+The native argmax class is the only decision input:
+
+- native `entailment` → `ENTAILED`;
+- native `neutral` or `contradiction` → `NOT_ENTAILED`.
+
+There is no probability threshold, confidence calibration, class weighting,
+offset, temperature adjustment, or custom tie-breaking. A typed internal
+result may retain the native label and the three validated probabilities for
+diagnostics, but probabilities never alter the binary decision or public
+answer status. Existing aggregation remains unchanged: all entailed
+requirements are `SUPPORTED`, none are `UNSUPPORTED`, and a mixture is
+`PARTIAL`; public statuses remain `ANSWER`, `PARTIAL_ANSWER`, and
+`INSUFFICIENT_EVIDENCE`.
+
+### Pinned offline model and CPU boundary
+
+The verifier loads only the exact local snapshot for the repository and
+revision above, verifies the approved snapshot manifest, and passes
+`local_files_only=True`. Missing, incomplete, or mismatched local material is
+a typed failure. There is no download, network access, cloud evaluator,
+MiniLM fallback, Qwen entailment fallback, or other model fallback.
+
+Model construction is explicitly CPU-only: `model.to("cpu")`, `model.eval()`,
+and `torch.inference_mode()`. The implementation must not call `.cuda()`,
+`to("cuda")`, `device_map="auto"`, or any implicit GPU placement. The
+RTX-4050/6-GB Qwen GPU lifecycle contract is unaffected; acceptance measures
+`NLI_DEVICE=CPU` and approximately zero CUDA-memory delta while proving the
+existing unload-BGE-before-Qwen-generation invariant.
+
+Loading is lazy and owned by the verifier. One loaded model/tokenizer pair is
+reused across requirements and requests while its owner is alive. The owner
+exposes deterministic, idempotent close/release behavior and clears model and
+tokenizer references. Imports and construction remain side-effect free until
+the verifier is explicitly used; tests use fakes and do not require the
+approximately 532-MB snapshot.
+
+### Input-size and failure contract
+
+Tokenization uses the tokenizer/model-supported maximum without truncation.
+The implementation must inspect the effective supported maximum and reject an
+overflow as typed `ENTAILMENT_INPUT_OVERFLOW`; it must not drop evidence,
+summarize, slide a window, or silently shorten the requirement. Tokenizer,
+model, label-mapping, and inference failures are typed fail-closed outcomes.
+No chat prompt, tools, agents, memory, or answer-generation capability is
+introduced. The verifier is a sequence-classification boundary only.
+
+### Dependency governance
+
+The current project declares `torch==2.13.0+cu130` directly. The current
+`transformers==5.16.1`, `sentencepiece==0.2.2`, `tokenizers`, and
+`huggingface-hub` resolutions arrive transitively through `FlagEmbedding` (as
+confirmed in the current lock). Implementation planning must decide whether
+the production package should add direct pins for `transformers==5.16.1` and
+`sentencepiece==0.2.2` (with compatible transitive `tokenizers` and
+`huggingface-hub`) before importing them from production code. This amendment
+does not change `pyproject.toml` or `uv.lock`; any required direct dependency
+change must be separately authorized and locked before implementation.
+
+### Resource and acceptance observations
+
+The approved bakeoff retained these sanitized mDeBERTa observations: roughly
+531.8 MB on disk, approximately 252.8 MB RSS increase, approximately 1220.7 MB
+peak RSS, roughly 1349.5 ms warm median and 2286.6 ms warm p95. These are
+planning observations, not guarantees. No batching, ONNX, quantization,
+compilation, GPU execution, or parallelism is required for the initial
+implementation.
+
+After implementation authorization, guarded real acceptance must verify the
+exact repository/revision/manifest, local-only loading, CPU placement, no
+overflow, dynamic three-label mapping, and no network. The consumed six-case
+calibration remains `v2-p002`, `v2-p005`, `v2-p025`, `v2-p004`, `v2-p001`, and
+`v2-p014` (with p002 up to three attempts), followed only if green by the
+consumed 56-case calibration. Required controls include supported English and
+Arabic, unsupported/topical and partial cases, and the previously proven R1/R2
+oracle controls. The cross-language bakeoff weakness is reported separately;
+poor multilingual behavior is a human-review stop, not a reason to relax
+entailment or switch to an unapproved fallback. No held-out answer, RAGAS,
+Checkpoint G, tag, or Phase 5 work is authorized by this amendment.
+
+## 46. Design self-review checklist
 
 This specification was checked for:
 
