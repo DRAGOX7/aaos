@@ -35,6 +35,8 @@ from aaos.rag.repository import (
     SourceSpanRecord,
 )
 
+_LEXICAL_RESCUE_MAX_RANK = 2
+
 
 def normalize_query(question: str) -> str:
     """Return a bounded, conservative lexical form of a query."""
@@ -463,6 +465,66 @@ class EvidenceSelector:
         for candidate in ordered:
             item = by_key[candidate.chunk_key]
             consider(item)
+
+        # Preserve the normal relevance-first selection while using the final
+        # bounded slot for a strong lexical candidate when one was displaced
+        # by the fused-rank prefix.  The candidate must still satisfy every
+        # existing duplicate, overlap, and token-budget guard.
+        if len(accepted) == self._config.max_chunks and accepted:
+            retained = accepted[:-1]
+            retained_keys = {item.chunk.chunk_key for item in retained}
+            retained_logical = {
+                (item.document_version.document_version_id, item.chunk.exact_text.strip())
+                for item in retained
+            }
+            retained_tokens = sum(item.chunk.token_count for item in retained)
+            rescue: AuthoritativeRetrievalChunk | None = None
+            rescue_candidate: FusedCandidate | None = None
+            for candidate in sorted(
+                ordered,
+                key=lambda candidate: (
+                    candidate.lexical_rank
+                    if candidate.lexical_rank is not None
+                    else self._config.max_chunks + 1,
+                    candidate.fused_rank,
+                    candidate.chunk_key,
+                ),
+            ):
+                if (
+                    candidate.chunk_key in retained_keys
+                    or candidate.lexical_rank is None
+                    or candidate.lexical_rank > _LEXICAL_RESCUE_MAX_RANK
+                ):
+                    continue
+                item = by_key[candidate.chunk_key]
+                logical_key = (
+                    item.document_version.document_version_id,
+                    item.chunk.exact_text.strip(),
+                )
+                if logical_key in retained_logical or any(
+                    _overlap_ratio(item, previous) >= self._config.adjacent_overlap_ratio
+                    for previous in retained
+                ):
+                    continue
+                if retained_tokens + item.chunk.token_count > self._config.max_tokens:
+                    continue
+                rescue = item
+                rescue_candidate = candidate
+                break
+            if rescue is not None and rescue_candidate is not None:
+                accepted = [*retained, rescue]
+                accepted.sort(
+                    key=lambda item: next(
+                        candidate.fused_rank
+                        for candidate in ordered
+                        if candidate.chunk_key == item.chunk.chunk_key
+                    )
+                )
+                seen_logical = {
+                    (item.document_version.document_version_id, item.chunk.exact_text.strip())
+                    for item in accepted
+                }
+                used_tokens = sum(item.chunk.token_count for item in accepted)
 
         # Relevance remains primary, but when the budget would otherwise be
         # monopolized by one document, replace its lowest-ranked selection with

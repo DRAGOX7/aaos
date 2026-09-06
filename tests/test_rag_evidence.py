@@ -103,6 +103,17 @@ def _candidate(key: str, rank: int) -> FusedCandidate:
     )
 
 
+def _lexical_candidate(key: str, fused_rank: int, lexical_rank: int) -> FusedCandidate:
+    return FusedCandidate(
+        chunk_key=key,
+        dense_rank=None,
+        lexical_rank=lexical_rank,
+        lexical_document_version_id=101,
+        fused_score=1.0 / fused_rank,
+        fused_rank=fused_rank,
+    )
+
+
 class _MemoryRepository(RagRepository):
     """Test-only stand-in for repository-owned authoritative materialization."""
 
@@ -261,6 +272,311 @@ def test_selector_replaces_a_single_document_monopoly_when_budget_allows() -> No
     assert "other" in tuple(item.chunk_key for item in selected)
     assert tuple(item.fused_rank for item in selected) == tuple(
         sorted(item.fused_rank for item in selected)
+    )
+
+
+def test_selector_rescues_best_lexical_rank_two_candidate_into_final_slot() -> None:
+    authorities = tuple(
+        _authority(
+            f"candidate-{ordinal}",
+            version_id=101,
+            course_id=11,
+            ordinal=ordinal,
+            text=f"candidate {ordinal}",
+            token_count=1,
+            start=ordinal * 10,
+            end=ordinal * 10 + 11,
+        )
+        for ordinal in (1, 3, 5, 7, 9, 11)
+    ) + (
+        _authority(
+            "lexical-rescue",
+            version_id=101,
+            course_id=11,
+            ordinal=13,
+            text="lexical rescue",
+            token_count=1,
+            start=130,
+            end=143,
+        ),
+    )
+    candidates = tuple(
+        _candidate(f"candidate-{ordinal}", rank)
+        for rank, ordinal in enumerate((1, 3, 5, 7, 9, 11), 1)
+    ) + (_lexical_candidate("lexical-rescue", 7, 2),)
+
+    selected = _select(
+        authorities, candidates, EvidenceSelectionConfig(max_chunks=6, max_tokens=20)
+    )
+
+    assert tuple(item.chunk_key for item in selected) == (
+        "candidate-1",
+        "candidate-3",
+        "candidate-5",
+        "candidate-7",
+        "candidate-9",
+        "lexical-rescue",
+    )
+    assert len(selected) == 6
+
+
+def test_selector_lexical_rescue_ties_use_lexical_then_fused_then_key_order() -> None:
+    authorities = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=ordinal,
+            text=key,
+            token_count=1,
+            start=ordinal * 10,
+            end=ordinal * 10 + len(key),
+        )
+        for ordinal, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (
+        _authority(
+            "rescue-b",
+            version_id=101,
+            course_id=11,
+            ordinal=13,
+            text="rescue b",
+            token_count=1,
+            start=130,
+            end=138,
+        ),
+        _authority(
+            "rescue-a",
+            version_id=101,
+            course_id=11,
+            ordinal=15,
+            text="rescue a",
+            token_count=1,
+            start=150,
+            end=158,
+        ),
+    )
+    candidates = tuple(
+        _candidate(key, rank)
+        for rank, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (
+        _lexical_candidate("rescue-b", 7, 1),
+        _lexical_candidate("rescue-a", 8, 1),
+    )
+
+    selected = _select(
+        authorities, candidates, EvidenceSelectionConfig(max_chunks=6, max_tokens=20)
+    )
+
+    assert selected[-1].chunk_key == "rescue-b"
+    assert len({item.chunk_key for item in selected}) == 6
+
+
+def test_selector_lexical_rescue_does_not_duplicate_retained_prefix_candidate() -> None:
+    keys = tuple(f"candidate-{ordinal}" for ordinal in (1, 3, 5, 7, 9, 11))
+    authorities = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=index,
+            text=key,
+            token_count=1,
+            start=index * 10,
+            end=index * 10 + len(key),
+        )
+        for index, key in enumerate(keys, 1)
+    )
+    candidates = (_lexical_candidate("candidate-1", 1, 1),) + tuple(
+        _candidate(key, rank) for rank, key in enumerate(keys[1:], 2)
+    )
+
+    selected = _select(
+        authorities,
+        candidates,
+        EvidenceSelectionConfig(max_chunks=6, max_tokens=20),
+    )
+
+    assert tuple(item.chunk_key for item in selected) == keys
+    assert len({item.chunk_key for item in selected}) == 6
+
+
+def test_selector_without_eligible_lexical_rescue_preserves_normal_selection() -> None:
+    authorities = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=ordinal,
+            text=key,
+            token_count=1,
+            start=ordinal * 10,
+            end=ordinal * 10 + len(key),
+        )
+        for ordinal, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (
+        _authority(
+            "not-rescue",
+            version_id=101,
+            course_id=11,
+            ordinal=13,
+            text="not rescue",
+            token_count=1,
+            start=130,
+            end=140,
+        ),
+    )
+    candidates = tuple(
+        _candidate(key, rank)
+        for rank, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (_lexical_candidate("not-rescue", 7, 3),)
+
+    selected = _select(
+        authorities, candidates, EvidenceSelectionConfig(max_chunks=6, max_tokens=20)
+    )
+
+    assert tuple(item.chunk_key for item in selected) == (
+        "candidate-1",
+        "candidate-3",
+        "candidate-5",
+        "candidate-7",
+        "candidate-9",
+        "candidate-11",
+    )
+
+
+def test_selector_lexical_rescue_respects_existing_token_guard() -> None:
+    authorities = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=ordinal,
+            text=key,
+            token_count=1,
+            start=ordinal * 10,
+            end=ordinal * 10 + len(key),
+        )
+        for ordinal, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (
+        _authority(
+            "too-large-rescue",
+            version_id=101,
+            course_id=11,
+            ordinal=13,
+            text="too large rescue",
+            token_count=2,
+            start=130,
+            end=146,
+        ),
+    )
+    candidates = tuple(
+        _candidate(key, rank)
+        for rank, key in enumerate(
+            (
+                "candidate-1",
+                "candidate-3",
+                "candidate-5",
+                "candidate-7",
+                "candidate-9",
+                "candidate-11",
+            ),
+            1,
+        )
+    ) + (_lexical_candidate("too-large-rescue", 7, 2),)
+
+    selected = _select(authorities, candidates, EvidenceSelectionConfig(max_chunks=6, max_tokens=6))
+
+    assert selected[-1].chunk_key == "candidate-11"
+
+
+def test_selector_lexical_rescue_uses_final_slot_for_bounds_below_six() -> None:
+    authorities = tuple(
+        _authority(
+            f"candidate-{ordinal}",
+            version_id=101,
+            course_id=11,
+            ordinal=ordinal,
+            text=f"candidate {ordinal}",
+            token_count=1,
+            start=ordinal * 10,
+            end=ordinal * 10 + 11,
+        )
+        for ordinal in (1, 3, 5, 7)
+    ) + (
+        _authority(
+            "small-bound-rescue",
+            version_id=101,
+            course_id=11,
+            ordinal=9,
+            text="small bound rescue",
+            token_count=1,
+            start=90,
+            end=108,
+        ),
+    )
+    candidates = tuple(
+        _candidate(f"candidate-{ordinal}", rank) for rank, ordinal in enumerate((1, 3, 5, 7), 1)
+    ) + (_lexical_candidate("small-bound-rescue", 5, 2),)
+
+    selected = _select(
+        authorities, candidates, EvidenceSelectionConfig(max_chunks=4, max_tokens=20)
+    )
+
+    assert tuple(item.chunk_key for item in selected) == (
+        "candidate-1",
+        "candidate-3",
+        "candidate-5",
+        "small-bound-rescue",
     )
 
 
