@@ -24,6 +24,16 @@ from .contracts import (
     canonical_json,
     fingerprint_contract,
 )
+from .observations import (
+    MAX_OBSERVATION_IDENTIFIER_SIZE,
+    MAX_OBSERVATION_TEXT_SIZE,
+    ObservationAudit,
+    ObservationSanitizationError,
+    ObservationSanitizer,
+    SanitizedObservation,
+    sanitize_tool_result,
+    sanitize_tool_result_with_audit,
+)
 from .orchestrator import (
     MAX_AGENT_STEPS,
     MAX_OBSERVATION_SIZE,
@@ -128,4 +138,12 @@ __all__ = [
     "MAX_TOOL_CALLS",
     "AgentOrchestrator",
     "ProposalSource",
+    "MAX_OBSERVATION_IDENTIFIER_SIZE",
+    "MAX_OBSERVATION_TEXT_SIZE",
+    "ObservationAudit",
+    "ObservationSanitizationError",
+    "ObservationSanitizer",
+    "SanitizedObservation",
+    "sanitize_tool_result",
+    "sanitize_tool_result_with_audit",
 ]

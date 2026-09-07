@@ -16,18 +16,20 @@ from dataclasses import replace
 from typing import Final, Protocol
 
 from .contracts import (
-    MAX_AGENT_TEXT_CHARACTERS,
     AgentErrorCode,
     AgentFailure,
     AgentLimits,
-    AgentProposal,
     AgentState,
     AgentTask,
     AgentTerminalResult,
     ToolObservation,
     ToolResult,
 )
-from .phase4_adapter import rag_result_to_observation
+from .observations import (
+    MAX_OBSERVATION_SIZE,
+    ObservationSanitizationError,
+    sanitize_tool_result,
+)
 from .policy import PermissionPolicy
 from .proposal import ProposalRequest, ProposalResult
 from .registry import ToolInvocationError, ToolRegistry
@@ -41,9 +43,6 @@ MAX_TOOL_CALLS: Final[int] = 4
 
 MAX_OBSERVATIONS: Final[int] = 8
 """Maximum number of sanitized observations retained in one proposal context."""
-
-MAX_OBSERVATION_SIZE: Final[int] = MAX_AGENT_TEXT_CHARACTERS
-"""Maximum canonical serialized size of one model-visible observation."""
 
 
 class ProposalSource(Protocol):
@@ -69,10 +68,6 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.MODEL_UNAVAILABLE: "agent proposal model is unavailable",
     AgentErrorCode.INTERNAL_AGENT_FAILURE: "agent execution failed safely",
 }
-
-
-class _ObservationError(ValueError):
-    """Raised internally when a result cannot cross the observation boundary."""
 
 
 class AgentOrchestrator:
@@ -392,10 +387,12 @@ class AgentOrchestrator:
                     proposal_fingerprint=last_proposal_fingerprint,
                     tool_call_fingerprint=tool_key,
                 )
-                observation = _result_to_observation(proposal, tool_result)
-                if len(_stable_json(observation.to_dict())) > self._max_observation_size:
-                    raise _ObservationError("observation exceeds the configured size")
-            except (TypeError, ValueError, _ObservationError):
+                observation = sanitize_tool_result(
+                    tool_result,
+                    tool_name=proposal.tool_call.name,
+                    max_size=self._max_observation_size,
+                )
+            except (TypeError, ValueError, ObservationSanitizationError):
                 return self._failure(
                     task,
                     machine,
@@ -559,30 +556,6 @@ def _safe_failure(
 ) -> AgentFailure:
     message = _SAFE_FAILURE_MESSAGES.get(code, "agent execution failed safely")
     return AgentFailure(code, message, stage=stage, retryable=retryable)
-
-
-def _result_to_observation(proposal: AgentProposal, result: ToolResult) -> ToolObservation:
-    if proposal.tool_call is None:
-        raise _ObservationError("tool proposal is required")
-    if proposal.tool_call.name.value == "rag_query":
-        return rag_result_to_observation(result)
-    if not result.ok:
-        if result.error is None:
-            raise _ObservationError("failed result has no safe error")
-        return ToolObservation(
-            kind=proposal.tool_call.name.value,
-            status="ERROR",
-            text="tool execution failed",
-            fields=(
-                ("error_code", result.error.code.value),
-                ("retryable", result.error.retryable),
-            ),
-        )
-    return ToolObservation(
-        kind=proposal.tool_call.name.value,
-        status="OK",
-        fields=(("output_fingerprint", _stable_fingerprint(result.to_dict())),),
-    )
 
 
 def _stable_json(value: object) -> str:
