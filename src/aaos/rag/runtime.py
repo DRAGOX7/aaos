@@ -17,6 +17,14 @@ from aaos.inference.lm_studio_lifecycle import (
     ModelLifecycleError,
 )
 from aaos.inference.nli import PinnedCpuNliClassifier
+from aaos.inference.telemetry import (
+    LocalInferenceTelemetryEvent,
+    TelemetrySink,
+    emit_local_inference_telemetry,
+    safe_backend_category,
+    safe_error_code,
+    safe_exception_type,
+)
 from aaos.persistence.database import create_database_engine, create_session_factory
 
 from .chroma import ChromaDenseIndexFactory
@@ -77,6 +85,15 @@ EntailmentVerifierFactory = Callable[[ModelGateway], EntailmentVerifierComponent
 @dataclass(slots=True)
 class _ModelResidencyState:
     answer_loaded: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _NamedCloser:
+    identity: str
+    callback: Callable[[], None]
+
+    def __call__(self) -> None:
+        self.callback()
 
 
 def _default_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
@@ -185,11 +202,16 @@ class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
     indexing: RagIndexingService
     _dense_factory: DenseIndexFactory
     _owned_closers: tuple[Callable[[], None], ...]
+    _diagnostic_sink: TelemetrySink = emit_local_inference_telemetry
     _closed: bool = False
 
     def close(self) -> None:
         """Close every owned resource once in reverse acquisition order."""
         if self._closed:
+            self._emit_cleanup(
+                lifecycle_state="already_completed",
+                cleanup_already_completed=True,
+            )
             return
         self._closed = True
         failure = False
@@ -197,11 +219,42 @@ class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
         for closer in reversed(self._owned_closers):
             try:
                 closer()
-            except Exception:
+            except Exception as error:
+                self._emit_cleanup(
+                    lifecycle_state="failed",
+                    closer_identity=_closer_identity(closer),
+                    exception=error,
+                    cleanup_already_completed=False,
+                )
                 failure = True
 
         if failure:
             raise _close_error()
+
+    def _emit_cleanup(
+        self,
+        *,
+        lifecycle_state: str,
+        closer_identity: str | None = None,
+        exception: BaseException | None = None,
+        cleanup_already_completed: bool,
+    ) -> None:
+        try:
+            self._diagnostic_sink(
+                LocalInferenceTelemetryEvent(
+                    operation="FINAL_CLEANUP",
+                    model_identifier=None,
+                    model_role="phase4_runtime",
+                    lifecycle_state=lifecycle_state,
+                    exception_type=safe_exception_type(exception) if exception else None,
+                    safe_error_code=safe_error_code(exception) if exception else None,
+                    backend_category=safe_backend_category(exception) if exception else None,
+                    closer_identity=closer_identity,
+                    cleanup_already_completed=cleanup_already_completed,
+                )
+            )
+        except Exception:
+            return
 
     def __enter__(self) -> "Phase4RagRuntime":
         return self
@@ -237,6 +290,7 @@ def build_phase4_runtime(
     service_factory: Callable[..., LocalRagService] | None = None,
     indexing_factory: Callable[..., RagIndexingService] | None = None,
     model_lifecycle_factory: ModelLifecycleFactory | None = None,
+    diagnostic_sink: TelemetrySink | None = None,
 ) -> Phase4RagRuntime:
     """Compose one runtime from explicit paths and injectable dependencies.
 
@@ -318,6 +372,7 @@ def build_phase4_runtime(
     service: LocalRagService | None = None
     indexing: RagIndexingService | None = None
     owned_closers: list[Callable[[], None]] = []
+    selected_diagnostic_sink = diagnostic_sink or emit_local_inference_telemetry
     try:
         engine = selected_engine_factory(paths.database_path)
         _register_closer(owned_closers, engine, "dispose", "database_engine")
@@ -452,9 +507,10 @@ def build_phase4_runtime(
             indexing=indexing,
             _dense_factory=selected_dense_factory,
             _owned_closers=tuple(owned_closers),
+            _diagnostic_sink=selected_diagnostic_sink,
         )
     except Exception as error:
-        cleanup_error = _cleanup_partial(owned_closers)
+        cleanup_error = _cleanup_partial(owned_closers, selected_diagnostic_sink)
         if cleanup_error is not None:
             raise error from cleanup_error
         raise
@@ -509,7 +565,7 @@ def _register_closer(
 ) -> None:
     closer = getattr(component, attribute, None)
     if callable(closer):
-        owned_closers.append(cast(Callable[[], None], closer))
+        owned_closers.append(_NamedCloser(name, cast(Callable[[], None], closer)))
     else:
         raise ValueError(f"{name} must provide {attribute}")
 
@@ -518,20 +574,45 @@ def _register_optional_closer(
     owned_closers: list[Callable[[], None]],
     component: object,
     attribute: str,
+    name: str | None = None,
 ) -> None:
     closer = getattr(component, attribute, None)
     if callable(closer):
-        owned_closers.append(cast(Callable[[], None], closer))
+        identity = name or f"{type(component).__name__}.{attribute}"
+        owned_closers.append(_NamedCloser(identity, cast(Callable[[], None], closer)))
 
 
-def _cleanup_partial(owned_closers: list[Callable[[], None]]) -> RagOperationalError | None:
+def _cleanup_partial(
+    owned_closers: list[Callable[[], None]],
+    diagnostic_sink: TelemetrySink = emit_local_inference_telemetry,
+) -> RagOperationalError | None:
     failure = False
     for closer in reversed(owned_closers):
         try:
             closer()
-        except Exception:
+        except Exception as error:
+            try:
+                diagnostic_sink(
+                    LocalInferenceTelemetryEvent(
+                        operation="FINAL_CLEANUP",
+                        model_role="phase4_runtime",
+                        lifecycle_state="failed",
+                        exception_type=safe_exception_type(error),
+                        safe_error_code=safe_error_code(error),
+                        backend_category=safe_backend_category(error),
+                        closer_identity=_closer_identity(closer),
+                        cleanup_already_completed=False,
+                    )
+                )
+            except Exception:
+                pass
             failure = True
     return _close_error() if failure else None
+
+
+def _closer_identity(closer: Callable[[], None]) -> str:
+    identity = getattr(closer, "identity", None)
+    return identity if isinstance(identity, str) and identity else type(closer).__name__
 
 
 __all__ = ["Phase4RagRuntime", "build_phase4_runtime"]

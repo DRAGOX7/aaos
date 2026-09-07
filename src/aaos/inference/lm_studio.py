@@ -22,6 +22,14 @@ from .gateway import (
     UnsupportedInferenceFeatureError,
 )
 from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
+from .telemetry import (
+    LocalInferenceTelemetryEvent,
+    TelemetrySink,
+    emit_local_inference_telemetry,
+    safe_backend_category,
+    safe_error_code,
+    safe_exception_type,
+)
 
 _SUPPORTED_MODEL_TYPES = frozenset({"llm", "embedding"})
 _ParsedResponse = TypeVar("_ParsedResponse")
@@ -328,6 +336,7 @@ class LMStudioGateway:
         self,
         settings: AppSettings,
         transport: httpx2.AsyncBaseTransport,
+        diagnostic_sink: TelemetrySink | None = None,
     ) -> None:
         """Take exclusive ownership of a dedicated async transport."""
         self._settings = settings
@@ -338,6 +347,7 @@ class LMStudioGateway:
             follow_redirects=False,
             trust_env=False,
         )
+        self._diagnostic_sink = diagnostic_sink or emit_local_inference_telemetry
         self._closed = False
 
     async def check_availability(self) -> ModelAvailability:
@@ -451,14 +461,61 @@ class LMStudioGateway:
             )
         else:
             if not response.is_success:
-                _raise_backend_error(
-                    response,
-                    operation=operation,
-                    model=model,
+                try:
+                    _raise_backend_error(
+                        response,
+                        operation=operation,
+                        model=model,
+                    )
+                except InferenceError as error:
+                    self._emit_failure(
+                        operation,
+                        error,
+                        http_status=response.status_code,
+                        backend_category=_backend_category(response, error),
+                    )
+                    raise
+            self._emit(
+                LocalInferenceTelemetryEvent(
+                    operation="INFERENCE_REQUEST",
+                    model_identifier=model,
+                    model_role="answer",
+                    lifecycle_state="completed",
+                    http_status=response.status_code,
+                    backend_category="success",
                 )
+            )
             return response
 
+        self._emit_failure(operation, translated_error)
         raise translated_error from None
+
+    def _emit_failure(
+        self,
+        operation: str,
+        error: BaseException,
+        *,
+        http_status: int | None = None,
+        backend_category: str | None = None,
+    ) -> None:
+        self._emit(
+            LocalInferenceTelemetryEvent(
+                operation="INFERENCE_REQUEST",
+                model_identifier=self._settings.lm_studio_model,
+                model_role="answer",
+                lifecycle_state=f"failed:{operation}",
+                exception_type=safe_exception_type(error),
+                safe_error_code=safe_error_code(error),
+                http_status=http_status,
+                backend_category=backend_category or safe_backend_category(error),
+            )
+        )
+
+    def _emit(self, event: LocalInferenceTelemetryEvent) -> None:
+        try:
+            self._diagnostic_sink(event)
+        except Exception:
+            return
 
     async def aclose(self) -> None:
         """Close the exclusively owned client at most once."""
@@ -517,6 +574,17 @@ def _read_structured_backend_error(
         return None
     backend_error = payload.get("error")
     return backend_error if isinstance(backend_error, dict) else None
+
+
+def _backend_category(response: httpx2.Response, error: InferenceError) -> str:
+    """Classify a backend failure without retaining its response body."""
+    if isinstance(error, ModelUnavailableError):
+        return "model_not_found"
+    if isinstance(error, UnsupportedInferenceFeatureError):
+        return "unsupported_feature"
+    if isinstance(error, InferenceBackendError):
+        return f"http_{response.status_code}"
+    return safe_backend_category(error)
 
 
 def _parse_success_response(
