@@ -24,6 +24,18 @@ from .contracts import (
     canonical_json,
     fingerprint_contract,
 )
+from .policy import PermissionPolicy
+from .registry import (
+    SideEffectClass,
+    ToolDefinition,
+    ToolField,
+    ToolInputSchema,
+    ToolInvocationError,
+    ToolRegistry,
+    ToolValueType,
+    ValidatedToolArguments,
+    ValidatedToolCall,
+)
 from .state import (
     LEGAL_STATE_TRANSITIONS,
     TERMINAL_STATES,
@@ -48,14 +60,24 @@ __all__ = [
     "PermissionClass",
     "PermissionDecision",
     "PermissionDecisionStatus",
+    "PermissionPolicy",
+    "SideEffectClass",
     "TERMINAL_STATES",
     "ToolArguments",
     "ToolCall",
+    "ToolDefinition",
     "ToolError",
     "ToolErrorCode",
+    "ToolField",
+    "ToolInputSchema",
+    "ToolInvocationError",
     "ToolName",
     "ToolObservation",
+    "ToolRegistry",
     "ToolResult",
+    "ToolValueType",
+    "ValidatedToolArguments",
+    "ValidatedToolCall",
     "canonical_json",
     "fingerprint_contract",
 ]
