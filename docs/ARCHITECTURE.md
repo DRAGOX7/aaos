@@ -63,8 +63,10 @@ evidence-qualified status: Phase 0 acceptance is unresolved; Phase 1 is
 Phase 2 is **ACCEPTED, NOT FROZEN** at
 `736c8498ab1fe2c1d4d425ba4625774eaf791e93` with no historical
 `phase-02-passed` tag; Phase 3 is **FROZEN** at `phase-03-passed` /
-`12a27f7a77ed79a3e638d9fc6bf4509840a9b326`; and Phase 4 onward are
-**PLANNED / NOT STARTED**. The existing `phase-00-passed` tag points to
+`12a27f7a77ed79a3e638d9fc6bf4509840a9b326`; Phase 4 is **FROZEN** at
+`phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`; and Phase 5 is
+**AUTHORIZED / SPECIFICATION IN PROGRESS** (implementation has not started).
+Phases 6 onward remain **PLANNED / NOT STARTED**. The existing `phase-00-passed` tag points to
 `55d2293` (`docs: plan Phase 0 final acceptance`); repository evidence does not
 establish completed Phase 0G/0H acceptance, so that historical provenance
 remains unresolved pending explicit governance action.

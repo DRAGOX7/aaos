@@ -1,6 +1,7 @@
 # Phase 4 — Local RAG Design Specification
 
-Status: human-approved architecture design; Phase 4 is **PLANNED / NOT STARTED**.
+Status: human-approved architecture design; Phase 4 is **FROZEN** at
+`phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`.
 
 This document is a design specification only. It defines the implementation
 boundary for local, citation-grounded retrieval and answer generation over
