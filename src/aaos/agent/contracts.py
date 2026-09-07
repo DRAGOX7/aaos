@@ -175,6 +175,8 @@ def _jsonable(value: object) -> object:
         return _jsonable(value.to_dict())
     if isinstance(value, Mapping):
         return {str(key): _jsonable(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(nested) for nested in value]
     if isinstance(value, tuple):
         return [_jsonable(nested) for nested in value]
     if value is None or isinstance(value, (str, bool, int, float)):

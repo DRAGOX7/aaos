@@ -24,6 +24,14 @@ from .contracts import (
     canonical_json,
     fingerprint_contract,
 )
+from .orchestrator import (
+    MAX_AGENT_STEPS,
+    MAX_OBSERVATION_SIZE,
+    MAX_OBSERVATIONS,
+    MAX_TOOL_CALLS,
+    AgentOrchestrator,
+    ProposalSource,
+)
 from .phase4_adapter import (
     MAX_RAG_CITATIONS,
     MAX_RAG_QUERY_CHARACTERS,
@@ -114,4 +122,10 @@ __all__ = [
     "RagQueryAdapter",
     "build_read_tool_registry",
     "rag_result_to_observation",
+    "MAX_AGENT_STEPS",
+    "MAX_OBSERVATION_SIZE",
+    "MAX_OBSERVATIONS",
+    "MAX_TOOL_CALLS",
+    "AgentOrchestrator",
+    "ProposalSource",
 ]
