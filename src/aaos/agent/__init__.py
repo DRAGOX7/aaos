@@ -24,6 +24,13 @@ from .contracts import (
     canonical_json,
     fingerprint_contract,
 )
+from .phase4_adapter import (
+    MAX_RAG_CITATIONS,
+    MAX_RAG_QUERY_CHARACTERS,
+    RagQueryAdapter,
+    build_read_tool_registry,
+    rag_result_to_observation,
+)
 from .policy import PermissionPolicy
 from .registry import (
     SideEffectClass,
@@ -80,4 +87,9 @@ __all__ = [
     "ValidatedToolCall",
     "canonical_json",
     "fingerprint_contract",
+    "MAX_RAG_CITATIONS",
+    "MAX_RAG_QUERY_CHARACTERS",
+    "RagQueryAdapter",
+    "build_read_tool_registry",
+    "rag_result_to_observation",
 ]
