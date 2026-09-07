@@ -7,6 +7,7 @@ from typing import Literal
 ChatRole = Literal["system", "user", "assistant"]
 StructuredOutputMode = Literal["plain", "json_schema"]
 StructuredOutputSchema = Literal[
+    "agent_proposal",
     "grounded_answer",
     "semantic_coverage",
     "requirement_decomposition",
@@ -63,6 +64,7 @@ class ChatRequest:
         if self.structured_output not in {"plain", "json_schema"}:
             raise ValueError("structured_output must be plain or json_schema")
         if self.structured_output_schema not in {
+            "agent_proposal",
             "grounded_answer",
             "semantic_coverage",
             "requirement_decomposition",

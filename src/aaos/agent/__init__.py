@@ -32,6 +32,18 @@ from .phase4_adapter import (
     rag_result_to_observation,
 )
 from .policy import PermissionPolicy
+from .proposal import (
+    MAX_PROPOSAL_INPUT_CHARACTERS,
+    MAX_PROPOSAL_OUTPUT_CHARACTERS,
+    MAX_PROPOSAL_OUTPUT_TOKENS,
+    MAX_PROPOSAL_REPAIR_ATTEMPTS,
+    PROPOSAL_SYSTEM_PROMPT,
+    PROPOSAL_TIMEOUT_SECONDS,
+    AgentProposalAdapter,
+    AgentProposalRequest,
+    ProposalRequest,
+    ProposalResult,
+)
 from .registry import (
     SideEffectClass,
     ToolDefinition,
@@ -89,6 +101,16 @@ __all__ = [
     "fingerprint_contract",
     "MAX_RAG_CITATIONS",
     "MAX_RAG_QUERY_CHARACTERS",
+    "MAX_PROPOSAL_INPUT_CHARACTERS",
+    "MAX_PROPOSAL_OUTPUT_CHARACTERS",
+    "MAX_PROPOSAL_OUTPUT_TOKENS",
+    "MAX_PROPOSAL_REPAIR_ATTEMPTS",
+    "PROPOSAL_SYSTEM_PROMPT",
+    "PROPOSAL_TIMEOUT_SECONDS",
+    "AgentProposalAdapter",
+    "AgentProposalRequest",
+    "ProposalRequest",
+    "ProposalResult",
     "RagQueryAdapter",
     "build_read_tool_registry",
     "rag_result_to_observation",

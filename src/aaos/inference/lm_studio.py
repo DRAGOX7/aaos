@@ -171,6 +171,51 @@ _REQUIREMENT_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
 }
 
 _STRUCTURED_RESPONSE_FORMATS = {
+    "agent_proposal": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_agent_proposal_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "proposal_id": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                        "maxLength": 128,
+                    },
+                    "tool_call": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "enum": [
+                                    "rag_query",
+                                    "read_task_state",
+                                    "write_task_state",
+                                    "complete_task",
+                                ],
+                            },
+                            "arguments": {"type": "object"},
+                            "call_id": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                                "maxLength": 128,
+                            },
+                        },
+                        "required": ["name", "arguments"],
+                    },
+                    "terminal_text": {"type": "string", "minLength": 1, "maxLength": 16384},
+                },
+                "oneOf": [
+                    {"required": ["tool_call"]},
+                    {"required": ["terminal_text"]},
+                ],
+            },
+        },
+    },
     "grounded_answer": _GROUNDED_RAG_RESPONSE_FORMAT,
     "semantic_coverage": _SEMANTIC_COVERAGE_RESPONSE_FORMAT,
     "requirement_decomposition": _REQUIREMENT_DECOMPOSITION_RESPONSE_FORMAT,
