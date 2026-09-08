@@ -21,6 +21,7 @@ from .contracts import (
     ToolName,
     ToolObservation,
     ToolResult,
+    TrustedTaskScope,
     canonical_json,
     fingerprint_contract,
 )
@@ -47,9 +48,10 @@ from .phase4_adapter import (
     MAX_RAG_QUERY_CHARACTERS,
     RagQueryAdapter,
     build_read_tool_registry,
+    parse_rag_scope,
     rag_result_to_observation,
 )
-from .policy import PermissionPolicy
+from .policy import PermissionPolicy, ScopeAuthorizationDecision, authorize_scope
 from .proposal import (
     MAX_PROPOSAL_INPUT_CHARACTERS,
     MAX_PROPOSAL_OUTPUT_CHARACTERS,
@@ -92,12 +94,15 @@ __all__ = [
     "AgentTask",
     "AgentTaskId",
     "AgentTerminalResult",
+    "TrustedTaskScope",
     "InvalidAgentTransition",
     "LEGAL_STATE_TRANSITIONS",
     "PermissionClass",
     "PermissionDecision",
     "PermissionDecisionStatus",
     "PermissionPolicy",
+    "ScopeAuthorizationDecision",
+    "authorize_scope",
     "SideEffectClass",
     "TERMINAL_STATES",
     "ToolArguments",
@@ -131,6 +136,7 @@ __all__ = [
     "ProposalResult",
     "RagQueryAdapter",
     "build_read_tool_registry",
+    "parse_rag_scope",
     "rag_result_to_observation",
     "MAX_AGENT_STEPS",
     "MAX_OBSERVATION_SIZE",

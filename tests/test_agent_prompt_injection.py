@@ -13,12 +13,14 @@ from aaos.agent.contracts import (
     PermissionClass,
     ToolName,
     ToolResult,
+    TrustedTaskScope,
 )
 from aaos.agent.observations import sanitize_tool_result
 from aaos.agent.orchestrator import AgentOrchestrator
 from aaos.agent.policy import PermissionPolicy
 from aaos.agent.proposal import ProposalRequest, ProposalResult
 from aaos.agent.registry import ToolRegistry, ValidatedToolArguments
+from aaos.rag import GlobalScope
 
 
 class _ScriptedAdapter:
@@ -32,7 +34,11 @@ class _ScriptedAdapter:
 
 
 def _task() -> AgentTask:
-    return AgentTask(AgentTaskId("task-injection"), "Read the task state safely")
+    return AgentTask(
+        AgentTaskId("task-injection"),
+        "Read the task state safely",
+        initial_scope=TrustedTaskScope(GlobalScope()),
+    )
 
 
 def _tool(name: str, arguments: dict[str, object]) -> ProposalResult:

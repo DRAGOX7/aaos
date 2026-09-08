@@ -15,6 +15,8 @@ from aaos.agent import (
     ToolName,
     ToolObservation,
     ToolResult,
+    TrustedTaskScope,
+    parse_rag_scope,
 )
 from aaos.agent.phase4_adapter import build_read_tool_registry, rag_result_to_observation
 from aaos.rag import (
@@ -105,9 +107,14 @@ def _proposal(arguments: dict[str, object]) -> AgentProposal:
 
 def _execute(service: FakeRagService, arguments: dict[str, object]) -> ToolResult:
     registry = build_read_tool_registry(service)
+    try:
+        trusted_scope = TrustedTaskScope(parse_rag_scope(arguments.get("scope")))
+    except (TypeError, ValueError):
+        trusted_scope = None
     return registry.execute(
         _proposal(arguments),
         PermissionPolicy.from_values({PermissionClass.READ_ONLY}),
+        trusted_task_scope=trusted_scope,
     )
 
 
@@ -223,6 +230,7 @@ def test_injection_like_answer_is_data_and_cannot_change_registry() -> None:
     result = registry.execute(
         _proposal({"question": "q", "scope": {"kind": "global"}}),
         PermissionPolicy.from_values({PermissionClass.READ_ONLY}),
+        trusted_task_scope=TrustedTaskScope(GlobalScope()),
     )
 
     assert result.ok is True

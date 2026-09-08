@@ -19,6 +19,8 @@ from math import isfinite
 from types import MappingProxyType
 from typing import TypeAlias
 
+from aaos.rag import CourseScope, GlobalScope, HistoricalScope, RagScope
+
 MAX_AGENT_TEXT_CHARACTERS = 16_384
 MAX_AGENT_ID_CHARACTERS = 128
 MAX_TOOL_NAME_CHARACTERS = 64
@@ -85,6 +87,8 @@ class AgentErrorCode(StrEnum):
     RAG_QUERY_FAILED = "RAG_QUERY_FAILED"
     TASK_CANCELLED = "TASK_CANCELLED"
     INTERNAL_AGENT_FAILURE = "INTERNAL_AGENT_FAILURE"
+    SCOPE_DENIED = "SCOPE_DENIED"
+    SCOPE_GRANTED = "SCOPE_GRANTED"
 
 
 AgentFailureCode = AgentErrorCode
@@ -217,11 +221,42 @@ class AgentTaskId:
 
 
 @dataclass(frozen=True, slots=True)
+class TrustedTaskScope:
+    """Application-owned Phase 4 scope grant for one agent task.
+
+    The wrapped scope is immutable and is never constructed from model text.
+    Historical grants are canonicalized and reject duplicate version ids so
+    authorization can use exact identity comparison.
+    """
+
+    scope: RagScope
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, (CourseScope, GlobalScope, HistoricalScope)):
+            raise TypeError("scope must be a supported Phase 4 scope")
+        if isinstance(self.scope, HistoricalScope):
+            ids = self.scope.document_version_ids
+            if len(set(ids)) != len(ids):
+                raise ValueError("trusted historical scope must not contain duplicate versions")
+            object.__setattr__(self, "scope", HistoricalScope(tuple(sorted(ids))))
+
+    def to_dict(self) -> dict[str, object]:
+        if isinstance(self.scope, CourseScope):
+            return {"kind": "course", "course_id": self.scope.course_id}
+        if isinstance(self.scope, GlobalScope):
+            return {"kind": "global"}
+        return {
+            "kind": "historical",
+            "document_version_ids": list(self.scope.document_version_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTask:
     task_id: AgentTaskId
     request_text: str
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    initial_scope: object | None = None
+    initial_scope: TrustedTaskScope | None = None
     metadata: tuple[tuple[str, str], ...] = ()
     state: AgentState = AgentState.CREATED
 
@@ -229,6 +264,8 @@ class AgentTask:
         if not isinstance(self.task_id, AgentTaskId):
             raise TypeError("task_id must be an AgentTaskId")
         object.__setattr__(self, "request_text", _nonblank_text(self.request_text, "request_text"))
+        if self.initial_scope is not None and not isinstance(self.initial_scope, TrustedTaskScope):
+            raise TypeError("initial_scope must be a TrustedTaskScope")
         if not isinstance(self.created_at, datetime) or self.created_at.tzinfo is None:
             raise ValueError("created_at must be timezone-aware")
         if not isinstance(self.metadata, tuple):
@@ -249,13 +286,16 @@ class AgentTask:
             raise ValueError("AgentTask state must start at CREATED")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "task_id": self.task_id.to_dict(),
             "request_text": self.request_text,
             "created_at": self.created_at.isoformat(),
             "metadata": {key: value for key, value in self.metadata},
             "state": self.state.value,
         }
+        if self.initial_scope is not None:
+            result["initial_scope"] = self.initial_scope.to_dict()
+        return result
 
 
 @dataclass(frozen=True, slots=True)

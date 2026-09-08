@@ -55,6 +55,7 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.INVALID_PROPOSAL: "agent proposal was invalid",
     AgentErrorCode.UNKNOWN_TOOL: "requested tool is not available",
     AgentErrorCode.INVALID_TOOL_ARGUMENTS: "tool arguments were invalid",
+    AgentErrorCode.SCOPE_DENIED: "requested scope was not authorized",
     AgentErrorCode.PERMISSION_DENIED: "tool permission was denied",
     AgentErrorCode.TOOL_NOT_EXECUTABLE: "requested tool is not executable",
     AgentErrorCode.TOOL_FAILED: "tool execution failed",
@@ -269,7 +270,11 @@ class AgentOrchestrator:
                 )
 
             try:
-                validated_call = self._registry.prepare(proposal, self._permission_policy)
+                validated_call = self._registry.prepare(
+                    proposal,
+                    self._permission_policy,
+                    trusted_task_scope=task.initial_scope,
+                )
             except ToolInvocationError as error:
                 return self._failure(
                     task,
@@ -331,11 +336,18 @@ class AgentOrchestrator:
                 )
             try:
                 if definition is None:
-                    tool_result = self._registry.execute(proposal, self._permission_policy)
+                    tool_result = self._registry.execute(
+                        proposal,
+                        self._permission_policy,
+                        trusted_task_scope=task.initial_scope,
+                    )
                 else:
                     tool_result = await asyncio.wait_for(
                         asyncio.to_thread(
-                            self._registry.execute, proposal, self._permission_policy
+                            self._registry.execute,
+                            proposal,
+                            self._permission_policy,
+                            trusted_task_scope=task.initial_scope,
                         ),
                         timeout=definition.timeout_seconds,
                     )

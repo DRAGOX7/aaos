@@ -2,10 +2,100 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from .contracts import AgentErrorCode, PermissionClass, PermissionDecision
+from aaos.rag import CourseScope, GlobalScope, HistoricalScope, RagScope
+
+from .contracts import (
+    AgentErrorCode,
+    PermissionClass,
+    PermissionDecision,
+    TrustedTaskScope,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeAuthorizationDecision:
+    """Trusted result of comparing a proposed RAG scope with a task grant."""
+
+    allowed: bool
+    reason_code: AgentErrorCode
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allowed, bool):
+            raise TypeError("allowed must be a boolean")
+        if self.reason_code not in {AgentErrorCode.SCOPE_GRANTED, AgentErrorCode.SCOPE_DENIED}:
+            raise ValueError("reason_code must be a scope authorization code")
+
+
+def _positive_scope_id(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
+
+
+def parse_proposed_scope(value: object) -> RagScope:
+    """Parse only the typed scope shape accepted by the Phase 4 boundary."""
+
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+        raise ValueError("scope must be an object")
+    kind = value.get("kind")
+    if not isinstance(kind, str):
+        raise ValueError("scope.kind must be a string")
+    normalized_kind = kind.strip().casefold()
+    if normalized_kind == "global":
+        if set(value) != {"kind"}:
+            raise ValueError("global scope contains unknown fields")
+        return GlobalScope()
+    if normalized_kind == "course":
+        if set(value) != {"kind", "course_id"}:
+            raise ValueError("course scope contains unknown fields")
+        return CourseScope(_positive_scope_id(value.get("course_id"), "course_id"))
+    if normalized_kind == "historical":
+        if set(value) != {"kind", "document_version_ids"}:
+            raise ValueError("historical scope contains unknown fields")
+        ids = value.get("document_version_ids")
+        if not isinstance(ids, list) or not ids:
+            raise ValueError("document_version_ids must be a non-empty list")
+        return HistoricalScope(
+            tuple(_positive_scope_id(item, "document_version_ids") for item in ids)
+        )
+    raise ValueError("scope.kind is unsupported")
+
+
+def authorize_scope(
+    proposed_scope: RagScope, trusted_task_scope: TrustedTaskScope | None
+) -> ScopeAuthorizationDecision:
+    """Authorize a model-proposed scope against an application-owned grant.
+
+    The relation is intentionally fail-closed: course and global grants are
+    exact-identity grants, while historical grants allow only an explicit
+    subset of their version allowlist. No natural-language request or model
+    observation participates in this decision.
+    """
+
+    denied = ScopeAuthorizationDecision(False, AgentErrorCode.SCOPE_DENIED)
+    if not isinstance(proposed_scope, (CourseScope, GlobalScope, HistoricalScope)):
+        return denied
+    if not isinstance(trusted_task_scope, TrustedTaskScope):
+        return denied
+    trusted = trusted_task_scope.scope
+    if isinstance(trusted, CourseScope) and isinstance(proposed_scope, CourseScope):
+        allowed = trusted.course_id == proposed_scope.course_id
+    elif isinstance(trusted, GlobalScope) and isinstance(proposed_scope, GlobalScope):
+        allowed = True
+    elif isinstance(trusted, HistoricalScope) and isinstance(proposed_scope, HistoricalScope):
+        proposed_ids = proposed_scope.document_version_ids
+        allowed = len(set(proposed_ids)) == len(proposed_ids) and set(proposed_ids).issubset(
+            trusted.document_version_ids
+        )
+    else:
+        allowed = False
+    return ScopeAuthorizationDecision(
+        allowed,
+        AgentErrorCode.SCOPE_GRANTED if allowed else AgentErrorCode.SCOPE_DENIED,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,4 +168,9 @@ class PermissionPolicy:
         }
 
 
-__all__ = ["PermissionPolicy"]
+__all__ = [
+    "PermissionPolicy",
+    "ScopeAuthorizationDecision",
+    "authorize_scope",
+    "parse_proposed_scope",
+]

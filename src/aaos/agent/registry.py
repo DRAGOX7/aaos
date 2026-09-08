@@ -19,8 +19,9 @@ from .contracts import (
     ToolError,
     ToolName,
     ToolResult,
+    TrustedTaskScope,
 )
-from .policy import PermissionPolicy
+from .policy import PermissionPolicy, authorize_scope, parse_proposed_scope
 
 MAX_TOOL_DESCRIPTION_CHARACTERS = 16_384
 MAX_TOOL_TIMEOUT_SECONDS = 86_400
@@ -439,7 +440,13 @@ class ToolRegistry:
     def register(self, _: ToolDefinition) -> None:
         raise ValueError(f"{AgentErrorCode.DYNAMIC_TOOL_REGISTRATION.value}: registry is static")
 
-    def prepare(self, proposal: AgentProposal, policy: PermissionPolicy) -> ValidatedToolCall:
+    def prepare(
+        self,
+        proposal: AgentProposal,
+        policy: PermissionPolicy,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
+    ) -> ValidatedToolCall:
         if not isinstance(proposal, AgentProposal) or proposal.tool_call is None:
             raise ToolInvocationError(
                 AgentErrorCode.INVALID_PROPOSAL, "a tool proposal is required"
@@ -458,6 +465,19 @@ class ToolRegistry:
             raise ToolInvocationError(
                 AgentErrorCode.INVALID_TOOL_ARGUMENTS, "arguments failed schema validation"
             ) from exc
+        if definition.name is ToolName.RAG_QUERY and any(
+            field.name == "scope" for field in definition.input_schema.fields
+        ):
+            try:
+                proposed_scope = parse_proposed_scope(arguments.to_mapping().get("scope"))
+            except (TypeError, ValueError) as exc:
+                raise ToolInvocationError(
+                    AgentErrorCode.INVALID_TOOL_ARGUMENTS, "RAG scope failed validation"
+                ) from exc
+            if not authorize_scope(proposed_scope, trusted_task_scope).allowed:
+                raise ToolInvocationError(
+                    AgentErrorCode.SCOPE_DENIED, "RAG scope was not authorized"
+                )
         decision = policy.evaluate(definition)
         if not decision.allowed:
             raise ToolInvocationError(
@@ -469,16 +489,29 @@ class ToolRegistry:
             )
         return ValidatedToolCall(call.name, arguments, call.call_id)
 
-    def execute(self, proposal: AgentProposal, policy: PermissionPolicy) -> ToolResult:
+    def execute(
+        self,
+        proposal: AgentProposal,
+        policy: PermissionPolicy,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
+    ) -> ToolResult:
         try:
-            invocation = self.prepare(proposal, policy)
+            invocation = self.prepare(proposal, policy, trusted_task_scope=trusted_task_scope)
             definition = self.get(invocation.name)
             handler = definition.handler
             if handler is None:
                 raise ToolInvocationError(
                     AgentErrorCode.TOOL_NOT_EXECUTABLE, "tool handler is disabled"
                 )
-            result = handler(invocation.arguments)
+            if definition.name is ToolName.RAG_QUERY:
+                scoped_handler = getattr(handler, "handle_with_scope", None)
+                if callable(scoped_handler):
+                    result = scoped_handler(invocation.arguments, trusted_task_scope)
+                else:
+                    result = handler(invocation.arguments)
+            else:
+                result = handler(invocation.arguments)
             if not isinstance(result, ToolResult):
                 raise ToolInvocationError(
                     AgentErrorCode.HANDLER_EXECUTION_FAILED, "handler returned an invalid result"
@@ -492,7 +525,11 @@ class ToolRegistry:
             )
 
     def execute_payload(
-        self, payload: Mapping[str, object], policy: PermissionPolicy
+        self,
+        payload: Mapping[str, object],
+        policy: PermissionPolicy,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
     ) -> ToolResult:
         if not isinstance(payload, Mapping):
             return ToolResult.failure(
@@ -511,7 +548,7 @@ class ToolRegistry:
             return ToolResult.failure(
                 ToolError(AgentErrorCode.INVALID_PROPOSAL, "proposal failed strict validation")
             )
-        return self.execute(proposal, policy)
+        return self.execute(proposal, policy, trusted_task_scope=trusted_task_scope)
 
 
 __all__ = [

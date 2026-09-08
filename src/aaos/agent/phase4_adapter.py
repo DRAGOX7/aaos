@@ -16,6 +16,7 @@ from aaos.rag import (
     RagErrorCode,
     RagOperationalError,
     RagQuery,
+    RagScope,
     RenderedRagResponse,
 )
 
@@ -26,7 +27,9 @@ from .contracts import (
     ToolName,
     ToolObservation,
     ToolResult,
+    TrustedTaskScope,
 )
+from .policy import authorize_scope, parse_proposed_scope
 from .registry import (
     SideEffectClass,
     ToolDefinition,
@@ -62,28 +65,13 @@ def _bounded_question(value: object) -> str:
 
 
 def _parse_scope(value: object) -> CourseScope | GlobalScope | HistoricalScope:
-    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
-        raise ValueError("scope must be an object")
-    kind = value.get("kind")
-    if not isinstance(kind, str):
-        raise ValueError("scope.kind must be a string")
-    normalized_kind = kind.strip().casefold()
-    if normalized_kind == "global":
-        if set(value) != {"kind"}:
-            raise ValueError("global scope contains unknown fields")
-        return GlobalScope()
-    if normalized_kind == "course":
-        if set(value) != {"kind", "course_id"}:
-            raise ValueError("course scope contains unknown fields")
-        return CourseScope(_positive_id(value.get("course_id"), "course_id"))
-    if normalized_kind == "historical":
-        if set(value) != {"kind", "document_version_ids"}:
-            raise ValueError("historical scope contains unknown fields")
-        ids = value.get("document_version_ids")
-        if not isinstance(ids, list) or not ids:
-            raise ValueError("document_version_ids must be a non-empty list")
-        return HistoricalScope(tuple(_positive_id(item, "document_version_ids") for item in ids))
-    raise ValueError("scope.kind is unsupported")
+    return parse_proposed_scope(value)
+
+
+def parse_rag_scope(value: object) -> RagScope:
+    """Parse a request-local scope without invoking the Phase 4 service."""
+
+    return parse_proposed_scope(value)
 
 
 def _parse_query(arguments: ValidatedToolArguments) -> RagQuery:
@@ -193,12 +181,21 @@ class RagQueryAdapter:
             raise TypeError("service must expose LocalRagService.ask")
         self._service = service
 
-    async def handle_async(self, arguments: ValidatedToolArguments) -> ToolResult:
+    async def handle_async(
+        self,
+        arguments: ValidatedToolArguments,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
+    ) -> ToolResult:
         try:
             query = _parse_query(arguments)
         except (TypeError, ValueError):
             return ToolResult.failure(
                 ToolError(AgentErrorCode.INVALID_TOOL_ARGUMENTS, "RAG query arguments are invalid")
+            )
+        if not authorize_scope(query.scope, trusted_task_scope).allowed:
+            return ToolResult.failure(
+                ToolError(AgentErrorCode.SCOPE_DENIED, "RAG scope was not authorized")
             )
         try:
             response = await self._service.ask(query)
@@ -210,14 +207,24 @@ class RagQueryAdapter:
         except Exception:
             return _safe_rag_failure()
 
-    def handle(self, arguments: ValidatedToolArguments) -> ToolResult:
+    def handle(
+        self,
+        arguments: ValidatedToolArguments,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
+    ) -> ToolResult:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.handle_async(arguments))
+            return asyncio.run(self.handle_async(arguments, trusted_task_scope=trusted_task_scope))
         return ToolResult.failure(
             ToolError(AgentErrorCode.RAG_QUERY_FAILED, "RAG query requires an async boundary")
         )
+
+    def handle_with_scope(
+        self, arguments: ValidatedToolArguments, trusted_task_scope: TrustedTaskScope | None
+    ) -> ToolResult:
+        return self.handle(arguments, trusted_task_scope=trusted_task_scope)
 
     def __call__(self, arguments: ValidatedToolArguments) -> ToolResult:
         return self.handle(arguments)
@@ -339,5 +346,6 @@ __all__ = [
     "MAX_RAG_QUERY_CHARACTERS",
     "RagQueryAdapter",
     "build_read_tool_registry",
+    "parse_rag_scope",
     "rag_result_to_observation",
 ]
