@@ -68,6 +68,24 @@ class TerminalResultKind(StrEnum):
     CONTROL_OR_CONVERSATIONAL_TERMINAL = "CONTROL_OR_CONVERSATIONAL_TERMINAL"
 
 
+class ToolExecutionLifecycleState(StrEnum):
+    """Trusted state of one bounded tool operation."""
+
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED"
+    CANCELLATION_REQUESTED = "CANCELLATION_REQUESTED"
+    TERMINATED = "TERMINATED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ExecutionOutcome(StrEnum):
+    KNOWN_SUCCESS = "KNOWN_SUCCESS"
+    KNOWN_FAILURE = "KNOWN_FAILURE"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+
+
 class AgentErrorCode(StrEnum):
     INVALID_PROPOSAL = "INVALID_PROPOSAL"
     INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
@@ -82,6 +100,8 @@ class AgentErrorCode(StrEnum):
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
     MODEL_TIMEOUT = "MODEL_TIMEOUT"
     TOOL_TIMEOUT = "TOOL_TIMEOUT"
+    TOOL_OUTCOME_UNKNOWN = "TOOL_OUTCOME_UNKNOWN"
+    TOOL_EXECUTION_IN_PROGRESS = "TOOL_EXECUTION_IN_PROGRESS"
     TOOL_FAILED = "TOOL_FAILED"
     TOOL_NOT_EXECUTABLE = "TOOL_NOT_EXECUTABLE"
     DUPLICATE_TOOL_REGISTRATION = "DUPLICATE_TOOL_REGISTRATION"
@@ -687,6 +707,117 @@ class AgentFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolExecutionLifecycle:
+    """Safe snapshot separating request wait state from operation outcome."""
+
+    state: ToolExecutionLifecycleState
+    request_deadline_exceeded: bool
+    cancellation_requested: bool
+    operation_terminated: bool | None
+    execution_outcome: ExecutionOutcome
+    execution_outcome_known: bool
+    resource_cleanup_requested: bool = False
+    resource_cleanup_complete: bool | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, ToolExecutionLifecycleState):
+            raise TypeError("state must be a ToolExecutionLifecycleState")
+        for name in ("request_deadline_exceeded", "cancellation_requested"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
+        if self.operation_terminated is not None and not isinstance(
+            self.operation_terminated, bool
+        ):
+            raise TypeError("operation_terminated must be a boolean or None")
+        if not isinstance(self.execution_outcome, ExecutionOutcome):
+            raise TypeError("execution_outcome must be an ExecutionOutcome")
+        if not isinstance(self.execution_outcome_known, bool):
+            raise TypeError("execution_outcome_known must be a boolean")
+        if not isinstance(self.resource_cleanup_requested, bool):
+            raise TypeError("resource_cleanup_requested must be a boolean")
+        if self.resource_cleanup_complete is not None and not isinstance(
+            self.resource_cleanup_complete, bool
+        ):
+            raise TypeError("resource_cleanup_complete must be a boolean or None")
+        if self.resource_cleanup_complete is True and self.operation_terminated is not True:
+            raise ValueError("cleanup cannot be complete before operation termination")
+        if self.execution_outcome_known is not (
+            self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME
+        ):
+            raise ValueError("execution outcome known flag does not match outcome")
+        if (
+            self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME
+            and self.operation_terminated is not True
+        ):
+            raise ValueError("known outcome requires operation termination")
+        if self.state is ToolExecutionLifecycleState.RUNNING:
+            if self.request_deadline_exceeded or self.cancellation_requested:
+                raise ValueError("running state cannot have a terminal request flag")
+            if self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME:
+                raise ValueError("running state requires an unknown outcome")
+            if self.operation_terminated is True:
+                raise ValueError("running state cannot claim operation termination")
+        if self.state is ToolExecutionLifecycleState.COMPLETED:
+            if self.request_deadline_exceeded or self.cancellation_requested:
+                raise ValueError("completed state cannot have a terminal request flag")
+            if self.execution_outcome is not ExecutionOutcome.KNOWN_SUCCESS:
+                raise ValueError("completed state requires known success")
+            if self.operation_terminated is not True:
+                raise ValueError("completed state requires operation termination")
+        if self.state is ToolExecutionLifecycleState.FAILED:
+            if self.request_deadline_exceeded or self.cancellation_requested:
+                raise ValueError("failed state cannot have a terminal request flag")
+            if self.execution_outcome is not ExecutionOutcome.KNOWN_FAILURE:
+                raise ValueError("failed state requires known failure")
+            if self.operation_terminated is not True:
+                raise ValueError("failed state requires operation termination")
+        if self.state is ToolExecutionLifecycleState.DEADLINE_EXCEEDED:
+            if not self.request_deadline_exceeded:
+                raise ValueError("deadline state requires an exceeded request deadline")
+            if self.cancellation_requested:
+                raise ValueError("deadline state cannot claim cancellation")
+            if self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME:
+                raise ValueError("deadline state requires an unknown outcome")
+            if self.operation_terminated is True:
+                raise ValueError("deadline state cannot claim operation termination")
+        if self.state is ToolExecutionLifecycleState.CANCELLATION_REQUESTED:
+            if not self.cancellation_requested:
+                raise ValueError("cancellation state requires a cancellation request")
+            if self.request_deadline_exceeded:
+                raise ValueError("cancellation state cannot claim a deadline")
+            if self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME:
+                raise ValueError("cancellation state requires an unknown outcome")
+            if self.operation_terminated is True:
+                raise ValueError("cancellation state cannot claim operation termination")
+        if self.state is ToolExecutionLifecycleState.UNKNOWN:
+            if self.request_deadline_exceeded or self.cancellation_requested:
+                raise ValueError("unknown state cannot have a terminal request flag")
+            if self.execution_outcome is not ExecutionOutcome.UNKNOWN_OUTCOME:
+                raise ValueError("unknown state requires an unknown outcome")
+            if self.operation_terminated is True:
+                raise ValueError("unknown state cannot claim operation termination")
+        if self.state is ToolExecutionLifecycleState.TERMINATED:
+            if self.request_deadline_exceeded or self.cancellation_requested:
+                raise ValueError("terminated state cannot have a terminal request flag")
+            if self.operation_terminated is not True:
+                raise ValueError("terminated state requires operation termination")
+        if self.execution_outcome is ExecutionOutcome.UNKNOWN_OUTCOME and self.operation_terminated:
+            raise ValueError("unknown outcome cannot claim operation termination")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "cancellation_requested": self.cancellation_requested,
+            "execution_outcome": self.execution_outcome.value,
+            "execution_outcome_known": self.execution_outcome_known,
+            "operation_terminated": self.operation_terminated,
+            "request_deadline_exceeded": self.request_deadline_exceeded,
+            "resource_cleanup_complete": self.resource_cleanup_complete,
+            "resource_cleanup_requested": self.resource_cleanup_requested,
+            "state": self.state.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class GroundedRagResponse:
     """Trusted, task-local projection of one validated Phase 4 RAG result.
 
@@ -788,6 +919,7 @@ class AgentTerminalResult:
     failure: AgentFailure | None = None
     result_kind: TerminalResultKind = TerminalResultKind.CONTROL_OR_CONVERSATIONAL_TERMINAL
     grounded_rag_response: GroundedRagResponse | None = None
+    tool_execution_lifecycle: ToolExecutionLifecycle | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, AgentTaskId):
@@ -799,6 +931,10 @@ class AgentTerminalResult:
             object.__setattr__(self, "result_text", _nonblank_text(self.result_text, "result_text"))
         if self.failure is not None and not isinstance(self.failure, AgentFailure):
             raise TypeError("failure must be an AgentFailure")
+        if self.tool_execution_lifecycle is not None and not isinstance(
+            self.tool_execution_lifecycle, ToolExecutionLifecycle
+        ):
+            raise TypeError("tool_execution_lifecycle must be a ToolExecutionLifecycle")
         if self.state is AgentState.FAILED and self.failure is None:
             raise ValueError("failed result requires an AgentFailure")
         if not isinstance(self.result_kind, TerminalResultKind):
@@ -831,6 +967,11 @@ class AgentTerminalResult:
             "state": self.state.value,
             "step_count": self.step_count,
             "task_id": self.task_id.to_dict(),
+            "tool_execution_lifecycle": (
+                self.tool_execution_lifecycle.to_dict()
+                if self.tool_execution_lifecycle is not None
+                else None
+            ),
         }
 
     @property
@@ -842,6 +983,7 @@ __all__ = [
     "AgentErrorCode",
     "AgentFailure",
     "AgentFailureCode",
+    "ExecutionOutcome",
     "GroundedRagResponse",
     "AgentLimits",
     "AgentProposal",
@@ -855,6 +997,8 @@ __all__ = [
     "PermissionDecision",
     "PermissionDecisionStatus",
     "TerminalResultKind",
+    "ToolExecutionLifecycle",
+    "ToolExecutionLifecycleState",
     "ToolArguments",
     "ToolCall",
     "ToolError",

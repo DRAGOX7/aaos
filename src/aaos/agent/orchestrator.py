@@ -22,9 +22,12 @@ from .contracts import (
     AgentState,
     AgentTask,
     AgentTerminalResult,
+    ExecutionOutcome,
     GroundedRagResponse,
     PermissionClass,
     TerminalResultKind,
+    ToolExecutionLifecycle,
+    ToolExecutionLifecycleState,
     ToolObservation,
     ToolResult,
 )
@@ -54,6 +57,13 @@ class ProposalSource(Protocol):
     async def propose(self, request: ProposalRequest) -> ProposalResult: ...
 
 
+async def _wait_for_event(event: asyncio.Event) -> object:
+    """Adapt an event wait to the common task type used by lifecycle races."""
+
+    await event.wait()
+    return True
+
+
 _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.INVALID_PROPOSAL: "agent proposal was invalid",
     AgentErrorCode.UNKNOWN_TOOL: "requested tool is not available",
@@ -63,6 +73,8 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.TOOL_NOT_EXECUTABLE: "requested tool is not executable",
     AgentErrorCode.TOOL_FAILED: "tool execution failed",
     AgentErrorCode.TOOL_TIMEOUT: "tool execution timed out",
+    AgentErrorCode.TOOL_OUTCOME_UNKNOWN: "tool execution outcome is unknown",
+    AgentErrorCode.TOOL_EXECUTION_IN_PROGRESS: "another tool execution is still in progress",
     AgentErrorCode.HANDLER_EXECUTION_FAILED: "tool execution failed",
     AgentErrorCode.STEP_LIMIT_EXCEEDED: "agent step limit was reached",
     AgentErrorCode.LOOP_DETECTED: "repeated tool call limit was reached",
@@ -112,6 +124,9 @@ class AgentOrchestrator:
         self._max_observations = _positive_bound(max_observations, "max_observations")
         self._max_observation_size = _positive_bound(max_observation_size, "max_observation_size")
         self._cancel_requested = False
+        self._cancel_signal: asyncio.Event | None = None
+        self._active_operations: dict[int, asyncio.Task[object]] = {}
+        self._run_lock = asyncio.Lock()
 
     @property
     def limits(self) -> AgentLimits:
@@ -141,8 +156,18 @@ class AgentOrchestrator:
         """Request cancellation before the next trusted orchestration boundary."""
 
         self._cancel_requested = True
+        if self._cancel_signal is not None:
+            self._cancel_signal.set()
 
     async def run(
+        self, task: AgentTask, cancel_event: asyncio.Event | None = None
+    ) -> AgentTerminalResult:
+        """Serialize task execution to preserve operation ownership."""
+
+        async with self._run_lock:
+            return await self._run_impl(task, cancel_event)
+
+    async def _run_impl(
         self, task: AgentTask, cancel_event: asyncio.Event | None = None
     ) -> AgentTerminalResult:
         """Execute one task until a trusted terminal result is reached."""
@@ -154,12 +179,14 @@ class AgentOrchestrator:
 
         cancellation_requested_before_run = self._cancel_requested
         self._cancel_requested = False
+        self._cancel_signal = asyncio.Event()
         machine = self._new_state_machine(task)
         proposal_steps = 0
         tool_calls = 0
         observations: list[ToolObservation] = []
         grounded_results: dict[str, GroundedRagResponse] = {}
         grounded_result_counter = 0
+        last_tool_execution_lifecycle: ToolExecutionLifecycle | None = None
         repeated_calls: dict[str, int] = {}
         last_proposal_fingerprint = _stable_fingerprint({"task_id": task.task_id.value})
 
@@ -171,15 +198,28 @@ class AgentOrchestrator:
                 AgentErrorCode.TASK_CANCELLED,
                 step_count=proposal_steps,
             )
-
         try:
             machine.transition(AgentState.PLANNING)
         except InvalidAgentTransition:
             return self._internal_failure(task, machine, proposal_steps)
+        if self._active_operations:
+            return self._failure(
+                task,
+                machine,
+                AgentErrorCode.TOOL_EXECUTION_IN_PROGRESS,
+                proposal_steps,
+                last_proposal_fingerprint,
+            )
 
         while True:
             if self._is_cancelled(cancel_event):
-                return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
+                return self._cancelled(
+                    task,
+                    machine,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
             if proposal_steps >= self._limits.max_agent_steps:
                 return self._failure(
                     task,
@@ -225,7 +265,13 @@ class AgentOrchestrator:
 
             proposal_steps += 1
             if self._is_cancelled(cancel_event):
-                return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
+                return self._cancelled(
+                    task,
+                    machine,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
             if not isinstance(result, ProposalResult):
                 return self._failure(
                     task,
@@ -274,7 +320,13 @@ class AgentOrchestrator:
                         proposal_steps,
                         last_proposal_fingerprint,
                     )
-                return self._complete_grounded(task, machine, grounded_result, proposal_steps)
+                return self._complete_grounded(
+                    task,
+                    machine,
+                    grounded_result,
+                    proposal_steps,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
             if proposal.terminal_text is not None:
                 if not self._terminal_permission_granted():
                     return self._failure(
@@ -296,7 +348,13 @@ class AgentOrchestrator:
                         proposal_steps,
                         last_proposal_fingerprint,
                     )
-                return self._complete_control(task, machine, proposal.terminal_text, proposal_steps)
+                return self._complete_control(
+                    task,
+                    machine,
+                    proposal.terminal_text,
+                    proposal_steps,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
             if proposal.tool_call is None:
                 return self._failure(
                     task,
@@ -367,6 +425,7 @@ class AgentOrchestrator:
                 return self._internal_failure(task, machine, proposal_steps)
 
             tool_calls += 1
+            tool_result: ToolResult | None = None
             try:
                 definition = self._registry.get(validated_call.name)
             except ToolInvocationError:
@@ -386,26 +445,74 @@ class AgentOrchestrator:
                         self._permission_policy,
                         trusted_task_scope=task.initial_scope,
                     )
+                    last_tool_execution_lifecycle = _known_tool_lifecycle(tool_result)
                 else:
-                    tool_result = await asyncio.wait_for(
+                    operation = asyncio.create_task(
                         asyncio.to_thread(
                             self._registry.execute,
                             proposal,
                             self._permission_policy,
                             trusted_task_scope=task.initial_scope,
-                        ),
-                        timeout=definition.timeout_seconds,
+                        )
                     )
-            except asyncio.TimeoutError:
-                return self._failure(
+                    operation_key = id(operation)
+                    self._active_operations[operation_key] = operation
+
+                    def consume_operation(
+                        completed: asyncio.Task[object], *, key: int = operation_key
+                    ) -> None:
+                        try:
+                            completed.result()
+                        except BaseException:
+                            # The result is intentionally discarded after a
+                            # terminal timeout/cancellation.  Consuming it
+                            # prevents an unhandled late exception while the
+                            # operation remains owned by this orchestrator.
+                            pass
+                        self._active_operations.pop(key, None)
+
+                    operation.add_done_callback(consume_operation)
+                    tool_result, last_tool_execution_lifecycle = await self._await_tool_operation(
+                        operation, definition.timeout_seconds, cancel_event
+                    )
+                    if last_tool_execution_lifecycle.state is (
+                        ToolExecutionLifecycleState.DEADLINE_EXCEEDED
+                    ):
+                        return self._failure(
+                            task,
+                            machine,
+                            AgentErrorCode.TOOL_TIMEOUT,
+                            proposal_steps,
+                            last_proposal_fingerprint,
+                            tool_execution_lifecycle=last_tool_execution_lifecycle,
+                        )
+                    if last_tool_execution_lifecycle.state is (
+                        ToolExecutionLifecycleState.CANCELLATION_REQUESTED
+                    ):
+                        return self._cancelled(
+                            task,
+                            machine,
+                            proposal_steps,
+                            last_proposal_fingerprint,
+                            tool_execution_lifecycle=last_tool_execution_lifecycle,
+                        )
+                    if last_tool_execution_lifecycle.state is ToolExecutionLifecycleState.UNKNOWN:
+                        return self._failure(
+                            task,
+                            machine,
+                            AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                            proposal_steps,
+                            last_proposal_fingerprint,
+                            tool_execution_lifecycle=last_tool_execution_lifecycle,
+                        )
+            except asyncio.CancelledError:
+                return self._cancelled(
                     task,
                     machine,
-                    AgentErrorCode.TOOL_TIMEOUT,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=_cancellation_requested_lifecycle(),
                 )
-            except asyncio.CancelledError:
-                return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
             except Exception:
                 return self._failure(
                     task,
@@ -413,9 +520,16 @@ class AgentOrchestrator:
                     AgentErrorCode.HANDLER_EXECUTION_FAILED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if self._is_cancelled(cancel_event):
-                return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
+                return self._cancelled(
+                    task,
+                    machine,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
             if not isinstance(tool_result, ToolResult):
                 return self._failure(
                     task,
@@ -423,6 +537,7 @@ class AgentOrchestrator:
                     AgentErrorCode.HANDLER_EXECUTION_FAILED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if not tool_result.ok:
                 error_code = (
@@ -436,6 +551,7 @@ class AgentOrchestrator:
                     error_code,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
 
             captured_grounded_result: GroundedRagResponse | None = None
@@ -460,6 +576,7 @@ class AgentOrchestrator:
                         AgentErrorCode.HANDLER_EXECUTION_FAILED,
                         proposal_steps,
                         last_proposal_fingerprint,
+                        tool_execution_lifecycle=last_tool_execution_lifecycle,
                     )
 
             try:
@@ -492,6 +609,7 @@ class AgentOrchestrator:
                     AgentErrorCode.OBSERVATION_SANITIZATION_FAILED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
 
             observations.append(observation)
@@ -504,6 +622,7 @@ class AgentOrchestrator:
                     AgentErrorCode.OBSERVATION_SANITIZATION_FAILED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if proposal_steps >= self._limits.max_agent_steps:
                 return self._failure(
@@ -512,6 +631,7 @@ class AgentOrchestrator:
                     AgentErrorCode.STEP_LIMIT_EXCEEDED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if tool_calls >= self._max_tool_calls:
                 return self._failure(
@@ -520,6 +640,7 @@ class AgentOrchestrator:
                     AgentErrorCode.STEP_LIMIT_EXCEEDED,
                     proposal_steps,
                     last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             try:
                 machine.transition(
@@ -529,6 +650,70 @@ class AgentOrchestrator:
                 )
             except InvalidAgentTransition:
                 return self._internal_failure(task, machine, proposal_steps)
+
+    async def _await_tool_operation(
+        self,
+        operation: asyncio.Task[object],
+        timeout_seconds: float,
+        cancel_event: asyncio.Event | None,
+    ) -> tuple[ToolResult | None, ToolExecutionLifecycle]:
+        """Wait for a tool without mistaking waiter cancellation for termination.
+
+        ``asyncio.to_thread`` cannot safely stop a synchronous worker.  The
+        operation task therefore remains owned by the orchestrator after a
+        deadline or cancellation request, while this method returns a
+        truthful unknown outcome to the agent state machine.
+        """
+
+        cancellation_watchers: list[asyncio.Task[object]] = []
+        if cancel_event is not None:
+            cancellation_watchers.append(asyncio.create_task(_wait_for_event(cancel_event)))
+        if self._cancel_signal is not None:
+            cancellation_watchers.append(asyncio.create_task(_wait_for_event(self._cancel_signal)))
+        waitables: set[asyncio.Future[object]] = {operation, *cancellation_watchers}
+        try:
+            done, _ = await asyncio.wait(
+                waitables,
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for watcher in cancellation_watchers:
+                if not watcher.done():
+                    watcher.cancel()
+            if cancellation_watchers:
+                await asyncio.gather(*cancellation_watchers, return_exceptions=True)
+
+        if operation in done:
+            try:
+                result = operation.result()
+            except BaseException:
+                return None, _unknown_tool_lifecycle()
+            if not isinstance(result, ToolResult):
+                return None, _unknown_tool_lifecycle()
+            return result, _known_tool_lifecycle(result)
+
+        if any(watcher in done for watcher in cancellation_watchers):
+            return None, ToolExecutionLifecycle(
+                state=ToolExecutionLifecycleState.CANCELLATION_REQUESTED,
+                request_deadline_exceeded=False,
+                cancellation_requested=True,
+                operation_terminated=None,
+                execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+                execution_outcome_known=False,
+                resource_cleanup_requested=False,
+                resource_cleanup_complete=None,
+            )
+        return None, ToolExecutionLifecycle(
+            state=ToolExecutionLifecycleState.DEADLINE_EXCEEDED,
+            request_deadline_exceeded=True,
+            cancellation_requested=False,
+            operation_terminated=None,
+            execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+            execution_outcome_known=False,
+            resource_cleanup_requested=False,
+            resource_cleanup_complete=None,
+        )
 
     def run_task(
         self, task: AgentTask, cancel_event: asyncio.Event | None = None
@@ -561,7 +746,13 @@ class AgentOrchestrator:
         return PermissionClass.TERMINAL in self._permission_policy.granted_permissions
 
     def _complete_control(
-        self, task: AgentTask, machine: AgentStateMachine, text: str, step_count: int
+        self,
+        task: AgentTask,
+        machine: AgentStateMachine,
+        text: str,
+        step_count: int,
+        *,
+        tool_execution_lifecycle: ToolExecutionLifecycle | None = None,
     ) -> AgentTerminalResult:
         try:
             machine.transition(AgentState.COMPLETED)
@@ -573,6 +764,7 @@ class AgentOrchestrator:
             step_count,
             result_text=text,
             result_kind=TerminalResultKind.CONTROL_OR_CONVERSATIONAL_TERMINAL,
+            tool_execution_lifecycle=tool_execution_lifecycle,
         )
 
     def _complete_grounded(
@@ -581,6 +773,8 @@ class AgentOrchestrator:
         machine: AgentStateMachine,
         grounded_result: GroundedRagResponse,
         step_count: int,
+        *,
+        tool_execution_lifecycle: ToolExecutionLifecycle | None = None,
     ) -> AgentTerminalResult:
         try:
             machine.transition(AgentState.COMPLETED)
@@ -593,6 +787,7 @@ class AgentOrchestrator:
             result_text=str(grounded_result.payload["rendered_text"]),
             result_kind=TerminalResultKind.GROUNDED_RAG_RESPONSE,
             grounded_rag_response=grounded_result,
+            tool_execution_lifecycle=tool_execution_lifecycle,
         )
 
     def _cancelled(
@@ -601,6 +796,8 @@ class AgentOrchestrator:
         machine: AgentStateMachine,
         step_count: int,
         proposal_fingerprint: str,
+        *,
+        tool_execution_lifecycle: ToolExecutionLifecycle | None = None,
     ) -> AgentTerminalResult:
         try:
             if machine.state not in TERMINAL_STATES:
@@ -612,7 +809,11 @@ class AgentOrchestrator:
         except InvalidAgentTransition:
             return self._internal_failure(task, machine, step_count)
         return self._terminal_failure(
-            task, machine, AgentErrorCode.TASK_CANCELLED, step_count=step_count
+            task,
+            machine,
+            AgentErrorCode.TASK_CANCELLED,
+            step_count=step_count,
+            tool_execution_lifecycle=tool_execution_lifecycle,
         )
 
     def _failure(
@@ -624,6 +825,7 @@ class AgentOrchestrator:
         proposal_fingerprint: str,
         *,
         failure: AgentFailure | None = None,
+        tool_execution_lifecycle: ToolExecutionLifecycle | None = None,
     ) -> AgentTerminalResult:
         safe_failure = failure or _safe_failure(code)
         try:
@@ -640,6 +842,7 @@ class AgentOrchestrator:
             AgentState.FAILED,
             step_count,
             failure=safe_failure,
+            tool_execution_lifecycle=tool_execution_lifecycle,
         )
 
     def _terminal_failure(
@@ -649,12 +852,14 @@ class AgentOrchestrator:
         code: AgentErrorCode,
         *,
         step_count: int,
+        tool_execution_lifecycle: ToolExecutionLifecycle | None = None,
     ) -> AgentTerminalResult:
         return AgentTerminalResult(
             task.task_id,
             machine.state,
             step_count,
             failure=_safe_failure(code),
+            tool_execution_lifecycle=tool_execution_lifecycle,
         )
 
     def _internal_failure(
@@ -673,6 +878,58 @@ def _positive_bound(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _known_tool_lifecycle(result: ToolResult) -> ToolExecutionLifecycle:
+    """Build a terminal lifecycle snapshot for an observed handler result."""
+
+    succeeded = result.ok
+    return ToolExecutionLifecycle(
+        state=(
+            ToolExecutionLifecycleState.COMPLETED
+            if succeeded
+            else ToolExecutionLifecycleState.FAILED
+        ),
+        request_deadline_exceeded=False,
+        cancellation_requested=False,
+        operation_terminated=True,
+        execution_outcome=(
+            ExecutionOutcome.KNOWN_SUCCESS if succeeded else ExecutionOutcome.KNOWN_FAILURE
+        ),
+        execution_outcome_known=True,
+        resource_cleanup_requested=False,
+        resource_cleanup_complete=None,
+    )
+
+
+def _unknown_tool_lifecycle() -> ToolExecutionLifecycle:
+    """Build a snapshot when task completion cannot prove operation outcome."""
+
+    return ToolExecutionLifecycle(
+        state=ToolExecutionLifecycleState.UNKNOWN,
+        request_deadline_exceeded=False,
+        cancellation_requested=False,
+        operation_terminated=None,
+        execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+        execution_outcome_known=False,
+        resource_cleanup_requested=False,
+        resource_cleanup_complete=None,
+    )
+
+
+def _cancellation_requested_lifecycle() -> ToolExecutionLifecycle:
+    """Build a lifecycle snapshot when the caller cancels an in-flight wait."""
+
+    return ToolExecutionLifecycle(
+        state=ToolExecutionLifecycleState.CANCELLATION_REQUESTED,
+        request_deadline_exceeded=False,
+        cancellation_requested=True,
+        operation_terminated=None,
+        execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+        execution_outcome_known=False,
+        resource_cleanup_requested=False,
+        resource_cleanup_complete=None,
+    )
 
 
 def _safe_failure(
