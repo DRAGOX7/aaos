@@ -30,6 +30,15 @@ from .contracts import (
     canonical_json,
     fingerprint_contract,
 )
+from .events import (
+    EVENT_SCHEMA_VERSION,
+    AgentEvent,
+    AgentEventKind,
+    AgentEventSink,
+    AgentRunId,
+    InMemoryAgentEventSink,
+    NullAgentEventSink,
+)
 from .observations import (
     MAX_OBSERVATION_IDENTIFIER_SIZE,
     MAX_OBSERVATION_TEXT_SIZE,
@@ -182,4 +191,11 @@ __all__ = [
     "SanitizedObservation",
     "sanitize_tool_result",
     "sanitize_tool_result_with_audit",
+    "AgentEvent",
+    "AgentEventKind",
+    "AgentEventSink",
+    "AgentRunId",
+    "EVENT_SCHEMA_VERSION",
+    "InMemoryAgentEventSink",
+    "NullAgentEventSink",
 ]

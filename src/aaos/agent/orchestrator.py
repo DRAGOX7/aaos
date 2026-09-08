@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Awaitable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from .contracts import (
@@ -21,6 +22,7 @@ from .contracts import (
     AgentLimits,
     AgentState,
     AgentTask,
+    AgentTaskId,
     AgentTerminalResult,
     ExecutionOutcome,
     GroundedRagResponse,
@@ -28,13 +30,21 @@ from .contracts import (
     TerminalResultKind,
     ToolExecutionLifecycle,
     ToolExecutionLifecycleState,
+    ToolName,
     ToolObservation,
     ToolResult,
+)
+from .events import (
+    AgentEvent,
+    AgentEventKind,
+    AgentEventSink,
+    AgentRunId,
+    NullAgentEventSink,
 )
 from .observations import ObservationSanitizationError
 from .policy import PermissionPolicy
 from .proposal import ProposalRequest, ProposalResult
-from .registry import ToolInvocationError, ToolRegistry
+from .registry import ToolDefinition, ToolInvocationError, ToolRegistry
 from .runtime_policy import (
     MAX_AGENT_STEPS,
     MAX_OBSERVATION_HISTORY_SIZE,
@@ -51,6 +61,13 @@ class ProposalSource(Protocol):
     """Structural interface implemented by the Slice 4 proposal adapter."""
 
     async def propose(self, request: ProposalRequest) -> ProposalResult: ...
+
+
+@dataclass(slots=True)
+class _RunEventContext:
+    run_id: AgentRunId
+    task_id: AgentTaskId
+    sequence_number: int = 0
 
 
 async def _wait_for_event(event: asyncio.Event) -> object:
@@ -105,6 +122,7 @@ class AgentOrchestrator:
         max_observations: int | None = None,
         max_observation_size: int | None = None,
         total_observation_history_size: int | None = None,
+        event_sink: AgentEventSink | None = None,
     ) -> None:
         if not callable(getattr(proposal_adapter, "propose", None)):
             raise TypeError("proposal_adapter must expose an async propose method")
@@ -114,6 +132,8 @@ class AgentOrchestrator:
             raise TypeError("permission_policy must be a PermissionPolicy")
         if limits is not None and not isinstance(limits, AgentLimits):
             raise TypeError("limits must be AgentLimits")
+        if event_sink is not None and not callable(getattr(event_sink, "emit", None)):
+            raise TypeError("event_sink must expose emit(event)")
         self._proposal_adapter = proposal_adapter
         self._registry = registry if registry is not None else ToolRegistry.default()
         self._permission_policy = (
@@ -138,6 +158,8 @@ class AgentOrchestrator:
         self._cancel_signal: asyncio.Event | None = None
         self._active_operations: dict[int, asyncio.Task[object]] = {}
         self._run_lock = asyncio.Lock()
+        self._event_sink = event_sink if event_sink is not None else NullAgentEventSink()
+        self._event_context: _RunEventContext | None = None
 
     @property
     def limits(self) -> AgentLimits:
@@ -191,8 +213,29 @@ class AgentOrchestrator:
     ) -> AgentTerminalResult:
         """Serialize task execution to preserve operation ownership."""
 
+        if not isinstance(task, AgentTask):
+            raise TypeError("task must be an AgentTask")
         async with self._run_lock:
-            return await self._run_impl(task, cancel_event)
+            self._event_context = _RunEventContext(AgentRunId.new(), task.task_id)
+            self._emit_event(AgentEventKind.TASK_STARTED)
+            self._emit_event(AgentEventKind.RUNTIME_POLICY_VALIDATED)
+            try:
+                result = await self._run_impl(task, cancel_event)
+                self._emit_event(
+                    AgentEventKind.TERMINAL_RESULT_EMITTED,
+                    step_index=result.step_count,
+                    terminal_state=result.state,
+                    terminal_result_kind=result.result_kind,
+                )
+                self._emit_event(
+                    AgentEventKind.TASK_FINISHED,
+                    step_index=result.step_count,
+                    terminal_state=result.state,
+                    terminal_result_kind=result.result_kind,
+                )
+                return result
+            finally:
+                self._event_context = None
 
     async def _run_impl(
         self, task: AgentTask, cancel_event: asyncio.Event | None = None
@@ -308,6 +351,11 @@ class AgentOrchestrator:
                     tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if not isinstance(result, ProposalResult):
+                self._emit_event(
+                    AgentEventKind.PROPOSAL_REJECTED,
+                    step_index=proposal_steps,
+                    error_code=AgentErrorCode.INVALID_PROPOSAL,
+                )
                 return self._failure(
                     task,
                     machine,
@@ -318,6 +366,11 @@ class AgentOrchestrator:
             if not result.ok or result.proposal is None:
                 failure = result.failure
                 if failure is None:
+                    self._emit_event(
+                        AgentEventKind.PROPOSAL_REJECTED,
+                        step_index=proposal_steps,
+                        error_code=AgentErrorCode.INVALID_PROPOSAL,
+                    )
                     return self._failure(
                         task,
                         machine,
@@ -326,6 +379,11 @@ class AgentOrchestrator:
                         last_proposal_fingerprint,
                     )
                 last_proposal_fingerprint = _stable_fingerprint(failure.to_dict())
+                self._emit_event(
+                    AgentEventKind.PROPOSAL_REJECTED,
+                    step_index=proposal_steps,
+                    error_code=failure.code,
+                )
                 return self._failure(
                     task,
                     machine,
@@ -338,6 +396,7 @@ class AgentOrchestrator:
             proposal = result.proposal
             last_proposal_fingerprint = _stable_fingerprint(proposal.to_dict())
             if proposal.grounded_result_ref is not None:
+                self._emit_event(AgentEventKind.PROPOSAL_ACCEPTED, step_index=proposal_steps)
                 if not self._terminal_permission_granted():
                     return self._failure(
                         task,
@@ -363,6 +422,7 @@ class AgentOrchestrator:
                     tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if proposal.terminal_text is not None:
+                self._emit_event(AgentEventKind.PROPOSAL_ACCEPTED, step_index=proposal_steps)
                 if not self._terminal_permission_granted():
                     return self._failure(
                         task,
@@ -391,6 +451,11 @@ class AgentOrchestrator:
                     tool_execution_lifecycle=last_tool_execution_lifecycle,
                 )
             if proposal.tool_call is None:
+                self._emit_event(
+                    AgentEventKind.PROPOSAL_REJECTED,
+                    step_index=proposal_steps,
+                    error_code=AgentErrorCode.INVALID_PROPOSAL,
+                )
                 return self._failure(
                     task,
                     machine,
@@ -398,6 +463,7 @@ class AgentOrchestrator:
                     proposal_steps,
                     last_proposal_fingerprint,
                 )
+            self._emit_event(AgentEventKind.PROPOSAL_ACCEPTED, step_index=proposal_steps)
             if tool_calls >= self._max_tool_calls:
                 return self._failure(
                     task,
@@ -461,6 +527,7 @@ class AgentOrchestrator:
 
             tool_calls += 1
             tool_result: ToolResult | None = None
+            tool_started_at = time.monotonic()
             try:
                 definition = self._registry.get(validated_call.name)
             except ToolInvocationError:
@@ -490,6 +557,13 @@ class AgentOrchestrator:
                     proposal_steps,
                     last_proposal_fingerprint,
                 )
+            self._emit_event(
+                AgentEventKind.TOOL_STARTED,
+                step_index=proposal_steps,
+                tool_name=definition.name,
+                tool_contract_version=definition.contract_version,
+                lifecycle_state=ToolExecutionLifecycleState.RUNNING,
+            )
             try:
                 operation = asyncio.create_task(
                     asyncio.to_thread(
@@ -518,6 +592,13 @@ class AgentOrchestrator:
                 operation.add_done_callback(consume_operation)
                 tool_result, last_tool_execution_lifecycle = await self._await_tool_operation(
                     operation, timeout_seconds, cancel_event
+                )
+                self._emit_tool_event(
+                    step_index=proposal_steps,
+                    definition=definition,
+                    lifecycle=last_tool_execution_lifecycle,
+                    tool_result=tool_result,
+                    duration_ms=_elapsed_event_duration(tool_started_at),
                 )
                 if last_tool_execution_lifecycle.state is (
                     ToolExecutionLifecycleState.DEADLINE_EXCEEDED
@@ -550,6 +631,14 @@ class AgentOrchestrator:
                         tool_execution_lifecycle=last_tool_execution_lifecycle,
                     )
             except asyncio.CancelledError:
+                cancellation_lifecycle = _cancellation_requested_lifecycle()
+                self._emit_tool_event(
+                    step_index=proposal_steps,
+                    definition=definition,
+                    lifecycle=cancellation_lifecycle,
+                    tool_result=None,
+                    duration_ms=_elapsed_event_duration(tool_started_at),
+                )
                 return self._cancelled(
                     task,
                     machine,
@@ -558,6 +647,14 @@ class AgentOrchestrator:
                     tool_execution_lifecycle=_cancellation_requested_lifecycle(),
                 )
             except Exception:
+                unknown_lifecycle = _unknown_tool_lifecycle()
+                self._emit_tool_event(
+                    step_index=proposal_steps,
+                    definition=definition,
+                    lifecycle=unknown_lifecycle,
+                    tool_result=None,
+                    duration_ms=_elapsed_event_duration(tool_started_at),
+                )
                 return self._failure(
                     task,
                     machine,
@@ -702,6 +799,123 @@ class AgentOrchestrator:
                 )
             except InvalidAgentTransition:
                 return self._internal_failure(task, machine, proposal_steps)
+
+    def _emit_event(
+        self,
+        event_kind: AgentEventKind,
+        *,
+        step_index: int | None = None,
+        tool_name: ToolName | None = None,
+        tool_contract_version: str | None = None,
+        lifecycle_state: ToolExecutionLifecycleState | None = None,
+        execution_outcome: ExecutionOutcome | None = None,
+        error_code: AgentErrorCode | None = None,
+        duration_ms: float | None = None,
+        terminal_state: AgentState | None = None,
+        terminal_result_kind: TerminalResultKind | None = None,
+    ) -> None:
+        """Emit a bounded trusted event without making delivery authoritative."""
+
+        context = self._event_context
+        if context is None:
+            return
+        context.sequence_number += 1
+        try:
+            event = AgentEvent(
+                run_id=context.run_id,
+                sequence_number=context.sequence_number,
+                event_kind=event_kind,
+                task_id=context.task_id,
+                step_index=step_index,
+                tool_name=tool_name,
+                tool_contract_version=tool_contract_version,
+                lifecycle_state=lifecycle_state,
+                execution_outcome=execution_outcome,
+                error_code=error_code,
+                duration_ms=duration_ms,
+                policy_version=self.runtime_policy_version,
+                policy_fingerprint=self.runtime_policy_fingerprint,
+                terminal_state=terminal_state,
+                terminal_result_kind=terminal_result_kind,
+            )
+            self._event_sink.emit(event)
+        except Exception:
+            # Event delivery is observational.  Sink failures must never alter
+            # the trusted task result or expose sink internals to the model.
+            return
+
+    def _emit_tool_event(
+        self,
+        *,
+        step_index: int,
+        definition: ToolDefinition,
+        lifecycle: ToolExecutionLifecycle,
+        tool_result: ToolResult | None,
+        duration_ms: float | None,
+    ) -> None:
+        """Map trusted lifecycle data to one safe tool event."""
+
+        name = definition.name
+        contract_version = definition.contract_version
+        if lifecycle.state is ToolExecutionLifecycleState.DEADLINE_EXCEEDED:
+            self._emit_event(
+                AgentEventKind.TOOL_DEADLINE_EXCEEDED,
+                step_index=step_index,
+                tool_name=name,
+                tool_contract_version=contract_version,
+                lifecycle_state=lifecycle.state,
+                execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+                error_code=AgentErrorCode.TOOL_TIMEOUT,
+                duration_ms=duration_ms,
+            )
+        elif lifecycle.state is ToolExecutionLifecycleState.CANCELLATION_REQUESTED:
+            self._emit_event(
+                AgentEventKind.TOOL_OUTCOME_UNKNOWN,
+                step_index=step_index,
+                tool_name=name,
+                tool_contract_version=contract_version,
+                lifecycle_state=lifecycle.state,
+                execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+                error_code=AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                duration_ms=duration_ms,
+            )
+        elif lifecycle.state is ToolExecutionLifecycleState.UNKNOWN:
+            self._emit_event(
+                AgentEventKind.TOOL_OUTCOME_UNKNOWN,
+                step_index=step_index,
+                tool_name=name,
+                tool_contract_version=contract_version,
+                lifecycle_state=lifecycle.state,
+                execution_outcome=ExecutionOutcome.UNKNOWN_OUTCOME,
+                error_code=AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                duration_ms=duration_ms,
+            )
+        elif tool_result is not None and tool_result.ok:
+            self._emit_event(
+                AgentEventKind.TOOL_COMPLETED,
+                step_index=step_index,
+                tool_name=name,
+                tool_contract_version=contract_version,
+                lifecycle_state=ToolExecutionLifecycleState.COMPLETED,
+                execution_outcome=ExecutionOutcome.KNOWN_SUCCESS,
+                duration_ms=duration_ms,
+            )
+        else:
+            error_code = (
+                tool_result.error.code
+                if tool_result is not None and tool_result.error is not None
+                else AgentErrorCode.TOOL_FAILED
+            )
+            self._emit_event(
+                AgentEventKind.TOOL_FAILED,
+                step_index=step_index,
+                tool_name=name,
+                tool_contract_version=contract_version,
+                lifecycle_state=ToolExecutionLifecycleState.FAILED,
+                execution_outcome=ExecutionOutcome.KNOWN_FAILURE,
+                error_code=error_code,
+                duration_ms=duration_ms,
+            )
 
     async def _await_tool_operation(
         self,
@@ -965,6 +1179,13 @@ def _unknown_tool_lifecycle() -> ToolExecutionLifecycle:
         resource_cleanup_requested=False,
         resource_cleanup_complete=None,
     )
+
+
+def _elapsed_event_duration(started_at: float) -> float:
+    """Return a bounded monotonic duration suitable for an event envelope."""
+
+    elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+    return min(elapsed_ms, 86_400_000.0)
 
 
 def _cancellation_requested_lifecycle() -> ToolExecutionLifecycle:
