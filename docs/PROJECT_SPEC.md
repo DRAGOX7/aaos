@@ -52,7 +52,16 @@ The current evidence-qualified status is:
 - **Phase 2 — ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`; no historical `phase-02-passed` tag is recorded.
 - **Phase 3 — FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
 - **Phase 4 — FROZEN** at `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`.
-- **Phase 5 — AUTHORIZED / SPECIFICATION IN PROGRESS.** Production implementation has not started.
+- **Phase 5 — PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED.** Slices 1–5 are human approved; committed Slice 6 is not yet human approved. Slice 7 and Phase 6 are not authorized.
+
+The authoritative status/decision source is [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
+Historical Phase 0/2 qualifications above remain unchanged. The approved
+roadmap revision requires C1–C7 before further Slice 7 / Slice 8 acceptance
+work; it does not reopen frozen phases. Future gates are defined in
+[PHASES.md](PHASES.md): durable approval core before Calendar, optional GitHub
+read-only, backend-led operational visibility, independent optional vision
+and isolated computation, then release qualification. Product capabilities
+listed elsewhere are goals, not early implementation authorization.
 
 Phase status vocabulary and the remaining roadmap are defined in
 [`docs/PHASES.md`](PHASES.md). These status notes do not alter the product

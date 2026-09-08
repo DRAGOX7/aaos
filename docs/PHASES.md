@@ -14,9 +14,15 @@ Every phase ends with:
 
 ## Status vocabulary
 
+The authoritative evidence-backed status/decision source is
+[GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md). Summaries here do not grant
+authorization. Its separate IMPLEMENTED, VERIFIED and HUMAN_APPROVED states
+supersede the earlier combined vocabulary below; ACCEPTED remains historical
+terminology, not evidence of a freeze tag.
+
 - **PLANNED** — Scope is documented; implementation has not begun.
 - **IN PROGRESS** — Implementation or acceptance work is actively underway.
-- **IMPLEMENTED** — Code and deterministic verification are complete, but explicit human acceptance is not complete.
+- **IMPLEMENTED** — Implementation exists; verification and human approval are separate evidence.
 - **ACCEPTED** — Required verification is complete and explicit human acceptance is recorded.
 - **FROZEN** — An accepted state is identified by a named immutable Git tag targeting the accepted SHA.
 - **AUTHORIZED / SPECIFICATION IN PROGRESS** — The phase is authorized for design and planning; production implementation has not begun.
@@ -30,7 +36,7 @@ Every phase ends with:
 - Phase 2 — **ACCEPTED, NOT FROZEN** at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`.
 - Phase 3 — **FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
 - Phase 4 — **FROZEN** at `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`.
-- Phase 5 — **AUTHORIZED / SPECIFICATION IN PROGRESS**.
+- Phase 5 — **PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED**; Slices 1–5 human approved, Slice 6 not yet approved.
 - Phases 6–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
@@ -247,7 +253,14 @@ Build the local citation-grounded academic second brain.
 
 ## PHASE 5 — Local Agent Orchestrator and Typed Tools
 
-**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.**
+**Current status: PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED.**
+
+Slice 6 is committed but NOT_YET_HUMAN_APPROVED. The Phase 5 plan's C1–C7
+gate covers trusted outer task scope, final-output lineage, lifecycle,
+sanitizer, effective policy, output contracts and safe backend events. Separate
+authorization and human approval are required before Slice 7 or Slice 8
+acceptance work. Slice 7 remains conditional/not authorized; absent a justified
+approved operation it is NOT_IMPLEMENTED_BY_SCOPE. Phase 4 is not reopened.
 
 ### Purpose
 
@@ -280,13 +293,36 @@ The production REPL remains disabled.
 - Retrieved content cannot create tools or bypass policy.
 - Arbitrary host-file access is prevented.
 
-## PHASE 6 — Approval Engine, Google Calendar, and GitHub MCP
+## PHASE 6 — Durable Approval Core and Gated External Integrations
 
 **Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
 Introduce carefully controlled external writes.
+
+Phase 6 is NOT AUTHORIZED and cannot begin until Phase 5 passes.
+
+### Internal gates
+
+- **6A:** durable approval/execution core, tested first with fake adapters.
+- **6B:** one narrow approval-controlled Calendar workflow, after 6A passes.
+- **6C:** optional GitHub read-only integration. GitHub writes require a
+  separate explicit gate; no implicit write authority follows from read access.
+
+Approval is orthogonal to ordinary capability permission: both must pass.
+Neither model text nor observations can approve an action. MCP is transport
+and interoperability, not a product capability or prerequisite for internal
+tools. Calendar/GitHub transport choices do not bypass the approval core.
+
+Before external writes, an application-owned action record binds actor,
+target account/resource, action type, normalized exact arguments, tool/schema/
+policy versions, expiry, applicable remote-state/precondition identity,
+approval identity, atomic claim/consumption, stable operation/idempotency
+identity and execution outcome. Outcomes are CONFIRMED_SUCCESS,
+CONFIRMED_FAILURE or UNKNOWN_OUTCOME. Explicit tests/design must cover replay,
+concurrent commits, crashes, stale approval and schema-version drift. Timeout
+is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ### Core work
 
@@ -311,13 +347,17 @@ Introduce carefully controlled external writes.
 - Credentials are never exposed to the model or frontend.
 - Retries do not duplicate completed writes.
 
-## PHASE 7 — Next.js Dashboard and Telemetry
+## PHASE 7 — Dashboard and Operational Visibility
 
 **Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
 Build the user interface only after the backend workflows are proven.
+
+The UI consumes authoritative backend contracts and safe versioned events.
+Event generation begins in Phase 5; durable approval/execution evidence is
+required before Phase 6 writes. Policy must not exist only in React state.
 
 ### Core work
 
@@ -341,13 +381,25 @@ Build the user interface only after the backend workflows are proven.
 - Secrets never enter browser responses.
 - Failures are visible and actionable.
 
-## PHASE 8 — Restricted IPython REPL and Multimodal Vision
+## PHASE 8 — Optional Vision and Independently Isolated Computation
 
 **Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
 Add advanced dynamic computation and visual-document understanding after the controlled agent architecture is stable.
+
+### Independent internal tracks
+
+- **8A:** optional read-only visual-document interpretation with provenance,
+  selected-page evaluation and explicit model/resource controls.
+- **8B:** optional isolated computation, justified only when domain-specific
+  deterministic tools are insufficient. Requires separate authorization,
+  isolation design and escape/resource/network/credential tests.
+
+Vision does not require code authority. Python namespace restriction alone is
+not adequate containment. The computation items below apply only to authorized
+8B; vision items only to authorized 8A. Neither track implicitly enables the other.
 
 ### Core work
 
@@ -372,13 +424,18 @@ Add advanced dynamic computation and visual-document understanding after the con
 - Text and VLM model swapping works within hardware constraints.
 - Ordinary PDF pages do not unnecessarily invoke the VLM.
 
-## PHASE 9 — Hardening, Evaluation, and Portfolio Release
+## PHASE 9 — Release Qualification and Portfolio Evidence
 
 **Current status: PLANNED / NOT STARTED.**
 
 ### Purpose
 
-Turn the working system into a defensible, portfolio-quality engineering project.
+Qualify the accepted system for clean setup, recovery demonstration and an
+end-to-end accepted demo, with sanitized portfolio evidence, finalized
+documentation and honest metrics/limitations. Security, recovery and evaluation
+are continuous responsibilities in every owning phase, not work deferred to
+Phase 9. The checks below consolidate/revalidate existing evidence rather than
+introduce missing security or product capabilities late.
 
 ### Core work
 

@@ -57,6 +57,9 @@ The model never receives direct, unrestricted access to credentials, Moodle auth
 
 ## Current implementation status
 
+The authoritative status/decision source is [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
+This summary is not independent implementation authorization.
+
 This document describes the intended architecture and the following
 evidence-qualified status: Phase 0 acceptance is unresolved; Phase 1 is
 **FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`;
@@ -65,8 +68,35 @@ Phase 2 is **ACCEPTED, NOT FROZEN** at
 `phase-02-passed` tag; Phase 3 is **FROZEN** at `phase-03-passed` /
 `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`; Phase 4 is **FROZEN** at
 `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`; and Phase 5 is
-**AUTHORIZED / SPECIFICATION IN PROGRESS** (implementation has not started).
+**PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED** (Slices 1–5 human
+approved; committed Slice 6 not yet approved).
 Phases 6 onward remain **PLANNED / NOT STARTED**. The existing `phase-00-passed` tag points to
 `55d2293` (`docs: plan Phase 0 final acceptance`); repository evidence does not
 establish completed Phase 0G/0H acceptance, so that historical provenance
 remains unresolved pending explicit governance action.
+
+## Reviewed consumer and future-phase boundaries
+
+Phase 5 corrective gate C1–C7 is specified in the
+[Phase 5 plan](superpowers/plans/2026-09-07-phase-5-controlled-agent-loop-implementation.md).
+It requires an application-owned outer task grant, one trusted completion
+authority preserving Phase 4 rendered-response lineage, explicit operation
+termination/cleanup distinct from request deadlines, tool-specific observation
+projections, one effective runtime policy, actual tool output validators and
+safe versioned backend events. These are pending corrections, not claims
+about current behavior. Slice 6 is not human approved.
+
+Historical Phase 4 design ownership wording (sections 7 and 38) is superseded
+for future Phase 5 work: conversation history and follow-up rewriting remain
+excluded, approval belongs to Phase 6. The frozen Phase 4 document and code
+are preserved; integration stays `LocalRagService.ask(RagQuery)` returning
+`RenderedRagResponse`, not a new answer generator.
+
+Phase 6 approval is orthogonal to capability permission, with durable atomic
+action consumption and unknown-outcome reconciliation before external writes.
+MCP is a transport, not a prerequisite for internal tools. Phase 7 consumes
+backend events/policy rather than owning execution policy in frontend state.
+Phase 8 vision and isolated computation are independently optional; vision
+does not grant code authority and a Python namespace is not containment.
+Phase 9 consolidates release evidence; security/recovery/evaluation remain
+continuous. Exact future gates live in [PHASES.md](PHASES.md).

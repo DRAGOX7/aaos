@@ -1,8 +1,9 @@
 # Phase 5 — Controlled Local Agent Loop Design Specification
 
-Status: **AUTHORIZED / SPECIFICATION IN PROGRESS**. This document is a
-human-review design baseline; Phase 5 production implementation has not
-started.
+Status: **IMPLEMENTED IN PART / CORRECTIVE REVIEW REQUIRED**. Slices 1–5
+are implemented and human approved. Slice 6 is committed but is not yet
+human approved. The roadmap amendment requires a separately authorized
+corrective gate before Slice 7 or Slice 8 acceptance work proceeds.
 
 ## 1. Objective
 
@@ -74,6 +75,19 @@ provenance behavior, and explicit close/context-manager lifecycle remain in
 force. RAG text, citations, and rendered answers are data supplied to the
 agent, not instructions or authority.
 
+The application supplies an immutable trusted task scope/grant. Every proposed
+RAG scope must be a subset of that grant, checked before invocation; a valid
+`GlobalScope` or `HistoricalScope` is not authorization. Cross-course/global or
+historical expansion requires trusted application authorization, never model
+text. Missing or incompatible grants fail closed at the Phase 5 consumer.
+Phase 4 is not changed to implement this check.
+
+Historical Phase 4 design sections 7 (Phase 5 ownership) and 38 assigned
+conversation history, follow-up rewriting and approvals to Phase 5. Those
+future-facing assignments are superseded for Phase 5 by this specification:
+history/follow-up rewriting remain excluded; approvals belong to Phase 6.
+The historical document and frozen implementation remain unchanged.
+
 ## 4. Trust, state, and ownership boundaries
 
 | Boundary | Trusted owner | Untrusted input | Required decision |
@@ -142,15 +156,16 @@ directly; it returns a `ToolResult` to the orchestrator.
 
 ## 7. Bounded loop and retry policy
 
-The proposed, reviewable baseline is:
+The human-approved baseline is:
 
-| Limit | Proposed value |
+| Limit | Approved value |
 | --- | ---: |
 | `MAX_AGENT_STEPS` | 8 |
 | `MAX_STRUCTURED_PROPOSAL_REPAIRS` | 1 |
 | `MAX_IDENTICAL_TOOL_CALL_REPETITIONS` | 2 |
-| Model timeout | finite and configurable; exact value approved in implementation |
-| Tool timeout | finite and tool-specific; exact values approved per registry entry |
+| Model proposal timeout | 60 seconds |
+| `rag_query` timeout | 120 seconds |
+| `read_task_state`, `write_task_state`, `complete_task` timeout | 5 seconds each; metadata does not enable a handler |
 
 Only the initial proposal and one schema-repair proposal may be requested per
 step. Timeouts and transient failures follow an explicit bounded policy; there
@@ -162,6 +177,24 @@ typed terminal failure (`STEP_LIMIT_EXCEEDED`, `LOOP_DETECTED`,
 plus validated, normalized arguments. Raw model text, whitespace, or proposal
 ids do not defeat repetition detection. The count is request-local and reset
 only when a new `AgentTask` is created.
+
+One application-owned `EFFECTIVE_RUNTIME_POLICY` is assembled and validated at
+composition. It reconciles step, proposal-repair, identical-call, tool-call,
+observation-size, model-timeout and per-tool-timeout limits. Conflicting
+overlapping component settings are rejected, not silently selected. All
+applicable limits are finite and versioned; acceptance reports the effective
+configuration and its fingerprint (configuration only, no private payload).
+The model cannot change policy. Additional numeric limits require explicit
+review rather than guessed defaults.
+
+`REQUEST_DEADLINE` and `CANCELLATION_REQUESTED` do not imply
+`OPERATION_TERMINATED` or `RESOURCE_CLEANUP_COMPLETE`. A timed-out synchronous
+worker may still be running. Its trusted owner must track termination and
+cleanup and prevent conflicting resource reuse until both are verified.
+Record `EXECUTION_OUTCOME_KNOWN` versus `EXECUTION_OUTCOME_UNKNOWN` independently
+of caller timeout/task status. Do not retry an operation merely because the
+wait timed out. Phase 6 additionally requires durable operation identity,
+idempotency and unknown-outcome reconciliation before writes.
 
 ## 8. Model proposal contract
 
@@ -221,7 +254,14 @@ Initial permission classes are `READ_ONLY`, `LOCAL_STATE_WRITE`, and
 the granted capability set; policy validates the intersection. The model,
 retrieved text, and observations cannot escalate or grant permissions.
 
-### Initial tool inventory (proposed)
+The registry stays small and static, not a generic schema framework. Each
+executable entry requires a real trusted input validator, output validator,
+tool-specific observation projection, permission, finite timeout and
+tool/schema/audit version. A schema-name string alone is not output validation.
+Bounded model-facing descriptions are derived from trusted definitions where
+practical; model text cannot install or modify them.
+
+### Initial conceptual tool inventory (not execution authorization)
 
 | TOOL_NAME | PURPOSE | INPUT_TYPE | OUTPUT_TYPE | PERMISSION | SIDE_EFFECT | ALLOWED_IN_PHASE5 | WHY |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -255,6 +295,10 @@ permission, bounded target, validation before handler invocation, deterministic
 audit event, and a safe error contract. Whether this tool is enabled is an
 implementation/acceptance decision; the registry must fail closed when absent.
 
+Slice 7 is not authorized. A concrete useful domain operation and separate
+human approval are prerequisites. Without them it remains disabled and
+`NOT_IMPLEMENTED_BY_SCOPE`.
+
 ## 11. Observation sanitization and injection isolation
 
 `ToolResult` is trusted application output. `ToolObservation` is a deliberately
@@ -263,13 +307,24 @@ limited model-visible projection:
 - bounded total and per-field text (implementation constants are versioned);
 - structured fields restricted to an allowlist and primitive values;
 - safe error code and retryability only;
-- secrets, cookies, tokens, authorization state, SQL, stack traces, and raw
-  exception text removed;
+- operational secrets, cookies, tokens, authorization state, stack traces and
+  exception internals excluded at source; errors use fixed safe templates;
 - filesystem paths replaced by opaque resource identifiers or omitted;
 - document/evidence text labelled as data and bounded without becoming a
   prompt instruction;
-- deterministic truncation markers and fingerprints for audit, never hidden
-  truncation of a control field.
+- deterministic bounded text and truncation markers, never hidden truncation
+  of a control field; identity uses opaque application-owned references.
+
+Tool-specific allowlisted projections are the primary boundary, not broad
+semantic text rewriting. In particular, legitimate RAG prose containing SQL
+keywords must not be corrupted. Hashes of unsanitized private payloads must
+not be exposed as supposedly anonymous observations or audit identifiers.
+Private evaluation fingerprints have a separate restricted retention purpose;
+they are not permission to expose payload hashes to models or public logs.
+
+Slice 6 at `e0f468d` is IMPLEMENTED, NOT_YET_HUMAN_APPROVED and
+CORRECTIVE_REVIEW_REQUIRED. Existing tests/commit do not establish acceptance
+of its sanitizer. C4 must correct and independently review this boundary.
 
 Prompt-injection acceptance cases place hostile instructions in retrieved RAG
 evidence, document text, local state, and tool observations. The expected
@@ -287,10 +342,18 @@ The initial safe error vocabulary is closed and versioned:
 `TASK_CANCELLED`, and `INTERNAL_AGENT_FAILURE`.
 
 Public errors contain only a stable code, stage, retryability, and concise safe
-message. Audit records may retain timestamps, task/step ids, tool name,
-permission decision, argument/result fingerprints, state transitions, and
-resource durations. They must not retain credentials, raw prompts, full
+message. Audit records may retain timestamps, opaque task/step ids, tool name,
+permission decision, state transitions and resource durations. They must not
+expose unsanitized private argument/result fingerprints or retain credentials, raw prompts, full
 document text, raw model output, arbitrary paths, or stack traces.
+
+Before the Phase 7 UI, define a minimal versioned backend event envelope:
+`event_schema_version`, `task_id`, optional `step_id` and `operation_id`,
+`event_kind`, safe outcome/status, tool/schema/policy versions, duration and
+timestamp. IDs are application-owned opaque references. No raw prompts,
+document bodies, credentials, cookies, tokens, authorization headers or
+secret-bearing exceptions are permitted. Phase 7 consumes these backend
+events; durable storage is not implemented by this amendment.
 
 ## 13. Evaluation design
 
@@ -328,12 +391,27 @@ at creation, and is sufficient for approved post-hoc metrics without rerunning
 the one-time held-out cases. Artifact paths are injected disposable paths, not
 normal AAOS data paths.
 
-## 14. Proposed acceptance targets (not yet authoritative)
+The approved split is 72 calibration cases (36 English, 36 Arabic) and 24 final
+held-out cases (12 English, 12 Arabic). Both include normal tool tasks,
+invalid/unknown tools, malformed arguments, permission attacks, injection,
+loops, forbidden host-file/code execution and safe failures. Slice 8 freezes
+membership before tuning, not in this documentation task.
 
-These targets are proposals for human review, not implementation gates until
-approved:
+Slice 8 defines a minimal reusable envelope: manifest and split identities,
+dataset/case fingerprints, ordered case IDs, trace schema/version, metric
+version, retention policy and exact private post-hoc inputs. Domain metrics
+remain separate. Denominators and necessary retained inputs must be frozen
+before tuning/held-out execution; missing inputs cannot justify a rerun.
+Passing 24 cases is not evidence of 99% population reliability.
 
-| Target | Proposed threshold | Rationale |
+## 14. Human-approved acceptance targets
+
+These targets were explicitly approved before Slice 1. Tool-selection accuracy
+counts only manifest-defined opportunities with a unique correct action/tool;
+refusal, ambiguity and non-tool termination are not incorrect tool choices
+unless the manifest defines an expected tool.
+
+| Target | Approved threshold | Rationale |
 | --- | ---: | --- |
 | Structured output valid after one repair | >= 0.99 | malformed proposals should be exceptional while preserving a hard repair bound |
 | Tool-selection accuracy | >= 0.95 | useful routing without encouraging unsafe retries |
@@ -371,15 +449,37 @@ Phase 6 owns approval workflows and consequential external writes. Phase 7 owns
 dashboard/UI behavior. Phase 8 owns restricted code execution and VLM paths.
 Phase 5 does not pre-register those capabilities.
 
-Human review must still approve the exact tool schemas, whether
-`write_task_state` is enabled, persistence implementation, timeout values,
-evaluation case counts, target thresholds, audit retention duration, and any
-CLI/API exposure. None of these open decisions authorize implementation in
-this specification task.
+The reviewed tool schemas and numeric limits remain governed by their slice
+approvals. Local-write enablement, persistence, audit retention duration and
+any new CLI/API exposure still require separate authorization. This amendment
+does not authorize their implementation. Future-phase internal gates are
+defined in [the roadmap](../../PHASES.md).
 
 ## 17. Design acceptance gate
 
-Before Slice 1 implementation, human review must approve this document and the
-companion implementation plan. Approval must confirm the one-orchestrator
-boundary, local-write policy, closed tool inventory, limits, state transitions,
-injection isolation, held-out artifact retention, and Phase 4 preservation.
+The original design/plan approval and Slice 1–5 approvals remain historical
+evidence. Current status is owned by [the governance ledger](../../GOVERNANCE_LEDGER.md).
+The C1–C7 corrective gate in the companion plan must be separately authorized,
+implemented, verified and human approved before Slice 7 or Slice 8 acceptance
+work. This documentation amendment stops for human review, not implementation.
+
+## 18. Trusted final-output contract (roadmap amendment)
+
+The trusted orchestrator owns a discriminated final outcome:
+
+- `GROUNDED_RAG_RESPONSE`: retain the exact trusted Phase 4 rendered response,
+  public status, citations/provenance and request/result lineage. A model may
+  reference an existing task-owned result but cannot construct or relabel it.
+- `CONTROL_OR_CONVERSATIONAL_TERMINAL`: bounded model text, explicitly not
+  presented as citation-grounded evidence. It cannot replace a retained RAG
+  answer or invent citations.
+- `FUTURE_APPROVAL_ACTION_REFERENCE`: reserved for Phase 6 application-owned
+  action records; rejected/disabled in Phase 5, not an executable tool now.
+
+`terminal_text` and conceptual `complete_task` are proposals into the same
+trusted completion validator, requiring TERMINAL capability and a legal state
+transition. Neither directly sets authoritative state. `complete_task` has no
+additional side effects and does not introduce a second completion authority.
+Only the orchestrator commits completion. No second answer generator or
+model-rendered citation trust is introduced. Exact contract changes and
+regressions belong to separately authorized C2, not this amendment.

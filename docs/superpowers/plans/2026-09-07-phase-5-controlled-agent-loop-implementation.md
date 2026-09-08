@@ -12,12 +12,19 @@
 
 ## Global Constraints
 
+Current status is authoritative in [the governance ledger](../../GOVERNANCE_LEDGER.md).
+Slices 1–5 are implemented/human approved. Slice 6 is implemented at
+`e0f468d` but NOT_YET_HUMAN_APPROVED / CORRECTIVE_REVIEW_REQUIRED.
+Original slice descriptions below are retained as implementation history and
+planning context, not instructions to redo accepted work. C1–C7 supersedes
+conflicting sanitizer/completion/lifecycle wording for future corrections.
+
 - Phase 4 is frozen at `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`; do not modify its production code, tests, data, lifecycle, retrieval, or model configuration.
-- Do not create Phase 5 modules or tests until this plan receives explicit human approval.
+- The original plan is human approved; each new slice or corrective change still requires its own authorization.
 - One primary orchestrator only. No agents, recursive loops, hidden fallback, memory, or follow-up rewriting.
 - Model output, retrieved text, evidence, local state, and observations are untrusted data. Trusted application code owns state, policy, registry, schemas, limits, handlers, and rendering.
 - No arbitrary Python, REPL, shell, subprocess, filesystem, SQL, HTTP, browser, Moodle, credentials, external writes, MCP writes, Phase 6 approvals, Phase 7 dashboard, or Phase 8 execution.
-- Proposed limits remain hard and bounded: `MAX_AGENT_STEPS=8`, `MAX_STRUCTURED_PROPOSAL_REPAIRS=1`, `MAX_IDENTICAL_TOOL_CALL_REPETITIONS=2`; model/tool timeouts are finite and configurable.
+- Approved limits remain 8 steps, 1 proposal repair, 2 identical calls; proposal timeout 60 seconds, RAG 120 seconds, other conceptual tools 5 seconds. C5 reconciles them without silently changing values.
 - `UNKNOWN_TOOL_POLICY=REJECT`, `INVALID_ARGUMENT_POLICY=REJECT_BEFORE_HANDLER`, `UNAUTHORIZED_TOOL_POLICY=REJECT_BEFORE_HANDLER`, and dynamic model tool registration is forbidden.
 - Normal AAOS data paths are never used by tests or acceptance. `reflex` is never touched or staged.
 - Every task below is test-first: write the named failing test, implement the smallest behavior, run the focused command, then run the listed regression commands.
@@ -136,9 +143,9 @@
 
 **TDD steps:**
 
-1. Test removal/redaction of tokens, cookies, authorization state, raw paths, SQL, stack traces, and oversized fields.
+1. Test source-level secret exclusion, fixed safe errors, tool-specific allowlisted projections, opaque references and bounded text. Legitimate RAG text containing SQL keywords must remain intact.
 2. Test adversarial instructions in evidence, document text, local state, and observations cannot change policy, registry, limits, or state.
-3. Implement allowlisted structured fields, deterministic truncation, opaque references, and fingerprints without exposing raw content.
+3. Implement allowlisted structured fields and deterministic truncation; never expose unsanitized private payload hashes as anonymous identity. Existing implementation requires C4 corrective review.
 
 **Validation:** `uv run pytest tests/test_agent_observations.py tests/test_agent_prompt_injection.py -q`; Ruff/mypy on changed paths.
 
@@ -148,7 +155,44 @@
 
 **Future-phase exclusions:** No prompt rewriting that changes authority, no secret access, no generic file tools.
 
+## Mandatory corrective gate — C1–C7 (NOT IMPLEMENTED by this amendment)
+
+**Blocking order:** Separate human authorization → test-first narrow correction
+→ focused and integration verification → independent review → human approval.
+Complete this gate before Slice 7 or Slice 8 acceptance work proceeds. No
+corrective code or tests are authorized by the documentation amendment itself.
+
+| Item | Narrow planned boundary | Tests first / acceptance invariant |
+| --- | --- | --- |
+| C1 trusted task scope | `contracts.py`, `policy.py`, `phase4_adapter.py`, orchestrator forwarding | Fake service never called for missing grants, cross-course/global/historical expansion; authorized subset forwarded unchanged |
+| C2 final-output lineage | `contracts.py`, `orchestrator.py`, terminal validation | Grounded result retains exact Phase 4 status/citations/lineage; free terminal text cannot forge it; both completion proposals require same trusted terminal policy/transition |
+| C3 lifecycle | `orchestrator.py`, existing resource ownership boundary | Blocking fake continues after deadline; do not claim termination/cleanup, reuse resources or retry before confirmed cleanup; cancellation and unknown outcome remain distinct |
+| C4 sanitizer | `observations.py`, tool projections | Legitimate SQL/course prose preserved; source secrets/fixed errors bounded; private payload hashes never model-visible; injection cannot grant authority |
+| C5 effective policy | composition boundary and existing limits | Reject mismatched repairs/timeouts/limits; report exact effective non-secret versioned configuration; model cannot override |
+| C6 output contract | `registry.py`, tool definitions | Invalid handler output fails before observation; actual validator/projection/version required; trusted bounded catalog derived from metadata, no generic schema engine |
+| C7 safe events | minimal agent event contract and emitting boundaries | Versioned bounded metadata only; no raw prompts/docs/exceptions/secrets/private hashes; event ordering and operation identity reflect C3 |
+
+Use existing `src/aaos/agent/` modules and matching `tests/test_agent_*.py`;
+new policy/event modules only when the separately approved correction needs
+them. Do not modify Phase 4. Each C item is a reviewable TDD/commit boundary;
+shared interfaces must be approved before dependent corrections. C1/C2/C3 and
+C6 inform C4 projections; C5 validates their composition; C7 records their
+safe outcomes. No durable event store, approval engine, external writes or UI.
+
+**Commands after separate implementation authorization:** run the matching
+focused `uv run pytest tests/test_agent_<module>.py -q` using actual test paths;
+then `uv run pytest -q`, `uv run ruff format --check .`, `uv run ruff check .`,
+`uv run mypy src tests`, `uv lock --check`, `git diff --check`, import and
+protected-path checks at the corrective integration gate. Never weaken guards.
+Acceptance requires all C1–C7 invariants verified, independent review without
+unresolved Important/Critical findings, and explicit human acceptance of
+corrected Slice 6. A docs commit is not this acceptance.
+
 ## Slice 7 — Approved domain-specific local-state write (conditional)
+
+NOT AUTHORIZED. After the corrective gate, separately justify a concrete useful
+operation and obtain human approval. No useful approved operation means
+`NOT_IMPLEMENTED_BY_SCOPE`, not an automatic write implementation.
 
 **Files (planned only if approved):** `src/aaos/agent/task_state.py`, `tests/test_agent_task_state_write.py`.
 
@@ -177,7 +221,14 @@
 **TDD steps:**
 
 1. Test manifest schema, disjoint splits, fingerprints, English/Arabic coverage, and exact case ordering.
+   Use approved 72 calibration (36 English/36 Arabic), 24 held-out (12/12).
+   Freeze manifest/split identity, dataset/case hashes, ordered IDs, trace
+   schema/version, metric version, retention and private post-hoc inputs before
+   tuning. Keep domain metrics separate within this minimal reusable envelope.
 2. Test metric calculations for tool choice, policy safety zeroes, bounded repair, loop escape, runtime failures, and refusal/ambiguity outcomes.
+   Freeze denominators: tool-choice accuracy includes only manifest-defined
+   unique correct action/tool opportunities. Do not imply that 24 passing
+   held-out cases establish 99% population reliability.
 3. Test private bundle retention contains only formally required safe fields, is local/fingerprinted, and is sufficient for post-hoc metrics without rerunning held-out.
 
 **Validation:** `uv run pytest tests/test_agent_evaluation.py -q`; full evaluation/privacy tests, Ruff, mypy, and `uv lock --check`.
@@ -244,6 +295,7 @@
 
 ## Stop gate
 
-After each slice, stop for human review when its commit and evidence satisfy
-the slice acceptance gate. Slice 1 cannot begin until this specification and
-plan are human-approved.
+After each authorized slice/correction, stop for human review. Current stop is
+HUMAN_REVIEW_OF_PHASE5_ROADMAP_AMENDMENT. Slices 1–5 are not redone. Slice 6
+requires corrective review; Slice 7 and Phase 6 remain unauthorized. No later
+work may bypass the mandatory corrective gate.
