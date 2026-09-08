@@ -88,8 +88,11 @@ def _registry(
     *,
     name: ToolName = ToolName.RAG_QUERY,
     schema: ToolInputSchema | None = None,
-    timeout_seconds: float = 120,
+    timeout_seconds: float | None = None,
 ) -> ToolRegistry:
+    resolved_timeout = timeout_seconds
+    if resolved_timeout is None:
+        resolved_timeout = 5 if name is ToolName.READ_TASK_STATE else 120
     return ToolRegistry(
         (
             ToolDefinition(
@@ -106,7 +109,7 @@ def _registry(
                 ),
                 required_permission=PermissionClass.READ_ONLY,
                 side_effect=SideEffectClass.READ_ONLY,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=resolved_timeout,
                 handler=handler,
             ),
         )

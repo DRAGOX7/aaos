@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections.abc import Awaitable
 from dataclasses import replace
-from typing import Final, Protocol
+from typing import Protocol
 
 from .contracts import (
     AgentErrorCode,
@@ -32,23 +32,23 @@ from .contracts import (
     ToolResult,
 )
 from .observations import (
-    MAX_OBSERVATION_SIZE,
+    MAX_OBSERVATION_TEXT_SIZE,
     ObservationSanitizationError,
-    sanitize_tool_result,
+    ObservationSanitizer,
 )
 from .policy import PermissionPolicy
 from .proposal import ProposalRequest, ProposalResult
 from .registry import ToolInvocationError, ToolRegistry
+from .runtime_policy import (
+    MAX_AGENT_STEPS,
+    MAX_OBSERVATION_HISTORY_SIZE,
+    MAX_OBSERVATION_SIZE,
+    MAX_OBSERVATIONS,
+    MAX_TOOL_CALLS,
+    EffectiveRuntimePolicy,
+    compose_effective_runtime_policy,
+)
 from .state import TERMINAL_STATES, AgentStateMachine, InvalidAgentTransition
-
-MAX_AGENT_STEPS: Final[int] = 8
-"""Default maximum number of proposal steps (owned by :class:`AgentLimits`)."""
-
-MAX_TOOL_CALLS: Final[int] = 4
-"""Conservative per-task tool-call cap; the plan leaves this bound configurable."""
-
-MAX_OBSERVATIONS: Final[int] = 8
-"""Maximum number of sanitized observations retained in one proposal context."""
 
 
 class ProposalSource(Protocol):
@@ -79,6 +79,8 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.STEP_LIMIT_EXCEEDED: "agent step limit was reached",
     AgentErrorCode.LOOP_DETECTED: "repeated tool call limit was reached",
     AgentErrorCode.OBSERVATION_SANITIZATION_FAILED: "tool observation could not be sanitized",
+    AgentErrorCode.OBSERVATION_HISTORY_LIMIT_EXCEEDED: "tool observation history limit was reached",
+    AgentErrorCode.INCONSISTENT_RUNTIME_POLICY: "runtime policy is inconsistent",
     AgentErrorCode.TASK_CANCELLED: "agent task was cancelled",
     AgentErrorCode.MODEL_TIMEOUT: "agent proposal model timed out",
     AgentErrorCode.MODEL_UNAVAILABLE: "agent proposal model is unavailable",
@@ -102,9 +104,11 @@ class AgentOrchestrator:
         permission_policy: PermissionPolicy | None = None,
         *,
         limits: AgentLimits | None = None,
-        max_tool_calls: int = MAX_TOOL_CALLS,
-        max_observations: int = MAX_OBSERVATIONS,
-        max_observation_size: int = MAX_OBSERVATION_SIZE,
+        effective_policy: EffectiveRuntimePolicy | None = None,
+        max_tool_calls: int | None = None,
+        max_observations: int | None = None,
+        max_observation_size: int | None = None,
+        total_observation_history_size: int | None = None,
     ) -> None:
         if not callable(getattr(proposal_adapter, "propose", None)):
             raise TypeError("proposal_adapter must expose an async propose method")
@@ -119,10 +123,21 @@ class AgentOrchestrator:
         self._permission_policy = (
             permission_policy if permission_policy is not None else PermissionPolicy()
         )
-        self._limits = limits if limits is not None else AgentLimits()
-        self._max_tool_calls = _positive_bound(max_tool_calls, "max_tool_calls")
-        self._max_observations = _positive_bound(max_observations, "max_observations")
-        self._max_observation_size = _positive_bound(max_observation_size, "max_observation_size")
+        self._runtime_policy = compose_effective_runtime_policy(
+            effective_policy=effective_policy,
+            proposal_adapter=proposal_adapter,
+            registry=self._registry,
+            limits=limits,
+            max_tool_calls=max_tool_calls,
+            max_observations=max_observations,
+            max_observation_size=max_observation_size,
+            total_observation_history_size=total_observation_history_size,
+        )
+        self._limits = self._runtime_policy.to_agent_limits()
+        self._max_tool_calls = self._runtime_policy.max_tool_calls
+        self._max_observations = self._runtime_policy.max_observations
+        self._max_observation_size = self._runtime_policy.max_observation_size
+        self._total_observation_history_size = self._runtime_policy.total_observation_history_size
         self._cancel_requested = False
         self._cancel_signal: asyncio.Event | None = None
         self._active_operations: dict[int, asyncio.Task[object]] = {}
@@ -131,6 +146,18 @@ class AgentOrchestrator:
     @property
     def limits(self) -> AgentLimits:
         return self._limits
+
+    @property
+    def runtime_policy(self) -> EffectiveRuntimePolicy:
+        return self._runtime_policy
+
+    @property
+    def runtime_policy_version(self) -> str:
+        return self._runtime_policy.policy_version
+
+    @property
+    def runtime_policy_fingerprint(self) -> str:
+        return self._runtime_policy.fingerprint
 
     @property
     def registry(self) -> ToolRegistry:
@@ -151,6 +178,10 @@ class AgentOrchestrator:
     @property
     def max_observation_size(self) -> int:
         return self._max_observation_size
+
+    @property
+    def total_observation_history_size(self) -> int:
+        return self._total_observation_history_size
 
     def cancel(self) -> None:
         """Request cancellation before the next trusted orchestration boundary."""
@@ -225,6 +256,14 @@ class AgentOrchestrator:
                     task,
                     machine,
                     AgentErrorCode.STEP_LIMIT_EXCEEDED,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                )
+            if _observation_history_size(observations) > self._total_observation_history_size:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.OBSERVATION_HISTORY_LIMIT_EXCEEDED,
                     proposal_steps,
                     last_proposal_fingerprint,
                 )
@@ -438,73 +477,82 @@ class AgentOrchestrator:
                     proposal_steps,
                     last_proposal_fingerprint,
                 )
+            if definition is None:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.INCONSISTENT_RUNTIME_POLICY,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                )
+            timeout_seconds = self._runtime_policy.timeout_for(validated_call.name)
+            if timeout_seconds is None:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.INCONSISTENT_RUNTIME_POLICY,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                )
             try:
-                if definition is None:
-                    tool_result = self._registry.execute(
+                operation = asyncio.create_task(
+                    asyncio.to_thread(
+                        self._registry.execute,
                         proposal,
                         self._permission_policy,
                         trusted_task_scope=task.initial_scope,
                     )
-                    last_tool_execution_lifecycle = _known_tool_lifecycle(tool_result)
-                else:
-                    operation = asyncio.create_task(
-                        asyncio.to_thread(
-                            self._registry.execute,
-                            proposal,
-                            self._permission_policy,
-                            trusted_task_scope=task.initial_scope,
-                        )
-                    )
-                    operation_key = id(operation)
-                    self._active_operations[operation_key] = operation
+                )
+                operation_key = id(operation)
+                self._active_operations[operation_key] = operation
 
-                    def consume_operation(
-                        completed: asyncio.Task[object], *, key: int = operation_key
-                    ) -> None:
-                        try:
-                            completed.result()
-                        except BaseException:
-                            # The result is intentionally discarded after a
-                            # terminal timeout/cancellation.  Consuming it
-                            # prevents an unhandled late exception while the
-                            # operation remains owned by this orchestrator.
-                            pass
-                        self._active_operations.pop(key, None)
+                def consume_operation(
+                    completed: asyncio.Task[object], *, key: int = operation_key
+                ) -> None:
+                    try:
+                        completed.result()
+                    except BaseException:
+                        # The result is intentionally discarded after a
+                        # terminal timeout/cancellation.  Consuming it
+                        # prevents an unhandled late exception while the
+                        # operation remains owned by this orchestrator.
+                        pass
+                    self._active_operations.pop(key, None)
 
-                    operation.add_done_callback(consume_operation)
-                    tool_result, last_tool_execution_lifecycle = await self._await_tool_operation(
-                        operation, definition.timeout_seconds, cancel_event
+                operation.add_done_callback(consume_operation)
+                tool_result, last_tool_execution_lifecycle = await self._await_tool_operation(
+                    operation, timeout_seconds, cancel_event
+                )
+                if last_tool_execution_lifecycle.state is (
+                    ToolExecutionLifecycleState.DEADLINE_EXCEEDED
+                ):
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.TOOL_TIMEOUT,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                        tool_execution_lifecycle=last_tool_execution_lifecycle,
                     )
-                    if last_tool_execution_lifecycle.state is (
-                        ToolExecutionLifecycleState.DEADLINE_EXCEEDED
-                    ):
-                        return self._failure(
-                            task,
-                            machine,
-                            AgentErrorCode.TOOL_TIMEOUT,
-                            proposal_steps,
-                            last_proposal_fingerprint,
-                            tool_execution_lifecycle=last_tool_execution_lifecycle,
-                        )
-                    if last_tool_execution_lifecycle.state is (
-                        ToolExecutionLifecycleState.CANCELLATION_REQUESTED
-                    ):
-                        return self._cancelled(
-                            task,
-                            machine,
-                            proposal_steps,
-                            last_proposal_fingerprint,
-                            tool_execution_lifecycle=last_tool_execution_lifecycle,
-                        )
-                    if last_tool_execution_lifecycle.state is ToolExecutionLifecycleState.UNKNOWN:
-                        return self._failure(
-                            task,
-                            machine,
-                            AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
-                            proposal_steps,
-                            last_proposal_fingerprint,
-                            tool_execution_lifecycle=last_tool_execution_lifecycle,
-                        )
+                if last_tool_execution_lifecycle.state is (
+                    ToolExecutionLifecycleState.CANCELLATION_REQUESTED
+                ):
+                    return self._cancelled(
+                        task,
+                        machine,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                        tool_execution_lifecycle=last_tool_execution_lifecycle,
+                    )
+                if last_tool_execution_lifecycle.state is ToolExecutionLifecycleState.UNKNOWN:
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                        tool_execution_lifecycle=last_tool_execution_lifecycle,
+                    )
             except asyncio.CancelledError:
                 return self._cancelled(
                     task,
@@ -585,11 +633,10 @@ class AgentOrchestrator:
                     proposal_fingerprint=last_proposal_fingerprint,
                     tool_call_fingerprint=tool_key,
                 )
-                observation = sanitize_tool_result(
-                    tool_result,
-                    tool_name=proposal.tool_call.name,
+                observation = ObservationSanitizer(
                     max_size=self._max_observation_size,
-                )
+                    max_text_size=min(MAX_OBSERVATION_TEXT_SIZE, self._max_observation_size),
+                ).sanitize(tool_result, tool_name=proposal.tool_call.name)
                 if captured_grounded_result is not None:
                     observation = ToolObservation(
                         kind=observation.kind,
@@ -620,6 +667,15 @@ class AgentOrchestrator:
                     task,
                     machine,
                     AgentErrorCode.OBSERVATION_SANITIZATION_FAILED,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
+            if _observation_history_size(observations) > self._total_observation_history_size:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.OBSERVATION_HISTORY_LIMIT_EXCEEDED,
                     proposal_steps,
                     last_proposal_fingerprint,
                     tool_execution_lifecycle=last_tool_execution_lifecycle,
@@ -874,10 +930,8 @@ class AgentOrchestrator:
         )
 
 
-def _positive_bound(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
+def _observation_history_size(observations: list[ToolObservation]) -> int:
+    return sum(len(_stable_json(observation.to_dict())) for observation in observations)
 
 
 def _known_tool_lifecycle(result: ToolResult) -> ToolExecutionLifecycle:
@@ -954,6 +1008,7 @@ def _stable_fingerprint(value: object) -> str:
 __all__ = [
     "MAX_AGENT_STEPS",
     "MAX_OBSERVATION_SIZE",
+    "MAX_OBSERVATION_HISTORY_SIZE",
     "MAX_OBSERVATIONS",
     "MAX_TOOL_CALLS",
     "AgentOrchestrator",

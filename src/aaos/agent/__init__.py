@@ -80,6 +80,12 @@ from .registry import (
     ValidatedToolArguments,
     ValidatedToolCall,
 )
+from .runtime_policy import (
+    MAX_OBSERVATION_HISTORY_SIZE,
+    EffectiveRuntimePolicy,
+    RuntimePolicyCompositionError,
+    compose_effective_runtime_policy,
+)
 from .state import (
     LEGAL_STATE_TRANSITIONS,
     TERMINAL_STATES,
@@ -111,6 +117,9 @@ __all__ = [
     "ToolExecutionLifecycle",
     "ToolExecutionLifecycleState",
     "PermissionPolicy",
+    "EffectiveRuntimePolicy",
+    "RuntimePolicyCompositionError",
+    "compose_effective_runtime_policy",
     "ScopeAuthorizationDecision",
     "authorize_scope",
     "SideEffectClass",
@@ -150,6 +159,7 @@ __all__ = [
     "rag_result_to_observation",
     "MAX_AGENT_STEPS",
     "MAX_OBSERVATION_SIZE",
+    "MAX_OBSERVATION_HISTORY_SIZE",
     "MAX_OBSERVATIONS",
     "MAX_TOOL_CALLS",
     "AgentOrchestrator",

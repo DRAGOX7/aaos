@@ -171,6 +171,30 @@ class AgentProposalAdapter:
         self._request_timeout_seconds = float(request_timeout_seconds)
         self._last_failure: AgentFailure | None = None
 
+    @property
+    def max_repair_attempts(self) -> int:
+        """Trusted configuration exposed for runtime-policy composition."""
+
+        return self._max_repair_attempts
+
+    @property
+    def max_structured_proposal_repairs(self) -> int:
+        """Policy vocabulary alias for the adapter's repair setting."""
+
+        return self._max_repair_attempts
+
+    @property
+    def request_timeout_seconds(self) -> float:
+        """Trusted model-request deadline exposed for policy composition."""
+
+        return self._request_timeout_seconds
+
+    @property
+    def model_proposal_timeout_seconds(self) -> float:
+        """Policy vocabulary alias for the adapter request deadline."""
+
+        return self._request_timeout_seconds
+
     async def propose(self, request: ProposalRequest) -> ProposalResult:
         """Return one strict proposal or a safe typed failure."""
 

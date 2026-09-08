@@ -13,6 +13,11 @@ from .contracts import (
     PermissionDecision,
     TrustedTaskScope,
 )
+from .runtime_policy import (
+    EffectiveRuntimePolicy,
+    RuntimePolicyCompositionError,
+    compose_effective_runtime_policy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,8 +174,11 @@ class PermissionPolicy:
 
 
 __all__ = [
+    "EffectiveRuntimePolicy",
     "PermissionPolicy",
+    "RuntimePolicyCompositionError",
     "ScopeAuthorizationDecision",
     "authorize_scope",
+    "compose_effective_runtime_policy",
     "parse_proposed_scope",
 ]
