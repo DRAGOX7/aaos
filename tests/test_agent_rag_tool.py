@@ -12,6 +12,7 @@ from aaos.agent import (
     AgentProposal,
     PermissionClass,
     PermissionPolicy,
+    ToolError,
     ToolName,
     ToolObservation,
     ToolResult,
@@ -277,6 +278,23 @@ def test_rag_result_converts_to_bounded_observation() -> None:
 def test_invalid_rag_result_never_reaches_observation_boundary() -> None:
     with pytest.raises(ValueError, match="result output"):
         rag_result_to_observation(ToolResult.success(["arbitrary", "output"]))
+
+
+def test_public_rag_projection_uses_c4_safe_error_boundary() -> None:
+    result = ToolResult.failure(
+        ToolError(
+            AgentErrorCode.HANDLER_EXECUTION_FAILED,
+            "Authorization: Bearer secret-token at C:\\Users\\Jane Doe\\credentials\\db.sqlite3",
+        )
+    )
+
+    observation = rag_result_to_observation(result)
+
+    assert observation.status == "ERROR"
+    assert observation.text == "tool execution failed"
+    serialized = str(observation.to_dict())
+    assert "secret-token" not in serialized
+    assert "C:\\Users\\Jane Doe\\credentials\\db.sqlite3" not in serialized
 
 
 def test_rag_adapter_import_is_side_effect_free() -> None:

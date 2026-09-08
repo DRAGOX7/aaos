@@ -288,8 +288,8 @@ def _response_payload_from_mapping(output: Mapping[str, object]) -> RagOutput:
     }
 
 
-def rag_result_to_observation(result: ToolResult) -> ToolObservation:
-    """Project one validated RAG result into a bounded model-visible observation."""
+def _validated_rag_result_to_observation(result: ToolResult) -> ToolObservation:
+    """Project one validated RAG result before the C4 observation boundary."""
 
     if not isinstance(result, ToolResult):
         raise ValueError("result must be a ToolResult")
@@ -318,6 +318,22 @@ def rag_result_to_observation(result: ToolResult) -> ToolObservation:
             ("status", payload["status"]),
         ),
     )
+
+
+def rag_result_to_observation(result: ToolResult) -> ToolObservation:
+    """Project a RAG result through the public C4-safe observation boundary."""
+
+    # Keep this import lazy so the Phase 4 adapter's import remains side-effect
+    # free and the sanitizer can use the private validated projection above
+    # without a circular import.
+    from .observations import ObservationSanitizationError, ObservationSanitizer
+
+    try:
+        return ObservationSanitizer().sanitize(result, tool_name=ToolName.RAG_QUERY)
+    except ObservationSanitizationError as exc:
+        # Preserve the historical ValueError boundary without exposing raw
+        # payload or exception details to callers.
+        raise ValueError("result output could not be safely projected") from exc
 
 
 def build_read_tool_registry(service: LocalRagService | _RagService) -> ToolRegistry:

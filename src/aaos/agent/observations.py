@@ -8,7 +8,6 @@ registry, or mutates task state; instruction-like document text is data.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,7 +21,7 @@ from .contracts import (
     ToolResult,
     canonical_json,
 )
-from .phase4_adapter import rag_result_to_observation
+from .phase4_adapter import _validated_rag_result_to_observation
 
 MAX_OBSERVATION_SIZE: Final[int] = MAX_AGENT_TEXT_CHARACTERS
 """Maximum canonical serialized size of one model-visible observation."""
@@ -34,23 +33,192 @@ MAX_OBSERVATION_IDENTIFIER_SIZE: Final[int] = 256
 """Maximum size of bounded identifiers retained in an observation."""
 
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
-_WINDOWS_PATH = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:\\|\\\\)[^\s\"'<>]+")
-_POSIX_PATH = re.compile(r"(?<![A-Za-z0-9])/(?:[^\s\"'<>]+/)+[^\s\"'<>]*")
+_FILE_URI_PATH = re.compile(r"(?i)\bfile://[^\s\r\n\"'<>]+")
+_UNC_SLASH_PATH = re.compile(r"(?<![A-Za-z0-9:/])//(?=[^./\s\"'<>]+/)[^\s\r\n\"'<>]+")
+_UNC_DOTTED_SHARE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9:/])//(?=[^/\s\"'<>]+\.[^/\s\"'<>]+/"
+    r"(?:share|users|home|data|documents|private|credentials?|secrets?|database|rag)(?:/|$))"
+    r"[^\s\r\n\"'<>]+"
+)
+_UNC_DOTTED_SENSITIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9:/])//(?=[^/\s\"'<>]+\.[^/\s\"'<>]+/"
+    r"(?:[^/\r\n\"'<>]+/)*(?:credentials?|secrets?|tokens?|passwords?|auth|"
+    r"database|documents|rag|cookies?|config(?:uration)?|private)(?:[/ .,:;!?)}\t\r\n]|$))"
+    r"[^\s\r\n\"'<>]+"
+)
+_UNC_ROOT = re.compile(r"(?<![A-Za-z0-9:/])//[^./\s\"'<>]+(?=$|[ \t\r\n])")
+_ENV_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])"
+    r"(?:~|\$env:[A-Za-z_][A-Za-z0-9_]*|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)"
+    r"[\\/][^\s\r\n\"'<>]+"
+)
+_WINDOWS_SENSITIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)"
+    r"(?:[^\\/'\"<>\r\n]*[\\/])*"
+    r"[^\\/'\"<>\r\n]*?(?:credentials?|secrets?|tokens?|passwords?|auth|database|documents|rag|cookies?|config(?:uration)?|private)"
+    r"[^\\/'\"<>\r\n]*?(?=[\"'`.,;:!?)}]|$|\r?\n|[ \t])"
+)
+_WINDOWS_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)"
+    r"(?:[^\\/'\"<>\r\n]*[\\/])*"
+    r"[^\s\\/'\"<>]+(?:[ \t]+[^\s\\/'\"<>]+)*?\.[A-Za-z0-9]{1,16}"
+    r"[\\/]?"
+)
+_WINDOWS_DIRECTORY_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)"
+    r"(?:[^\\/'\"<>\r\n]+[\\/])+"
+    r"(?=[\"'`]|$|[ \t\r\n])"
+)
+_POSIX_SENSITIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9/])/(?!/)"
+    r"(?:[^/'\"<>\r\n]*[/])*"
+    r"[^/'\"<>\r\n]*?(?:credentials?|secrets?|tokens?|passwords?|auth|database|documents|rag|cookies?|config(?:uration)?|private)"
+    r"[^/'\"<>\r\n]*?(?=[\"'`.,;:!?)}]|$|\r?\n|[ \t])"
+)
+_POSIX_PATH = re.compile(
+    r"(?<![A-Za-z0-9/])/(?!/)(?:[^/'\"<>\r\n]*[/])*"
+    r"[^\s/'\"<>]+(?:[ \t]+[^\s/'\"<>]+)*?\.[A-Za-z0-9]{1,16}"
+    r"/?"
+)
+_POSIX_DIRECTORY_PATH = re.compile(
+    r"(?<![A-Za-z0-9/])/(?!/)(?:[^/'\"<>\r\n]+[/])+"
+    r"(?=[\"'`]|$|[ \t\r\n])"
+)
+_RELATIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?:\.\.?[\\/]|[A-Za-z0-9_-]+[\\/])"
+    r"(?:[^\\/'\"<>\r\n]*[\\/])*"
+    r"[^\s\\/'\"<>]+(?:[ \t]+[^\s\\/'\"<>]+)*?\.[A-Za-z0-9]{1,16}"
+)
+_RELATIVE_SENSITIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])"
+    r"(?:"
+    r"(?:\.\.?[\\/]|[A-Za-z0-9_-]+[\\/])+"
+    r"(?:credentials?|secrets?|tokens?|passwords?|auth|database|documents|rag|cookies?|config(?:uration)?|private)"
+    r"(?:[\\/][^\\/'\"<>\r\n]+)*"
+    r"|"
+    r"(?:credentials?|secrets?|tokens?|passwords?|auth|database|documents|rag|cookies?|config(?:uration)?|private)"
+    r"(?:[\\/][^\\/'\"<>\r\n]+)+"
+    r")"
+    r"(?=[\"'`.,;:!?)}]|$|\r?\n|[ \t])"
+)
+_DOT_RELATIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])\.[A-Za-z0-9_-]+[\\/]"
+    r"(?:[^\\/'\"<>\r\n]+[\\/])*[^\s\\/'\"<>]+"
+)
+_RELATIVE_DOTTED_SENSITIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?:[A-Za-z0-9_-]+\.)+[A-Za-z0-9_-]+[\\/]"
+    r"(?:[^\\/'\"<>\r\n]+[\\/])*"
+    r"(?:credentials?|secrets?|tokens?|passwords?|auth|database|documents|rag|"
+    r"cookies?|config(?:uration)?|private|signing[_ -]?key)(?:[\\/]|[ .,:;!?)}\t\r\n]|$)"
+    r"[^\r\n\"'<>]*"
+)
+_RELATIVE_DIRECTORY_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?:\.\.?[\\/]|[A-Za-z0-9_-]+[\\/])"
+    r"(?:[^\\/'\"<>\r\n]+[\\/])*"
+    r"(?=[\"'`]|$|[ \t\r\n])"
+)
+_RELATIVE_PATH_MARKER = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?!(?:\d+[\\/])+\d+(?:[\"'`.,;:!?)}]|$))"
+    r"(?:"
+    r"(?:\.\.?[\\/]|(?:src|users|home|docs|tmp|var|app|private)[\\/])"
+    r"(?:[^\\/'\"<>\r\n]+[\\/])+[^\s\\/'\"<>]+"
+    r"|(?:[A-Za-z0-9_-]+[\\/]){2}[^\s\\/'\"<>]+"
+    r")"
+)
+_AMBIGUOUS_SPACED_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:\\-])(?:\bfile://|//|~[\\/]|"
+    r"\$(?:env:[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*)[\\/]|"
+    r"%[A-Za-z_][A-Za-z0-9_]*%[\\/]|"
+    r"\.[A-Za-z0-9_-]+[\\/]|(?:src|users|home|docs|tmp|var|app|private)[\\/])"
+    r"[^\r\n\"'<>]*\s+[^\r\n\"'<>]*[\\/][^\r\n\"'<>]*"
+)
+_AMBIGUOUS_SPACED_RELATIVE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:\\-])(?:src|docs|tmp|var|app|private)/"
+    r"[^\r\n\"'<>]*\s+[^\r\n\"'<>]*"
+)
+_SPACED_DRIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)"
+    r"[^\r\n\"'<>]*\s+[^\r\n\"'<>]*[\\/][^\r\n\"'<>]*"
+)
+_SPACED_POSIX_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9/])/(?:[^/\r\n\"'<>]+/)*"
+    r"[^/\r\n\"'<>]*\s+[^/\r\n\"'<>]*/[^\r\n\"'<>]*"
+)
+_SPACED_DOTTED_RELATIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?:[A-Za-z0-9_-]+\.)+[A-Za-z0-9_-]+[\\/]"
+    r"[^\r\n\"'<>]*\s+[^\r\n\"'<>]*[\\/][^\r\n\"'<>]*"
+)
+_SPACED_SENSITIVE_RELATIVE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:\\-])(?:credentials?|secrets?|tokens?|passwords?|auth|"
+    r"database|documents|rag|cookies?|config(?:uration)?|private)[^\r\n\"'<>]*\s+"
+    r"[^\r\n\"'<>]*[\\/][^\r\n\"'<>]*"
+)
+_RELATIVE_BARE_PATH = re.compile(
+    r"(?i)(?<![A-Za-z0-9_./:-])(?!(?:\d+[\\/])+\d+(?:[\"'`.,;:!?)}]|$))"
+    r"(?:"
+    r"(?:\.\.?[\\/]|(?:src|users|home|docs|tmp|var|app|private)[\\/])"
+    r"[^\\/'\"<>\s]+(?:[\\/][^\\/'\"<>\s]+)*"
+    r"|(?:[A-Za-z0-9_-]+[\\/]){2}[^\\/'\"<>\s]+"
+    r")"
+    r"(?=[\"'`.,;:!?)}]|$)"
+)
+_WINDOWS_PATH_MARKER = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)(?=[^\r\n<>\"']+)")
+_POSIX_PATH_MARKER = re.compile(r"(?<![A-Za-z0-9/])/(?!/)(?=[^/\s\"'<>])")
+_DRIVE_ROOT = re.compile(r"(?i)(?<![A-Za-z0-9])[A-Za-z]:[\\/]")
 _AUTH_HEADER = re.compile(
     r"(?i)\b(?:authorization|proxy-authorization|x-api-key|x-auth-token)\s*:\s*"
     r"(?:bearer|basic)?\s*[^\s,;]+"
 )
 _COOKIE_HEADER = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*:\s*[^\s,;]+")
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|oauth[_ -]?token|"
-    r"session[_ -]?token|auth(?:orization)?[_ -]?(?:header|token|state)?|cookie|"
-    r"token|password|secret|credential(?:s)?)\b\s*[:=]\s*[^\n]+"
+    r"(?i)\b[A-Za-z0-9_.-]*(?:api[_ .-]?key|access[_ .-]?token|refresh[_ .-]?token|"
+    r"oauth[_ .-]?token|session[_ .-]?token|auth(?:orization)?[_ .-]?(?:header|token|state)?|"
+    r"cookie|proxy-authorization|x-api-key|x-auth-token|authorization|client[_ .-]?secret|"
+    r"private[_ .-]?key|signing[_ .-]?key|encryption[_ .-]?key|token|password|secret|"
+    r"credential(?:s)?)[A-Za-z0-9_.-]*\b\s*[:=]\s*[^\n]+"
+)
+_QUOTED_SECRET_ASSIGNMENT = re.compile(
+    r"(?is)[\"'][A-Za-z0-9_.-]*(?:api[_ .-]?key|access[_ .-]?token|refresh[_ .-]?token|"
+    r"oauth[_ .-]?token|session[_ .-]?token|auth(?:orization)?[_ .-]?(?:header|token|state)?|"
+    r"cookie|proxy-authorization|x-api-key|x-auth-token|authorization|client[_ .-]?secret|"
+    r"private[_ .-]?key|signing[_ .-]?key|encryption[_ .-]?key|token|password|secret|"
+    r"credential(?:s)?)[A-Za-z0-9_.-]*[\"']\s*[:=]\s*"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^,}\]]+)"
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
-_SQL = re.compile(r"(?is)\b(?:select|insert|update|delete|create|alter|drop|pragma)\b.*?(?:;|$)")
+_CLI_SECRET_FLAG = re.compile(
+    r"(?i)(?<![A-Za-z0-9_-])--(?:api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|"
+    r"auth[-_ ]?token|password|secret|credential)\s+[^\s,;]+"
+)
+_BARE_AUTH_HEADER = re.compile(
+    r"(?i)\b(?:authorization|proxy-authorization)\s+(?:bearer|basic)\s+[^\s,;]+"
+)
+_URL_CREDENTIALS = re.compile(r"(?i)\b([A-Za-z][A-Za-z0-9+.-]*)://[^/\s:@]*:[^/\s]+@")
+_PROTOCOL_RELATIVE_CREDENTIALS = re.compile(r"(?i)(?<![A-Za-z0-9:/])//[^/\s:@]*:[^/\s]+@")
 _TRACEBACK = re.compile(r"(?is)traceback\s*\(most recent call last\):.*")
-_EXCEPTION_REPR = re.compile(r"(?i)\b(?:[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\s*\([^\n]*\)")
+_EXCEPTION_REPR = re.compile(r"(?is)\b(?:[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\s*\([^)]*\)")
 _EXCEPTION_LINE = re.compile(r"(?im)^\s*[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)\s*:[^\n]*")
+_NESTED_EXCEPTION_OBJECT = re.compile(
+    r"(?is)\{[^{}]{0,512}[\"'](?:type|class|exception|"
+    r"(?:exception|error)[_-]?(?:type|class)?)[\"']\s*[:=]\s*"
+    r"[\"'](?:[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)|Error|Exception)[\"'][^{}]{0,1024}\}"
+)
+_PEM_PRIVATE_KEY = re.compile(
+    r"(?is)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----"
+)
+_STRUCTURED_DOUBLE_EXCEPTION = re.compile(
+    r"(?is)([\"\'](?:error|exception|trace|message|detail)[\"\']\s*[:=]\s*)"
+    r"\"(?:\\.|[^\"\\])*\""
+)
+_STRUCTURED_SINGLE_EXCEPTION = re.compile(
+    r"(?is)([\"'](?:error|exception|trace|message|detail)[\"']\s*[:=]\s*)"
+    r"'(?:\\.|[^'\\])*'"
+)
+_INLINE_EXCEPTION = re.compile(
+    r"(?i)\b(?:Error|Exception|[A-Z][A-Za-z0-9_]*(?:Error|Exception))\s*:\s*"
+    r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^}\]]*)"
+)
+_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
 
 _GENERIC_FIELDS: dict[str, frozenset[str]] = {
     "read_task_state": frozenset({"task_id", "state", "summary"}),
@@ -95,7 +263,6 @@ class ObservationAudit:
     tool_name: str
     result_status: str
     sanitization_status: str
-    source_fingerprint: str
     input_size: int
     output_size: int
     truncated: bool
@@ -106,12 +273,6 @@ class ObservationAudit:
             value = getattr(self, name)
             if not isinstance(value, str) or not _SAFE_IDENTIFIER.fullmatch(value):
                 raise ValueError(f"{name} must be a safe identifier")
-        if (
-            not isinstance(self.source_fingerprint, str)
-            or len(self.source_fingerprint) != 64
-            or any(character not in "0123456789abcdef" for character in self.source_fingerprint)
-        ):
-            raise ValueError("source_fingerprint must be a lowercase SHA-256 digest")
         for name in ("input_size", "output_size"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -128,7 +289,6 @@ class ObservationAudit:
             "output_size": self.output_size,
             "result_status": self.result_status,
             "sanitization_status": self.sanitization_status,
-            "source_fingerprint": self.source_fingerprint,
             "tool_name": self.tool_name,
             "truncated": self.truncated,
         }
@@ -189,7 +349,6 @@ class ObservationSanitizer:
             raise ObservationSanitizationError()
         try:
             source_json = canonical_json(result.to_dict())
-            source_fingerprint = hashlib.sha256(source_json.encode("utf-8")).hexdigest()
             if normalized_name == ToolName.RAG_QUERY.value:
                 observation = self._rag_observation(result)
                 truncated = False
@@ -206,7 +365,6 @@ class ObservationSanitizer:
                 tool_name=normalized_name,
                 result_status=observation.status,
                 sanitization_status="SANITIZED",
-                source_fingerprint=source_fingerprint,
                 input_size=len(source_json),
                 output_size=output_size,
                 truncated=truncated,
@@ -221,7 +379,7 @@ class ObservationSanitizer:
     def _rag_observation(self, result: ToolResult) -> ToolObservation:
         # Slice 3 owns the trusted Phase 4 response schema.  Reuse that
         # projection, then sanitize only the model-visible data representation.
-        projected = rag_result_to_observation(result)
+        projected = _validated_rag_result_to_observation(result)
         if projected.status == "ERROR":
             return self._error_observation(result, ToolName.RAG_QUERY.value)
         safe_fields: list[tuple[str, object]] = []
@@ -235,6 +393,9 @@ class ObservationSanitizer:
                 safe_fields.append((key, _safe_scalar_text(value, self._max_text_size)))
         if projected.text is None:
             raise ObservationSanitizationError()
+        # Phase 4 answer text is untrusted data, but it remains legitimate
+        # academic prose.  Preserve SQL-keyword prose while still removing
+        # operational filesystem paths before model exposure.
         safe_text = _sanitize_text(projected.text, self._max_text_size, truncate=False)
         return ToolObservation(
             kind=ToolName.RAG_QUERY.value,
@@ -248,19 +409,11 @@ class ObservationSanitizer:
     ) -> tuple[ToolObservation, bool]:
         output = result.output
         if not isinstance(output, Mapping):
-            # Arbitrary scalar/list output is not forwarded; only its opaque
-            # fingerprint is useful to a planner.
-            return (
-                ToolObservation(
-                    kind=tool_name,
-                    status="OK",
-                    fields=(("output_fingerprint", _fingerprint(result)),),
-                ),
-                False,
-            )
-        fields: list[tuple[str, object]] = [
-            ("output_fingerprint", _fingerprint(result)),
-        ]
+            # Arbitrary scalar/list output is not forwarded.  In particular,
+            # do not expose a deterministic hash of private raw content as a
+            # model-visible pseudo-identifier.
+            return ToolObservation(kind=tool_name, status="OK"), False
+        fields: list[tuple[str, object]] = []
         truncated = False
         for key in sorted(_GENERIC_FIELDS.get(tool_name, frozenset())):
             if key not in output:
@@ -367,13 +520,6 @@ def _normalize_tool_name(value: ToolName | str) -> str:
     raise ObservationSanitizationError()
 
 
-def _fingerprint(result: ToolResult) -> str:
-    try:
-        return hashlib.sha256(canonical_json(result.to_dict()).encode("utf-8")).hexdigest()
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ObservationSanitizationError() from exc
-
-
 def _safe_scalar_text(value: str, limit: int) -> str:
     safe = _sanitize_text(value, limit, truncate=False)
     if not safe or not _SAFE_IDENTIFIER.fullmatch(safe):
@@ -422,26 +568,144 @@ def _bounded_sanitized_text(value: str, limit: int) -> tuple[str, bool]:
     return _truncate_text(safe, limit), True
 
 
-def _sanitize_text(value: str, limit: int, *, truncate: bool) -> str:
+def _sanitize_text(value: str, limit: int, *, truncate: bool, redact_paths: bool = True) -> str:
     if not isinstance(value, str):
         raise ObservationSanitizationError()
+    # Remove private-key blocks before path ambiguity checks; encoded PEM
+    # material may contain separators that are not meaningful filesystem
+    # paths but would otherwise trigger the fail-closed guard.
+    value = _PEM_PRIVATE_KEY.sub("[REDACTED_SECRET]", value)
+    if redact_paths:
+        _reject_ambiguous_spaced_path(value)
     sanitized = value
     sanitized = _TRACEBACK.sub("[REDACTED_ERROR]", sanitized)
     sanitized = _EXCEPTION_REPR.sub("[REDACTED_ERROR]", sanitized)
+    # Apply the inline form before the line-oriented fallback so a multiline
+    # exception message is removed as one unit rather than leaving a
+    # continuation line behind.
+    sanitized = _INLINE_EXCEPTION.sub("[REDACTED_ERROR]", sanitized)
     sanitized = _EXCEPTION_LINE.sub("[REDACTED_ERROR]", sanitized)
-    sanitized = _SQL.sub("[REDACTED_QUERY]", sanitized)
+    sanitized = _NESTED_EXCEPTION_OBJECT.sub("[REDACTED_ERROR]", sanitized)
+    sanitized = _STRUCTURED_DOUBLE_EXCEPTION.sub(_redact_structured_exception, sanitized)
+    sanitized = _STRUCTURED_SINGLE_EXCEPTION.sub(_redact_structured_exception, sanitized)
+    sanitized = _PEM_PRIVATE_KEY.sub("[REDACTED_SECRET]", sanitized)
+    sanitized = _URL_CREDENTIALS.sub(r"\1://[REDACTED_AUTH]@", sanitized)
+    sanitized = _PROTOCOL_RELATIVE_CREDENTIALS.sub("//[REDACTED_AUTH]@", sanitized)
     sanitized = _AUTH_HEADER.sub("Authorization: [REDACTED_AUTH]", sanitized)
+    sanitized = _BARE_AUTH_HEADER.sub("Authorization: [REDACTED_AUTH]", sanitized)
     sanitized = _COOKIE_HEADER.sub("Cookie: [REDACTED_AUTH]", sanitized)
+    sanitized = _CLI_SECRET_FLAG.sub("[REDACTED_SECRET]", sanitized)
+    sanitized = _QUOTED_SECRET_ASSIGNMENT.sub("[REDACTED_SECRET]", sanitized)
     sanitized = _SECRET_ASSIGNMENT.sub("[REDACTED_SECRET]", sanitized)
     sanitized = _BEARER_TOKEN.sub("[REDACTED_AUTH]", sanitized)
-    sanitized = _WINDOWS_PATH.sub("[REDACTED_PATH]", sanitized)
-    sanitized = _POSIX_PATH.sub("[REDACTED_PATH]", sanitized)
+    if redact_paths:
+        sanitized = _WINDOWS_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _FILE_URI_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _UNC_DOTTED_SENSITIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _UNC_DOTTED_SHARE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _UNC_SLASH_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _UNC_ROOT.sub(_redact_path_match, sanitized)
+        sanitized = _ENV_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _WINDOWS_SENSITIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _SPACED_POSIX_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _SPACED_DOTTED_RELATIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _SPACED_SENSITIVE_RELATIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _POSIX_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _POSIX_SENSITIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _RELATIVE_SENSITIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _DOT_RELATIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _RELATIVE_DOTTED_SENSITIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _RELATIVE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _RELATIVE_BARE_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _WINDOWS_DIRECTORY_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _POSIX_DIRECTORY_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _RELATIVE_DIRECTORY_PATH.sub(_redact_path_match, sanitized)
+        sanitized = _DRIVE_ROOT.sub(_redact_path_match, sanitized)
+        if (
+            _WINDOWS_PATH_MARKER.search(sanitized)
+            or _POSIX_PATH_MARKER.search(sanitized)
+            or _RELATIVE_PATH_MARKER.search(sanitized)
+        ):
+            raise ObservationSanitizationError()
     sanitized = sanitized.strip()
     if not sanitized:
         raise ObservationSanitizationError()
     if truncate and len(sanitized) > limit:
         return _truncate_text(sanitized, limit)
     return sanitized
+
+
+def _redact_path_match(match: re.Match[str]) -> str:
+    """Replace a path while preserving sentence punctuation after it."""
+
+    value = match.group(0)
+    # Some defensive patterns intentionally over-approximate a path when
+    # spaces make its boundary ambiguous.  If a file extension gives us a
+    # safe boundary, retain the prose that follows it.  Handle compound
+    # extensions (for example ``.tar.gz``) as one suffix.
+    extension = re.search(
+        r"\.[A-Za-z0-9]{1,16}(?:\.[A-Za-z0-9]{1,16})*"
+        r"(?=[ \t,;:!?)}]|(?:\.(?![A-Za-z0-9]))|$)",
+        value,
+    )
+    trailing_after_extension = ""
+    if extension is not None:
+        trailing_after_extension = value[extension.end() :]
+        value = value[: extension.end()]
+    trailing = ""
+    while trailing_after_extension and trailing_after_extension[0] in _PATH_TRAILING_PUNCTUATION:
+        trailing += trailing_after_extension[0]
+        trailing_after_extension = trailing_after_extension[1:]
+    trailing += trailing_after_extension
+    while value and value[-1] in _PATH_TRAILING_PUNCTUATION:
+        trailing = value[-1] + trailing
+        value = value[:-1]
+    return "[REDACTED_PATH]" + trailing
+
+
+def _redact_structured_exception(match: re.Match[str]) -> str:
+    """Redact a serialized exception field without exposing its message."""
+
+    prefix = match.group(1)
+    quote = match.group(0)[-1]
+    value = match.group(0)[len(prefix) + 1 : -1]
+    key = re.search(r"[\"']([^\"']+)[\"']\s*[:=]\s*$", prefix)
+    if (
+        key is not None and key.group(1).lower() in {"error", "exception", "trace", "detail"}
+    ) or re.search(r"(?i)\b[A-Z][A-Za-z0-9_]*(?:Error|Exception)\b", value):
+        return f"{prefix}{quote}[REDACTED_ERROR]{quote}"
+    return match.group(0)
+
+
+def _reject_ambiguous_spaced_path(value: str) -> None:
+    """Fail closed when whitespace makes a path boundary indeterminate."""
+
+    if _AMBIGUOUS_SPACED_PATH.search(value):
+        raise ObservationSanitizationError()
+    relative = _AMBIGUOUS_SPACED_RELATIVE.search(value)
+    if relative is not None and not re.search(
+        r"\.[A-Za-z0-9]{1,16}(?=[ \t]|[.,;:!?)}]|$)", relative.group(0)
+    ):
+        raise ObservationSanitizationError()
+    match = _SPACED_DRIVE_PATH.search(value)
+    if (
+        match is not None
+        and not match.group(0).rstrip().endswith(("/", "\\"))
+        and not re.search(r"\.[A-Za-z0-9]{1,16}(?=[ \t]|[.,;:!?)}]|$)", match.group(0))
+    ):
+        raise ObservationSanitizationError()
+    for pattern in (
+        _SPACED_POSIX_PATH,
+        _SPACED_DOTTED_RELATIVE_PATH,
+        _SPACED_SENSITIVE_RELATIVE_PATH,
+    ):
+        match = pattern.search(value)
+        if (
+            match is not None
+            and not match.group(0).rstrip().endswith(("/", "\\"))
+            and not re.search(r"\.[A-Za-z0-9]{1,16}(?=[ \t]|[.,;:!?)}]|$)", match.group(0))
+        ):
+            raise ObservationSanitizationError()
 
 
 def _truncate_text(value: str, limit: int) -> str:
