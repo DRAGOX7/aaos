@@ -25,6 +25,8 @@ from aaos.agent.registry import (
     ToolRegistry,
     ToolValueType,
     ValidatedToolArguments,
+    make_observation_projector,
+    validate_generic_tool_result,
 )
 
 
@@ -54,6 +56,8 @@ def _definition(
         side_effect=side_effect,
         timeout_seconds=timeout,
         handler=handler,
+        output_validator=validate_generic_tool_result,
+        observation_projector=make_observation_projector(name),
     )
 
 

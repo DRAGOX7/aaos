@@ -18,6 +18,7 @@ from .contracts import (
     ToolCall,
     ToolError,
     ToolName,
+    ToolObservation,
     ToolResult,
     TrustedTaskScope,
 )
@@ -45,6 +46,10 @@ class ToolValueType(StrEnum):
 
 
 Handler: TypeAlias = Callable[["ValidatedToolArguments"], ToolResult]
+ToolOutputValidator: TypeAlias = Callable[[ToolResult], ToolResult]
+ToolObservationProjector: TypeAlias = Callable[[ToolResult, int], ToolObservation]
+
+DEFAULT_TOOL_CONTRACT_VERSION = "phase5-tool-contract-v1"
 
 
 def _safe_name(value: object, field: str, *, limit: int = 128) -> str:
@@ -265,6 +270,37 @@ class ValidatedToolCall:
         }
 
 
+def validate_generic_tool_result(result: ToolResult) -> ToolResult:
+    """Validate the bounded JSON-object result used by non-RAG read tools."""
+
+    if not isinstance(result, ToolResult):
+        raise ValueError("handler returned an invalid ToolResult")
+    if result.ok and not isinstance(result.output, Mapping):
+        raise ValueError("successful tool output must be a JSON object")
+    return result
+
+
+def make_observation_projector(tool_name: ToolName) -> ToolObservationProjector:
+    def project(result: ToolResult, max_size: int) -> ToolObservation:
+        # Keep observations lazy so importing the registry never loads a
+        # model, opens a store, starts a process, or mutates the filesystem.
+        from .observations import (
+            MAX_OBSERVATION_TEXT_SIZE,
+            ObservationSanitizationError,
+            ObservationSanitizer,
+        )
+
+        try:
+            return ObservationSanitizer(
+                max_size=max_size,
+                max_text_size=min(MAX_OBSERVATION_TEXT_SIZE, max_size),
+            ).sanitize(result, tool_name=tool_name)
+        except ObservationSanitizationError as exc:
+            raise ValueError("tool result could not be safely projected") from exc
+
+    return project
+
+
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
     name: ToolName
@@ -278,6 +314,9 @@ class ToolDefinition:
     result_schema: str = "tool_result"
     sanitization_policy: str = "safe_default"
     audit_version: str = "phase5-v1"
+    output_validator: ToolOutputValidator | None = None
+    observation_projector: ToolObservationProjector | None = None
+    contract_version: str = DEFAULT_TOOL_CONTRACT_VERSION
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, ToolName):
@@ -324,6 +363,46 @@ class ToolDefinition:
         object.__setattr__(
             self, "audit_version", _safe_name(self.audit_version, "audit_version", limit=64)
         )
+        object.__setattr__(
+            self,
+            "contract_version",
+            _safe_name(self.contract_version, "contract_version", limit=64),
+        )
+        if self.output_validator is not None and not callable(self.output_validator):
+            raise TypeError("output_validator must be callable or None")
+        if self.observation_projector is not None and not callable(self.observation_projector):
+            raise TypeError("observation_projector must be callable or None")
+
+    @property
+    def input_validator(self) -> Callable[[ToolArguments], ValidatedToolArguments]:
+        """Return the immutable schema-owned validator for raw arguments."""
+
+        return self.input_schema.validate
+
+    def validate_output(self, result: ToolResult) -> ToolResult:
+        """Validate trusted handler output before it can reach observation."""
+
+        validator = self.output_validator
+        if not callable(validator):
+            raise ValueError("executable tool requires output_validator")
+        validated = validator(result)
+        if not isinstance(validated, ToolResult):
+            raise ValueError("output_validator must return ToolResult")
+        return validated
+
+    def project_observation(self, result: ToolResult, *, max_size: int) -> ToolObservation:
+        """Project validated output into the bounded C4 observation boundary."""
+
+        projector = self.observation_projector
+        if not callable(projector):
+            raise ValueError("executable tool requires observation_projector")
+        try:
+            observation = projector(result, max_size)
+        except Exception as exc:
+            raise ValueError("observation projector failed safely") from exc
+        if not isinstance(observation, ToolObservation):
+            raise ValueError("observation_projector must return ToolObservation")
+        return observation
 
     def to_metadata(self) -> dict[str, object]:
         return {
@@ -337,6 +416,11 @@ class ToolDefinition:
             "side_effect": self.side_effect.value,
             "timeout_seconds": self.timeout_seconds,
             "audit_version": self.audit_version,
+            "contract_version": self.contract_version,
+            "output_contract": {
+                "name": self.result_schema,
+                "version": self.contract_version,
+            },
         }
 
 
@@ -363,6 +447,17 @@ class ToolRegistry:
                 raise ValueError(
                     f"{AgentErrorCode.DUPLICATE_TOOL_REGISTRATION.value}: {definition.name.value}"
                 )
+            if definition.handler is not None:
+                if not callable(definition.output_validator):
+                    raise ValueError(
+                        f"{AgentErrorCode.INVALID_TOOL_DEFINITION.value}: "
+                        "executable tool requires output_validator"
+                    )
+                if not callable(definition.observation_projector):
+                    raise ValueError(
+                        f"{AgentErrorCode.INVALID_TOOL_DEFINITION.value}: "
+                        "executable tool requires observation_projector"
+                    )
             by_name[definition.name] = definition
             ordered.append(definition)
         self._definitions = MappingProxyType(by_name)
@@ -386,6 +481,8 @@ class ToolRegistry:
                     PermissionClass.READ_ONLY,
                     SideEffectClass.READ_ONLY,
                     120,
+                    output_validator=validate_generic_tool_result,
+                    observation_projector=make_observation_projector(ToolName.RAG_QUERY),
                 ),
                 ToolDefinition(
                     ToolName.READ_TASK_STATE,
@@ -396,6 +493,8 @@ class ToolRegistry:
                     PermissionClass.READ_ONLY,
                     SideEffectClass.READ_ONLY,
                     5,
+                    output_validator=validate_generic_tool_result,
+                    observation_projector=make_observation_projector(ToolName.READ_TASK_STATE),
                 ),
                 ToolDefinition(
                     ToolName.WRITE_TASK_STATE,
@@ -410,6 +509,8 @@ class ToolRegistry:
                     PermissionClass.LOCAL_STATE_WRITE,
                     SideEffectClass.LOCAL_STATE_WRITE,
                     5,
+                    output_validator=validate_generic_tool_result,
+                    observation_projector=make_observation_projector(ToolName.WRITE_TASK_STATE),
                 ),
                 ToolDefinition(
                     ToolName.COMPLETE_TASK,
@@ -420,6 +521,8 @@ class ToolRegistry:
                     PermissionClass.TERMINAL,
                     SideEffectClass.TERMINAL,
                     5,
+                    output_validator=validate_generic_tool_result,
+                    observation_projector=make_observation_projector(ToolName.COMPLETE_TASK),
                 ),
             )
         )
@@ -458,7 +561,7 @@ class ToolRegistry:
         call: ToolCall = proposal.tool_call
         try:
             definition = self.get(call.name)
-            arguments = definition.input_schema.validate(call.arguments)
+            arguments = definition.input_validator(call.arguments)
         except ToolInvocationError:
             raise
         except (TypeError, ValueError) as exc:
@@ -516,7 +619,7 @@ class ToolRegistry:
                 raise ToolInvocationError(
                     AgentErrorCode.HANDLER_EXECUTION_FAILED, "handler returned an invalid result"
                 )
-            return result
+            return definition.validate_output(result)
         except ToolInvocationError as exc:
             return ToolResult.failure(ToolError(exc.code, str(exc).split(": ", 1)[-1]))
         except Exception:
@@ -552,14 +655,19 @@ class ToolRegistry:
 
 
 __all__ = [
+    "DEFAULT_TOOL_CONTRACT_VERSION",
     "MAX_TOOL_TIMEOUT_SECONDS",
     "SideEffectClass",
     "ToolDefinition",
     "ToolField",
     "ToolInputSchema",
     "ToolInvocationError",
+    "ToolObservationProjector",
+    "ToolOutputValidator",
     "ToolRegistry",
     "ToolValueType",
+    "make_observation_projector",
+    "validate_generic_tool_result",
     "ValidatedToolArguments",
     "ValidatedToolCall",
 ]

@@ -31,11 +31,7 @@ from .contracts import (
     ToolObservation,
     ToolResult,
 )
-from .observations import (
-    MAX_OBSERVATION_TEXT_SIZE,
-    ObservationSanitizationError,
-    ObservationSanitizer,
-)
+from .observations import ObservationSanitizationError
 from .policy import PermissionPolicy
 from .proposal import ProposalRequest, ProposalResult
 from .registry import ToolInvocationError, ToolRegistry
@@ -633,10 +629,10 @@ class AgentOrchestrator:
                     proposal_fingerprint=last_proposal_fingerprint,
                     tool_call_fingerprint=tool_key,
                 )
-                observation = ObservationSanitizer(
+                observation = definition.project_observation(
+                    tool_result,
                     max_size=self._max_observation_size,
-                    max_text_size=min(MAX_OBSERVATION_TEXT_SIZE, self._max_observation_size),
-                ).sanitize(tool_result, tool_name=proposal.tool_call.name)
+                )
                 if captured_grounded_result is not None:
                     observation = ToolObservation(
                         kind=observation.kind,

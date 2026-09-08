@@ -89,6 +89,9 @@ def test_adversarial_rag_data_cannot_change_policy_limits_or_registry() -> None:
                 result_schema=definition.result_schema,
                 sanitization_policy=definition.sanitization_policy,
                 audit_version=definition.audit_version,
+                output_validator=definition.output_validator,
+                observation_projector=definition.observation_projector,
+                contract_version=definition.contract_version,
             )
             for definition in ToolRegistry.default().definitions
         )

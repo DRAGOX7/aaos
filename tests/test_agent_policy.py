@@ -6,7 +6,14 @@ import pytest
 
 from aaos.agent.contracts import AgentErrorCode, PermissionClass, ToolName, ToolResult
 from aaos.agent.policy import PermissionPolicy
-from aaos.agent.registry import SideEffectClass, ToolDefinition, ToolInputSchema, ToolRegistry
+from aaos.agent.registry import (
+    SideEffectClass,
+    ToolDefinition,
+    ToolInputSchema,
+    ToolRegistry,
+    make_observation_projector,
+    validate_generic_tool_result,
+)
 
 
 def _definition(permission: PermissionClass) -> ToolDefinition:
@@ -23,6 +30,8 @@ def _definition(permission: PermissionClass) -> ToolDefinition:
         side_effect=side_effect,
         timeout_seconds=5,
         handler=lambda _: ToolResult.success({}),
+        output_validator=validate_generic_tool_result,
+        observation_projector=make_observation_projector(ToolName.RAG_QUERY),
     )
 
 

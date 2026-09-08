@@ -34,6 +34,8 @@ from aaos.agent.registry import (
     ToolRegistry,
     ToolValueType,
     ValidatedToolArguments,
+    make_observation_projector,
+    validate_generic_tool_result,
 )
 
 
@@ -92,6 +94,8 @@ def _read_registry(
                 side_effect=SideEffectClass.READ_ONLY,
                 timeout_seconds=timeout,
                 handler=handler,
+                output_validator=validate_generic_tool_result,
+                observation_projector=make_observation_projector(ToolName.READ_TASK_STATE),
             ),
         )
     )
@@ -162,6 +166,8 @@ def test_mismatched_tool_timeout_fails_against_an_existing_snapshot() -> None:
                 side_effect=SideEffectClass.READ_ONLY,
                 timeout_seconds=4,
                 handler=lambda _: ToolResult.success({}),
+                output_validator=validate_generic_tool_result,
+                observation_projector=make_observation_projector(ToolName.READ_TASK_STATE),
             ),
         )
     )

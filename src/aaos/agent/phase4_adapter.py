@@ -254,6 +254,36 @@ def _validate_observation_output(output: object) -> Mapping[str, object]:
     return payload
 
 
+def _validate_rag_tool_result(result: ToolResult) -> ToolResult:
+    """Validate the exact trusted Phase 4 output contract before projection."""
+
+    if not isinstance(result, ToolResult):
+        raise ValueError("result must be a ToolResult")
+    if result.ok:
+        _validate_observation_output(result.output)
+    elif result.error is None:
+        raise ValueError("failed result requires an error")
+    return result
+
+
+def _rag_observation_projector(result: ToolResult, max_size: int) -> ToolObservation:
+    """Project validated RAG output through the C4 sanitizer at its bound."""
+
+    from .observations import (
+        MAX_OBSERVATION_TEXT_SIZE,
+        ObservationSanitizationError,
+        ObservationSanitizer,
+    )
+
+    try:
+        return ObservationSanitizer(
+            max_size=max_size,
+            max_text_size=min(MAX_OBSERVATION_TEXT_SIZE, max_size),
+        ).sanitize(result, tool_name=ToolName.RAG_QUERY)
+    except ObservationSanitizationError as exc:
+        raise ValueError("result output could not be safely projected") from exc
+
+
 def _response_payload_from_mapping(output: Mapping[str, object]) -> RagOutput:
     status = output.get("status")
     if not isinstance(status, str) or status not in {item.value for item in RagAnswerStatus}:
@@ -326,11 +356,13 @@ def rag_result_to_observation(result: ToolResult) -> ToolObservation:
     # Keep this import lazy so the Phase 4 adapter's import remains side-effect
     # free and the sanitizer can use the private validated projection above
     # without a circular import.
-    from .observations import ObservationSanitizationError, ObservationSanitizer
+    from .observations import ObservationSanitizationError
 
     try:
-        return ObservationSanitizer().sanitize(result, tool_name=ToolName.RAG_QUERY)
-    except ObservationSanitizationError as exc:
+        from .observations import MAX_OBSERVATION_SIZE
+
+        return _rag_observation_projector(result, MAX_OBSERVATION_SIZE)
+    except (ImportError, ObservationSanitizationError, ValueError) as exc:
         # Preserve the historical ValueError boundary without exposing raw
         # payload or exception details to callers.
         raise ValueError("result output could not be safely projected") from exc
@@ -358,6 +390,9 @@ def build_read_tool_registry(service: LocalRagService | _RagService) -> ToolRegi
                 result_schema="rag_query_result",
                 sanitization_policy="rag_safe_summary",
                 audit_version=definition.audit_version,
+                output_validator=_validate_rag_tool_result,
+                observation_projector=_rag_observation_projector,
+                contract_version=definition.contract_version,
             )
         )
     return ToolRegistry(tuple(definitions))

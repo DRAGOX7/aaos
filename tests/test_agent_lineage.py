@@ -33,6 +33,8 @@ from aaos.agent.registry import (
     ToolRegistry,
     ToolValueType,
     ValidatedToolArguments,
+    make_observation_projector,
+    validate_generic_tool_result,
 )
 
 
@@ -92,6 +94,8 @@ def _registry(
                 side_effect=SideEffectClass.READ_ONLY,
                 timeout_seconds=120,
                 handler=handler,
+                output_validator=validate_generic_tool_result,
+                observation_projector=make_observation_projector(name),
             ),
         )
     )
@@ -299,6 +303,8 @@ def test_non_rag_result_cannot_create_grounded_reference() -> None:
                 side_effect=SideEffectClass.READ_ONLY,
                 timeout_seconds=5,
                 handler=handler,
+                output_validator=validate_generic_tool_result,
+                observation_projector=make_observation_projector(ToolName.READ_TASK_STATE),
             ),
         )
     )
@@ -332,6 +338,8 @@ def test_rag_named_generic_handler_cannot_mint_grounded_reference() -> None:
                 side_effect=SideEffectClass.READ_ONLY,
                 timeout_seconds=120,
                 handler=handler,
+                output_validator=validate_generic_tool_result,
+                observation_projector=make_observation_projector(ToolName.RAG_QUERY),
             ),
         )
     )
