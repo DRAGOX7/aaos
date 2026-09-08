@@ -91,6 +91,18 @@ def test_valid_tool_proposal_remains_untrusted_and_does_not_execute() -> None:
     assert result.proposal.tool_call.arguments.validated is False
 
 
+def test_valid_grounded_result_reference_is_the_only_terminal_authority_field() -> None:
+    gateway = FakeGateway(_response('{"grounded_result_ref":"rag-abc123"}'))
+
+    result = _propose(gateway)
+
+    assert result.ok is True
+    assert result.proposal is not None
+    assert result.proposal.grounded_result_ref == "rag-abc123"
+    assert result.proposal.terminal_text is None
+    assert result.proposal.tool_call is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

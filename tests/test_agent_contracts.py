@@ -17,8 +17,10 @@ from aaos.agent.contracts import (
     AgentStep,
     AgentTask,
     AgentTaskId,
+    GroundedRagResponse,
     PermissionClass,
     PermissionDecision,
+    TerminalResultKind,
     ToolArguments,
     ToolCall,
     ToolError,
@@ -189,6 +191,48 @@ def test_terminal_result_and_step_validate_trusted_shapes() -> None:
         AgentTerminalResult(AgentTaskId("task-001"), AgentState.PLANNING, 0)
     with pytest.raises(ValueError, match="fingerprint"):
         AgentStep(1, AgentState.CREATED, AgentState.PLANNING, "not-a-hash")
+
+
+def test_grounded_terminal_contract_rejects_replacement_text_and_preserves_lineage() -> None:
+    payload = {
+        "answer_text": "Trusted answer",
+        "citations": (
+            {
+                "claim_id": "claim-1",
+                "document_version_id": 7,
+                "document_title": "source.pdf",
+                "page_start": 1,
+                "page_end": 1,
+            },
+        ),
+        "content_revision": 2,
+        "generation_id": 3,
+        "language": "en",
+        "rendered_text": "Trusted answer\n[source.pdf, page 1]",
+        "status": "ANSWER",
+    }
+    trusted = GroundedRagResponse(AgentTaskId("task-001"), "rag-ref", payload)
+    from aaos.agent.contracts import AgentTerminalResult
+
+    result = AgentTerminalResult(
+        AgentTaskId("task-001"),
+        AgentState.COMPLETED,
+        1,
+        result_kind=TerminalResultKind.GROUNDED_RAG_RESPONSE,
+        grounded_rag_response=trusted,
+    )
+
+    assert result.grounded is True
+    assert result.result_text == payload["rendered_text"]
+    with pytest.raises(ValueError, match="preserve"):
+        AgentTerminalResult(
+            AgentTaskId("task-001"),
+            AgentState.COMPLETED,
+            1,
+            result_text="forged",
+            result_kind=TerminalResultKind.GROUNDED_RAG_RESPONSE,
+            grounded_rag_response=trusted,
+        )
 
 
 def test_contract_serialization_is_deterministic_and_json_compatible() -> None:

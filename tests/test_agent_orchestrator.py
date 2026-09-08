@@ -124,7 +124,8 @@ def _orchestrator(
     return AgentOrchestrator(
         adapter,
         registry,
-        permission or PermissionPolicy.from_values({PermissionClass.READ_ONLY}),
+        permission
+        or PermissionPolicy.from_values({PermissionClass.READ_ONLY, PermissionClass.TERMINAL}),
         limits=limits,
         max_tool_calls=max_tool_calls,
     )

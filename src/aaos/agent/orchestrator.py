@@ -22,6 +22,9 @@ from .contracts import (
     AgentState,
     AgentTask,
     AgentTerminalResult,
+    GroundedRagResponse,
+    PermissionClass,
+    TerminalResultKind,
     ToolObservation,
     ToolResult,
 )
@@ -68,6 +71,7 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.MODEL_TIMEOUT: "agent proposal model timed out",
     AgentErrorCode.MODEL_UNAVAILABLE: "agent proposal model is unavailable",
     AgentErrorCode.INTERNAL_AGENT_FAILURE: "agent execution failed safely",
+    AgentErrorCode.INVALID_GROUNDED_REFERENCE: "grounded result reference was invalid",
 }
 
 
@@ -154,6 +158,8 @@ class AgentOrchestrator:
         proposal_steps = 0
         tool_calls = 0
         observations: list[ToolObservation] = []
+        grounded_results: dict[str, GroundedRagResponse] = {}
+        grounded_result_counter = 0
         repeated_calls: dict[str, int] = {}
         last_proposal_fingerprint = _stable_fingerprint({"task_id": task.task_id.value})
 
@@ -250,8 +256,47 @@ class AgentOrchestrator:
 
             proposal = result.proposal
             last_proposal_fingerprint = _stable_fingerprint(proposal.to_dict())
+            if proposal.grounded_result_ref is not None:
+                if not self._terminal_permission_granted():
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.PERMISSION_DENIED,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+                grounded_result = grounded_results.get(proposal.grounded_result_ref)
+                if grounded_result is None or grounded_result.task_id != task.task_id:
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.INVALID_GROUNDED_REFERENCE,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+                return self._complete_grounded(task, machine, grounded_result, proposal_steps)
             if proposal.terminal_text is not None:
-                return self._complete(task, machine, proposal.terminal_text, proposal_steps)
+                if not self._terminal_permission_granted():
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.PERMISSION_DENIED,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+                # A control/conversational proposal is valid only when no
+                # trusted Phase 4 result has been retained. It must never
+                # replace a grounded answer or refusal with model-authored
+                # text.
+                if grounded_results:
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.INVALID_PROPOSAL,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+                return self._complete_control(task, machine, proposal.terminal_text, proposal_steps)
             if proposal.tool_call is None:
                 return self._failure(
                     task,
@@ -393,6 +438,30 @@ class AgentOrchestrator:
                     last_proposal_fingerprint,
                 )
 
+            captured_grounded_result: GroundedRagResponse | None = None
+            trusted_phase4_output = (
+                definition is not None
+                and getattr(definition.handler, "trusted_phase4_output", False) is True
+            )
+            if trusted_phase4_output:
+                try:
+                    grounded_result_counter += 1
+                    # This is a task-local opaque handle, intentionally not a
+                    # hash of answer/citation/provenance content. The trusted
+                    # map below is the only authority that resolves it.
+                    result_ref = f"rag-result-{grounded_result_counter}"
+                    captured_grounded_result = GroundedRagResponse.from_tool_result(
+                        task.task_id, result_ref, tool_result
+                    )
+                except (TypeError, ValueError, KeyError):
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.HANDLER_EXECUTION_FAILED,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+
             try:
                 machine.transition(
                     AgentState.OBSERVING,
@@ -404,6 +473,18 @@ class AgentOrchestrator:
                     tool_name=proposal.tool_call.name,
                     max_size=self._max_observation_size,
                 )
+                if captured_grounded_result is not None:
+                    observation = ToolObservation(
+                        kind=observation.kind,
+                        status=observation.status,
+                        text=observation.text,
+                        fields=(
+                            *observation.fields,
+                            ("grounded_result_ref", captured_grounded_result.result_ref),
+                        ),
+                    )
+                    if len(_stable_json(observation.to_dict())) > self._max_observation_size:
+                        raise ObservationSanitizationError()
             except (TypeError, ValueError, ObservationSanitizationError):
                 return self._failure(
                     task,
@@ -414,6 +495,8 @@ class AgentOrchestrator:
                 )
 
             observations.append(observation)
+            if captured_grounded_result is not None:
+                grounded_results[captured_grounded_result.result_ref] = captured_grounded_result
             if len(observations) > self._max_observations:
                 return self._failure(
                     task,
@@ -474,14 +557,43 @@ class AgentOrchestrator:
     def _is_cancelled(self, cancel_event: asyncio.Event | None) -> bool:
         return self._cancel_requested or (cancel_event is not None and cancel_event.is_set())
 
-    def _complete(
+    def _terminal_permission_granted(self) -> bool:
+        return PermissionClass.TERMINAL in self._permission_policy.granted_permissions
+
+    def _complete_control(
         self, task: AgentTask, machine: AgentStateMachine, text: str, step_count: int
     ) -> AgentTerminalResult:
         try:
             machine.transition(AgentState.COMPLETED)
         except InvalidAgentTransition:
             return self._internal_failure(task, machine, step_count)
-        return AgentTerminalResult(task.task_id, AgentState.COMPLETED, step_count, result_text=text)
+        return AgentTerminalResult(
+            task.task_id,
+            AgentState.COMPLETED,
+            step_count,
+            result_text=text,
+            result_kind=TerminalResultKind.CONTROL_OR_CONVERSATIONAL_TERMINAL,
+        )
+
+    def _complete_grounded(
+        self,
+        task: AgentTask,
+        machine: AgentStateMachine,
+        grounded_result: GroundedRagResponse,
+        step_count: int,
+    ) -> AgentTerminalResult:
+        try:
+            machine.transition(AgentState.COMPLETED)
+        except InvalidAgentTransition:
+            return self._internal_failure(task, machine, step_count)
+        return AgentTerminalResult(
+            task.task_id,
+            AgentState.COMPLETED,
+            step_count,
+            result_text=str(grounded_result.payload["rendered_text"]),
+            result_kind=TerminalResultKind.GROUNDED_RAG_RESPONSE,
+            grounded_rag_response=grounded_result,
+        )
 
     def _cancelled(
         self,

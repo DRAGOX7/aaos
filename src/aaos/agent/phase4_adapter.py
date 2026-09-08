@@ -176,6 +176,12 @@ def _safe_rag_failure(error: RagOperationalError | None = None) -> ToolResult:
 class RagQueryAdapter:
     """Translate validated tool arguments into one frozen Phase 4 query."""
 
+    # Trusted provenance marker consumed by the Phase 5 C2 boundary. Merely
+    # naming a custom tool ``rag_query`` is insufficient to create grounded
+    # output; only this application-owned Phase 4 adapter may mint a lineage
+    # reference.
+    trusted_phase4_output = True
+
     def __init__(self, service: LocalRagService | _RagService) -> None:
         if not callable(getattr(service, "ask", None)):
             raise TypeError("service must expose LocalRagService.ask")

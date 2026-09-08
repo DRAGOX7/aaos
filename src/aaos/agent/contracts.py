@@ -61,6 +61,13 @@ class PermissionDecisionStatus(StrEnum):
     DENY = "DENY"
 
 
+class TerminalResultKind(StrEnum):
+    """Trusted discriminant for an agent's final application result."""
+
+    GROUNDED_RAG_RESPONSE = "GROUNDED_RAG_RESPONSE"
+    CONTROL_OR_CONVERSATIONAL_TERMINAL = "CONTROL_OR_CONVERSATIONAL_TERMINAL"
+
+
 class AgentErrorCode(StrEnum):
     INVALID_PROPOSAL = "INVALID_PROPOSAL"
     INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
@@ -89,6 +96,7 @@ class AgentErrorCode(StrEnum):
     INTERNAL_AGENT_FAILURE = "INTERNAL_AGENT_FAILURE"
     SCOPE_DENIED = "SCOPE_DENIED"
     SCOPE_GRANTED = "SCOPE_GRANTED"
+    INVALID_GROUNDED_REFERENCE = "INVALID_GROUNDED_REFERENCE"
 
 
 AgentFailureCode = AgentErrorCode
@@ -410,14 +418,17 @@ class AgentProposal:
     tool_call: ToolCall | None = None
     terminal_text: str | None = None
     proposal_id: str | None = None
+    grounded_result_ref: str | None = None
 
     def __post_init__(self) -> None:
-        if self.tool_call is None and self.terminal_text is None:
+        actions = sum(
+            value is not None
+            for value in (self.tool_call, self.terminal_text, self.grounded_result_ref)
+        )
+        if actions != 1:
             raise ValueError("proposal must contain exactly one action")
         if self.tool_call is not None and not isinstance(self.tool_call, ToolCall):
             raise TypeError("tool_call must be a ToolCall")
-        if self.tool_call is not None and self.terminal_text is not None:
-            raise ValueError("proposal must contain exactly one action")
         if self.terminal_text is not None:
             object.__setattr__(
                 self, "terminal_text", _nonblank_text(self.terminal_text, "terminal_text")
@@ -426,12 +437,18 @@ class AgentProposal:
             object.__setattr__(
                 self, "proposal_id", _safe_identifier(self.proposal_id, "proposal_id")
             )
+        if self.grounded_result_ref is not None:
+            object.__setattr__(
+                self,
+                "grounded_result_ref",
+                _safe_identifier(self.grounded_result_ref, "grounded_result_ref"),
+            )
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> AgentProposal:
         if not isinstance(payload, Mapping):
             raise TypeError("proposal must be an object")
-        allowed = {"proposal_id", "tool_call", "terminal_text"}
+        allowed = {"proposal_id", "tool_call", "terminal_text", "grounded_result_ref"}
         unknown = set(payload) - allowed
         if unknown:
             raise ValueError("proposal contains unknown fields")
@@ -441,6 +458,9 @@ class AgentProposal:
         terminal_text = payload.get("terminal_text")
         if terminal_text is not None and not isinstance(terminal_text, str):
             raise TypeError("terminal_text must be a string")
+        grounded_result_ref = payload.get("grounded_result_ref")
+        if grounded_result_ref is not None and not isinstance(grounded_result_ref, str):
+            raise TypeError("grounded_result_ref must be a string")
         raw_call = payload.get("tool_call")
         call: ToolCall | None = None
         if raw_call is not None:
@@ -465,7 +485,12 @@ class AgentProposal:
             if call_id is not None and not isinstance(call_id, str):
                 raise TypeError("call_id must be a string")
             call = ToolCall(ToolName(name), ToolArguments.from_mapping(raw_arguments), call_id)
-        return cls(tool_call=call, terminal_text=terminal_text, proposal_id=proposal_id)
+        return cls(
+            tool_call=call,
+            terminal_text=terminal_text,
+            proposal_id=proposal_id,
+            grounded_result_ref=grounded_result_ref,
+        )
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -475,6 +500,8 @@ class AgentProposal:
             result["tool_call"] = self.tool_call.to_dict()
         if self.terminal_text is not None:
             result["terminal_text"] = self.terminal_text
+        if self.grounded_result_ref is not None:
+            result["grounded_result_ref"] = self.grounded_result_ref
         return result
 
 
@@ -660,12 +687,107 @@ class AgentFailure:
 
 
 @dataclass(frozen=True, slots=True)
+class GroundedRagResponse:
+    """Trusted, task-local projection of one validated Phase 4 RAG result.
+
+    The payload is created by trusted application code from a successful
+    ``rag_query`` handler result.  It is never parsed from model terminal
+    text, and the task/ref identity prevents stale or cross-task references.
+    """
+
+    task_id: AgentTaskId
+    result_ref: str
+    payload: Mapping[str, object]
+
+    _PAYLOAD_FIELDS = frozenset(
+        {
+            "answer_text",
+            "citations",
+            "content_revision",
+            "generation_id",
+            "language",
+            "rendered_text",
+            "status",
+        }
+    )
+    _STATUSES = frozenset({"ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"})
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task_id, AgentTaskId):
+            raise TypeError("task_id must be an AgentTaskId")
+        object.__setattr__(self, "result_ref", _safe_identifier(self.result_ref, "result_ref"))
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("payload must be a mapping")
+        frozen_payload = _freeze_json(self.payload, "payload")
+        if not isinstance(frozen_payload, Mapping):
+            raise TypeError("payload must be a JSON object")
+        values = dict(frozen_payload)
+        if set(values) != self._PAYLOAD_FIELDS:
+            raise ValueError("grounded RAG payload fields are invalid")
+        status = values["status"]
+        if not isinstance(status, str) or status not in self._STATUSES:
+            raise ValueError("grounded RAG status is invalid")
+        for field_name in ("answer_text", "rendered_text"):
+            _nonblank_text(values[field_name], f"payload.{field_name}")
+        language = values["language"]
+        if not isinstance(language, str) or language.casefold() not in {"en", "ar"}:
+            raise ValueError("grounded RAG language is invalid")
+        _positive_int(values["generation_id"], "payload.generation_id")
+        _nonnegative_int(values["content_revision"], "payload.content_revision")
+        citations = values["citations"]
+        if not isinstance(citations, tuple):
+            raise ValueError("grounded RAG citations must be a tuple")
+        for citation in citations:
+            if not isinstance(citation, Mapping) or set(citation) != {
+                "claim_id",
+                "document_version_id",
+                "document_title",
+                "page_start",
+                "page_end",
+            }:
+                raise ValueError("grounded RAG citation is invalid")
+            _nonblank_text(citation["claim_id"], "citation.claim_id")
+            _nonblank_text(citation["document_title"], "citation.document_title")
+            _positive_int(citation["document_version_id"], "citation.document_version_id")
+            _positive_int(citation["page_start"], "citation.page_start")
+            _positive_int(citation["page_end"], "citation.page_end")
+            if citation["page_end"] < citation["page_start"]:
+                raise ValueError("grounded RAG citation page range is invalid")
+        if status == "INSUFFICIENT_EVIDENCE" and citations:
+            raise ValueError("grounded RAG refusal cannot contain citations")
+        if status != "INSUFFICIENT_EVIDENCE" and not citations:
+            raise ValueError("grounded RAG supported response requires citations")
+        object.__setattr__(self, "payload", frozen_payload)
+
+    @classmethod
+    def from_tool_result(
+        cls, task_id: AgentTaskId, result_ref: str, result: ToolResult
+    ) -> "GroundedRagResponse":
+        if (
+            not isinstance(result, ToolResult)
+            or not result.ok
+            or not isinstance(result.output, Mapping)
+        ):
+            raise ValueError("result is not a successful RAG payload")
+        return cls(task_id, result_ref, result.output)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "payload": _thaw_json(self.payload),
+            "result_ref": self.result_ref,
+            "task_id": self.task_id.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class AgentTerminalResult:
     task_id: AgentTaskId
     state: AgentState
     step_count: int
     result_text: str | None = None
     failure: AgentFailure | None = None
+    result_kind: TerminalResultKind = TerminalResultKind.CONTROL_OR_CONVERSATIONAL_TERMINAL
+    grounded_rag_response: GroundedRagResponse | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, AgentTaskId):
@@ -679,21 +801,48 @@ class AgentTerminalResult:
             raise TypeError("failure must be an AgentFailure")
         if self.state is AgentState.FAILED and self.failure is None:
             raise ValueError("failed result requires an AgentFailure")
+        if not isinstance(self.result_kind, TerminalResultKind):
+            raise TypeError("result_kind must be a TerminalResultKind")
+        if self.result_kind is TerminalResultKind.GROUNDED_RAG_RESPONSE:
+            if self.state is not AgentState.COMPLETED:
+                raise ValueError("grounded response requires completed state")
+            if self.failure is not None or self.grounded_rag_response is None:
+                raise ValueError("grounded response cannot contain failure or be absent")
+            if self.grounded_rag_response.task_id != self.task_id:
+                raise ValueError("grounded response task identity does not match")
+            rendered_text = self.grounded_rag_response.payload["rendered_text"]
+            if not isinstance(rendered_text, str):
+                raise ValueError("grounded response rendered text is invalid")
+            if self.result_text is None:
+                object.__setattr__(self, "result_text", rendered_text)
+            elif self.result_text != rendered_text:
+                raise ValueError("grounded result text must preserve Phase 4 rendered text")
+        elif self.grounded_rag_response is not None:
+            raise ValueError("control terminal cannot contain a grounded response")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "failure": self.failure.to_dict() if self.failure else None,
+            "grounded_rag_response": (
+                self.grounded_rag_response.to_dict() if self.grounded_rag_response else None
+            ),
+            "result_kind": self.result_kind.value,
             "result_text": self.result_text,
             "state": self.state.value,
             "step_count": self.step_count,
             "task_id": self.task_id.to_dict(),
         }
 
+    @property
+    def grounded(self) -> bool:
+        return self.result_kind is TerminalResultKind.GROUNDED_RAG_RESPONSE
+
 
 __all__ = [
     "AgentErrorCode",
     "AgentFailure",
     "AgentFailureCode",
+    "GroundedRagResponse",
     "AgentLimits",
     "AgentProposal",
     "AgentState",
@@ -705,6 +854,7 @@ __all__ = [
     "PermissionClass",
     "PermissionDecision",
     "PermissionDecisionStatus",
+    "TerminalResultKind",
     "ToolArguments",
     "ToolCall",
     "ToolError",

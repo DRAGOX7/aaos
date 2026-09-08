@@ -208,10 +208,16 @@ _STRUCTURED_RESPONSE_FORMATS = {
                         "required": ["name", "arguments"],
                     },
                     "terminal_text": {"type": "string", "minLength": 1, "maxLength": 16384},
+                    "grounded_result_ref": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                        "maxLength": 128,
+                    },
                 },
                 "oneOf": [
                     {"required": ["tool_call"]},
                     {"required": ["terminal_text"]},
+                    {"required": ["grounded_result_ref"]},
                 ],
             },
         },
