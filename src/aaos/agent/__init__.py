@@ -78,6 +78,8 @@ from .proposal import (
     ProposalRequest,
     ProposalResult,
     ProviderProposalEnvelope,
+    RetrieveProposal,
+    TerminalProposal,
 )
 from .registry import (
     DEFAULT_TOOL_CONTRACT_VERSION,
@@ -97,6 +99,7 @@ from .registry import (
 )
 from .runtime_policy import (
     MAX_OBSERVATION_HISTORY_SIZE,
+    USEFUL_RAG_CALLS_PER_REQUEST_MAX,
     EffectiveRuntimePolicy,
     RuntimePolicyCompositionError,
     compose_effective_runtime_policy,
@@ -174,6 +177,8 @@ __all__ = [
     "ProviderProposalEnvelope",
     "ProposalRequest",
     "ProposalResult",
+    "RetrieveProposal",
+    "TerminalProposal",
     "RagQueryAdapter",
     "build_read_tool_registry",
     "parse_rag_scope",
@@ -183,6 +188,7 @@ __all__ = [
     "MAX_OBSERVATION_HISTORY_SIZE",
     "MAX_OBSERVATIONS",
     "MAX_TOOL_CALLS",
+    "USEFUL_RAG_CALLS_PER_REQUEST_MAX",
     "AgentOrchestrator",
     "ProposalSource",
     "MAX_OBSERVATION_IDENTIFIER_SIZE",

@@ -299,3 +299,34 @@ After each authorized slice/correction, stop for human review. Current stop is
 HUMAN_REVIEW_OF_PHASE5_ROADMAP_AMENDMENT. Slices 1–5 are not redone. Slice 6
 requires corrective review; Slice 7 and Phase 6 remain unauthorized. No later
 work may bypass the mandatory corrective gate.
+
+## C8 — Least-authority proposal and evaluation contract
+
+**Files:** `src/aaos/agent/proposal.py`, `src/aaos/agent/orchestrator.py`,
+`src/aaos/inference/models.py`, `src/aaos/inference/lm_studio.py`, and the
+versioned `src/aaos/agent/evaluation/v2.py` contract.
+
+The model-facing transport is a strict flat `retrieve`/`terminal_text`
+envelope. Trusted code derives the static `rag_query` identity, task scope,
+bounded original question and default language. Successful RAG output is
+completed directly with its Phase 4 lineage; no second model step or useful
+RAG call is allowed. The v1 evaluation contract remains immutable and v2 is a
+uniform, fingerprinted contract-only projection with model metrics focused on
+retrieve-vs-terminal behavior.
+
+**Validation:** focused C8/provider-schema/orchestrator tests, all C1–C7 and
+v1 regressions, v2 manifest tests, full pytest, Ruff, strict mypy,
+`uv lock --check`, `git diff --check`, and import smoke. No model or held-out
+run is part of this slice.
+
+**Acceptance gate:** model cannot supply tool identity, scope, arguments,
+permission, policy or grounded lineage; trusted Phase 4 execution and all
+security boundaries remain intact; v1 artifacts are unchanged; v2 manifests
+are disjoint, language-balanced and fingerprinted. Human review is required
+before v2 calibration.
+
+**Commit boundary:** `fix(phase5): minimize proposal model authority`.
+
+**Future-phase exclusions:** no calibration, held-out execution, model
+selection, Phase 4 changes, Phase 6 approval/write infrastructure, or Phase 7–8
+capabilities.

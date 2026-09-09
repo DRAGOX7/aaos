@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from .contracts import (
     MAX_AGENT_TEXT_CHARACTERS,
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 MAX_AGENT_STEPS = 8
 MAX_TOOL_CALLS = 4
+USEFUL_RAG_CALLS_PER_REQUEST_MAX: Final[int] = 1
 MAX_OBSERVATIONS = 8
 MAX_OBSERVATION_SIZE = MAX_AGENT_TEXT_CHARACTERS
 MAX_OBSERVATION_HISTORY_SIZE = MAX_AGENT_TEXT_CHARACTERS
@@ -464,6 +465,7 @@ __all__ = [
     "MAX_OBSERVATION_SIZE",
     "MAX_OBSERVATIONS",
     "MAX_TOOL_CALLS",
+    "USEFUL_RAG_CALLS_PER_REQUEST_MAX",
     "EffectiveRuntimePolicy",
     "RuntimePolicyCompositionError",
     "compose_effective_runtime_policy",

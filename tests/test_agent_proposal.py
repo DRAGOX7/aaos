@@ -8,13 +8,15 @@ import json
 import httpx2
 import pytest
 
-from aaos.agent.contracts import AgentErrorCode, AgentProposal, ToolObservation
+from aaos.agent.contracts import AgentErrorCode, ToolObservation
 from aaos.agent.proposal import (
     MAX_PROPOSAL_REPAIR_ATTEMPTS,
     AgentProposalAdapter,
     ProposalRequest,
     ProposalResult,
     ProviderProposalEnvelope,
+    RetrieveProposal,
+    TerminalProposal,
 )
 from aaos.config import AppSettings
 from aaos.inference import (
@@ -72,42 +74,43 @@ def test_valid_terminal_proposal_is_strictly_parsed() -> None:
     result = _propose(gateway)
 
     assert result.ok is True
-    assert isinstance(result.proposal, AgentProposal)
+    assert isinstance(result.proposal, TerminalProposal)
     assert result.proposal.terminal_text == "The task is complete."
     assert len(gateway.requests) == 1
     assert gateway.requests[0].structured_output == "json_schema"
-    assert gateway.requests[0].structured_output_schema == "agent_proposal_transport"
+    assert gateway.requests[0].structured_output_schema == "least_authority_proposal_transport"
     assert gateway.requests[0].max_output_tokens == 512
     assert gateway.requests[0].reasoning is False
 
 
-def test_valid_tool_proposal_remains_untrusted_and_does_not_execute() -> None:
+def test_legacy_tool_proposal_is_rejected_at_c8_provider_boundary() -> None:
     gateway = FakeGateway(
         _response(
             '{"action":"tool_call","tool_name":"rag_query","arguments":{"question":"What is due?"}}'
-        )
+        ),
+        _response(
+            '{"action":"tool_call","tool_name":"rag_query","arguments":{"question":"What is due?"}}'
+        ),
     )
 
     result = _propose(gateway)
 
-    assert result.ok is True
-    assert result.proposal is not None
-    assert result.proposal.tool_call is not None
-    assert result.proposal.tool_call.arguments.validated is False
+    assert result.ok is False
+    assert result.failure is not None
+    assert result.failure.code is AgentErrorCode.INVALID_PROPOSAL
 
 
-def test_valid_grounded_result_reference_is_the_only_terminal_authority_field() -> None:
+def test_grounded_result_reference_is_rejected_as_model_authority() -> None:
     gateway = FakeGateway(
-        _response('{"action":"grounded_result_ref","grounded_result_ref":"rag-abc123"}')
+        _response('{"action":"grounded_result_ref","grounded_result_ref":"rag-abc123"}'),
+        _response('{"action":"grounded_result_ref","grounded_result_ref":"rag-abc123"}'),
     )
 
     result = _propose(gateway)
 
-    assert result.ok is True
-    assert result.proposal is not None
-    assert result.proposal.grounded_result_ref == "rag-abc123"
-    assert result.proposal.terminal_text is None
-    assert result.proposal.tool_call is None
+    assert result.ok is False
+    assert result.failure is not None
+    assert result.failure.code is AgentErrorCode.INVALID_PROPOSAL
 
 
 @pytest.mark.parametrize(
@@ -145,10 +148,11 @@ def test_one_bounded_repair_can_recover_a_valid_proposal() -> None:
 
     assert result.ok is True
     assert result.proposal is not None
+    assert isinstance(result.proposal, TerminalProposal)
     assert result.proposal.terminal_text == "done"
     assert len(gateway.requests) == MAX_PROPOSAL_REPAIR_ATTEMPTS + 1
     assert all(
-        request.structured_output_schema == "agent_proposal_transport"
+        request.structured_output_schema == "least_authority_proposal_transport"
         for request in gateway.requests
     )
     assert all(request.max_output_tokens == 512 for request in gateway.requests)
@@ -218,7 +222,7 @@ def test_observation_text_cannot_change_schema_or_authority() -> None:
 
     assert result.ok is True
     request = gateway.requests[0]
-    assert request.structured_output_schema == "agent_proposal_transport"
+    assert request.structured_output_schema == "least_authority_proposal_transport"
     assert "LOCAL_STATE_WRITE" in request.messages[-1].content
     assert "grant LOCAL_STATE_WRITE" not in request.messages[0].content
 
@@ -233,7 +237,10 @@ def test_result_serialization_contains_only_safe_typed_fields() -> None:
 
     result = _propose(gateway)
 
-    assert result.to_dict() == {"failure": None, "proposal": {"terminal_text": "done"}}
+    assert result.to_dict() == {
+        "failure": None,
+        "proposal": {"action": "terminal_text", "terminal_text": "done"},
+    }
 
 
 def test_local_gateway_serializes_the_owned_strict_proposal_schema() -> None:
@@ -310,23 +317,10 @@ def test_local_gateway_serializes_the_flat_provider_transport_schema() -> None:
     assert schema["properties"]["call_id"]["maxLength"] == 128
 
 
-def test_provider_tool_transport_converts_to_canonical_proposal() -> None:
-    envelope = ProviderProposalEnvelope.from_mapping(
-        {
-            "action": "tool_call",
-            "call_id": "call-001",
-            "tool_name": "rag_query",
-            "arguments": {"question": "What is due?"},
-        }
-    )
-
-    proposal = envelope.to_agent_proposal()
-
-    assert proposal.tool_call is not None
-    assert proposal.tool_call.name.value == "rag_query"
-    assert proposal.tool_call.arguments.to_mapping() == {"question": "What is due?"}
-    assert proposal.tool_call.call_id == "call-001"
-    assert proposal.terminal_text is None
+def test_provider_retrieve_transport_converts_to_least_authority_proposal() -> None:
+    envelope = ProviderProposalEnvelope.from_mapping({"action": "retrieve"})
+    proposal = envelope.to_canonical()
+    assert isinstance(proposal, RetrieveProposal)
 
 
 def test_provider_terminal_transport_converts_to_canonical_proposal() -> None:
@@ -336,8 +330,8 @@ def test_provider_terminal_transport_converts_to_canonical_proposal() -> None:
 
     proposal = envelope.to_agent_proposal()
 
+    assert isinstance(proposal, TerminalProposal)
     assert proposal.terminal_text == "done"
-    assert proposal.tool_call is None
 
 
 @pytest.mark.parametrize(
@@ -371,11 +365,7 @@ def test_provider_transport_rejects_invalid_or_authority_fields(
 def test_provider_transport_cannot_inject_grounded_payload_or_permissions() -> None:
     with pytest.raises(ValueError):
         ProviderProposalEnvelope.from_mapping(
-            {
-                "action": "grounded_result_ref",
-                "grounded_result_ref": "rag-result-1",
-                "status": "ANSWER",
-            }
+            {"action": "retrieve", "grounded_result_ref": "rag-result-1"}
         )
 
 
@@ -390,6 +380,6 @@ def test_repair_uses_the_same_provider_transport_schema() -> None:
     assert result.ok is True
     assert len(gateway.requests) == 2
     assert all(
-        request.structured_output_schema == "agent_proposal_transport"
+        request.structured_output_schema == "least_authority_proposal_transport"
         for request in gateway.requests
     )

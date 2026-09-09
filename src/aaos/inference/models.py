@@ -9,6 +9,7 @@ StructuredOutputMode = Literal["plain", "json_schema"]
 StructuredOutputSchema = Literal[
     "agent_proposal",
     "agent_proposal_transport",
+    "least_authority_proposal_transport",
     "grounded_answer",
     "semantic_coverage",
     "requirement_decomposition",
@@ -67,6 +68,7 @@ class ChatRequest:
         if self.structured_output_schema not in {
             "agent_proposal",
             "agent_proposal_transport",
+            "least_authority_proposal_transport",
             "grounded_answer",
             "semantic_coverage",
             "requirement_decomposition",

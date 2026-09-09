@@ -20,6 +20,7 @@ from .contracts import (
     AgentErrorCode,
     AgentFailure,
     AgentLimits,
+    AgentProposal,
     AgentState,
     AgentTask,
     AgentTaskId,
@@ -43,7 +44,12 @@ from .events import (
 )
 from .observations import ObservationSanitizationError
 from .policy import PermissionPolicy
-from .proposal import ProposalRequest, ProposalResult
+from .proposal import (
+    ProposalRequest,
+    ProposalResult,
+    RetrieveProposal,
+    TerminalProposal,
+)
 from .registry import ToolDefinition, ToolInvocationError, ToolRegistry
 from .runtime_policy import (
     MAX_AGENT_STEPS,
@@ -51,6 +57,7 @@ from .runtime_policy import (
     MAX_OBSERVATION_SIZE,
     MAX_OBSERVATIONS,
     MAX_TOOL_CALLS,
+    USEFUL_RAG_CALLS_PER_REQUEST_MAX,
     EffectiveRuntimePolicy,
     compose_effective_runtime_policy,
 )
@@ -399,8 +406,43 @@ class AgentOrchestrator:
                     failure=failure,
                 )
 
-            proposal = result.proposal
-            last_proposal_fingerprint = _stable_fingerprint(proposal.to_dict())
+            proposal_value = result.proposal
+            last_proposal_fingerprint = _stable_fingerprint(proposal_value.to_dict())
+            direct_trusted_retrieve = isinstance(proposal_value, RetrieveProposal)
+            if direct_trusted_retrieve:
+                trusted_proposal = _trusted_retrieve_proposal(task)
+                if trusted_proposal is None:
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.SCOPE_DENIED,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                    )
+                proposal: AgentProposal = trusted_proposal
+            elif isinstance(proposal_value, TerminalProposal):
+                proposal = AgentProposal(terminal_text=proposal_value.terminal_text)
+            elif isinstance(proposal_value, AgentProposal):
+                # Compatibility path for trusted test sources and previously
+                # constructed proposals.  The provider adapter never emits
+                # this legacy authority-bearing shape after C8.
+                proposal = proposal_value
+            else:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.INVALID_PROPOSAL,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                )
+            if direct_trusted_retrieve and tool_calls >= USEFUL_RAG_CALLS_PER_REQUEST_MAX:
+                return self._failure(
+                    task,
+                    machine,
+                    AgentErrorCode.STEP_LIMIT_EXCEEDED,
+                    proposal_steps,
+                    last_proposal_fingerprint,
+                )
             if proposal.grounded_result_ref is not None:
                 self._emit_event(AgentEventKind.PROPOSAL_ACCEPTED, step_index=proposal_steps)
                 if not self._terminal_permission_granted():
@@ -725,6 +767,35 @@ class AgentOrchestrator:
                         last_proposal_fingerprint,
                         tool_execution_lifecycle=last_tool_execution_lifecycle,
                     )
+
+            if direct_trusted_retrieve:
+                if captured_grounded_result is None:
+                    return self._failure(
+                        task,
+                        machine,
+                        AgentErrorCode.HANDLER_EXECUTION_FAILED,
+                        proposal_steps,
+                        last_proposal_fingerprint,
+                        tool_execution_lifecycle=last_tool_execution_lifecycle,
+                    )
+                try:
+                    machine.transition(
+                        AgentState.OBSERVING,
+                        proposal_fingerprint=last_proposal_fingerprint,
+                        tool_call_fingerprint=tool_key,
+                    )
+                except InvalidAgentTransition:
+                    return self._internal_failure(task, machine, proposal_steps)
+                # C8 removes the second model step: trusted Phase 4 output is
+                # returned directly, preserving its original lineage and
+                # citation/provenance payload.
+                return self._complete_grounded(
+                    task,
+                    machine,
+                    captured_grounded_result,
+                    proposal_steps,
+                    tool_execution_lifecycle=last_tool_execution_lifecycle,
+                )
 
             try:
                 machine.transition(
@@ -1148,6 +1219,29 @@ class AgentOrchestrator:
 
 def _observation_history_size(observations: list[ToolObservation]) -> int:
     return sum(len(_stable_json(observation.to_dict())) for observation in observations)
+
+
+def _trusted_retrieve_proposal(task: AgentTask) -> AgentProposal | None:
+    """Compose the sole executable RAG proposal from trusted task state.
+
+    This compatibility representation is created only after the model has
+    selected the authority-free ``retrieve`` action.  The model cannot supply
+    any of these fields.
+    """
+
+    if task.initial_scope is None:
+        return None
+    return AgentProposal.from_mapping(
+        {
+            "tool_call": {
+                "name": ToolName.RAG_QUERY.value,
+                "arguments": {
+                    "question": task.request_text,
+                    "scope": task.initial_scope.to_dict(),
+                },
+            }
+        }
+    )
 
 
 def _known_tool_lifecycle(result: ToolResult) -> ToolExecutionLifecycle:

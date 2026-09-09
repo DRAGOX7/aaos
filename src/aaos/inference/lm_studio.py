@@ -75,6 +75,30 @@ _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT: dict[str, object] = {
     },
 }
 
+_LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_least_authority_proposal_transport_v2",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["retrieve", "terminal_text"],
+                },
+                "terminal_text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16384,
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "json_schema": {
@@ -213,6 +237,7 @@ _REQUIREMENT_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
 
 _STRUCTURED_RESPONSE_FORMATS = {
     "agent_proposal_transport": _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
+    "least_authority_proposal_transport": _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

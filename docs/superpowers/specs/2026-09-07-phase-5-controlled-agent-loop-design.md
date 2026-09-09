@@ -483,3 +483,31 @@ additional side effects and does not introduce a second completion authority.
 Only the orchestrator commits completion. No second answer generator or
 model-rendered citation trust is introduced. Exact contract changes and
 regressions belong to separately authorized C2, not this amendment.
+
+## 19. C8 least-authority proposal contract (approved amendment)
+
+The model-facing proposal is versioned as `RETRIEVE_OR_TERMINAL`. The model
+chooses only `retrieve` or bounded non-grounded `terminal_text`; it cannot
+select a tool name, scope, permission, runtime policy, tool contract,
+arguments, answer language, grounded status, citations or provenance. Trusted
+AAOS composition supplies `rag_query`, the exact `AgentTask.initial_scope`,
+the bounded original request text and the existing trusted/default language
+derivation. The existing registry, permission policy, C5 runtime policy, C6
+validators/projectors, C7 events and C2 lineage checks remain authoritative.
+
+After a successful `rag_query`, the trusted Phase 4 response is returned
+directly. No second model proposal may rewrite or mint grounded output, and
+at most one useful RAG execution is permitted per request. Legacy provider
+envelopes containing authority-bearing fields fail closed; the provider
+schema is strict and infrastructure-owned.
+
+The historical `phase5-agent-benchmark-v1` contract and artifacts are
+immutable. A uniform contract-only migration defines
+`phase5-agent-benchmark-v2`, whose model-facing metrics cover the
+retrieve-versus-terminal decision, terminal correctness, format/repair,
+language and end-to-end outcome. Trusted execution oracles remain private and
+are not scored as model-selected tool/scope/permission fields. V2 calibration
+and held-out manifests retain the approved 72 (36 English/36 Arabic) and 24
+(12 English/12 Arabic) memberships and receive distinct fingerprints before
+any model calibration. Held-out consumption remains one-time and is not
+authorized by this amendment.

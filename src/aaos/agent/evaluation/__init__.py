@@ -24,6 +24,22 @@ from .reports import (
     build_evaluation_report,
     build_private_bundle,
 )
+from .v2 import (
+    V2_BENCHMARK_SCHEMA_VERSION,
+    V2_EXPECTED_ACTION_RETRIEVE,
+    V2_EXPECTED_ACTION_TERMINAL,
+    V2_METRIC_SCHEMA_VERSION,
+    V2_SCHEMA_FINGERPRINT,
+    V2_TRACE_SCHEMA_VERSION,
+    V2BenchmarkCase,
+    V2EvaluationManifest,
+    V2EvaluationMetrics,
+    V2EvaluationTrace,
+    V2ExpectedAction,
+    build_v2_manifests,
+    migrate_v1_cases,
+    score_v2_evaluation,
+)
 
 __all__ = [
     "BENCHMARK_SCHEMA_VERSION",
@@ -49,4 +65,18 @@ __all__ = [
     "build_evaluation_report",
     "build_private_bundle",
     "score_evaluation",
+    "V2_BENCHMARK_SCHEMA_VERSION",
+    "V2_EXPECTED_ACTION_RETRIEVE",
+    "V2_EXPECTED_ACTION_TERMINAL",
+    "V2_METRIC_SCHEMA_VERSION",
+    "V2_SCHEMA_FINGERPRINT",
+    "V2_TRACE_SCHEMA_VERSION",
+    "V2BenchmarkCase",
+    "V2EvaluationMetrics",
+    "V2EvaluationManifest",
+    "V2EvaluationTrace",
+    "V2ExpectedAction",
+    "build_v2_manifests",
+    "migrate_v1_cases",
+    "score_v2_evaluation",
 ]

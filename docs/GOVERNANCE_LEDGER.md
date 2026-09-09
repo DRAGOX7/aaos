@@ -96,3 +96,14 @@ approval source without fabricating a historical verification report.
 Normative detail: [roadmap](PHASES.md),
 [Phase 5 design](superpowers/specs/2026-09-07-phase-5-controlled-agent-loop-design.md),
 [Phase 5 plan](superpowers/plans/2026-09-07-phase-5-controlled-agent-loop-implementation.md).
+
+## C8 least-authority implementation evidence
+
+The human-authorized C8 amendment narrows model responsibility to
+`RETRIEVE_OR_TERMINAL`. The model cannot select tool identity, scope,
+arguments, permission, runtime policy, contract metadata or grounded lineage;
+trusted AAOS composition supplies those values and returns successful Phase 4
+RAG output directly. The v1 evaluation artifacts remain immutable and the
+uniform v2 contract is versioned separately. This entry records implementation
+evidence only; calibration, held-out execution and human approval remain
+future gates.
