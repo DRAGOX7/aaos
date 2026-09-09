@@ -27,8 +27,8 @@ from .contracts import (
 from .metrics import MetricValue
 
 V2_BENCHMARK_SCHEMA_VERSION = "phase5-agent-benchmark-v2"
-V2_TRACE_SCHEMA_VERSION = "phase5-agent-trace-v2"
-V2_METRIC_SCHEMA_VERSION = "phase5-agent-evaluation-v2"
+V2_TRACE_SCHEMA_VERSION = "phase5-agent-trace-v2.1"
+V2_METRIC_SCHEMA_VERSION = "phase5-agent-evaluation-v2.1"
 V2_EXPECTED_ACTION_RETRIEVE = "retrieve"
 V2_EXPECTED_ACTION_TERMINAL = "terminal_text"
 MAX_V2_TERMINAL_TEXT_CHARACTERS = 16_384
@@ -46,6 +46,21 @@ _V2_SCHEMA_DESCRIPTOR = {
 class V2ExpectedAction(StrEnum):
     RETRIEVE = V2_EXPECTED_ACTION_RETRIEVE
     TERMINAL_TEXT = V2_EXPECTED_ACTION_TERMINAL
+
+
+class V2FailureClass(StrEnum):
+    """Mutually exclusive primary failure classes for one evaluated case."""
+
+    RETRIEVE_DECISION = "RETRIEVE_DECISION"
+    TERMINAL_DECISION = "TERMINAL_DECISION"
+    PROPOSAL_FORMAT = "PROPOSAL_FORMAT"
+    PROPOSAL_REPAIR = "PROPOSAL_REPAIR"
+    RAG_INSUFFICIENT_EVIDENCE = "RAG_INSUFFICIENT_EVIDENCE"
+    RAG_FAILURE = "RAG_FAILURE"
+    TERMINAL_CONTENT = "TERMINAL_CONTENT"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    MODEL_TIMEOUT = "MODEL_TIMEOUT"
+    ENVIRONMENT = "ENVIRONMENT"
 
 
 def _digest(value: object) -> str:
@@ -274,6 +289,7 @@ class V2EvaluationTrace:
     trusted_rag_call_count: int = 0
     proposal_format_valid: bool = True
     proposal_repairs: int = 0
+    proposal_format_event_count: int = 0
     model_calls: int = 0
     runtime_failure: bool = False
 
@@ -299,6 +315,7 @@ class V2EvaluationTrace:
         for name, value in (
             ("trusted_rag_call_count", self.trusted_rag_call_count),
             ("proposal_repairs", self.proposal_repairs),
+            ("proposal_format_event_count", self.proposal_format_event_count),
             ("model_calls", self.model_calls),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -322,6 +339,7 @@ class V2EvaluationTrace:
                 self.observed_terminal_kind.value if self.observed_terminal_kind else None
             ),
             "proposal_format_valid": self.proposal_format_valid,
+            "proposal_format_event_count": self.proposal_format_event_count,
             "proposal_repairs": self.proposal_repairs,
             "runtime_failure": self.runtime_failure,
             "trusted_rag_call_count": self.trusted_rag_call_count,
@@ -338,6 +356,12 @@ class V2EvaluationMetrics:
     proposal_format_validity: MetricValue
     case_accuracy: MetricValue
     runtime_failures: int
+    invalid_proposal_count: int = 0
+    model_unavailable_count: int = 0
+    model_timeout_count: int = 0
+    environment_failure_count: int = 0
+    proposal_format_event_count: int = 0
+    failure_class_counts: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -352,6 +376,27 @@ class V2EvaluationMetrics:
             raise TypeError("runtime_failures must be an integer")
         if self.runtime_failures < 0:
             raise ValueError("runtime_failures must be non-negative")
+        for name in (
+            "invalid_proposal_count",
+            "model_unavailable_count",
+            "model_timeout_count",
+            "environment_failure_count",
+            "proposal_format_event_count",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if not isinstance(self.failure_class_counts, tuple):
+            raise TypeError("failure_class_counts must be a tuple")
+        previous: str | None = None
+        for name, count in self.failure_class_counts:
+            if name not in {failure.value for failure in V2FailureClass}:
+                raise ValueError("failure_class_counts contains an unsupported class")
+            if previous is not None and name <= previous:
+                raise ValueError("failure_class_counts must be sorted and unique")
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError("failure_class_counts values must be non-negative integers")
+            previous = name
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -359,9 +404,52 @@ class V2EvaluationMetrics:
             "metric_schema_version": V2_METRIC_SCHEMA_VERSION,
             "proposal_format_validity": self.proposal_format_validity.to_dict(),
             "runtime_failures": self.runtime_failures,
+            "invalid_proposal_count": self.invalid_proposal_count,
+            "model_unavailable_count": self.model_unavailable_count,
+            "model_timeout_count": self.model_timeout_count,
+            "environment_failure_count": self.environment_failure_count,
+            "proposal_format_event_count": self.proposal_format_event_count,
+            "failure_class_counts": {name: count for name, count in self.failure_class_counts},
             "terminal_accuracy": self.terminal_accuracy.to_dict(),
             "action_accuracy": self.action_accuracy.to_dict(),
         }
+
+
+def classify_v2_failure(case: V2BenchmarkCase, trace: V2EvaluationTrace) -> V2FailureClass | None:
+    """Return one primary, safe failure class for an evaluated case.
+
+    Provider/environment failures take precedence over proposal-format flags;
+    this prevents an unavailable model from being counted as malformed output.
+    A format failure is classified only after the bounded repair budget is
+    exhausted (``proposal_format_valid`` is false).
+    """
+
+    if trace.observed_error_code is AgentErrorCode.MODEL_UNAVAILABLE:
+        return V2FailureClass.MODEL_UNAVAILABLE
+    if trace.observed_error_code is AgentErrorCode.MODEL_TIMEOUT:
+        return V2FailureClass.MODEL_TIMEOUT
+    if trace.observed_error_code is AgentErrorCode.RAG_QUERY_FAILED:
+        return V2FailureClass.RAG_FAILURE
+    if trace.runtime_failure:
+        return V2FailureClass.ENVIRONMENT
+    if not trace.proposal_format_valid:
+        return (
+            V2FailureClass.PROPOSAL_REPAIR
+            if trace.proposal_repairs > 0
+            else V2FailureClass.PROPOSAL_FORMAT
+        )
+    if trace.observed_action is not case.expected_action:
+        return (
+            V2FailureClass.RETRIEVE_DECISION
+            if case.expected_action is V2ExpectedAction.RETRIEVE
+            else V2FailureClass.TERMINAL_DECISION
+        )
+    if (
+        case.expected_action is V2ExpectedAction.TERMINAL_TEXT
+        and trace.observed_terminal_kind is not case.expected_terminal_kind
+    ):
+        return V2FailureClass.TERMINAL_CONTENT
+    return None
 
 
 def score_v2_evaluation(
@@ -384,7 +472,14 @@ def score_v2_evaluation(
         by_id[case.case_id].observed_terminal_kind is case.expected_terminal_kind
         for case in terminal_cases
     )
-    format_hits = sum(by_id[case.case_id].proposal_format_valid for case in manifest.cases)
+    format_observed = [
+        by_id[case.case_id]
+        for case in manifest.cases
+        if by_id[case.case_id].observed_error_code
+        not in {AgentErrorCode.MODEL_UNAVAILABLE, AgentErrorCode.MODEL_TIMEOUT}
+        and (by_id[case.case_id].proposal_format_valid or not by_id[case.case_id].runtime_failure)
+    ]
+    format_hits = sum(trace.proposal_format_valid for trace in format_observed)
     case_hits = sum(
         by_id[case.case_id].observed_action is case.expected_action
         and (
@@ -393,12 +488,47 @@ def score_v2_evaluation(
         )
         for case in manifest.cases
     )
+    failure_classes: dict[V2FailureClass, int] = {}
+    invalid_proposal_count = 0
+    model_unavailable_count = 0
+    model_timeout_count = 0
+    environment_failure_count = 0
+    proposal_format_event_count = 0
+    for case in manifest.cases:
+        trace = by_id[case.case_id]
+        proposal_format_event_count += trace.proposal_format_event_count
+        if (
+            not trace.proposal_format_valid
+            and not trace.runtime_failure
+            and trace.observed_error_code
+            not in {AgentErrorCode.MODEL_UNAVAILABLE, AgentErrorCode.MODEL_TIMEOUT}
+        ):
+            invalid_proposal_count += 1
+        if trace.observed_error_code is AgentErrorCode.MODEL_UNAVAILABLE:
+            model_unavailable_count += 1
+        elif trace.observed_error_code is AgentErrorCode.MODEL_TIMEOUT:
+            model_timeout_count += 1
+        elif trace.runtime_failure:
+            environment_failure_count += 1
+        failure_class = classify_v2_failure(case, trace)
+        if failure_class is not None:
+            failure_classes[failure_class] = failure_classes.get(failure_class, 0) + 1
+
     return V2EvaluationMetrics(
         action_accuracy=MetricValue(action_hits, len(manifest.cases)),
         terminal_accuracy=MetricValue(terminal_hits, len(terminal_cases)),
-        proposal_format_validity=MetricValue(format_hits, len(manifest.cases)),
+        proposal_format_validity=MetricValue(format_hits, len(format_observed)),
         case_accuracy=MetricValue(case_hits, len(manifest.cases)),
         runtime_failures=sum(by_id[case.case_id].runtime_failure for case in manifest.cases),
+        invalid_proposal_count=invalid_proposal_count,
+        model_unavailable_count=model_unavailable_count,
+        model_timeout_count=model_timeout_count,
+        environment_failure_count=environment_failure_count,
+        proposal_format_event_count=proposal_format_event_count,
+        failure_class_counts=tuple(
+            (failure.value, failure_classes[failure])
+            for failure in sorted(failure_classes, key=str)
+        ),
     )
 
 
@@ -438,9 +568,11 @@ __all__ = [
     "V2BenchmarkCase",
     "V2EvaluationManifest",
     "V2ExpectedAction",
+    "V2FailureClass",
     "V2EvaluationMetrics",
     "V2EvaluationTrace",
     "build_v2_manifests",
+    "classify_v2_failure",
     "migrate_v1_cases",
     "score_v2_evaluation",
 ]

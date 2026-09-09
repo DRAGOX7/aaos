@@ -36,7 +36,9 @@ from .v2 import (
     V2EvaluationMetrics,
     V2EvaluationTrace,
     V2ExpectedAction,
+    V2FailureClass,
     build_v2_manifests,
+    classify_v2_failure,
     migrate_v1_cases,
     score_v2_evaluation,
 )
@@ -76,7 +78,9 @@ __all__ = [
     "V2EvaluationManifest",
     "V2EvaluationTrace",
     "V2ExpectedAction",
+    "V2FailureClass",
     "build_v2_manifests",
+    "classify_v2_failure",
     "migrate_v1_cases",
     "score_v2_evaluation",
 ]
