@@ -22,7 +22,13 @@ from .contracts import (
     ToolResult,
     TrustedTaskScope,
 )
-from .policy import PermissionPolicy, authorize_scope, parse_proposed_scope
+from .policy import (
+    RAG_ANSWER_LANGUAGES,
+    PermissionPolicy,
+    authorize_scope,
+    parse_proposed_scope,
+    rag_scope_model_contract,
+)
 
 MAX_TOOL_DESCRIPTION_CHARACTERS = 16_384
 MAX_TOOL_TIMEOUT_SECONDS = 86_400
@@ -423,6 +429,33 @@ class ToolDefinition:
             },
         }
 
+    def to_model_metadata(self) -> dict[str, object]:
+        """Return the bounded capability description exposed to the model.
+
+        Trusted registry metadata deliberately omits permission, timeout,
+        handler, and side-effect authority.  Only an executable definition is
+        selected by :meth:`ToolRegistry.model_visible_metadata`.
+        """
+
+        arguments: dict[str, object] = {}
+        for field in self.input_schema.fields:
+            value: dict[str, object] = {
+                "required": field.required,
+                "type": field.value_type.value.casefold(),
+            }
+            if field.enum_values:
+                value["allowed_values"] = list(field.enum_values)
+            if self.input_schema.schema_name == "rag_query" and field.name == "scope":
+                value.update(rag_scope_model_contract())
+            if self.input_schema.schema_name == "rag_query" and field.name == "answer_language":
+                value["allowed_values"] = list(RAG_ANSWER_LANGUAGES)
+            arguments[field.name] = value
+        return {
+            "arguments": arguments,
+            "description": self.description,
+            "name": self.name.value,
+        }
+
 
 class ToolInvocationError(ValueError):
     """Safe error raised before or at a trusted handler boundary."""
@@ -534,6 +567,19 @@ class ToolRegistry:
     @property
     def names(self) -> tuple[ToolName, ...]:
         return tuple(definition.name for definition in self._ordered)
+
+    def model_visible_metadata(self) -> tuple[dict[str, object], ...]:
+        """Return only currently executable trusted capabilities.
+
+        Disabled conceptual tools remain registered for trusted rejection and
+        audit tests but are never advertised as available model actions.
+        """
+
+        return tuple(
+            definition.to_model_metadata()
+            for definition in self._ordered
+            if definition.handler is not None
+        )
 
     def get(self, name: ToolName) -> ToolDefinition:
         if not isinstance(name, ToolName) or name not in self._definitions:

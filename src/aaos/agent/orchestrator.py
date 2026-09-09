@@ -136,6 +136,12 @@ class AgentOrchestrator:
             raise TypeError("event_sink must expose emit(event)")
         self._proposal_adapter = proposal_adapter
         self._registry = registry if registry is not None else ToolRegistry.default()
+        # Bind the trusted registry to adapters that expose the optional
+        # capability-catalog hook.  The adapter receives only model-safe
+        # metadata; registry ownership and execution remain here.
+        configure_tool_registry = getattr(proposal_adapter, "configure_tool_registry", None)
+        if callable(configure_tool_registry):
+            configure_tool_registry(self._registry)
         self._permission_policy = (
             permission_policy if permission_policy is not None else PermissionPolicy()
         )

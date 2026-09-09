@@ -19,6 +19,28 @@ from .runtime_policy import (
     compose_effective_runtime_policy,
 )
 
+RAG_ANSWER_LANGUAGES: tuple[str, ...] = ("en", "ar")
+_RAG_SCOPE_FIELDS: dict[str, tuple[str, ...]] = {
+    "global": ("kind",),
+    "course": ("kind", "course_id"),
+    "historical": ("kind", "document_version_ids"),
+}
+
+
+def rag_scope_model_contract() -> dict[str, object]:
+    """Return trusted model-visible shapes for Phase 4 RAG scopes.
+
+    The metadata is descriptive only; ``parse_proposed_scope`` remains the
+    authoritative validator and permission policy remains authoritative for
+    task authorization.
+    """
+
+    return {
+        "allowed_shapes": tuple(
+            {"fields": fields, "kind": kind} for kind, fields in _RAG_SCOPE_FIELDS.items()
+        )
+    }
+
 
 @dataclass(frozen=True, slots=True)
 class ScopeAuthorizationDecision:
@@ -50,15 +72,15 @@ def parse_proposed_scope(value: object) -> RagScope:
         raise ValueError("scope.kind must be a string")
     normalized_kind = kind.strip().casefold()
     if normalized_kind == "global":
-        if set(value) != {"kind"}:
+        if set(value) != set(_RAG_SCOPE_FIELDS["global"]):
             raise ValueError("global scope contains unknown fields")
         return GlobalScope()
     if normalized_kind == "course":
-        if set(value) != {"kind", "course_id"}:
+        if set(value) != set(_RAG_SCOPE_FIELDS["course"]):
             raise ValueError("course scope contains unknown fields")
         return CourseScope(_positive_scope_id(value.get("course_id"), "course_id"))
     if normalized_kind == "historical":
-        if set(value) != {"kind", "document_version_ids"}:
+        if set(value) != set(_RAG_SCOPE_FIELDS["historical"]):
             raise ValueError("historical scope contains unknown fields")
         ids = value.get("document_version_ids")
         if not isinstance(ids, list) or not ids:
@@ -176,9 +198,11 @@ class PermissionPolicy:
 __all__ = [
     "EffectiveRuntimePolicy",
     "PermissionPolicy",
+    "RAG_ANSWER_LANGUAGES",
     "RuntimePolicyCompositionError",
     "ScopeAuthorizationDecision",
     "authorize_scope",
     "compose_effective_runtime_policy",
     "parse_proposed_scope",
+    "rag_scope_model_contract",
 ]

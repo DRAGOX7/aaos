@@ -29,7 +29,7 @@ from .contracts import (
     ToolResult,
     TrustedTaskScope,
 )
-from .policy import authorize_scope, parse_proposed_scope
+from .policy import RAG_ANSWER_LANGUAGES, authorize_scope, parse_proposed_scope
 from .registry import (
     SideEffectClass,
     ToolDefinition,
@@ -85,10 +85,9 @@ def _parse_query(arguments: ValidatedToolArguments) -> RagQuery:
     scope = _parse_scope(values.get("scope"))
     answer_language = values.get("answer_language")
     if answer_language is not None:
-        if not isinstance(answer_language, str) or answer_language.strip().casefold() not in {
-            "en",
-            "ar",
-        }:
+        if not isinstance(answer_language, str) or answer_language.strip().casefold() not in set(
+            RAG_ANSWER_LANGUAGES
+        ):
             raise ValueError("answer_language must be en or ar")
         answer_language = answer_language.strip().casefold()
     return RagQuery(question, scope, answer_language)
@@ -131,7 +130,9 @@ def _response_payload(response: object) -> RagOutput:
     answer: RagAnswer = response.answer
     if not isinstance(answer, RagAnswer) or not isinstance(answer.status, RagAnswerStatus):
         raise ValueError("Phase 4 returned an invalid answer")
-    if not isinstance(answer.language, str) or answer.language.casefold() not in {"en", "ar"}:
+    if not isinstance(answer.language, str) or answer.language.casefold() not in set(
+        RAG_ANSWER_LANGUAGES
+    ):
         raise ValueError("Phase 4 returned an invalid language")
     if not isinstance(answer.answer_text, str) or not answer.answer_text.strip():
         raise ValueError("Phase 4 returned empty answer text")
@@ -295,7 +296,7 @@ def _response_payload_from_mapping(output: Mapping[str, object]) -> RagOutput:
         raise ValueError("result output answer_text is invalid")
     if not isinstance(rendered_text, str) or not rendered_text.strip():
         raise ValueError("result output rendered_text is invalid")
-    if not isinstance(language, str) or language not in {"en", "ar"}:
+    if not isinstance(language, str) or language not in set(RAG_ANSWER_LANGUAGES):
         raise ValueError("result output language is invalid")
     generation_id = _positive_id(output.get("generation_id"), "generation_id")
     revision = output.get("content_revision")

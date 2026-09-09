@@ -59,12 +59,8 @@ _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT: dict[str, object] = {
                 },
                 "tool_name": {
                     "type": "string",
-                    "enum": [
-                        "rag_query",
-                        "read_task_state",
-                        "write_task_state",
-                        "complete_task",
-                    ],
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,127}$",
+                    "maxLength": 128,
                 },
                 "arguments": {"type": "object"},
                 "terminal_text": {"type": "string", "minLength": 1, "maxLength": 16384},
@@ -237,12 +233,8 @@ _STRUCTURED_RESPONSE_FORMATS = {
                         "properties": {
                             "name": {
                                 "type": "string",
-                                "enum": [
-                                    "rag_query",
-                                    "read_task_state",
-                                    "write_task_state",
-                                    "complete_task",
-                                ],
+                                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,127}$",
+                                "maxLength": 128,
                             },
                             "arguments": {"type": "object"},
                             "call_id": {
