@@ -8,6 +8,7 @@ ChatRole = Literal["system", "user", "assistant"]
 StructuredOutputMode = Literal["plain", "json_schema"]
 StructuredOutputSchema = Literal[
     "agent_proposal",
+    "agent_proposal_transport",
     "grounded_answer",
     "semantic_coverage",
     "requirement_decomposition",
@@ -65,6 +66,7 @@ class ChatRequest:
             raise ValueError("structured_output must be plain or json_schema")
         if self.structured_output_schema not in {
             "agent_proposal",
+            "agent_proposal_transport",
             "grounded_answer",
             "semantic_coverage",
             "requirement_decomposition",

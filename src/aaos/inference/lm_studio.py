@@ -34,6 +34,51 @@ from .telemetry import (
 _SUPPORTED_MODEL_TYPES = frozenset({"llm", "embedding"})
 _ParsedResponse = TypeVar("_ParsedResponse")
 
+_AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_agent_proposal_transport_v1",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["tool_call", "terminal_text", "grounded_result_ref"],
+                },
+                "proposal_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "maxLength": 128,
+                },
+                "call_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "maxLength": 128,
+                },
+                "tool_name": {
+                    "type": "string",
+                    "enum": [
+                        "rag_query",
+                        "read_task_state",
+                        "write_task_state",
+                        "complete_task",
+                    ],
+                },
+                "arguments": {"type": "object"},
+                "terminal_text": {"type": "string", "minLength": 1, "maxLength": 16384},
+                "grounded_result_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "maxLength": 128,
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "json_schema": {
@@ -171,6 +216,7 @@ _REQUIREMENT_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
 }
 
 _STRUCTURED_RESPONSE_FORMATS = {
+    "agent_proposal_transport": _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

@@ -29,6 +29,7 @@ from .contracts import (
     AgentErrorCode,
     AgentFailure,
     AgentProposal,
+    ToolName,
     ToolObservation,
     canonical_json,
 )
@@ -96,6 +97,135 @@ class ProposalRequest:
 
 
 AgentProposalRequest = ProposalRequest
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderProposalEnvelope:
+    """Strict, provider-facing proposal transport envelope.
+
+    LM Studio reliably constrains a flat object with primitive fields, while
+    its local Qwen provider did not honor the canonical ``oneOf`` proposal
+    schema.  This envelope is therefore only a transport representation.  It
+    is untrusted until the cross-field checks below and conversion through the
+    canonical :class:`AgentProposal` parser both succeed.
+    """
+
+    action: str
+    proposal_id: str | None = None
+    call_id: str | None = None
+    tool_name: str | None = None
+    arguments: Mapping[str, object] | None = None
+    terminal_text: str | None = None
+    grounded_result_ref: str | None = None
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, object]) -> ProviderProposalEnvelope:
+        if not isinstance(payload, Mapping):
+            raise TypeError("provider proposal must be an object")
+        allowed = {
+            "action",
+            "proposal_id",
+            "call_id",
+            "tool_name",
+            "arguments",
+            "terminal_text",
+            "grounded_result_ref",
+        }
+        unknown = set(payload) - allowed
+        if unknown:
+            raise ValueError("provider proposal contains unknown fields")
+        if "action" not in payload or not isinstance(payload["action"], str):
+            raise ValueError("provider proposal action is required")
+        action = payload["action"]
+        if action not in {"tool_call", "terminal_text", "grounded_result_ref"}:
+            raise ValueError("provider proposal action is unsupported")
+
+        proposal_id = payload.get("proposal_id")
+        if proposal_id is not None and not isinstance(proposal_id, str):
+            raise TypeError("proposal_id must be a string")
+        call_id = payload.get("call_id")
+        if call_id is not None and not isinstance(call_id, str):
+            raise TypeError("call_id must be a string")
+        tool_name = payload.get("tool_name")
+        if tool_name is not None and not isinstance(tool_name, str):
+            raise TypeError("tool_name must be a string")
+        arguments = payload.get("arguments")
+        if arguments is not None and not isinstance(arguments, Mapping):
+            raise TypeError("arguments must be an object")
+        terminal_text = payload.get("terminal_text")
+        if terminal_text is not None and not isinstance(terminal_text, str):
+            raise TypeError("terminal_text must be a string")
+        grounded_result_ref = payload.get("grounded_result_ref")
+        if grounded_result_ref is not None and not isinstance(grounded_result_ref, str):
+            raise TypeError("grounded_result_ref must be a string")
+
+        if action == "tool_call":
+            if not tool_name or arguments is None:
+                raise ValueError("tool_call requires tool_name and arguments")
+            try:
+                ToolName(tool_name)
+            except ValueError as exc:
+                raise ValueError("tool_call contains an unsupported tool name") from exc
+            if terminal_text is not None or grounded_result_ref is not None:
+                raise ValueError("tool_call cannot contain terminal fields")
+        elif action == "terminal_text":
+            if terminal_text is None or not terminal_text.strip():
+                raise ValueError("terminal_text action requires terminal_text")
+            if (
+                call_id is not None
+                or tool_name is not None
+                or arguments is not None
+                or grounded_result_ref is not None
+            ):
+                raise ValueError("terminal_text cannot contain tool or grounded fields")
+        else:
+            if grounded_result_ref is None or not grounded_result_ref.strip():
+                raise ValueError("grounded_result_ref action requires a reference")
+            if (
+                call_id is not None
+                or tool_name is not None
+                or arguments is not None
+                or terminal_text is not None
+            ):
+                raise ValueError("grounded_result_ref cannot contain tool or text fields")
+
+        return cls(
+            action=action,
+            proposal_id=proposal_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=dict(arguments) if arguments is not None else None,
+            terminal_text=terminal_text,
+            grounded_result_ref=grounded_result_ref,
+        )
+
+    def to_agent_proposal(self) -> AgentProposal:
+        """Convert only a validated envelope into the canonical proposal."""
+
+        payload: dict[str, object] = {}
+        if self.proposal_id is not None:
+            payload["proposal_id"] = self.proposal_id
+        if self.action == "tool_call":
+            if self.tool_name is None or self.arguments is None:
+                raise ValueError("tool_call transport is incomplete")
+            tool_payload: dict[str, object] = {
+                "name": self.tool_name,
+                "arguments": dict(self.arguments),
+            }
+            if self.call_id is not None:
+                tool_payload["call_id"] = self.call_id
+            payload["tool_call"] = tool_payload
+        elif self.action == "terminal_text":
+            if self.terminal_text is None:
+                raise ValueError("terminal transport is incomplete")
+            payload["terminal_text"] = self.terminal_text
+        elif self.action == "grounded_result_ref":
+            if self.grounded_result_ref is None:
+                raise ValueError("grounded transport is incomplete")
+            payload["grounded_result_ref"] = self.grounded_result_ref
+        else:
+            raise ValueError("provider proposal action is unsupported")
+        return AgentProposal.from_mapping(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,7 +374,7 @@ class AgentProposalAdapter:
             max_output_tokens=self._max_output_tokens,
             reasoning=False,
             structured_output="json_schema",
-            structured_output_schema="agent_proposal",
+            structured_output_schema="agent_proposal_transport",
             temperature=0.0,
             request_timeout_seconds=self._request_timeout_seconds,
         )
@@ -288,13 +418,8 @@ def _parse_proposal(response: ChatResponse | None) -> AgentProposal | None:
         return None
     if not isinstance(payload, Mapping):
         return None
-    action_keys = [
-        key for key in ("tool_call", "terminal_text", "grounded_result_ref") if key in payload
-    ]
-    if len(action_keys) != 1 or payload.get(action_keys[0]) is None:
-        return None
     try:
-        return AgentProposal.from_mapping(payload)
+        return ProviderProposalEnvelope.from_mapping(payload).to_agent_proposal()
     except (TypeError, ValueError, KeyError):
         return None
 
@@ -322,6 +447,7 @@ __all__ = [
     "MAX_PROPOSAL_OUTPUT_CHARACTERS",
     "MAX_PROPOSAL_OUTPUT_TOKENS",
     "MAX_PROPOSAL_REPAIR_ATTEMPTS",
+    "ProviderProposalEnvelope",
     "PROPOSAL_SYSTEM_PROMPT",
     "PROPOSAL_TIMEOUT_SECONDS",
     "AgentProposalAdapter",

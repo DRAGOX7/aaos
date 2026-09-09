@@ -77,6 +77,7 @@ from .proposal import (
     AgentProposalRequest,
     ProposalRequest,
     ProposalResult,
+    ProviderProposalEnvelope,
 )
 from .registry import (
     DEFAULT_TOOL_CONTRACT_VERSION,
@@ -170,6 +171,7 @@ __all__ = [
     "PROPOSAL_TIMEOUT_SECONDS",
     "AgentProposalAdapter",
     "AgentProposalRequest",
+    "ProviderProposalEnvelope",
     "ProposalRequest",
     "ProposalResult",
     "RagQueryAdapter",
