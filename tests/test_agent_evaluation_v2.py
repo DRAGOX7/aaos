@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from aaos.agent.contracts import AgentErrorCode
+from aaos.agent.contracts import AgentErrorCode, TerminalResultKind
 from aaos.agent.evaluation.v2 import (
     V2_BENCHMARK_SCHEMA_VERSION,
     V2_EXPECTED_ACTION_RETRIEVE,
@@ -53,6 +53,73 @@ def test_v2_scoring_uses_retrieve_or_terminal_semantics() -> None:
     metrics = score_v2_evaluation(calibration, traces)
     assert metrics.action_accuracy.ratio == 1.0
     assert metrics.to_dict()["metric_schema_version"] == V2_METRIC_SCHEMA_VERSION
+
+
+def test_v2_terminal_accuracy_only_scores_terminal_kind_when_oracle_is_defined() -> None:
+    calibration, _ = build_v2_manifests()
+    terminal_case = next(
+        case
+        for case in calibration.cases
+        if case.expected_action is V2ExpectedAction.TERMINAL_TEXT
+        and case.expected_terminal_kind is None
+    )
+    traces = _traces_with_override(
+        terminal_case.case_id,
+        observed_action=V2ExpectedAction.TERMINAL_TEXT,
+        observed_terminal_kind=None,
+    )
+    metrics = score_v2_evaluation(calibration, traces)
+
+    assert metrics.case_accuracy.numerator == len(calibration.cases)
+    assert metrics.terminal_accuracy.denominator < sum(
+        case.expected_action is V2ExpectedAction.TERMINAL_TEXT for case in calibration.cases
+    )
+
+
+def test_v2_terminal_without_kind_oracle_is_not_terminal_content_failure() -> None:
+    calibration, _ = build_v2_manifests()
+    terminal_case = next(
+        case
+        for case in calibration.cases
+        if case.expected_action is V2ExpectedAction.TERMINAL_TEXT
+        and case.expected_terminal_kind is None
+    )
+    traces = _traces_with_override(
+        terminal_case.case_id,
+        observed_action=V2ExpectedAction.TERMINAL_TEXT,
+        observed_terminal_kind=None,
+    )
+    metrics = score_v2_evaluation(calibration, traces)
+
+    assert metrics.failure_class_counts == ()
+
+
+def test_v2_terminal_kind_oracle_still_enforces_terminal_content() -> None:
+    calibration, _ = build_v2_manifests()
+    terminal_case = next(
+        case
+        for case in calibration.cases
+        if case.expected_action is V2ExpectedAction.TERMINAL_TEXT
+        and case.expected_terminal_kind is not None
+    )
+    observed_kind = terminal_case.expected_terminal_kind
+    assert observed_kind is not None
+    wrong_kind = (
+        TerminalResultKind.CONTROL_OR_CONVERSATIONAL_TERMINAL
+        if observed_kind is TerminalResultKind.GROUNDED_RAG_RESPONSE
+        else TerminalResultKind.GROUNDED_RAG_RESPONSE
+    )
+    metrics = score_v2_evaluation(
+        calibration,
+        _traces_with_override(
+            terminal_case.case_id,
+            observed_action=V2ExpectedAction.TERMINAL_TEXT,
+            observed_terminal_kind=wrong_kind,
+        ),
+    )
+
+    assert metrics.case_accuracy.numerator == len(calibration.cases) - 1
+    assert metrics.failure_class_counts == ((V2FailureClass.TERMINAL_CONTENT.value, 1),)
 
 
 def _traces_with_override(case_id: str, **kwargs: object) -> tuple[V2EvaluationTrace, ...]:

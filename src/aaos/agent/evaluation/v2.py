@@ -446,6 +446,7 @@ def classify_v2_failure(case: V2BenchmarkCase, trace: V2EvaluationTrace) -> V2Fa
         )
     if (
         case.expected_action is V2ExpectedAction.TERMINAL_TEXT
+        and case.expected_terminal_kind is not None
         and trace.observed_terminal_kind is not case.expected_terminal_kind
     ):
         return V2FailureClass.TERMINAL_CONTENT
@@ -468,9 +469,12 @@ def score_v2_evaluation(
     terminal_cases = [
         case for case in manifest.cases if case.expected_action is V2ExpectedAction.TERMINAL_TEXT
     ]
+    terminal_oracle_cases = [
+        case for case in terminal_cases if case.expected_terminal_kind is not None
+    ]
     terminal_hits = sum(
         by_id[case.case_id].observed_terminal_kind is case.expected_terminal_kind
-        for case in terminal_cases
+        for case in terminal_oracle_cases
     )
     format_observed = [
         by_id[case.case_id]
@@ -480,14 +484,18 @@ def score_v2_evaluation(
         and (by_id[case.case_id].proposal_format_valid or not by_id[case.case_id].runtime_failure)
     ]
     format_hits = sum(trace.proposal_format_valid for trace in format_observed)
-    case_hits = sum(
-        by_id[case.case_id].observed_action is case.expected_action
-        and (
-            case.expected_action is V2ExpectedAction.RETRIEVE
-            or by_id[case.case_id].observed_terminal_kind is case.expected_terminal_kind
-        )
-        for case in manifest.cases
-    )
+
+    def case_outcome_matches(case: V2BenchmarkCase) -> bool:
+        trace = by_id[case.case_id]
+        if trace.observed_action is not case.expected_action:
+            return False
+        if case.expected_action is V2ExpectedAction.RETRIEVE:
+            return True
+        if case.expected_terminal_kind is None:
+            return True
+        return trace.observed_terminal_kind is case.expected_terminal_kind
+
+    case_hits = sum(case_outcome_matches(case) for case in manifest.cases)
     failure_classes: dict[V2FailureClass, int] = {}
     invalid_proposal_count = 0
     model_unavailable_count = 0
@@ -516,7 +524,7 @@ def score_v2_evaluation(
 
     return V2EvaluationMetrics(
         action_accuracy=MetricValue(action_hits, len(manifest.cases)),
-        terminal_accuracy=MetricValue(terminal_hits, len(terminal_cases)),
+        terminal_accuracy=MetricValue(terminal_hits, len(terminal_oracle_cases)),
         proposal_format_validity=MetricValue(format_hits, len(format_observed)),
         case_accuracy=MetricValue(case_hits, len(manifest.cases)),
         runtime_failures=sum(by_id[case.case_id].runtime_failure for case in manifest.cases),
