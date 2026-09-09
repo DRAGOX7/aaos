@@ -16,6 +16,7 @@ from aaos.agent.contracts import (
     AgentState,
     AgentTask,
     AgentTaskId,
+    AgentTerminalResult,
     PermissionClass,
     ToolError,
     ToolName,
@@ -177,6 +178,48 @@ def test_one_rag_query_then_terminal_uses_registry_and_sanitized_observation() -
     assert len(observed[1].observations) == 1
     assert observed[1].observations[0].status == "OK"
     assert observed[1].observations[0].text == "safe result"
+
+
+def test_rag_handler_async_path_stays_on_orchestrator_event_loop() -> None:
+    """Async RAG handlers must not be re-entered through a nested event loop."""
+
+    class AsyncAwareHandler:
+        def __init__(self) -> None:
+            self.async_calls = 0
+            self.sync_calls = 0
+            self.loop_ids: list[int] = []
+
+        async def handle_async(
+            self,
+            _arguments: ValidatedToolArguments,
+            *,
+            trusted_task_scope: object | None = None,
+        ) -> ToolResult:
+            del trusted_task_scope
+            self.async_calls += 1
+            self.loop_ids.append(id(asyncio.get_running_loop()))
+            return ToolResult.success(_rag_output())
+
+        def __call__(self, _arguments: ValidatedToolArguments) -> ToolResult:
+            self.sync_calls += 1
+            return ToolResult.success(_rag_output())
+
+    handler = AsyncAwareHandler()
+    adapter = ScriptedProposalAdapter(_tool(), _terminal())
+    orchestrator = _orchestrator(adapter, _registry(handler))
+    loop_id: int | None = None
+
+    async def run() -> AgentTerminalResult:
+        nonlocal loop_id
+        loop_id = id(asyncio.get_running_loop())
+        return await orchestrator.run(_task())
+
+    result = asyncio.run(run())
+
+    assert result.state is AgentState.COMPLETED
+    assert handler.async_calls == 1
+    assert handler.sync_calls == 0
+    assert handler.loop_ids == [loop_id]
 
 
 def test_multiple_bounded_tool_steps_are_supported() -> None:

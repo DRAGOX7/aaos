@@ -614,8 +614,7 @@ class AgentOrchestrator:
             )
             try:
                 operation = asyncio.create_task(
-                    asyncio.to_thread(
-                        self._registry.execute,
+                    self._registry.execute_async(
                         proposal,
                         self._permission_policy,
                         trusted_task_scope=task.initial_scope,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -648,30 +649,84 @@ class ToolRegistry:
         try:
             invocation = self.prepare(proposal, policy, trusted_task_scope=trusted_task_scope)
             definition = self.get(invocation.name)
-            handler = definition.handler
-            if handler is None:
-                raise ToolInvocationError(
-                    AgentErrorCode.TOOL_NOT_EXECUTABLE, "tool handler is disabled"
-                )
-            if definition.name is ToolName.RAG_QUERY:
-                scoped_handler = getattr(handler, "handle_with_scope", None)
-                if callable(scoped_handler):
-                    result = scoped_handler(invocation.arguments, trusted_task_scope)
-                else:
-                    result = handler(invocation.arguments)
-            else:
-                result = handler(invocation.arguments)
-            if not isinstance(result, ToolResult):
-                raise ToolInvocationError(
-                    AgentErrorCode.HANDLER_EXECUTION_FAILED, "handler returned an invalid result"
-                )
-            return definition.validate_output(result)
+            return self._execute_validated(definition, invocation, trusted_task_scope)
         except ToolInvocationError as exc:
             return ToolResult.failure(ToolError(exc.code, str(exc).split(": ", 1)[-1]))
         except Exception:
             return ToolResult.failure(
                 ToolError(AgentErrorCode.HANDLER_EXECUTION_FAILED, "trusted tool execution failed")
             )
+
+    async def execute_async(
+        self,
+        proposal: AgentProposal,
+        policy: PermissionPolicy,
+        *,
+        trusted_task_scope: TrustedTaskScope | None = None,
+    ) -> ToolResult:
+        """Execute a validated tool without crossing event-loop ownership boundaries.
+
+        Async-aware trusted handlers (currently the Phase 4 RAG adapter) run
+        on the caller's event loop. Synchronous handlers are isolated in a
+        worker thread, preserving the blocking-handler safety of ``execute``.
+        """
+
+        try:
+            invocation = self.prepare(proposal, policy, trusted_task_scope=trusted_task_scope)
+            definition = self.get(invocation.name)
+            handler = definition.handler
+            if handler is None:
+                raise ToolInvocationError(
+                    AgentErrorCode.TOOL_NOT_EXECUTABLE, "tool handler is disabled"
+                )
+            async_handler = getattr(handler, "handle_async", None)
+            if definition.name is ToolName.RAG_QUERY and callable(async_handler):
+                result = await async_handler(
+                    invocation.arguments, trusted_task_scope=trusted_task_scope
+                )
+                if not isinstance(result, ToolResult):
+                    raise ToolInvocationError(
+                        AgentErrorCode.HANDLER_EXECUTION_FAILED,
+                        "handler returned an invalid result",
+                    )
+                return definition.validate_output(result)
+            return await asyncio.to_thread(
+                self._execute_validated,
+                definition,
+                invocation,
+                trusted_task_scope,
+            )
+        except ToolInvocationError as exc:
+            return ToolResult.failure(ToolError(exc.code, str(exc).split(": ", 1)[-1]))
+        except Exception:
+            return ToolResult.failure(
+                ToolError(AgentErrorCode.HANDLER_EXECUTION_FAILED, "trusted tool execution failed")
+            )
+
+    @staticmethod
+    def _execute_validated(
+        definition: ToolDefinition,
+        invocation: ValidatedToolCall,
+        trusted_task_scope: TrustedTaskScope | None,
+    ) -> ToolResult:
+        handler = definition.handler
+        if handler is None:
+            raise ToolInvocationError(
+                AgentErrorCode.TOOL_NOT_EXECUTABLE, "tool handler is disabled"
+            )
+        if definition.name is ToolName.RAG_QUERY:
+            scoped_handler = getattr(handler, "handle_with_scope", None)
+            if callable(scoped_handler):
+                result = scoped_handler(invocation.arguments, trusted_task_scope)
+            else:
+                result = handler(invocation.arguments)
+        else:
+            result = handler(invocation.arguments)
+        if not isinstance(result, ToolResult):
+            raise ToolInvocationError(
+                AgentErrorCode.HANDLER_EXECUTION_FAILED, "handler returned an invalid result"
+            )
+        return definition.validate_output(result)
 
     def execute_payload(
         self,
