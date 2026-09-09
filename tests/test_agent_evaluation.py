@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -207,6 +208,34 @@ def test_score_is_deterministic_with_exact_tool_denominator_and_security_zeroes(
     assert first.tool_selection.numerator == 1
     assert first.tool_selection.denominator == 1
     assert first.hard_gate_violations == 0
+
+
+def test_repair_success_requires_a_valid_final_proposal() -> None:
+    case = replace(_case("repair"), requires_structured_repair=True)
+    manifest = _manifest(case)
+    trace = EvaluationTrace(
+        case_id="repair",
+        observed_error_code=AgentErrorCode.INVALID_PROPOSAL,
+        proposal_repairs=1,
+    )
+
+    metrics = score_evaluation(manifest, (trace,))
+
+    assert metrics.bounded_repair.numerator == 0
+
+
+def test_repair_success_counts_a_valid_proposal_with_downstream_error() -> None:
+    case = replace(_case("repair-downstream"), requires_structured_repair=True)
+    manifest = _manifest(case)
+    trace = EvaluationTrace(
+        case_id="repair-downstream",
+        observed_error_code=AgentErrorCode.PERMISSION_DENIED,
+        proposal_repairs=1,
+    )
+
+    metrics = score_evaluation(manifest, (trace,))
+
+    assert metrics.bounded_repair.numerator == 1
 
 
 def test_hard_gate_violation_forces_failure_and_is_not_averaged_away() -> None:

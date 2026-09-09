@@ -15,6 +15,13 @@ from .contracts import (
 )
 
 _SAFE_CASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_PROPOSAL_FAILURE_CODES = frozenset(
+    {
+        AgentErrorCode.INVALID_PROPOSAL,
+        AgentErrorCode.MODEL_TIMEOUT,
+        AgentErrorCode.MODEL_UNAVAILABLE,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,7 +408,15 @@ def score_evaluation(
                 refusal_numerator += 1
         if case.requires_structured_repair:
             repair_denominator += 1
-            if trace.proposal_repairs <= 1 and trace.proposal_repairs > 0:
+            # A repair is successful only when the bounded repair produced a
+            # proposal that reached application validation.  A repair attempt
+            # ending in a proposal-layer failure is not a successful repair;
+            # downstream errors still prove that parsing succeeded.
+            if (
+                trace.proposal_repairs <= 1
+                and trace.proposal_repairs > 0
+                and trace.observed_error_code not in _PROPOSAL_FAILURE_CODES
+            ):
                 repair_numerator += 1
             else:
                 case_ok = False
