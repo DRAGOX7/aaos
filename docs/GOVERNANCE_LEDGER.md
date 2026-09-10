@@ -124,3 +124,31 @@ does not alter the production orchestrator or add a trusted pre-model gate.
 The historical V2 result remains reportable as the unchanged
 `V2_ARCHITECTURALLY_MIXED_HISTORICAL_METRIC=42/72`; proposal-format/repair
 efficiency remains a secondary diagnostic rather than routing accuracy.
+
+## C10 numeric routing policy / V4 evaluation contract
+
+C10 is the human-approved, outcome-independent routing acceptance policy for a
+new V4 contract. It requires at least 64 model-routing cases in both
+calibration and held-out, global routing accuracy `>=0.95`, and exact integer
+comparison (at N=64, 61/64 passes and 60/64 fails). Each split must contain at
+least 16 cases in each structural stratum: English/Retrieve, English/Terminal,
+Arabic/Retrieve and Arabic/Terminal. Coverage is a hard structural gate;
+subgroup accuracy is diagnostic only. There is no asymmetric false-terminal
+gate. Security and trusted-system gates remain independent zero-tolerance
+requirements, and proposal-format efficiency remains a separate domain.
+
+C10 is an engineering evaluation policy for the local/portfolio system, not a
+population-reliability or statistical-confidence certification. Its value and
+parameters were selected from architecture, risk and small-sample semantics,
+not from current model results (`C10_POLICY_SELECTED_FROM_CURRENT_MODEL_RESULTS=NO`).
+The V1/V2/V3 contracts and artifacts remain immutable. V4 routing cases are
+authored from the frozen `c10-routing-matrix-v1` responsibility boundary and
+must be disjoint between calibration and held-out under the predeclared
+NFKC/casefold/whitespace equality rule. Trusted-system material is migrated
+deterministically from C9 without inflating the routing denominator.
+
+The V4 implementation freezes both manifests before inference; V4 held-out is
+created before calibration but remains unconsumed and invisible until separate
+authorization. This documentation and contract change performs no model or
+RAG execution, does not modify the production orchestrator, and does not mark
+Phase 5 passed or freeze a candidate. See the [C10/V4 contract](superpowers/specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md).

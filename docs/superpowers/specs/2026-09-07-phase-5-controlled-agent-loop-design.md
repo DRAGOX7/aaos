@@ -540,3 +540,37 @@ any V3 model run. The V2 held-out remains unconsumed and V3 held-out results
 remain invisible until a separately authorized run. C9 changes evaluation
 ownership/scoring only; it does not add a production pre-model gate or change
 the C8 orchestrator.
+
+## 21. C10 numeric routing policy and V4 contract
+
+C10 supersedes no historical artifact. It defines a new
+`phase5-agent-benchmark-v4` evaluation contract while keeping V1, V2 and V3
+schemas, manifests, reports, fingerprints and held-out data immutable. C10 is
+an engineering evaluation policy for this local/portfolio system, not
+population-reliability certification or a statistical confidence guarantee.
+The policy is explicitly independent of model results:
+`C10_POLICY_SELECTED_FROM_CURRENT_MODEL_RESULTS=NO`.
+
+The model-routing domain must have at least 64 cases in calibration and at
+least 64 in held-out. Global routing accuracy must be `>=0.95`, evaluated by
+exact numerator/denominator comparison (61/64 passes; 60/64 fails at N=64).
+Each split must structurally cover at least 16 English/Retrieve, 16
+English/Terminal, 16 Arabic/Retrieve and 16 Arabic/Terminal cases. Coverage is
+a hard structural gate; subgroup accuracy is diagnostic, not an independent
+hard gate. No asymmetric false-terminal gate is authorized. Trusted-system and
+security gates remain independent zero-tolerance domains, while proposal
+format/repair efficiency remains separate from routing quality.
+
+The frozen authoring specification `c10-routing-matrix-v1` uses only the C8
+semantic boundary: retrieve when a clear answerable information need requires
+trusted local knowledge, otherwise use bounded terminal text. Calibration and
+held-out instances are deterministic, balanced, independently instantiated,
+ID/content-disjoint under the predeclared normalized-equality rule, and never
+filtered by model outputs, known failures, prompts or language-specific
+heuristics. Existing C9 trusted-system cases are migrated deterministically
+without changing semantic intent or inflating the routing denominator.
+
+V4 manifests and fingerprints are created before inference. V4 held-out is
+created before any calibration run and remains unconsumed/invisible until a
+separate authorization. No model or RAG execution, candidate freeze, or Phase 5
+acceptance is implied by this contract.

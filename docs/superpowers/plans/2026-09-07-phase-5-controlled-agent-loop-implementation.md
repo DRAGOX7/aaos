@@ -370,3 +370,44 @@ unconsumed/invisible. Human review is required before the first V3 calibration.
 **Future-phase exclusions:** no production orchestrator/pre-model gate change,
 no model or RAG execution, no held-out execution, no Phase 4 change, no Phase 6
 authorization, and no Phase 5 final-candidate freeze.
+
+## C10 — Numeric routing policy and V4 evaluation artifacts
+
+**Files:** `src/aaos/agent/evaluation/v4.py`, evaluation package exports,
+focused V4 contract tests, the C10/V4 specification and governance ledger.
+
+**Tests first:** prove routing N below 64 is acceptance-ineligible; exact 61/64
+passes and 60/64 fails without rounding; all four language/action coverage
+strata are structurally present; subgroup accuracy is diagnostic; trusted and
+security failures cannot be compensated by routing; no blended primary metric
+is emitted; ownership is complete; calibration/held-out routing content is
+disjoint; and V1/V2/V3 fingerprints remain unchanged.
+
+**Implementation:** author 64 calibration and 64 held-out routing cases from
+the frozen `c10-routing-matrix-v1` semantic responsibility boundary, with 16
+cases per English/Retrieve, English/Terminal, Arabic/Retrieve and
+Arabic/Terminal stratum. Migrate the existing C9 trusted-system material
+deterministically without changing semantic intent. Score separate
+model-routing, trusted-system, security, runtime and proposal-format domains.
+Apply the C10 global target `>=0.95` only when routing N is at least 64 and
+structural coverage is valid; use exact integer comparison. Do not use model
+outputs, failures, prompt experiments or result filtering to author cases.
+
+**Validation:** focused V4 tests plus all Phase 5/evaluation, C1–C9 and Phase 4
+regressions, full pytest, Ruff, strict mypy, `uv lock --check`, diff-check and
+import smoke. `MODEL_CALL_COUNT=0`, `RAG_EXECUTION_COUNT=0`,
+`V4_CALIBRATION_EXECUTION_COUNT=0` and `V4_HELDOUT_EXECUTION_COUNT=0` are
+required. The V4 held-out manifest must exist before any future calibration,
+remain unconsumed/invisible, and retain a distinct fingerprint.
+
+**Acceptance gate:** V1/V2/V3 artifacts are unchanged; V4 routing coverage,
+ownership, disjointness and fingerprints are deterministic; the exact C10
+threshold and independent zero-tolerance domains are represented without a
+blended score; and no production orchestrator or C8 behavior changes. Human
+review is required before the first V4 calibration.
+
+**Commit boundary:** `feat(phase5): add c10 v4 acceptance benchmark`.
+
+**Future-phase exclusions:** no model/RAG inference, no prompt or model change,
+no held-out execution, no candidate freeze, no Phase 4 change and no Phase 6
+capability.
