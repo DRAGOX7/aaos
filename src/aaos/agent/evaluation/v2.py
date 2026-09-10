@@ -27,8 +27,8 @@ from .contracts import (
 from .metrics import MetricValue
 
 V2_BENCHMARK_SCHEMA_VERSION = "phase5-agent-benchmark-v2"
-V2_TRACE_SCHEMA_VERSION = "phase5-agent-trace-v2.1"
-V2_METRIC_SCHEMA_VERSION = "phase5-agent-evaluation-v2.1"
+V2_TRACE_SCHEMA_VERSION = "phase5-agent-trace-v2.2"
+V2_METRIC_SCHEMA_VERSION = "phase5-agent-evaluation-v2.2"
 V2_EXPECTED_ACTION_RETRIEVE = "retrieve"
 V2_EXPECTED_ACTION_TERMINAL = "terminal_text"
 MAX_V2_TERMINAL_TEXT_CHARACTERS = 16_384
@@ -289,7 +289,8 @@ class V2EvaluationTrace:
     trusted_rag_call_count: int = 0
     proposal_format_valid: bool = True
     proposal_repairs: int = 0
-    proposal_format_event_count: int = 0
+    proposal_format_diagnostic_event_count: int = 0
+    invalid_proposal_response_count: int = 0
     model_calls: int = 0
     runtime_failure: bool = False
 
@@ -315,7 +316,11 @@ class V2EvaluationTrace:
         for name, value in (
             ("trusted_rag_call_count", self.trusted_rag_call_count),
             ("proposal_repairs", self.proposal_repairs),
-            ("proposal_format_event_count", self.proposal_format_event_count),
+            (
+                "proposal_format_diagnostic_event_count",
+                self.proposal_format_diagnostic_event_count,
+            ),
+            ("invalid_proposal_response_count", self.invalid_proposal_response_count),
             ("model_calls", self.model_calls),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -339,7 +344,8 @@ class V2EvaluationTrace:
                 self.observed_terminal_kind.value if self.observed_terminal_kind else None
             ),
             "proposal_format_valid": self.proposal_format_valid,
-            "proposal_format_event_count": self.proposal_format_event_count,
+            "proposal_format_diagnostic_event_count": self.proposal_format_diagnostic_event_count,
+            "invalid_proposal_response_count": self.invalid_proposal_response_count,
             "proposal_repairs": self.proposal_repairs,
             "runtime_failure": self.runtime_failure,
             "trusted_rag_call_count": self.trusted_rag_call_count,
@@ -360,7 +366,8 @@ class V2EvaluationMetrics:
     model_unavailable_count: int = 0
     model_timeout_count: int = 0
     environment_failure_count: int = 0
-    proposal_format_event_count: int = 0
+    proposal_format_diagnostic_event_count: int = 0
+    invalid_proposal_response_count: int = 0
     failure_class_counts: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
@@ -381,7 +388,8 @@ class V2EvaluationMetrics:
             "model_unavailable_count",
             "model_timeout_count",
             "environment_failure_count",
-            "proposal_format_event_count",
+            "proposal_format_diagnostic_event_count",
+            "invalid_proposal_response_count",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -408,7 +416,8 @@ class V2EvaluationMetrics:
             "model_unavailable_count": self.model_unavailable_count,
             "model_timeout_count": self.model_timeout_count,
             "environment_failure_count": self.environment_failure_count,
-            "proposal_format_event_count": self.proposal_format_event_count,
+            "proposal_format_diagnostic_event_count": self.proposal_format_diagnostic_event_count,
+            "invalid_proposal_response_count": self.invalid_proposal_response_count,
             "failure_class_counts": {name: count for name, count in self.failure_class_counts},
             "terminal_accuracy": self.terminal_accuracy.to_dict(),
             "action_accuracy": self.action_accuracy.to_dict(),
@@ -501,10 +510,12 @@ def score_v2_evaluation(
     model_unavailable_count = 0
     model_timeout_count = 0
     environment_failure_count = 0
-    proposal_format_event_count = 0
+    proposal_format_diagnostic_event_count = 0
+    invalid_proposal_response_count = 0
     for case in manifest.cases:
         trace = by_id[case.case_id]
-        proposal_format_event_count += trace.proposal_format_event_count
+        proposal_format_diagnostic_event_count += trace.proposal_format_diagnostic_event_count
+        invalid_proposal_response_count += trace.invalid_proposal_response_count
         if (
             not trace.proposal_format_valid
             and not trace.runtime_failure
@@ -532,7 +543,8 @@ def score_v2_evaluation(
         model_unavailable_count=model_unavailable_count,
         model_timeout_count=model_timeout_count,
         environment_failure_count=environment_failure_count,
-        proposal_format_event_count=proposal_format_event_count,
+        proposal_format_diagnostic_event_count=proposal_format_diagnostic_event_count,
+        invalid_proposal_response_count=invalid_proposal_response_count,
         failure_class_counts=tuple(
             (failure.value, failure_classes[failure])
             for failure in sorted(failure_classes, key=str)

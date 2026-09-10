@@ -146,12 +146,14 @@ def test_v2_repairable_format_event_is_not_a_final_invalid_proposal() -> None:
             observed_action=case.expected_action,
             proposal_format_valid=True,
             proposal_repairs=1,
-            proposal_format_event_count=1,
+            proposal_format_diagnostic_event_count=1,
+            invalid_proposal_response_count=1,
         ),
     )
 
     assert metrics.invalid_proposal_count == 0
-    assert metrics.proposal_format_event_count == 1
+    assert metrics.invalid_proposal_response_count == 1
+    assert metrics.proposal_format_diagnostic_event_count == 1
     assert metrics.failure_class_counts == ()
 
 
@@ -165,13 +167,34 @@ def test_v2_failed_repair_is_a_final_invalid_proposal() -> None:
             observed_error_code=AgentErrorCode.INVALID_PROPOSAL,
             proposal_format_valid=False,
             proposal_repairs=1,
-            proposal_format_event_count=2,
+            proposal_format_diagnostic_event_count=2,
+            invalid_proposal_response_count=2,
         ),
     )
 
     assert metrics.invalid_proposal_count == 1
-    assert metrics.proposal_format_event_count == 2
+    assert metrics.invalid_proposal_response_count == 2
+    assert metrics.proposal_format_diagnostic_event_count == 2
     assert metrics.failure_class_counts == ((V2FailureClass.PROPOSAL_REPAIR.value, 1),)
+
+
+def test_v2_diagnostic_events_and_invalid_responses_are_distinct() -> None:
+    calibration, _ = build_v2_manifests()
+    case = calibration.cases[0]
+    metrics = score_v2_evaluation(
+        calibration,
+        _traces_with_override(
+            case.case_id,
+            observed_action=case.expected_action,
+            proposal_format_valid=True,
+            proposal_format_diagnostic_event_count=3,
+            invalid_proposal_response_count=1,
+        ),
+    )
+
+    assert metrics.proposal_format_diagnostic_event_count == 3
+    assert metrics.invalid_proposal_response_count == 1
+    assert metrics.invalid_proposal_count == 0
 
 
 def test_v2_environment_failures_do_not_masquerade_as_invalid_proposals() -> None:
