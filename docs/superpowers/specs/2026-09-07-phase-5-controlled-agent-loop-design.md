@@ -511,3 +511,32 @@ and held-out manifests retain the approved 72 (36 English/36 Arabic) and 24
 (12 English/12 Arabic) memberships and receive distinct fingerprints before
 any model calibration. Held-out consumption remains one-time and is not
 authorized by this amendment.
+
+## 20. C9 trusted decision ownership and V3 evaluation contract
+
+The V1 and V2 contracts, manifests, fingerprints and historical results remain
+immutable. `phase5-agent-benchmark-v3` is a new contract-only projection of V2.
+Each case has exactly one architecture-derived owner from the closed set
+`MODEL_SEMANTIC_ROUTING`, `TRUSTED_PRE_MODEL_CONTROL`,
+`TRUSTED_POST_MODEL_VALIDATION`, `TRUSTED_RUNTIME_OR_LIFECYCLE`,
+`TRUSTED_POST_TOOL_RESULT` or `EVALUATION_SYNTHETIC_FAULT_INJECTION`.
+Ownership is determined from category, architecture and case intent, never from
+model output or observed performance.
+
+V3 reports separate model-routing, trusted-system, security-hard-gate,
+runtime-environment and proposal-format-efficiency domains. Model-routing
+metrics score only retrieve-versus-terminal behavior and explicitly applicable
+terminal-kind oracles. Trusted-system cases score the deterministic condition
+owned by AAOS; security hard gates remain independent zero-tolerance gates and
+cannot be averaged away by routing accuracy. No blended agent-accuracy metric
+is a primary acceptance result. The historical V2 result remains reportable,
+unchanged, as `V2_ARCHITECTURALLY_MIXED_HISTORICAL_METRIC=42/72`; proposal
+format/repair counts are secondary model-routing diagnostics, not semantic
+routing accuracy.
+
+V3 calibration (72 cases, 36 English/36 Arabic) and V3 held-out (24 cases,
+12 English/12 Arabic) are derived uniformly from the frozen V2 manifests before
+any V3 model run. The V2 held-out remains unconsumed and V3 held-out results
+remain invisible until a separately authorized run. C9 changes evaluation
+ownership/scoring only; it does not add a production pre-model gate or change
+the C8 orchestrator.

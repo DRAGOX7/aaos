@@ -330,3 +330,43 @@ before v2 calibration.
 **Future-phase exclusions:** no calibration, held-out execution, model
 selection, Phase 4 changes, Phase 6 approval/write infrastructure, or Phase 7–8
 capabilities.
+
+## C9 — Trusted decision ownership and V3 evaluation contract
+
+**Files:** `src/aaos/agent/evaluation/v3.py`, evaluation package exports,
+focused V3 contract tests, and the minimal Phase 5 governance/spec updates.
+
+**Tests first:** verify one immutable owner per case, complete deterministic V2
+category mapping, performance-independent migration, separated model-routing /
+trusted-system / security domains, independent hard-gate failure behavior,
+V1/V2 immutability, deterministic calibration and held-out migration, and
+absence of a blended primary accuracy metric.
+
+**Implementation:** derive `phase5-agent-benchmark-v3` uniformly from V2 with
+the closed architecture-owned owner enum. Model-routing cases score only the
+retrieve/terminal decision (including terminal-kind oracles where present).
+All other cases score trusted deterministic conditions; security hard gates
+remain an independent zero-tolerance domain. Preserve the 72-case calibration
+and 24-case held-out memberships and create distinct V3 schema/manifest
+fingerprints without running a model.
+
+Retain the historical V2 result as the report-only label
+`V2_ARCHITECTURALLY_MIXED_HISTORICAL_METRIC=42/72`; proposal format and repair
+efficiency are secondary diagnostics over model-routing opportunities and are
+not blended into routing accuracy.
+
+**Validation:** focused V3 tests, all V1/V2/evaluation and C1–C8 regressions,
+Phase 4 regressions, full pytest, Ruff, strict mypy, `uv lock --check`,
+`git diff --check`, and import smoke. `MODEL_CALL_COUNT=0` and
+`RAG_EXECUTION_COUNT=0` are required.
+
+**Acceptance gate:** V1/V2 artifacts remain byte-for-byte untouched; every V3
+case has one owner; ownership is not performance-dependent; score domains are
+separate; V3 held-out is derived before any V3 calibration and remains
+unconsumed/invisible. Human review is required before the first V3 calibration.
+
+**Commit boundary:** `feat(phase5): add ownership-aware v3 evaluation`.
+
+**Future-phase exclusions:** no production orchestrator/pre-model gate change,
+no model or RAG execution, no held-out execution, no Phase 4 change, no Phase 6
+authorization, and no Phase 5 final-candidate freeze.

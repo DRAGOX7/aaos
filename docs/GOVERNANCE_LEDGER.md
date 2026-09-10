@@ -107,3 +107,20 @@ RAG output directly. The v1 evaluation artifacts remain immutable and the
 uniform v2 contract is versioned separately. This entry records implementation
 evidence only; calibration, held-out execution and human approval remain
 future gates.
+
+## C9 trusted decision ownership / V3 evaluation evidence
+
+C9 introduces the distinct `phase5-agent-benchmark-v3` evaluation contract.
+V1 and V2 schemas, manifests, fingerprints and historical results remain
+immutable. A closed, architecture-derived mapping assigns exactly one primary
+owner to every V2 category; the mapping is independent of model outputs and
+observed performance. V3 keeps model-routing, trusted-system,
+security-hard-gate, runtime-environment and proposal-format-efficiency metrics
+as separate domains. Security hard gates remain zero-tolerance and cannot be
+hidden by routing accuracy. Calibration and held-out manifests are migrated
+uniformly from V2 before any V3 model run; held-out remains unconsumed and
+results remain invisible. This C9 slice changes scoring ownership only and
+does not alter the production orchestrator or add a trusted pre-model gate.
+The historical V2 result remains reportable as the unchanged
+`V2_ARCHITECTURALLY_MIXED_HISTORICAL_METRIC=42/72`; proposal-format/repair
+efficiency remains a secondary diagnostic rather than routing accuracy.
