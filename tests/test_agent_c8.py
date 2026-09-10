@@ -18,6 +18,7 @@ from aaos.agent.contracts import (
 from aaos.agent.orchestrator import AgentOrchestrator
 from aaos.agent.policy import PermissionPolicy
 from aaos.agent.proposal import (
+    PROPOSAL_SYSTEM_PROMPT,
     AgentProposalAdapter,
     ProposalRequest,
     ProposalResult,
@@ -38,6 +39,17 @@ from aaos.agent.registry import (
 from aaos.inference import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
 from aaos.inference.lm_studio import _STRUCTURED_RESPONSE_FORMATS
 from aaos.rag import GlobalScope
+
+
+def test_c8_instruction_uses_general_information_source_boundary() -> None:
+    prompt = " ".join(PROPOSAL_SYSTEM_PROMPT.split())
+    assert "requires trusted local, user, course, or project material" in prompt
+    assert "If it does, choose retrieve" in prompt
+    assert "If it does not, choose terminal_text" in prompt
+    assert "Do not retrieve merely because a request is technical" in prompt
+    assert "Do not choose terminal_text merely because a plausible general answer exists" in prompt
+    for forbidden in ("cal-", "v4-", "ambiguous_task", "oracle", "English", "Arabic"):
+        assert forbidden not in prompt
 
 
 class _Gateway:
