@@ -19,6 +19,8 @@ from aaos.agent.evaluation.v3 import (
     V3EvaluationManifest,
     V3EvaluationOwner,
     V3EvaluationTrace,
+    V3TrustedExecution,
+    build_trusted_trace,
     build_v3_manifests,
     migrate_v2_cases,
     owner_for_category,
@@ -33,6 +35,8 @@ def _all_pass_traces(manifest: V3EvaluationManifest) -> tuple[V3EvaluationTrace,
             case_id=case.case_id,
             observed_action=case.expected_action,
             observed_terminal_kind=case.expected_terminal_kind,
+            trusted_condition_instantiated=True,
+            trusted_owner_exercised=True,
             trusted_condition_passed=True,
         )
         for case in cases
@@ -221,6 +225,8 @@ def test_v3_routing_scorer_cross_check_shape_without_model_calls() -> None:
                 case_id=case.case_id,
                 observed_action=case.expected_action,
                 observed_terminal_kind=case.expected_terminal_kind,
+                trusted_condition_instantiated=True,
+                trusted_owner_exercised=True,
                 trusted_condition_passed=True,
             )
         )
@@ -239,3 +245,90 @@ def test_v3_routing_scorer_cross_check_shape_without_model_calls() -> None:
     metrics = score_v3_evaluation(v3_calibration, traces)
     assert metrics.model_routing.total == 18
     assert metrics.model_routing.correct == 17
+
+
+def test_trusted_scorer_requires_owner_execution_evidence() -> None:
+    calibration, _ = build_v3_manifests()
+    traces = list(_all_pass_traces(calibration))
+    trusted_case = next(
+        case
+        for case in calibration.cases
+        if case.owner is not V3EvaluationOwner.MODEL_SEMANTIC_ROUTING
+    )
+    index = next(
+        index for index, trace in enumerate(traces) if trace.case_id == trusted_case.case_id
+    )
+    traces[index] = replace(
+        traces[index],
+        trusted_condition_instantiated=None,
+        trusted_owner_exercised=None,
+        trusted_condition_passed=True,
+    )
+
+    metrics = score_v3_evaluation(calibration, traces)
+
+    assert metrics.trusted_system.correct == 53
+
+
+def test_v3_format_metrics_separate_response_counts_from_diagnostic_events() -> None:
+    calibration, _ = build_v3_manifests()
+    traces = list(_all_pass_traces(calibration))
+    routing_case = next(
+        case for case in calibration.cases if case.owner is V3EvaluationOwner.MODEL_SEMANTIC_ROUTING
+    )
+    index = next(
+        index for index, trace in enumerate(traces) if trace.case_id == routing_case.case_id
+    )
+    traces[index] = replace(
+        traces[index],
+        proposal_format_diagnostic_event_count=3,
+        invalid_proposal_response_count=1,
+        model_calls=4,
+    )
+
+    metrics = score_v3_evaluation(calibration, traces)
+
+    assert metrics.proposal_format_efficiency.proposal_format_diagnostic_event_count == 3
+    assert metrics.proposal_format_efficiency.invalid_proposal_response_count == 1
+    serialized = cast(dict[str, object], metrics.to_dict()["proposal_format_efficiency_metrics"])
+    assert cast(int, serialized["proposal_format_diagnostic_event_count"]) == 3
+    assert cast(int, serialized["invalid_proposal_response_count"]) == 1
+
+
+def test_trusted_trace_requires_instantiated_condition_and_owner_execution() -> None:
+    calibration, _ = build_v3_manifests()
+    case = next(
+        case
+        for case in calibration.cases
+        if case.owner is V3EvaluationOwner.TRUSTED_POST_MODEL_VALIDATION
+    )
+    execution = V3TrustedExecution(
+        case_id=case.case_id,
+        owner=case.owner,
+        condition_instantiated=True,
+        owner_exercised=True,
+        observed_error_code=case.expected_error_code,
+        permission_allowed=False,
+    )
+
+    trace = build_trusted_trace(case, execution)
+
+    assert trace.trusted_condition_passed is True
+
+
+def test_trusted_trace_rejects_uninstantiated_condition() -> None:
+    calibration, _ = build_v3_manifests()
+    case = next(
+        case
+        for case in calibration.cases
+        if case.owner is not V3EvaluationOwner.MODEL_SEMANTIC_ROUTING
+    )
+    execution = V3TrustedExecution(
+        case_id=case.case_id,
+        owner=case.owner,
+        condition_instantiated=False,
+        owner_exercised=True,
+    )
+
+    with pytest.raises(ValueError, match="condition must be instantiated"):
+        build_trusted_trace(case, execution)

@@ -418,11 +418,17 @@ class V3EvaluationTrace:
     case_id: str
     observed_action: V2ExpectedAction | None = None
     observed_terminal_kind: TerminalResultKind | None = None
+    observed_error_code: AgentErrorCode | None = None
+    trusted_condition_instantiated: bool | None = None
+    trusted_owner_exercised: bool | None = None
     trusted_condition_passed: bool | None = None
     security_hard_gate_failure_count: int = 0
     security_hard_gate_failed: bool = False
     proposal_format_valid: bool = True
     proposal_repairs: int = 0
+    proposal_format_diagnostic_event_count: int = 0
+    invalid_proposal_response_count: int = 0
+    model_calls: int = 0
     model_unavailable: bool = False
     model_timeout: bool = False
     runtime_failure: bool = False
@@ -442,6 +448,14 @@ class V3EvaluationTrace:
             self.observed_terminal_kind, TerminalResultKind
         ):
             raise TypeError("observed_terminal_kind is unsupported")
+        if self.observed_error_code is not None and not isinstance(
+            self.observed_error_code, AgentErrorCode
+        ):
+            raise TypeError("observed_error_code is unsupported")
+        for name in ("trusted_condition_instantiated", "trusted_owner_exercised"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool or None")
         if self.trusted_condition_passed is not None and not isinstance(
             self.trusted_condition_passed, bool
         ):
@@ -465,6 +479,14 @@ class V3EvaluationTrace:
             raise ValueError("proposal_repairs must be a non-negative integer")
         if self.proposal_repairs < 0 or self.proposal_repairs > 1:
             raise ValueError("proposal_repairs must be between zero and one")
+        for name in (
+            "proposal_format_diagnostic_event_count",
+            "invalid_proposal_response_count",
+            "model_calls",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
 
     @classmethod
     def from_v2(
@@ -479,9 +501,15 @@ class V3EvaluationTrace:
             case_id=trace.case_id,
             observed_action=trace.observed_action,
             observed_terminal_kind=trace.observed_terminal_kind,
+            observed_error_code=trace.observed_error_code,
+            trusted_condition_instantiated=None,
+            trusted_owner_exercised=None,
             trusted_condition_passed=trusted_condition_passed,
             proposal_format_valid=trace.proposal_format_valid,
             proposal_repairs=trace.proposal_repairs,
+            proposal_format_diagnostic_event_count=trace.proposal_format_diagnostic_event_count,
+            invalid_proposal_response_count=trace.invalid_proposal_response_count,
+            model_calls=trace.model_calls,
             model_unavailable=trace.observed_error_code is AgentErrorCode.MODEL_UNAVAILABLE,
             model_timeout=trace.observed_error_code is AgentErrorCode.MODEL_TIMEOUT,
             runtime_failure=trace.runtime_failure,
@@ -498,19 +526,125 @@ class V3EvaluationTrace:
             "case_id": self.case_id,
             "model_unavailable": self.model_unavailable,
             "model_timeout": self.model_timeout,
+            "model_calls": self.model_calls,
             "observed_action": self.observed_action.value
             if self.observed_action is not None
+            else None,
+            "observed_error_code": self.observed_error_code.value
+            if self.observed_error_code is not None
             else None,
             "observed_terminal_kind": self.observed_terminal_kind.value
             if self.observed_terminal_kind is not None
             else None,
             "proposal_format_valid": self.proposal_format_valid,
+            "proposal_format_diagnostic_event_count": self.proposal_format_diagnostic_event_count,
+            "invalid_proposal_response_count": self.invalid_proposal_response_count,
             "proposal_repairs": self.proposal_repairs,
             "runtime_failure": self.runtime_failure,
             "security_hard_gate_failure_count": self.security_failure_count,
+            "trusted_condition_instantiated": self.trusted_condition_instantiated,
+            "trusted_owner_exercised": self.trusted_owner_exercised,
             "trusted_condition_passed": self.trusted_condition_passed,
             "trace_schema_version": V3_TRACE_SCHEMA_VERSION,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class V3TrustedExecution:
+    """Evidence that one trusted-system owner actually ran its condition.
+
+    V3 scoring must not treat a generic production run as evidence for a
+    trusted fault-injection case.  This record is produced by a trusted,
+    owner-specific diagnostic harness after it has instantiated the declared
+    condition and exercised the owning boundary.  Model output cannot create
+    or populate this record.
+    """
+
+    case_id: str
+    owner: V3EvaluationOwner
+    condition_instantiated: bool
+    owner_exercised: bool
+    completed: bool = False
+    observed_error_code: AgentErrorCode | None = None
+    observed_terminal_kind: TerminalResultKind | None = None
+    permission_allowed: bool | None = None
+    grounded: bool = False
+    tool_calls: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.case_id, str)
+            or _SAFE_CASE_ID.fullmatch(self.case_id.strip()) is None
+        ):
+            raise ValueError("trusted execution case_id must be a safe logical identifier")
+        object.__setattr__(self, "case_id", self.case_id.strip())
+        if not isinstance(self.owner, V3EvaluationOwner):
+            raise TypeError("trusted execution owner must be a V3EvaluationOwner")
+        for name in ("condition_instantiated", "owner_exercised", "completed", "grounded"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a bool")
+        if self.observed_error_code is not None and not isinstance(
+            self.observed_error_code, AgentErrorCode
+        ):
+            raise TypeError("observed_error_code is unsupported")
+        if self.observed_terminal_kind is not None and not isinstance(
+            self.observed_terminal_kind, TerminalResultKind
+        ):
+            raise TypeError("observed_terminal_kind is unsupported")
+        if self.permission_allowed is not None and not isinstance(self.permission_allowed, bool):
+            raise TypeError("permission_allowed must be a bool or None")
+        if (
+            isinstance(self.tool_calls, bool)
+            or not isinstance(self.tool_calls, int)
+            or self.tool_calls < 0
+        ):
+            raise ValueError("tool_calls must be a non-negative integer")
+
+
+def build_trusted_trace(case: V3BenchmarkCase, execution: V3TrustedExecution) -> V3EvaluationTrace:
+    """Build a trusted trace only from an exercised owner-specific condition."""
+
+    if not isinstance(case, V3BenchmarkCase):
+        raise TypeError("case must be a V3BenchmarkCase")
+    if not isinstance(execution, V3TrustedExecution):
+        raise TypeError("execution must be a V3TrustedExecution")
+    if case.owner is V3EvaluationOwner.MODEL_SEMANTIC_ROUTING:
+        raise ValueError("model-routing cases do not use trusted execution")
+    if execution.case_id != case.case_id:
+        raise ValueError("trusted execution case_id does not match benchmark case")
+    if execution.owner is not case.owner:
+        raise ValueError("trusted execution owner does not match benchmark case")
+    if not execution.condition_instantiated:
+        raise ValueError("condition must be instantiated")
+    if not execution.owner_exercised:
+        raise ValueError("trusted execution owner must be exercised")
+
+    checks: list[bool] = []
+    if case.expected_error_code is not None:
+        checks.append(execution.observed_error_code is case.expected_error_code)
+    if case.expected_terminal_kind is not None:
+        checks.append(execution.observed_terminal_kind is case.expected_terminal_kind)
+    if case.expected_grounded is not None:
+        checks.append(execution.grounded is case.expected_grounded)
+    if case.expected_permission_allowed is not None:
+        checks.append(execution.permission_allowed is case.expected_permission_allowed)
+    if case.expected_no_tool:
+        checks.append(execution.tool_calls == 0)
+    if case.expected_max_tool_calls is not None:
+        checks.append(execution.tool_calls <= case.expected_max_tool_calls)
+    if not checks:
+        checks.append(execution.completed and execution.observed_error_code is None)
+
+    return V3EvaluationTrace(
+        case_id=case.case_id,
+        observed_terminal_kind=execution.observed_terminal_kind,
+        observed_error_code=execution.observed_error_code,
+        trusted_condition_instantiated=True,
+        trusted_owner_exercised=True,
+        trusted_condition_passed=all(checks),
+        model_unavailable=execution.observed_error_code is AgentErrorCode.MODEL_UNAVAILABLE,
+        model_timeout=execution.observed_error_code is AgentErrorCode.MODEL_TIMEOUT,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -656,9 +790,20 @@ class V3ProposalFormatEfficiencyMetrics:
     valid: int
     repair_attempts: int
     repair_successes: int
+    proposal_format_diagnostic_event_count: int = 0
+    invalid_proposal_response_count: int = 0
+    model_calls: int = 0
 
     def __post_init__(self) -> None:
-        for name in ("total", "valid", "repair_attempts", "repair_successes"):
+        for name in (
+            "total",
+            "valid",
+            "repair_attempts",
+            "repair_successes",
+            "proposal_format_diagnostic_event_count",
+            "invalid_proposal_response_count",
+            "model_calls",
+        ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
@@ -672,6 +817,9 @@ class V3ProposalFormatEfficiencyMetrics:
     def to_dict(self) -> dict[str, object]:
         return {
             "initial_valid": self.validity.to_dict(),
+            "invalid_proposal_response_count": self.invalid_proposal_response_count,
+            "model_calls": self.model_calls,
+            "proposal_format_diagnostic_event_count": self.proposal_format_diagnostic_event_count,
             "repair_attempts": self.repair_attempts,
             "repair_successes": self.repair_successes,
             "total": self.total,
@@ -800,7 +948,10 @@ def score_v3_evaluation(
         if case.owner is not V3EvaluationOwner.MODEL_SEMANTIC_ROUTING
     ]
     trusted_correct = sum(
-        by_id[case.case_id].trusted_condition_passed is True for case in trusted_cases
+        by_id[case.case_id].trusted_condition_instantiated is True
+        and by_id[case.case_id].trusted_owner_exercised is True
+        and by_id[case.case_id].trusted_condition_passed is True
+        for case in trusted_cases
     )
 
     security_failures = sum(trace.security_failure_count for trace in values)
@@ -817,6 +968,15 @@ def score_v3_evaluation(
     repair_successes = sum(
         trace.proposal_repairs > 0 and trace.proposal_format_valid for trace in format_traces
     )
+    # Transport diagnostics cover every model/schema request in a run, while
+    # ``total``/``valid`` above intentionally remain the model-routing domain
+    # denominator.  Keeping both prevents decomposition/evidence schema
+    # events from masquerading as proposal responses.
+    proposal_format_diagnostic_event_count = sum(
+        trace.proposal_format_diagnostic_event_count for trace in values
+    )
+    invalid_proposal_response_count = sum(trace.invalid_proposal_response_count for trace in values)
+    model_calls = sum(trace.model_calls for trace in values)
 
     return V3EvaluationMetrics(
         model_routing=V3ModelRoutingMetrics(
@@ -842,6 +1002,9 @@ def score_v3_evaluation(
             valid=sum(trace.proposal_format_valid for trace in format_traces),
             repair_attempts=repair_attempts,
             repair_successes=repair_successes,
+            proposal_format_diagnostic_event_count=proposal_format_diagnostic_event_count,
+            invalid_proposal_response_count=invalid_proposal_response_count,
+            model_calls=model_calls,
         ),
     )
 
@@ -866,6 +1029,7 @@ __all__ = [
     "V3EvaluationMetrics",
     "V3EvaluationOwner",
     "V3EvaluationTrace",
+    "V3TrustedExecution",
     "V3ModelRoutingMetrics",
     "V3Owner",
     "V3ExpectedAction",
@@ -878,6 +1042,7 @@ __all__ = [
     "V2_HELDOUT_SOURCE_DATASET_FINGERPRINT",
     "V2_HISTORICAL_METRIC_LABEL",
     "build_v3_manifests",
+    "build_trusted_trace",
     "migrate_v2_cases",
     "owner_for_category",
     "score_v3_evaluation",
