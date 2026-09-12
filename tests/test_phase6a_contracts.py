@@ -2,23 +2,29 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
-from typing import ClassVar, get_type_hints
+from typing import ClassVar, cast, get_type_hints
 
 import pytest
 
 from aaos.agent.contracts import PermissionClass
 from aaos.approval.contracts import (
     ActionId,
+    ActionRecord,
+    ActionState,
     ActionType,
     ActorIdentity,
+    ApprovalConsumption,
     ApprovalId,
     ApprovalRecord,
     ApprovalState,
     CanonicalArguments,
+    ClaimIdentity,
     ExecutableAction,
+    ExecutionOutcome,
     OperationId,
     OperationRecord,
     OperationState,
+    PreparedAction,
     PreparedActionBinding,
     RemotePrecondition,
     TargetIdentity,
@@ -64,7 +70,7 @@ def make_prepared_action_binding(*, action_expires_at: datetime) -> PreparedActi
     )
 
 
-def make_prepared_action():
+def make_prepared_action() -> PreparedAction:
     return build_prepared_action(make_prepared_action_binding(action_expires_at=utc_after(300)))
 
 
@@ -193,34 +199,31 @@ def test_approval_lifecycle_fields_are_mutable_but_binding_fields_are_not() -> N
 def test_records_and_executable_action_reject_untrusted_runtime_values() -> None:
     prepared = make_prepared_action()
     with pytest.raises(TypeError):
-        OperationRecord(OperationId("op-001"), ActionId("act-001"), "CLAIMED")  # type: ignore[arg-type]
+        OperationRecord(OperationId("op-001"), ActionId("act-001"), cast(OperationState, "CLAIMED"))
     with pytest.raises(TypeError):
         OperationRecord(
             OperationId("op-001"),
             ActionId("act-001"),
             OperationState.CLAIMED,
-            outcome="UNKNOWN_OUTCOME",  # type: ignore[arg-type]
+            outcome=cast(ExecutionOutcome, "UNKNOWN_OUTCOME"),
         )
     with pytest.raises(TypeError):
-        __import__("aaos.approval.contracts", fromlist=["ActionRecord"]).ActionRecord(
-            prepared,
-            "PREPARED",  # type: ignore[arg-type]
-        )
+        ActionRecord(prepared, cast(ActionState, "PREPARED"))
     with pytest.raises(TypeError):
-        __import__("aaos.approval.contracts", fromlist=["ApprovalConsumption"]).ApprovalConsumption(
+        ApprovalConsumption(
             ApprovalId("approval-001"),
             ActionId("act-001"),
             OperationId("op-001"),
-            "worker",
-            NOW,  # type: ignore[arg-type]
+            cast(ClaimIdentity, "worker"),
+            NOW,
         )
     with pytest.raises(TypeError):
         ExecutableAction(
             make_target(),
             ActionType("fake_calendar_create"),
-            "{}",
+            cast(bytes, "{}"),
             OperationId("op-001"),
-            prepared.remote_precondition,  # type: ignore[arg-type]
+            prepared.remote_precondition,
         )
 
 
