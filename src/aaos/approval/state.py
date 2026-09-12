@@ -271,6 +271,7 @@ class DispatchFenceSnapshot:
     stored_precondition_intact: bool
     action_expires_at: datetime
     approval_expires_at: datetime
+    evaluated_at: datetime
     dispatch_started_at: datetime | None
     operation_revision: int
 
@@ -302,6 +303,11 @@ def evaluate_dispatch_fence(snapshot: DispatchFenceSnapshot) -> FenceDecision:
         return _rejected_fence(Phase6ErrorCode.VERSION_MISMATCH)
     if not snapshot.stored_precondition_intact:
         return _rejected_fence(Phase6ErrorCode.PRECONDITION_STALE)
+    if (
+        snapshot.action_expires_at <= snapshot.evaluated_at
+        or snapshot.approval_expires_at <= snapshot.evaluated_at
+    ):
+        return FenceDecision(False, Phase6ErrorCode.APPROVAL_EXPIRED, False)
     if snapshot.dispatch_started_at is not None:
         return _rejected_fence(Phase6ErrorCode.DISPATCH_ALREADY_RECORDED)
     return FenceDecision(True, None, False)

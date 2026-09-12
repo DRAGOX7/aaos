@@ -250,6 +250,7 @@ def make_snapshot(**changes: object) -> DispatchFenceSnapshot:
         "stored_precondition_intact": True,
         "action_expires_at": now + timedelta(minutes=10),
         "approval_expires_at": now + timedelta(minutes=5),
+        "evaluated_at": now,
         "dispatch_started_at": None,
         "operation_revision": 3,
     }
@@ -259,6 +260,25 @@ def make_snapshot(**changes: object) -> DispatchFenceSnapshot:
 
 def test_dispatch_fence_accepts_complete_claimed_snapshot() -> None:
     assert evaluate_dispatch_fence(make_snapshot()).allowed
+
+
+@pytest.mark.parametrize(
+    ("expiry_field", "expected"),
+    (
+        ("action_expires_at", Phase6ErrorCode.APPROVAL_EXPIRED),
+        ("approval_expires_at", Phase6ErrorCode.APPROVAL_EXPIRED),
+    ),
+)
+def test_dispatch_fence_fails_closed_when_a_bound_deadline_has_expired(
+    expiry_field: str, expected: Phase6ErrorCode
+) -> None:
+    evaluated_at = datetime(2026, 9, 12, tzinfo=timezone.utc)
+    decision = evaluate_dispatch_fence(
+        make_snapshot(**{expiry_field: evaluated_at, "evaluated_at": evaluated_at})
+    )
+    assert not decision.allowed
+    assert decision.error_code is expected
+    assert not decision.invalidates_action
 
 
 @pytest.mark.parametrize(
