@@ -75,7 +75,9 @@ class PreparedActionORM(Base):
             name="ck_prepared_actions_remote_precondition",
         ),
         CheckConstraint(
-            "action_expires_at > prepared_at",
+            "julianday(action_expires_at) IS NOT NULL "
+            "AND julianday(prepared_at) IS NOT NULL "
+            "AND julianday(action_expires_at) > julianday(prepared_at)",
             name="ck_prepared_actions_expiry",
         ),
         Index("ix_prepared_actions_actor", "actor_identity"),
@@ -157,7 +159,9 @@ class ApprovalRecordORM(Base):
             name="ck_approval_records_reason_code",
         ),
         CheckConstraint(
-            "approval_expires_at > issued_at",
+            "julianday(approval_expires_at) IS NOT NULL "
+            "AND julianday(issued_at) IS NOT NULL "
+            "AND julianday(approval_expires_at) > julianday(issued_at)",
             name="ck_approval_records_expiry",
         ),
         Index("ix_approval_records_action_status", "action_id", "status"),

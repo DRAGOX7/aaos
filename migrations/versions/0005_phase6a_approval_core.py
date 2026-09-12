@@ -78,7 +78,12 @@ def upgrade() -> None:
             "json_valid(remote_precondition) AND length(remote_precondition) <= 16384",
             name="ck_prepared_actions_remote_precondition",
         ),
-        sa.CheckConstraint("action_expires_at > prepared_at", name="ck_prepared_actions_expiry"),
+        sa.CheckConstraint(
+            "julianday(action_expires_at) IS NOT NULL "
+            "AND julianday(prepared_at) IS NOT NULL "
+            "AND julianday(action_expires_at) > julianday(prepared_at)",
+            name="ck_prepared_actions_expiry",
+        ),
     )
     op.create_index("ix_prepared_actions_actor", "prepared_actions", ["actor_identity"])
     op.create_index("ix_prepared_actions_action_type", "prepared_actions", ["action_type"])
@@ -151,7 +156,12 @@ def upgrade() -> None:
             "'BINDING_DRIFT','STORED_PRECONDITION_DRIFT')",
             name="ck_approval_records_reason_code",
         ),
-        sa.CheckConstraint("approval_expires_at > issued_at", name="ck_approval_records_expiry"),
+        sa.CheckConstraint(
+            "julianday(approval_expires_at) IS NOT NULL "
+            "AND julianday(issued_at) IS NOT NULL "
+            "AND julianday(approval_expires_at) > julianday(issued_at)",
+            name="ck_approval_records_expiry",
+        ),
     )
     op.create_index(
         "ix_approval_records_action_status", "approval_records", ["action_id", "status"]
@@ -271,16 +281,16 @@ def upgrade() -> None:
     op.execute(
         "CREATE TRIGGER approval_expiry_guard_insert "
         "BEFORE INSERT ON approval_records "
-        "WHEN NEW.approval_expires_at > ("
+        "WHEN julianday(NEW.approval_expires_at) > julianday(("
         "SELECT action_expires_at FROM prepared_actions WHERE action_id = NEW.action_id"
-        ") BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
+        ")) BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
     )
     op.execute(
         "CREATE TRIGGER approval_expiry_guard_update "
         "BEFORE UPDATE OF approval_expires_at, action_id ON approval_records "
-        "WHEN NEW.approval_expires_at > ("
+        "WHEN julianday(NEW.approval_expires_at) > julianday(("
         "SELECT action_expires_at FROM prepared_actions WHERE action_id = NEW.action_id"
-        ") BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
+        ")) BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
     )
     op.execute(
         "CREATE TRIGGER phase6a_action_events_no_update "

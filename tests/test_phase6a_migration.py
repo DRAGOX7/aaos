@@ -467,6 +467,123 @@ def test_direct_sql_rejects_approval_expiry_after_action_expiry_on_update(
                 )
 
 
+def test_local_expiry_checks_order_fractional_utc_timestamps_chronologically(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                prepared_at="2026-09-12T10:00:00Z",
+                action_expires_at="2026-09-12T10:00:00.500000Z",
+            )
+            insert_approval(
+                connection,
+                issued_at="2026-09-12T10:00:00Z",
+                approval_expires_at="2026-09-12T10:00:00.250000Z",
+            )
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_prepared(
+                    connection,
+                    action_id="action-2",
+                    operation_id="operation-2",
+                    prepared_at="2026-09-12T11:00:00.500000Z",
+                    action_expires_at="2026-09-12T11:00:00Z",
+                    prepared_action_sha256="f" * 64,
+                )
+
+
+def test_approval_expiry_insert_guard_orders_fractional_utc_timestamps_chronologically(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_expires_at="2026-09-12T12:00:00.500000Z",
+            )
+            insert_approval(
+                connection,
+                issued_at="2026-09-12T11:00:00Z",
+                approval_expires_at="2026-09-12T12:00:00Z",
+            )
+            insert_prepared(
+                connection,
+                action_id="action-2",
+                operation_id="operation-2",
+                action_expires_at="2026-09-12T13:00:00Z",
+                prepared_action_sha256="f" * 64,
+            )
+
+        with pytest.raises(IntegrityError, match="approval expiry exceeds action expiry"):
+            with engine.begin() as connection:
+                insert_approval(
+                    connection,
+                    approval_id="approval-2",
+                    action_id="action-2",
+                    operation_id="operation-2",
+                    issued_at="2026-09-12T12:00:00Z",
+                    approval_expires_at="2026-09-12T13:00:00.500000Z",
+                    prepared_action_sha256="f" * 64,
+                    approval_binding_sha256="1" * 64,
+                )
+
+
+def test_approval_expiry_update_guard_orders_fractional_utc_timestamps_chronologically(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_expires_at="2026-09-12T12:00:00.500000Z",
+            )
+            insert_approval(connection, approval_expires_at="2026-09-12T11:00:00Z")
+            insert_prepared(
+                connection,
+                action_id="action-2",
+                operation_id="operation-2",
+                action_expires_at="2026-09-12T13:00:00Z",
+                prepared_action_sha256="f" * 64,
+            )
+            insert_approval(
+                connection,
+                approval_id="approval-2",
+                action_id="action-2",
+                operation_id="operation-2",
+                approval_expires_at="2026-09-12T12:00:00Z",
+                prepared_action_sha256="f" * 64,
+                approval_binding_sha256="1" * 64,
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE approval_records SET approval_expires_at=:expiry "
+                    "WHERE approval_id=:approval"
+                ),
+                {"approval": APPROVAL_ID, "expiry": "2026-09-12T12:00:00Z"},
+            )
+
+        with pytest.raises(IntegrityError, match="approval expiry exceeds action expiry"):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE approval_records SET approval_expires_at=:expiry "
+                        "WHERE approval_id=:approval"
+                    ),
+                    {
+                        "approval": "approval-2",
+                        "expiry": "2026-09-12T13:00:00.500000Z",
+                    },
+                )
+
+
 def test_phase6a_schema_enforces_consumption_and_event_uniqueness(tmp_path: Path) -> None:
     database_path = tmp_path / "phase6a.db"
     with phase6a_database(database_path) as engine:
