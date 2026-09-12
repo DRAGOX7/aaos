@@ -8,11 +8,11 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from math import isfinite
-from typing import Any
+from typing import Any, ClassVar
 
 from aaos.agent.contracts import JSONValue, PermissionClass
 
@@ -352,7 +352,7 @@ class Phase6ErrorCode(StrEnum):
     PERSISTENCE_CONFLICT = "PERSISTENCE_CONFLICT"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, init=False)
 class Phase6ActionDefinition:
     action_type: ActionType
     tool_name: str
@@ -362,11 +362,31 @@ class Phase6ActionDefinition:
     policy_version: str
     policy_fingerprint: str
     timeout_seconds: int
-    # Trusted application wiring only: it is deliberately excluded from
-    # representation/equality and this DTO exposes no serializer for it.
-    argument_validator: Callable[
-        [Mapping[str, JSONValue]], Mapping[str, JSONValue] | CanonicalArguments
-    ] = field(repr=False, compare=False, metadata={"trusted_only": True})
+
+    def __init__(
+        self,
+        action_type: ActionType,
+        tool_name: str,
+        tool_schema_version: str,
+        tool_definition_fingerprint: str,
+        required_permission: PermissionClass,
+        policy_version: str,
+        policy_fingerprint: str,
+        timeout_seconds: int,
+        argument_validator: Callable[
+            [Mapping[str, JSONValue]], Mapping[str, JSONValue] | CanonicalArguments
+        ],
+    ) -> None:
+        object.__setattr__(self, "action_type", action_type)
+        object.__setattr__(self, "tool_name", tool_name)
+        object.__setattr__(self, "tool_schema_version", tool_schema_version)
+        object.__setattr__(self, "tool_definition_fingerprint", tool_definition_fingerprint)
+        object.__setattr__(self, "required_permission", required_permission)
+        object.__setattr__(self, "policy_version", policy_version)
+        object.__setattr__(self, "policy_fingerprint", policy_fingerprint)
+        object.__setattr__(self, "timeout_seconds", timeout_seconds)
+        object.__setattr__(self, "_argument_validator", argument_validator)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if not isinstance(self.action_type, ActionType) or not isinstance(
@@ -383,13 +403,13 @@ class Phase6ActionDefinition:
             or not 0 < self.timeout_seconds <= 86400
         ):
             raise ValueError("timeout_seconds must be positive and bounded")
-        if not callable(self.argument_validator):
+        if not callable(getattr(self, "_argument_validator")):
             raise TypeError("argument_validator must be callable")
 
     def validate_arguments(self, arguments: Mapping[str, JSONValue]) -> CanonicalArguments:
         if not isinstance(arguments, Mapping):
             raise TypeError("arguments must be a mapping")
-        value = self.argument_validator(arguments)
+        value = getattr(self, "_argument_validator")(arguments)
         if isinstance(value, CanonicalArguments):
             return value
         if not isinstance(value, Mapping):
@@ -550,7 +570,7 @@ class ApprovalRecord:
     decided_at: datetime | None = None
     reason: HumanDecisionReason | TrustedInvalidationReason | None = None
 
-    _MUTABLE_FIELDS = frozenset({"status", "decided_at", "reason"})
+    _MUTABLE_FIELDS: ClassVar[frozenset[str]] = frozenset({"status", "decided_at", "reason"})
 
     def __setattr__(self, name: str, value: object) -> None:
         if hasattr(self, name) and name not in self._MUTABLE_FIELDS:

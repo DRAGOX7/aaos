@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
+from typing import ClassVar, get_type_hints
 
 import pytest
 
@@ -237,5 +238,48 @@ def test_action_definition_validator_is_trusted_only_and_not_serialized() -> Non
         30,
         lambda values: values,
     )
-    assert definition.__dataclass_fields__["argument_validator"].repr is False
-    assert definition.__dataclass_fields__["argument_validator"].compare is False
+    assert "argument_validator" not in definition.__dataclass_fields__
+
+
+def test_approval_mutable_field_allowlist_is_not_constructor_controlled() -> None:
+    approval = make_approval(approval_expires_at=utc_after(200), action_expires_at=utc_after(300))
+
+    assert get_type_hints(ApprovalRecord)["_MUTABLE_FIELDS"] == ClassVar[frozenset[str]]
+    with pytest.raises(TypeError):
+        ApprovalRecord(
+            approval.approval_id,
+            approval.action_id,
+            approval.operation_id,
+            approval.approver,
+            approval.prepared_action_sha256,
+            approval.approval_binding_sha256,
+            approval.issued_at,
+            approval.approval_expires_at,
+            approval.action_expires_at,
+            approval.status,
+            _MUTABLE_FIELDS=frozenset(),  # type: ignore[call-arg]
+        )
+
+
+def test_action_definition_dataclass_serialization_excludes_validator() -> None:
+    from aaos.approval.contracts import Phase6ActionDefinition
+
+    definition = Phase6ActionDefinition(
+        ActionType("fake_calendar_create"),
+        "fake_calendar_create",
+        "v1",
+        "a" * 64,
+        PermissionClass.LOCAL_STATE_WRITE,
+        "v1",
+        "b" * 64,
+        30,
+        lambda values: values,
+    )
+    serialized = asdict(definition)
+
+    assert "argument_validator" not in serialized
+    assert not any(callable(value) for value in serialized.values())
+    assert (
+        definition.validate_arguments({"title": "office hours"}).bytes
+        == b'{"title":"office hours"}'
+    )
