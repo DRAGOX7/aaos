@@ -275,7 +275,7 @@ def test_phase6a_schema_has_exact_task3_columns_and_no_attempt_or_catch_all(
 
 
 def test_phase6a_orm_metadata_discovers_all_ledger_tables() -> None:
-    from aaos.persistence import approval_models  # noqa: F401
+    import aaos.persistence.approval_models  # noqa: F401
     from aaos.persistence.academic_models import Base
 
     assert set(Base.metadata.tables) >= LEDGER_TABLES
@@ -493,6 +493,27 @@ def test_local_expiry_checks_order_fractional_utc_timestamps_chronologically(
                     prepared_at="2026-09-12T11:00:00.500000Z",
                     action_expires_at="2026-09-12T11:00:00Z",
                     prepared_action_sha256="f" * 64,
+                )
+
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_id="action-3",
+                operation_id="operation-3",
+                action_expires_at="2026-09-12T12:00:00Z",
+                prepared_action_sha256="2" * 64,
+            )
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_approval(
+                    connection,
+                    approval_id="approval-3",
+                    action_id="action-3",
+                    operation_id="operation-3",
+                    issued_at="2026-09-12T11:00:00.500000Z",
+                    approval_expires_at="2026-09-12T11:00:00Z",
+                    prepared_action_sha256="2" * 64,
+                    approval_binding_sha256="3" * 64,
                 )
 
 
