@@ -633,7 +633,7 @@ src/aaos/approval/adapters.py        # least-authority adapter protocol/fakes
 src/aaos/approval/service.py         # prepare, approve, claim, dispatch, reconcile
 src/aaos/approval/events.py          # safe event types/projections
 src/aaos/persistence/approval_models.py
-migrations/versions/0004_phase6a_approval_core.py
+migrations/versions/0005_phase6a_approval_core.py  # down_revision="0004_phase4_local_rag"
 tests/test_phase6a_*.py
 ```
 
