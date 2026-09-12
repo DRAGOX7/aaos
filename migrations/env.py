@@ -9,6 +9,7 @@ from alembic import context
 from sqlalchemy.engine import Connection
 
 from aaos.persistence import (
+    approval_models,  # noqa: F401
     document_models,  # noqa: F401
     rag_models,  # noqa: F401
 )
