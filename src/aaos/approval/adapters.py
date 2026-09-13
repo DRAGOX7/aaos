@@ -75,6 +75,10 @@ class DispatchResult:
     error_code: Phase6ErrorCode | None
 
 
+class AdapterExecutionError(RuntimeError):
+    """An expected, typed failure reported by a trusted adapter."""
+
+
 class ExternalAdapter(Protocol):
     """The only execution interface available to Phase 6A dispatch."""
 
@@ -220,7 +224,9 @@ def _snapshot_from_rows(
     try:
         capability = capability_policy.evaluate(_capability_projection(definition))
         capability_allowed = (
-            capability.allowed and capability.required_permission is definition.required_permission
+            capability.allowed
+            and capability.required_permission is definition.required_permission
+            and capability_policy.policy_version == prepared.policy_version
         )
         lifecycle_state = ActionState(rows.lifecycle.state)
         operation_state = OperationState(rows.operation.state)
@@ -379,21 +385,6 @@ def dispatch_claimed_operation(
                 event=event,
             ):
                 raise PersistenceConflict()
-        # The repository transaction is committed here.  In particular, no
-        # adapter check or execute call occurs while SQLite is locked.
-        executable = load_executable_action(repository, operation_id)
-        try:
-            outcome = adapter.execute(executable)
-        except Exception:
-            outcome = AdapterExecutionOutcome(
-                AdapterOutcomeKind.UNKNOWN,
-                "adapter outcome unavailable",
-            )
-        if not isinstance(outcome, AdapterExecutionOutcome):
-            outcome = AdapterExecutionOutcome(
-                AdapterOutcomeKind.UNKNOWN, "adapter outcome unavailable"
-            )
-        return DispatchResult(operation_id, outcome, True, True, None)
     except PersistenceConflict:
         return DispatchResult(operation_id, None, False, False, Phase6ErrorCode.CLAIM_CONFLICT)
     except (SQLAlchemyError, TypeError, ValueError):
@@ -401,9 +392,39 @@ def dispatch_claimed_operation(
             operation_id, None, False, False, Phase6ErrorCode.PERSISTENCE_CONFLICT
         )
 
+    # The repository transaction is committed here.  In particular, no
+    # adapter check or execute call occurs while SQLite is locked.
+    try:
+        executable = load_executable_action(repository, operation_id)
+    except (PersistenceConflict, SQLAlchemyError, TypeError, ValueError):
+        # Dispatch is already durable.  A projection failure cannot be
+        # reported as a pre-dispatch conflict or safely retried here.
+        return DispatchResult(
+            operation_id,
+            AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "dispatch projection unavailable"),
+            False,
+            True,
+            Phase6ErrorCode.UNKNOWN_OUTCOME,
+        )
+
+    try:
+        outcome = adapter.execute(executable)
+    except AdapterExecutionError:
+        return DispatchResult(
+            operation_id,
+            AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "adapter execution failed"),
+            True,
+            True,
+            Phase6ErrorCode.ADAPTER_FAILURE,
+        )
+    if not isinstance(outcome, AdapterExecutionOutcome):
+        raise TypeError("adapter returned an invalid typed outcome")
+    return DispatchResult(operation_id, outcome, True, True, None)
+
 
 __all__ = [
     "DispatchResult",
+    "AdapterExecutionError",
     "ExternalAdapter",
     "FakeExternalAdapter",
     "dispatch_claimed_operation",

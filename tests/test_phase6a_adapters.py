@@ -15,7 +15,9 @@ from test_phase6a_service import APPROVER, NOW, fake_definition, policy, prepare
 
 from aaos.agent.contracts import PermissionClass
 from aaos.agent.policy import PermissionPolicy
+from aaos.approval import adapters as adapters_module
 from aaos.approval.adapters import (
+    AdapterExecutionError,
     FakeExternalAdapter,
     dispatch_claimed_operation,
     load_executable_action,
@@ -26,9 +28,10 @@ from aaos.approval.contracts import (
     OperationId,
     OperationState,
     Phase6ActionDefinition,
+    Phase6ErrorCode,
     RemotePrecondition,
 )
-from aaos.approval.repository import ApprovalRepository
+from aaos.approval.repository import ApprovalRepository, PersistenceConflict
 from aaos.approval.service import approve_approval, claim_action, request_approval
 from aaos.persistence.academic_models import Base
 from aaos.persistence.approval_models import ActionEventORM, OperationRecordORM
@@ -197,3 +200,89 @@ def test_unknown_operation_is_safe_and_does_not_invoke_adapter(
     assert result.adapter_invoked is False
     assert result.dispatch_started is False
     assert result.error_code is not None
+
+
+def test_dispatch_rejects_capability_policy_version_drift(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id, precondition = _claimed(repo)
+    adapter = FakeExternalAdapter(precondition)
+    drifted_policy = PermissionPolicy(
+        frozenset({PermissionClass.LOCAL_STATE_WRITE}), policy_version="drifted-v1"
+    )
+
+    result = dispatch_claimed_operation(
+        repo,
+        adapter,
+        operation_id,
+        capability_policy=drifted_policy,
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=3),
+    )
+
+    assert result.adapter_invoked is False
+    assert result.dispatch_started is False
+    assert result.error_code is Phase6ErrorCode.CAPABILITY_DENIED
+    assert adapter.execute_count == 0
+
+
+def test_projection_failure_after_dispatch_commit_is_started_unknown(
+    repo: ApprovalRepository,
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_id, precondition = _claimed(repo)
+    adapter = FakeExternalAdapter(precondition)
+    monkeypatch.setattr(
+        adapters_module,
+        "load_executable_action",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PersistenceConflict()),
+    )
+
+    result = dispatch_claimed_operation(repo, adapter, operation_id, **_dispatch_context())
+
+    assert result.adapter_invoked is False
+    assert result.dispatch_started is True
+    assert result.adapter_outcome is not None
+    assert result.adapter_outcome.kind is AdapterOutcomeKind.UNKNOWN
+    assert result.error_code is Phase6ErrorCode.UNKNOWN_OUTCOME
+    assert adapter.execute_count == 0
+    with sessions() as session:
+        operation = session.get(OperationRecordORM, operation_id.value)
+        assert operation is not None
+        assert operation.state == OperationState.EXECUTING.value
+
+
+def test_expected_adapter_failure_is_typed_without_fallback(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id, precondition = _claimed(repo)
+
+    class FailingAdapter(FakeExternalAdapter):
+        def execute(self, action):  # type: ignore[no-untyped-def]
+            del action
+            raise AdapterExecutionError("expected fake adapter failure")
+
+    adapter = FailingAdapter(precondition)
+    result = dispatch_claimed_operation(repo, adapter, operation_id, **_dispatch_context())
+
+    assert result.adapter_invoked is True
+    assert result.dispatch_started is True
+    assert result.adapter_outcome is not None
+    assert result.adapter_outcome.kind is AdapterOutcomeKind.UNKNOWN
+    assert result.error_code is Phase6ErrorCode.ADAPTER_FAILURE
+
+
+def test_unexpected_adapter_exception_is_not_coerced_to_unknown(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id, precondition = _claimed(repo)
+
+    class BrokenAdapter(FakeExternalAdapter):
+        def execute(self, action):  # type: ignore[no-untyped-def]
+            del action
+            raise RuntimeError("unexpected adapter bug")
+
+    adapter = BrokenAdapter(precondition)
+    with pytest.raises(RuntimeError, match="unexpected adapter bug"):
+        dispatch_claimed_operation(repo, adapter, operation_id, **_dispatch_context())
