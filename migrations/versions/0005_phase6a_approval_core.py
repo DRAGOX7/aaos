@@ -90,8 +90,7 @@ def upgrade() -> None:
             name="ck_prepared_actions_remote_precondition",
         ),
         sa.CheckConstraint(
-            f"{_canonical_utc_text('action_expires_at')} > "
-            f"{_canonical_utc_text('prepared_at')}",
+            f"{_canonical_utc_text('action_expires_at')} > {_canonical_utc_text('prepared_at')}",
             name="ck_prepared_actions_expiry",
         ),
     )
@@ -167,8 +166,7 @@ def upgrade() -> None:
             name="ck_approval_records_reason_code",
         ),
         sa.CheckConstraint(
-            f"{_canonical_utc_text('approval_expires_at')} > "
-            f"{_canonical_utc_text('issued_at')}",
+            f"{_canonical_utc_text('approval_expires_at')} > {_canonical_utc_text('issued_at')}",
             name="ck_approval_records_expiry",
         ),
     )

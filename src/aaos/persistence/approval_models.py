@@ -86,8 +86,7 @@ class PreparedActionORM(Base):
             name="ck_prepared_actions_remote_precondition",
         ),
         CheckConstraint(
-            f"{_canonical_utc_text('action_expires_at')} > "
-            f"{_canonical_utc_text('prepared_at')}",
+            f"{_canonical_utc_text('action_expires_at')} > {_canonical_utc_text('prepared_at')}",
             name="ck_prepared_actions_expiry",
         ),
         Index("ix_prepared_actions_actor", "actor_identity"),
@@ -169,8 +168,7 @@ class ApprovalRecordORM(Base):
             name="ck_approval_records_reason_code",
         ),
         CheckConstraint(
-            f"{_canonical_utc_text('approval_expires_at')} > "
-            f"{_canonical_utc_text('issued_at')}",
+            f"{_canonical_utc_text('approval_expires_at')} > {_canonical_utc_text('issued_at')}",
             name="ck_approval_records_expiry",
         ),
         Index("ix_approval_records_action_status", "action_id", "status"),
