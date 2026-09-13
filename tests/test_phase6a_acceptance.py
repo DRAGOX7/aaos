@@ -17,13 +17,19 @@ from phase6a_evaluation.harness import (
     HeldoutAuthorization,
     HeldoutConsumptionError,
     HeldoutExecutionEvidence,
+    HeldoutKeyLossRecoveryAuthorization,
     SQLiteHeldoutClaimStore,
     build_real_heldout_executor_after_cli_gate,
     consume_heldout_once,
+    issue_key_loss_recovery_authorization_file,
+    issue_successor_heldout_authorization_file,
     issue_trusted_authorization_file,
+    load_key_loss_recovery_authorization_file,
+    load_successor_heldout_authorization_file,
     load_synthetic_manifest,
     load_trusted_authorization_file,
     reconcile_zero_execution_claim,
+    reconcile_zero_execution_claim_with_recovery,
     run_manifest,
     run_phase6a_trusted_core_acceptance,
 )
@@ -707,4 +713,281 @@ def test_zero_case_reconciliation_rejects_existing_successor_attempt(tmp_path: P
             claim_store=store,
             report_path=tmp_path / "report.json",
             bundle_path=tmp_path / "bundle.bin",
+        )
+
+
+def test_key_loss_recovery_issuance_requires_new_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    original = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+    )
+    monkeypatch.delenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", raising=False)
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        issue_key_loss_recovery_authorization_file(
+            manifest_path,
+            tmp_path / "recovery.json",
+            original_claimed_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+            repaired_task11_head="a" * 40,
+            approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+            claim_store=store,
+            report_path=tmp_path / "report.json",
+            bundle_path=tmp_path / "bundle.bin",
+        )
+
+
+def test_key_loss_recovery_authorization_binds_historical_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    original = _authorization(manifest.manifest_sha256)
+    claimed_at = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=claimed_at,
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    destination = tmp_path / "recovery.json"
+    recovery = issue_key_loss_recovery_authorization_file(
+        manifest_path,
+        destination,
+        original_claimed_at=claimed_at,
+        repaired_task11_head="a" * 40,
+        approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+        issued_at=datetime(2026, 9, 13, 1, tzinfo=timezone.utc),
+    )
+    assert isinstance(recovery, HeldoutKeyLossRecoveryAuthorization)
+    assert recovery.original_authorization_id == original.authorization_id
+    assert recovery.zero_case_execution_proven is True
+    assert load_key_loss_recovery_authorization_file(destination) == recovery
+    assert store.read_claim(manifest_sha256=manifest.manifest_sha256).status == "IN_PROGRESS"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("recovery_authorization_id", "tampered"),
+        ("manifest_sha256", "0" * 64),
+        ("original_authorization_id", "other-auth"),
+        ("original_claimed_at", "2026-09-14T00:00:00Z"),
+        ("original_attempt_id", "other-attempt"),
+        ("zero_case_execution_proven", False),
+        ("repaired_task11_head", "b" * 40),
+        ("approver_identity", "other-approver"),
+        ("context_id", "other-context"),
+    ],
+)
+def test_key_loss_recovery_tampering_invalidates_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    original = _authorization(manifest.manifest_sha256)
+    claimed_at = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=claimed_at,
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    destination = tmp_path / "recovery.json"
+    issue_key_loss_recovery_authorization_file(
+        manifest_path,
+        destination,
+        original_claimed_at=claimed_at,
+        repaired_task11_head="a" * 40,
+        approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    raw = json.loads(destination.read_text(encoding="utf-8"))
+    raw[field] = value
+    destination.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_key_loss_recovery_authorization_file(destination)
+
+
+def test_key_loss_recovery_rejects_ambiguous_or_consumed_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = FakeHeldoutClaimStore()
+    original = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    store.finalize_consumed_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        report_sha256="a" * 64,
+        private_bundle_sha256="b" * 64,
+        finalized_at=datetime.now(timezone.utc),
+        executed_case_count=1,
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_RECONCILIATION_REQUIRED"):
+        issue_key_loss_recovery_authorization_file(
+            manifest_path,
+            tmp_path / "recovery.json",
+            original_claimed_at=datetime.now(timezone.utc),
+            repaired_task11_head="a" * 40,
+            approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+            claim_store=store,
+            report_path=tmp_path / "report.json",
+            bundle_path=tmp_path / "bundle.bin",
+        )
+
+
+def test_recovery_authorization_reconciles_only_matching_zero_case_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    original = _authorization(manifest.manifest_sha256)
+    claimed_at = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=claimed_at,
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    destination = tmp_path / "recovery.json"
+    issue_key_loss_recovery_authorization_file(
+        manifest_path,
+        destination,
+        original_claimed_at=claimed_at,
+        repaired_task11_head="a" * 40,
+        approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    recovery = load_key_loss_recovery_authorization_file(destination)
+    reconciled = reconcile_zero_execution_claim_with_recovery(
+        manifest_path,
+        recovery,
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    assert reconciled.status == "RECONCILED_ZERO_EXECUTION"
+    assert reconciled.recovery_authorization_id == recovery.recovery_authorization_id.value
+    assert reconciled.original_authorization_hmac_status == "UNVERIFIABLE_KEY_LOST"
+
+
+def test_successor_authorization_requires_reconciled_root_and_is_manifest_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    original = _authorization(manifest.manifest_sha256)
+    claimed_at = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=claimed_at,
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    recovery = issue_key_loss_recovery_authorization_file(
+        manifest_path,
+        tmp_path / "recovery.json",
+        original_claimed_at=claimed_at,
+        repaired_task11_head="a" * 40,
+        approver_context=TrustedApproverContext("recovery-approver", "recovery-context"),
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    root = reconcile_zero_execution_claim_with_recovery(
+        manifest_path,
+        recovery,
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    successor = issue_successor_heldout_authorization_file(
+        manifest_path,
+        tmp_path / "successor.json",
+        approver_context=TrustedApproverContext("successor-approver", "successor-context"),
+        claim_store=store,
+        reconciled_attempt_id=root.attempt_id,
+        recovery_authorization_id=recovery.recovery_authorization_id,
+        issued_at=datetime(2026, 9, 13, 2, tzinfo=timezone.utc),
+    )
+    assert successor.frozen_manifest_sha256 == manifest.manifest_sha256
+    assert successor.original_attempt_id == root.attempt_id
+    assert load_successor_heldout_authorization_file(tmp_path / "successor.json") == successor
+
+
+def test_successor_authorization_cannot_be_issued_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = FakeHeldoutClaimStore()
+    original = _authorization(manifest.manifest_sha256)
+    root = store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY", "synthetic-recovery-key")
+    recovery = HeldoutKeyLossRecoveryAuthorization(
+        EvaluationAuthorizationId("recovery-auth"),
+        TrustedApproverContext("recovery-approver", "recovery-context"),
+        datetime.now(timezone.utc),
+        manifest.manifest_sha256,
+        original.authorization_id,
+        root.claimed_at,
+        root.attempt_id,
+        True,
+        "a" * 40,
+    )
+    store.reconcile_zero_execution(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=original.authorization_id,
+        reconciled_at=datetime.now(timezone.utc),
+        reason="REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES_KEY_LOSS_RECOVERY",
+        recovery_authorization_id=recovery.recovery_authorization_id.value,
+        original_authorization_hmac_status="UNVERIFIABLE_KEY_LOST",
+        repaired_task11_head="a" * 40,
+    )
+    issue_successor_heldout_authorization_file(
+        manifest_path,
+        tmp_path / "successor.json",
+        approver_context=TrustedApproverContext("successor-approver", "successor-context"),
+        claim_store=store,
+        reconciled_attempt_id=root.attempt_id,
+        recovery_authorization_id=recovery.recovery_authorization_id,
+    )
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_ARTIFACT_EXISTS"):
+        issue_successor_heldout_authorization_file(
+            manifest_path,
+            tmp_path / "successor.json",
+            approver_context=TrustedApproverContext("successor-approver", "successor-context"),
+            claim_store=store,
+            reconciled_attempt_id=root.attempt_id,
+            recovery_authorization_id=recovery.recovery_authorization_id,
         )

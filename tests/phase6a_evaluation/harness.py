@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -125,6 +126,99 @@ class HeldoutAuthorization:
 
 
 @dataclass(frozen=True, slots=True)
+class HeldoutKeyLossRecoveryAuthorization:
+    recovery_authorization_id: EvaluationAuthorizationId
+    approver_context: TrustedApproverContext
+    issued_at: datetime
+    frozen_manifest_sha256: str
+    original_authorization_id: EvaluationAuthorizationId
+    original_claimed_at: datetime
+    original_attempt_id: str
+    zero_case_execution_proven: bool
+    repaired_task11_head: str
+    original_authorization_hmac_status: Literal["UNVERIFIABLE_KEY_LOST"] = "UNVERIFIABLE_KEY_LOST"
+    recovery_purpose: Literal["RECONCILE_ZERO_EXECUTION_KEY_LOSS_AND_ALLOW_ONE_SUCCESSOR"] = (
+        "RECONCILE_ZERO_EXECUTION_KEY_LOSS_AND_ALLOW_ONE_SUCCESSOR"
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.recovery_authorization_id, EvaluationAuthorizationId):
+            raise TypeError("recovery_authorization_id must be typed")
+        if not isinstance(self.original_authorization_id, EvaluationAuthorizationId):
+            raise TypeError("original_authorization_id must be typed")
+        if not isinstance(self.approver_context, TrustedApproverContext):
+            raise TypeError("approver_context must be trusted")
+        for value in (self.issued_at, self.original_claimed_at):
+            if (
+                not isinstance(value, datetime)
+                or value.tzinfo is None
+                or value.utcoffset() != timezone.utc.utcoffset(value)
+            ):
+                raise ValueError("timestamps must be aware UTC datetimes")
+        if not isinstance(self.frozen_manifest_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.frozen_manifest_sha256
+        ):
+            raise ValueError("frozen_manifest_sha256 must be a lowercase SHA-256 digest")
+        if not isinstance(self.original_claimed_at, datetime):
+            raise TypeError("original_claimed_at must be typed")
+        if not isinstance(self.original_attempt_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", self.original_attempt_id
+        ):
+            raise ValueError("original_attempt_id must be bounded")
+        if self.zero_case_execution_proven is not True:
+            raise ValueError("zero-case proof must be true")
+        if not isinstance(self.repaired_task11_head, str) or not re.fullmatch(
+            r"[0-9a-f]{40}", self.repaired_task11_head
+        ):
+            raise ValueError("repaired_task11_head must be a commit SHA")
+        if self.original_authorization_hmac_status != "UNVERIFIABLE_KEY_LOST":
+            raise ValueError("original authorization HMAC status must be closed")
+        if self.recovery_purpose != _RECOVERY_PURPOSE:
+            raise ValueError("recovery purpose must be closed")
+
+
+_RECOVERY_PURPOSE: Literal["RECONCILE_ZERO_EXECUTION_KEY_LOSS_AND_ALLOW_ONE_SUCCESSOR"] = (
+    "RECONCILE_ZERO_EXECUTION_KEY_LOSS_AND_ALLOW_ONE_SUCCESSOR"
+)
+_SUCCESSOR_PURPOSE: Literal["EXECUTE_ONE_RECONCILED_SUCCESSOR"] = "EXECUTE_ONE_RECONCILED_SUCCESSOR"
+
+
+@dataclass(frozen=True, slots=True)
+class HeldoutSuccessorAuthorization:
+    successor_authorization_id: EvaluationAuthorizationId
+    approver_context: TrustedApproverContext
+    issued_at: datetime
+    frozen_manifest_sha256: str
+    original_attempt_id: str
+    recovery_authorization_id: EvaluationAuthorizationId
+    successor_purpose: Literal["EXECUTE_ONE_RECONCILED_SUCCESSOR"] = _SUCCESSOR_PURPOSE
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.successor_authorization_id, EvaluationAuthorizationId):
+            raise TypeError("successor_authorization_id must be typed")
+        if not isinstance(self.recovery_authorization_id, EvaluationAuthorizationId):
+            raise TypeError("recovery_authorization_id must be typed")
+        if not isinstance(self.approver_context, TrustedApproverContext):
+            raise TypeError("approver_context must be trusted")
+        if (
+            not isinstance(self.issued_at, datetime)
+            or self.issued_at.tzinfo is None
+            or self.issued_at.utcoffset() != timezone.utc.utcoffset(self.issued_at)
+        ):
+            raise ValueError("issued_at must be an aware UTC datetime")
+        if not isinstance(self.frozen_manifest_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.frozen_manifest_sha256
+        ):
+            raise ValueError("frozen_manifest_sha256 must be a lowercase SHA-256 digest")
+        if not isinstance(self.original_attempt_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", self.original_attempt_id
+        ):
+            raise ValueError("original_attempt_id must be bounded")
+        if self.successor_purpose != _SUCCESSOR_PURPOSE:
+            raise ValueError("successor purpose must be closed")
+
+
+@dataclass(frozen=True, slots=True)
 class HeldoutExecutionEvidence:
     manifest_sha256: str
     report_bytes: bytes
@@ -153,6 +247,9 @@ class HeldoutExecutionClaim:
     successor_of: str | None = None
     reconciliation_reason: str | None = None
     executed_case_count: int = 0
+    recovery_authorization_id: str | None = None
+    original_authorization_hmac_status: str | None = None
+    repaired_task11_head: str | None = None
 
 
 class HeldoutConsumptionError(Exception):
@@ -208,6 +305,9 @@ class HeldoutClaimStore(Protocol):
         authorization_id: EvaluationAuthorizationId,
         reconciled_at: datetime,
         reason: str,
+        recovery_authorization_id: str | None = None,
+        original_authorization_hmac_status: str | None = None,
+        repaired_task11_head: str | None = None,
     ) -> HeldoutExecutionClaim: ...
 
     def create_successor_in_progress_claim(
@@ -586,6 +686,9 @@ class FakeHeldoutClaimStore:
         authorization_id: EvaluationAuthorizationId,
         reconciled_at: datetime,
         reason: str,
+        recovery_authorization_id: str | None = None,
+        original_authorization_hmac_status: str | None = None,
+        repaired_task11_head: str | None = None,
     ) -> HeldoutExecutionClaim:
         existing = self._claims.get(manifest_sha256)
         if existing is None or existing.authorization_id != authorization_id:
@@ -606,6 +709,9 @@ class FakeHeldoutClaimStore:
             existing.successor_of,
             reason,
             0,
+            recovery_authorization_id,
+            original_authorization_hmac_status,
+            repaired_task11_head,
         )
         self._claims[manifest_sha256] = claim
         self._history[claim.attempt_id] = claim
@@ -662,6 +768,9 @@ def _claim_from_row(row: sqlite3.Row) -> HeldoutExecutionClaim:
         row["successor_of"],
         row["reconciliation_reason"],
         int(row["executed_case_count"] or 0),
+        row["recovery_authorization_id"],
+        row["original_authorization_hmac_status"],
+        row["repaired_task11_head"],
     )
 
 
@@ -703,10 +812,28 @@ class SQLiteHeldoutClaimStore:
                     private_bundle_sha256 TEXT,
                     successor_of TEXT,
                     reconciliation_reason TEXT,
-                    executed_case_count INTEGER NOT NULL DEFAULT 0
+                    executed_case_count INTEGER NOT NULL DEFAULT 0,
+                    recovery_authorization_id TEXT,
+                    original_authorization_hmac_status TEXT,
+                    repaired_task11_head TEXT
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(heldout_execution_attempts)"
+                ).fetchall()
+            }
+            for name, definition in (
+                ("recovery_authorization_id", "TEXT"),
+                ("original_authorization_hmac_status", "TEXT"),
+                ("repaired_task11_head", "TEXT"),
+            ):
+                if name not in columns:
+                    connection.execute(
+                        f"ALTER TABLE heldout_execution_attempts ADD COLUMN {name} {definition}"
+                    )
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS one_root_attempt_per_manifest "
                 "ON heldout_execution_attempts(manifest_sha256) WHERE successor_of IS NULL"
@@ -882,6 +1009,9 @@ class SQLiteHeldoutClaimStore:
         authorization_id: EvaluationAuthorizationId,
         reconciled_at: datetime,
         reason: str,
+        recovery_authorization_id: str | None = None,
+        original_authorization_hmac_status: str | None = None,
+        repaired_task11_head: str | None = None,
     ) -> HeldoutExecutionClaim:
         connection = self._connect()
         try:
@@ -902,12 +1032,17 @@ class SQLiteHeldoutClaimStore:
             else:
                 connection.execute(
                     "UPDATE heldout_execution_attempts SET status = ?, finalized_at = ?, "
-                    "reconciliation_reason = ?, executed_case_count = 0 "
+                    "reconciliation_reason = ?, executed_case_count = 0, "
+                    "recovery_authorization_id = ?, original_authorization_hmac_status = ?, "
+                    "repaired_task11_head = ? "
                     "WHERE attempt_id = ? AND status = 'IN_PROGRESS'",
                     (
                         "RECONCILED_ZERO_EXECUTION",
                         _encode_time(reconciled_at),
                         reason,
+                        recovery_authorization_id,
+                        original_authorization_hmac_status,
+                        repaired_task11_head,
                         row["attempt_id"],
                     ),
                 )
@@ -1039,19 +1174,36 @@ def _marker_path(manifest_sha256: str, report_path: Path) -> Path:
     return report_path.parent / f".phase6a-heldout-consumed-{manifest_sha256}.json"
 
 
+HeldoutConsumptionAuthorization = HeldoutAuthorization | HeldoutSuccessorAuthorization
+
+
+def _authorization_manifest_sha256(authorization: HeldoutConsumptionAuthorization) -> str:
+    if isinstance(authorization, HeldoutAuthorization):
+        return authorization.manifest_sha256
+    return authorization.frozen_manifest_sha256
+
+
+def _authorization_id(authorization: HeldoutConsumptionAuthorization) -> EvaluationAuthorizationId:
+    if isinstance(authorization, HeldoutAuthorization):
+        return authorization.authorization_id
+    return authorization.successor_authorization_id
+
+
 def consume_heldout_once(
     manifest_path: Path,
     report_path: Path,
     bundle_path: Path,
-    authorization: HeldoutAuthorization | None,
+    authorization: HeldoutConsumptionAuthorization | None,
     *,
     claim_store: HeldoutClaimStore,
     executor: HeldoutExecutor,
 ) -> HeldoutRunResult:
-    if authorization is None or not isinstance(authorization, HeldoutAuthorization):
+    if authorization is None or not isinstance(
+        authorization, (HeldoutAuthorization, HeldoutSuccessorAuthorization)
+    ):
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     manifest = _load_consumption_manifest(manifest_path)
-    if authorization.manifest_sha256 != manifest.manifest_sha256:
+    if _authorization_manifest_sha256(authorization) != manifest.manifest_sha256:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
     successor_of: str | None = None
@@ -1061,6 +1213,12 @@ def consume_heldout_once(
         if existing.status == "CONSUMED":
             raise HeldoutConsumptionError("HELDOUT_ALREADY_CONSUMED")
         if existing.status == "RECONCILED_ZERO_EXECUTION":
+            if isinstance(authorization, HeldoutSuccessorAuthorization) and (
+                authorization.original_attempt_id != existing.attempt_id
+                or existing.recovery_authorization_id
+                != authorization.recovery_authorization_id.value
+            ):
+                raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
             successor_of = existing.attempt_id
         else:
             raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
@@ -1077,13 +1235,13 @@ def consume_heldout_once(
         if successor_of is None:
             claim_store.create_in_progress_claim(
                 manifest_sha256=manifest.manifest_sha256,
-                authorization_id=authorization.authorization_id,
+                authorization_id=_authorization_id(authorization),
                 claimed_at=datetime.now(timezone.utc),
             )
         else:
             claim_store.create_successor_in_progress_claim(
                 manifest_sha256=manifest.manifest_sha256,
-                authorization_id=authorization.authorization_id,
+                authorization_id=_authorization_id(authorization),
                 claimed_at=datetime.now(timezone.utc),
                 successor_of=successor_of,
             )
@@ -1104,7 +1262,7 @@ def consume_heldout_once(
     bundle_sha256 = _write_temp_fsync_and_atomic_rename(evidence.private_bundle_bytes, bundle_path)
     claim_store.finalize_consumed_claim(
         manifest_sha256=manifest.manifest_sha256,
-        authorization_id=authorization.authorization_id,
+        authorization_id=_authorization_id(authorization),
         report_sha256=report_sha256,
         private_bundle_sha256=bundle_sha256,
         finalized_at=datetime.now(timezone.utc),
@@ -1114,7 +1272,7 @@ def consume_heldout_once(
         "manifest_sha256": manifest.manifest_sha256,
         "report_sha256": report_sha256,
         "private_bundle_sha256": bundle_sha256,
-        "authorization_id": authorization.authorization_id.value,
+        "authorization_id": _authorization_id(authorization).value,
     }
     _write_temp_fsync_and_atomic_rename(
         (json.dumps(marker_payload, sort_keys=True, separators=(",", ":")) + "\n").encode(),
@@ -1156,6 +1314,57 @@ def reconcile_zero_execution_claim(
     )
 
 
+def reconcile_zero_execution_claim_with_recovery(
+    manifest_path: Path,
+    authorization: HeldoutKeyLossRecoveryAuthorization,
+    *,
+    claim_store: HeldoutClaimStore,
+    report_path: Path,
+    bundle_path: Path,
+    current_repaired_head: str | None = None,
+) -> HeldoutExecutionClaim:
+    """Reconcile only the exact historical zero-case attempt bound by recovery authority."""
+    if not isinstance(authorization, HeldoutKeyLossRecoveryAuthorization):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    manifest = _load_consumption_manifest(manifest_path)
+    if authorization.frozen_manifest_sha256 != manifest.manifest_sha256:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    if (
+        current_repaired_head is not None
+        and current_repaired_head != authorization.repaired_task11_head
+    ):
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    if report_path.exists() or bundle_path.exists():
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+    if existing is None:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    if existing.status == "RECONCILED_ZERO_EXECUTION":
+        if (
+            existing.recovery_authorization_id == authorization.recovery_authorization_id.value
+            and existing.original_authorization_hmac_status == "UNVERIFIABLE_KEY_LOST"
+        ):
+            return existing
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    if (
+        existing.status != "IN_PROGRESS"
+        or existing.executed_case_count != 0
+        or existing.attempt_id != authorization.original_attempt_id
+        or existing.authorization_id != authorization.original_authorization_id
+        or existing.claimed_at != authorization.original_claimed_at
+    ):
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    return claim_store.reconcile_zero_execution(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=authorization.original_authorization_id,
+        reconciled_at=datetime.now(timezone.utc),
+        reason="REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES_KEY_LOSS_RECOVERY",
+        recovery_authorization_id=authorization.recovery_authorization_id.value,
+        original_authorization_hmac_status="UNVERIFIABLE_KEY_LOST",
+        repaired_task11_head=authorization.repaired_task11_head,
+    )
+
+
 class _CliGateToken:
     __slots__ = ()
 
@@ -1164,7 +1373,7 @@ _CLI_GATE_TOKEN = _CliGateToken()
 
 
 def build_real_heldout_executor_after_cli_gate(
-    authorization: HeldoutAuthorization,
+    authorization: HeldoutConsumptionAuthorization,
     frozen_manifest_sha256: str,
 ) -> RealHeldoutExecutor:
     """Public compatibility name that cannot construct the real executor."""
@@ -1173,16 +1382,18 @@ def build_real_heldout_executor_after_cli_gate(
 
 
 def _build_real_heldout_executor_after_cli_gate(
-    authorization: HeldoutAuthorization,
+    authorization: HeldoutConsumptionAuthorization,
     frozen_manifest_sha256: str,
     *,
     gate_token: _CliGateToken,
 ) -> RealHeldoutExecutor:
-    if gate_token is not _CLI_GATE_TOKEN or not isinstance(authorization, HeldoutAuthorization):
+    if gate_token is not _CLI_GATE_TOKEN or not isinstance(
+        authorization, (HeldoutAuthorization, HeldoutSuccessorAuthorization)
+    ):
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     if frozen_manifest_sha256 != _FROZEN_HELDOUT_SHA256:
         raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
-    if authorization.manifest_sha256 != frozen_manifest_sha256:
+    if _authorization_manifest_sha256(authorization) != frozen_manifest_sha256:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     return RealHeldoutExecutor()
 
@@ -1274,6 +1485,23 @@ def _write_new_authorization_file(path: Path, encoded: bytes) -> None:
     _fsync_file(path)
 
 
+def _trusted_current_head() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=Path.cwd(),
+        )
+        head = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", head):
+            raise ValueError
+        return head
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED") from None
+
+
 def issue_trusted_authorization_file(
     manifest_path: Path,
     destination: Path,
@@ -1309,6 +1537,272 @@ def issue_trusted_authorization_file(
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
     _write_new_authorization_file(destination, encoded)
     return authorization
+
+
+def _recovery_authorization_payload(
+    authorization: HeldoutKeyLossRecoveryAuthorization,
+) -> dict[str, object]:
+    return {
+        "recovery_authorization_id": authorization.recovery_authorization_id.value,
+        "approver_identity": authorization.approver_context.approver_identity.value,
+        "context_id": authorization.approver_context.context_id,
+        "issued_at": _encode_time(authorization.issued_at),
+        "frozen_manifest_sha256": authorization.frozen_manifest_sha256,
+        "original_authorization_id": authorization.original_authorization_id.value,
+        "original_claimed_at": _encode_time(authorization.original_claimed_at),
+        "original_attempt_id": authorization.original_attempt_id,
+        "zero_case_execution_proven": authorization.zero_case_execution_proven,
+        "repaired_task11_head": authorization.repaired_task11_head,
+        "original_authorization_hmac_status": authorization.original_authorization_hmac_status,
+        "recovery_purpose": authorization.recovery_purpose,
+    }
+
+
+def _recovery_key() -> str:
+    key = os.environ.get("AAOS_PHASE6A_RECOVERY_AUTHORIZATION_KEY")
+    if not key:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    return key
+
+
+def issue_key_loss_recovery_authorization_file(
+    manifest_path: Path,
+    destination: Path,
+    *,
+    original_claimed_at: datetime,
+    repaired_task11_head: str,
+    approver_context: TrustedApproverContext,
+    claim_store: HeldoutClaimStore,
+    report_path: Path,
+    bundle_path: Path,
+    issued_at: datetime | None = None,
+) -> HeldoutKeyLossRecoveryAuthorization:
+    """Issue a new, narrowly bound authority for a proven zero-case key loss."""
+    _recovery_key()
+    if not isinstance(approver_context, TrustedApproverContext):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    _validate_authorization_destination(destination)
+    try:
+        manifest = _load_consumption_manifest(manifest_path)
+        claim = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+        if (
+            claim is None
+            or claim.status != "IN_PROGRESS"
+            or claim.executed_case_count != 0
+            or claim.successor_of is not None
+            or claim.claimed_at != original_claimed_at
+            or report_path.exists()
+            or bundle_path.exists()
+        ):
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        issued = issued_at or datetime.now(timezone.utc)
+        authorization = HeldoutKeyLossRecoveryAuthorization(
+            EvaluationAuthorizationId(f"auth-recovery-{uuid.uuid4().hex}"),
+            approver_context,
+            issued,
+            manifest.manifest_sha256,
+            claim.authorization_id,
+            claim.claimed_at,
+            claim.attempt_id,
+            True,
+            repaired_task11_head,
+        )
+        payload = _recovery_authorization_payload(authorization)
+        encoded_payload = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        signed = dict(payload)
+        signed["signature"] = hmac.new(
+            _recovery_key().encode("utf-8"), encoded_payload, hashlib.sha256
+        ).hexdigest()
+        encoded = (
+            json.dumps(signed, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        ).encode("utf-8")
+    except HeldoutConsumptionError:
+        raise
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+    _write_new_authorization_file(destination, encoded)
+    return authorization
+
+
+def load_key_loss_recovery_authorization_file(
+    path: Path,
+) -> HeldoutKeyLossRecoveryAuthorization:
+    """Verify a recovery authority using only the trusted recovery key."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        fields = {
+            "recovery_authorization_id",
+            "approver_identity",
+            "context_id",
+            "issued_at",
+            "frozen_manifest_sha256",
+            "original_authorization_id",
+            "original_claimed_at",
+            "original_attempt_id",
+            "zero_case_execution_proven",
+            "repaired_task11_head",
+            "original_authorization_hmac_status",
+            "recovery_purpose",
+            "signature",
+        }
+        if not isinstance(raw, dict) or set(raw) != fields:
+            raise ValueError
+        signature = raw["signature"]
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError
+        payload = {name: raw[name] for name in fields if name != "signature"}
+        expected = hmac.new(
+            _recovery_key().encode("utf-8"),
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            ),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError
+        if not isinstance(raw["zero_case_execution_proven"], bool):
+            raise ValueError
+        return HeldoutKeyLossRecoveryAuthorization(
+            EvaluationAuthorizationId(raw["recovery_authorization_id"]),
+            TrustedApproverContext(raw["approver_identity"], raw["context_id"]),
+            _decode_time(raw["issued_at"]),
+            raw["frozen_manifest_sha256"],
+            EvaluationAuthorizationId(raw["original_authorization_id"]),
+            _decode_time(raw["original_claimed_at"]),
+            raw["original_attempt_id"],
+            raw["zero_case_execution_proven"],
+            raw["repaired_task11_head"],
+            raw["original_authorization_hmac_status"],
+            raw["recovery_purpose"],
+        )
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+
+
+def _successor_authorization_payload(
+    authorization: HeldoutSuccessorAuthorization,
+) -> dict[str, object]:
+    return {
+        "successor_authorization_id": authorization.successor_authorization_id.value,
+        "approver_identity": authorization.approver_context.approver_identity.value,
+        "context_id": authorization.approver_context.context_id,
+        "issued_at": _encode_time(authorization.issued_at),
+        "frozen_manifest_sha256": authorization.frozen_manifest_sha256,
+        "original_attempt_id": authorization.original_attempt_id,
+        "recovery_authorization_id": authorization.recovery_authorization_id.value,
+        "successor_purpose": authorization.successor_purpose,
+    }
+
+
+def issue_successor_heldout_authorization_file(
+    manifest_path: Path,
+    destination: Path,
+    *,
+    approver_context: TrustedApproverContext,
+    claim_store: HeldoutClaimStore,
+    reconciled_attempt_id: str,
+    recovery_authorization_id: EvaluationAuthorizationId,
+    frozen_manifest_sha256: str | None = None,
+    issued_at: datetime | None = None,
+) -> HeldoutSuccessorAuthorization:
+    """Issue exactly one successor authority after zero-case reconciliation."""
+    _recovery_key()
+    if not isinstance(approver_context, TrustedApproverContext) or not isinstance(
+        recovery_authorization_id, EvaluationAuthorizationId
+    ):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    _validate_authorization_destination(destination)
+    try:
+        manifest = _load_consumption_manifest(manifest_path)
+        if (
+            frozen_manifest_sha256 is not None
+            and frozen_manifest_sha256 != manifest.manifest_sha256
+        ):
+            raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+        if not isinstance(reconciled_attempt_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", reconciled_attempt_id
+        ):
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        root = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+        if (
+            root is None
+            or root.status != "RECONCILED_ZERO_EXECUTION"
+            or root.attempt_id != reconciled_attempt_id
+            or root.recovery_authorization_id != recovery_authorization_id.value
+            or root.executed_case_count != 0
+        ):
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        issued = issued_at or datetime.now(timezone.utc)
+        authorization = HeldoutSuccessorAuthorization(
+            EvaluationAuthorizationId(f"auth-successor-{uuid.uuid4().hex}"),
+            approver_context,
+            issued,
+            manifest.manifest_sha256,
+            root.attempt_id,
+            recovery_authorization_id,
+        )
+        payload = _successor_authorization_payload(authorization)
+        encoded_payload = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        signed = dict(payload)
+        signed["signature"] = hmac.new(
+            _recovery_key().encode("utf-8"), encoded_payload, hashlib.sha256
+        ).hexdigest()
+        encoded = (
+            json.dumps(signed, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        ).encode("utf-8")
+    except HeldoutConsumptionError:
+        raise
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+    _write_new_authorization_file(destination, encoded)
+    return authorization
+
+
+def load_successor_heldout_authorization_file(path: Path) -> HeldoutSuccessorAuthorization:
+    """Verify a successor authority using the trusted recovery key."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        fields = {
+            "successor_authorization_id",
+            "approver_identity",
+            "context_id",
+            "issued_at",
+            "frozen_manifest_sha256",
+            "original_attempt_id",
+            "recovery_authorization_id",
+            "successor_purpose",
+            "signature",
+        }
+        if not isinstance(raw, dict) or set(raw) != fields:
+            raise ValueError
+        signature = raw["signature"]
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError
+        payload = {name: raw[name] for name in fields if name != "signature"}
+        expected = hmac.new(
+            _recovery_key().encode("utf-8"),
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            ),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError
+        return HeldoutSuccessorAuthorization(
+            EvaluationAuthorizationId(raw["successor_authorization_id"]),
+            TrustedApproverContext(raw["approver_identity"], raw["context_id"]),
+            _decode_time(raw["issued_at"]),
+            raw["frozen_manifest_sha256"],
+            raw["original_attempt_id"],
+            EvaluationAuthorizationId(raw["recovery_authorization_id"]),
+            raw["successor_purpose"],
+        )
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
 
 
 def run_trusted_case(case: Phase6AEvaluationCase, harness: Phase6AHarness) -> CaseResult:
@@ -1450,7 +1944,10 @@ def _main() -> int:
         nargs="?",
         choices=(
             "issue-heldout-authorization",
+            "issue-heldout-key-loss-recovery",
+            "issue-heldout-successor-authorization",
             "reconcile-heldout-zero",
+            "reconcile-heldout-zero-recovery",
             "consume-heldout",
         ),
     )
@@ -1459,6 +1956,9 @@ def _main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--authorization", type=Path)
+    parser.add_argument("--recovery-authorization", type=Path)
+    parser.add_argument("--reconciled-attempt-id")
+    parser.add_argument("--successor", action="store_true")
     parser.add_argument("--approver-identity")
     parser.add_argument("--context-id")
     args = parser.parse_args()
@@ -1479,7 +1979,7 @@ def _main() -> int:
     if args.command == "reconcile-heldout-zero":
         if args.authorization is None or args.report is None or args.bundle is None:
             raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
-        authorization = load_trusted_authorization_file(args.authorization)
+        trusted_authorization = load_trusted_authorization_file(args.authorization)
         manifest = _load_consumption_manifest(args.manifest)
         if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
             raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
@@ -1488,10 +1988,30 @@ def _main() -> int:
         )
         claim = reconcile_zero_execution_claim(
             args.manifest,
-            authorization,
+            trusted_authorization,
             claim_store=SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite"),
             report_path=args.report,
             bundle_path=args.bundle,
+        )
+        print(json.dumps({"attempt_id": claim.attempt_id, "status": claim.status}, sort_keys=True))
+        return 0
+    if args.command == "reconcile-heldout-zero-recovery":
+        if args.authorization is None or args.report is None or args.bundle is None:
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        recovery = load_key_loss_recovery_authorization_file(args.authorization)
+        manifest = _load_consumption_manifest(args.manifest)
+        if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+            raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+        claim_root = (
+            Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
+        )
+        claim = reconcile_zero_execution_claim_with_recovery(
+            args.manifest,
+            recovery,
+            claim_store=SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite"),
+            report_path=args.report,
+            bundle_path=args.bundle,
+            current_repaired_head=_trusted_current_head(),
         )
         print(json.dumps({"attempt_id": claim.attempt_id, "status": claim.status}, sort_keys=True))
         return 0
@@ -1513,17 +2033,88 @@ def _main() -> int:
             )
         )
         return 0
+    if args.command == "issue-heldout-key-loss-recovery":
+        if args.authorization is None or args.report is None or args.bundle is None:
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        manifest = _load_consumption_manifest(args.manifest)
+        claim_root = (
+            Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
+        )
+        store = SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite")
+        existing = store.read_claim(manifest_sha256=manifest.manifest_sha256)
+        if existing is None:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        recovery = issue_key_loss_recovery_authorization_file(
+            args.manifest,
+            args.authorization,
+            original_claimed_at=existing.claimed_at,
+            repaired_task11_head=_trusted_current_head(),
+            approver_context=TrustedApproverContext(
+                args.approver_identity or "", args.context_id or ""
+            ),
+            claim_store=store,
+            report_path=args.report,
+            bundle_path=args.bundle,
+        )
+        print(
+            json.dumps(
+                {
+                    "recovery_authorization_id": recovery.recovery_authorization_id.value,
+                    "manifest_sha256": recovery.frozen_manifest_sha256,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "issue-heldout-successor-authorization":
+        if args.authorization is None or args.recovery_authorization is None:
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        recovery = load_key_loss_recovery_authorization_file(args.recovery_authorization)
+        claim_root = (
+            Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
+        )
+        store = SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite")
+        root = store.read_claim(manifest_sha256=recovery.frozen_manifest_sha256)
+        if root is None:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        successor = issue_successor_heldout_authorization_file(
+            args.manifest,
+            args.authorization,
+            approver_context=TrustedApproverContext(
+                args.approver_identity or "", args.context_id or ""
+            ),
+            claim_store=store,
+            reconciled_attempt_id=root.attempt_id,
+            recovery_authorization_id=recovery.recovery_authorization_id,
+            frozen_manifest_sha256=recovery.frozen_manifest_sha256,
+        )
+        print(
+            json.dumps(
+                {
+                    "successor_authorization_id": successor.successor_authorization_id.value,
+                    "manifest_sha256": successor.frozen_manifest_sha256,
+                    "original_attempt_id": successor.original_attempt_id,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command != "consume-heldout":
         parser.error(
             "specify --split calibration, issue-heldout-authorization, "
-            "reconcile-heldout-zero, or consume-heldout"
+            "issue-heldout-key-loss-recovery, issue-heldout-successor-authorization, "
+            "reconcile-heldout-zero, reconcile-heldout-zero-recovery, or consume-heldout"
         )
     if args.authorization is None or args.report is None or args.bundle is None:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
-    authorization = load_trusted_authorization_file(args.authorization)
+    consumption_authorization: HeldoutConsumptionAuthorization
+    if args.successor:
+        consumption_authorization = load_successor_heldout_authorization_file(args.authorization)
+    else:
+        consumption_authorization = load_trusted_authorization_file(args.authorization)
     manifest = _load_consumption_manifest(args.manifest)
     executor = _build_real_heldout_executor_after_cli_gate(
-        authorization, manifest.manifest_sha256, gate_token=_CLI_GATE_TOKEN
+        consumption_authorization, manifest.manifest_sha256, gate_token=_CLI_GATE_TOKEN
     )
     claim_root = (
         Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
@@ -1532,7 +2123,7 @@ def _main() -> int:
         args.manifest,
         args.report,
         args.bundle,
-        authorization,
+        consumption_authorization,
         claim_store=SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite"),
         executor=executor,
     )
