@@ -20,18 +20,18 @@ def req(**kw: object) -> CalendarCreateRequest:
     )
 
 
-def test_canonical_rfc3339_is_stable():
+def test_canonical_rfc3339_is_stable() -> None:
     assert canonicalize_calendar_request(req(), now=NOW).start.endswith("Z")
 
 
-def test_absent_optionals_have_one_representation():
+def test_absent_optionals_have_one_representation() -> None:
     assert (
         canonical_event_arguments(canonicalize_calendar_request(req(), now=NOW))["description"]
         is None
     )
 
 
-def test_summary_limit():
+def test_summary_limit() -> None:
     with pytest.raises(ValueError):
         canonicalize_calendar_request(
             CalendarCreateRequest(
@@ -41,13 +41,13 @@ def test_summary_limit():
         )
 
 
-def test_provider_id_is_deterministic():
+def test_provider_id_is_deterministic() -> None:
     assert derive_provider_event_id(
         OperationId("op"), derivation_version="v1"
     ) == derive_provider_event_id(OperationId("op"), derivation_version="v1")
 
 
-def test_different_operation_ids_produce_different_provider_ids():
+def test_different_operation_ids_produce_different_provider_ids() -> None:
     assert derive_provider_event_id(
         OperationId("op"), derivation_version="v1"
     ) != derive_provider_event_id(OperationId("op2"), derivation_version="v1")

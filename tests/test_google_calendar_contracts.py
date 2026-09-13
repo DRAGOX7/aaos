@@ -45,7 +45,8 @@ def test_forbidden_provider_fields_are_not_representable() -> None:
 
 def test_user_cannot_choose_provider_event_id() -> None:
     with pytest.raises(TypeError):
-        CalendarCreateRequest(
+        from typing import Any, cast
+        cast(Any, CalendarCreateRequest)(
             "x",
             datetime.now(timezone.utc),
             datetime.now(timezone.utc),
@@ -56,6 +57,7 @@ def test_user_cannot_choose_provider_event_id() -> None:
 
 def test_user_cannot_choose_calendar_id() -> None:
     with pytest.raises(TypeError):
-        CalendarCreateRequest(
+        from typing import Any, cast
+        cast(Any, CalendarCreateRequest)(
             "x", datetime.now(timezone.utc), datetime.now(timezone.utc), "UTC", calendar_id="x"
         )
