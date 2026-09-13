@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aaos.agent.contracts import JSONValue
 from aaos.approval.contracts import OperationId
-from .contracts import CalendarCreateRequest, CanonicalCalendarEvent
+from .contracts import CalendarCreateRequest, CanonicalCalendarEvent, _CANONICAL_TOKEN
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -20,7 +20,7 @@ def _text(value: str | None, name: str, limit: int, optional: bool = False) -> s
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string")
     value = unicodedata.normalize("NFKC", value)
-    if not value or len(value) > limit or any(ord(c) < 32 or ord(c) == 127 for c in value):
+    if not value or len(value) > limit or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
         raise ValueError(f"{name} is invalid or exceeds its limit")
     return value
 
@@ -35,7 +35,12 @@ def _zone(name: str) -> ZoneInfo:
 def _instant(value: datetime, zone: ZoneInfo, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
-    return value.astimezone(zone).astimezone(timezone.utc)
+    if not (getattr(value.tzinfo, "key", None) == zone.key or (zone.key == "UTC" and value.utcoffset() == timedelta(0))):
+        raise ValueError(f"{name} timezone must match declared timezone")
+    localized = value.replace(fold=0)
+    if localized.astimezone(zone).replace(tzinfo=None) != value.replace(tzinfo=None):
+        raise ValueError(f"{name} is nonexistent in declared timezone")
+    return value.astimezone(timezone.utc)
 
 
 def _rfc3339(value: datetime) -> str:
@@ -54,16 +59,16 @@ def canonicalize_calendar_request(request: CalendarCreateRequest, *, now: dateti
     if end - start > timedelta(hours=24): raise ValueError("duration must not exceed 24 hours")
     if start < current: raise ValueError("start cannot be in the past")
     if start > current + timedelta(days=365): raise ValueError("start exceeds horizon")
-    return CanonicalCalendarEvent(_text(request.summary, "summary", 100), _rfc3339(start), _rfc3339(end), request.timezone, _text(request.description, "description", 2000, True), _text(request.location, "location", 500, True))
+    return CanonicalCalendarEvent(_text(request.summary, "summary", 200), _rfc3339(start), _rfc3339(end), request.timezone, _text(request.description, "description", 2000, True), _text(request.location, "location", 300, True), _CANONICAL_TOKEN)
 
 
 def canonical_event_arguments(event: CanonicalCalendarEvent) -> Mapping[str, JSONValue]:
-    if not isinstance(event, CanonicalCalendarEvent): raise TypeError("event must be canonical")
+    if not isinstance(event, CanonicalCalendarEvent) or event._token is not _CANONICAL_TOKEN: raise TypeError("event must be canonical")
     return {"description": event.description, "end": event.end, "location": event.location, "start": event.start, "summary": event.summary, "timezone": event.timezone}
 
 
 def derive_provider_event_id(operation_id: OperationId, *, derivation_version: str) -> str:
     if not isinstance(operation_id, OperationId): raise TypeError("operation_id must be an OperationId")
     if not isinstance(derivation_version, str) or not _ID.fullmatch(derivation_version): raise ValueError("invalid derivation version")
-    digest = hashlib.sha256(f"aaos/google-calendar/event/{derivation_version}/{operation_id.value}".encode()).hexdigest()
-    return f"aaos-{digest[:48]}"
+    digest = hashlib.sha256(f"aaos/google-calendar/event/{derivation_version}/{operation_id.value}".encode()).digest()
+    return "aaos-" + __import__("base64").b32hexencode(digest).decode().lower().rstrip("=")[:50]
