@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from phase6a_evaluation.harness import (
     issue_trusted_authorization_file,
     load_synthetic_manifest,
     load_trusted_authorization_file,
+    reconcile_zero_execution_claim,
     run_manifest,
     run_phase6a_trusted_core_acceptance,
 )
@@ -519,3 +521,158 @@ def test_issuance_cli_is_distinct_from_consumption() -> None:
 
     assert "issue-heldout-authorization" in harness._main.__code__.co_consts
     assert "consume-heldout" in harness._main.__code__.co_consts
+
+
+def test_real_executor_runs_every_synthetic_case_once(tmp_path: Path) -> None:
+    from phase6a_evaluation.harness import RealHeldoutExecutor
+
+    manifest_path = _synthetic_manifest_path(
+        tmp_path, tuple(f"synthetic-{index:03d}" for index in range(1, 4))
+    )
+    manifest = load_synthetic_manifest(manifest_path)
+    executor = RealHeldoutExecutor(allow_synthetic=True)
+    evidence = executor.execute(manifest)
+    assert evidence.manifest_sha256 == manifest.manifest_sha256
+    assert evidence.executed_case_count == len(manifest.cases)
+    assert json.loads(evidence.report_bytes)["case_count"] == 3
+
+
+def test_real_executor_marks_broken_invariant_as_failed(tmp_path: Path) -> None:
+    from phase6a_evaluation.harness import RealHeldoutExecutor, TrustedCoreFixture
+
+    class BrokenFixture(TrustedCoreFixture):
+        def evaluate(self, case):  # type: ignore[no-untyped-def]
+            result = super().evaluate(case)
+            return result.__class__(
+                False,
+                result.trusted_validation,
+                result.claim_duplicate_prevention,
+                result.lifecycle_reconciliation,
+                result.security_hard_gate,
+                result.runtime_import,
+                result.latency_ms,
+                result.security_probe,
+            )
+
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    evidence = RealHeldoutExecutor(allow_synthetic=True, fixture=BrokenFixture()).execute(manifest)
+    report = json.loads(evidence.report_bytes)
+    assert report["results"][0]["passed"] is False
+
+
+def test_real_executor_rejects_duplicate_case_execution(tmp_path: Path) -> None:
+    from phase6a_evaluation.harness import RealHeldoutExecutor
+
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001", "synthetic-001"))
+    manifest = load_synthetic_manifest(manifest_path)
+    with pytest.raises(ValueError, match="duplicate"):
+        RealHeldoutExecutor(allow_synthetic=True).execute(manifest)
+
+
+def test_zero_case_reconciliation_closes_only_in_progress_claim(tmp_path: Path) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    authorization = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=authorization.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    reconciled = reconcile_zero_execution_claim(
+        manifest_path,
+        authorization,
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    assert reconciled.status == "RECONCILED_ZERO_EXECUTION"
+    assert reconciled.executed_case_count == 0
+    assert reconciled.reconciliation_reason == "REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES"
+    assert store.read_claim(manifest_sha256=manifest.manifest_sha256) == reconciled
+
+
+def test_zero_case_reconciliation_is_idempotent_and_consumed_is_rejected(tmp_path: Path) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    authorization = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=authorization.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    first = reconcile_zero_execution_claim(
+        manifest_path,
+        authorization,
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    second = reconcile_zero_execution_claim(
+        manifest_path,
+        authorization,
+        claim_store=store,
+        report_path=tmp_path / "report.json",
+        bundle_path=tmp_path / "bundle.bin",
+    )
+    assert second == first
+
+
+def test_legacy_in_progress_row_is_migrated_and_preserved(tmp_path: Path) -> None:
+    import sqlite3
+
+    database = tmp_path / "legacy.sqlite"
+    claimed_at = "2026-09-13T00:00:00Z"
+    manifest_sha256 = "a" * 64
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE heldout_execution_claims ("
+            "manifest_sha256 TEXT PRIMARY KEY, authorization_id TEXT NOT NULL, "
+            "status TEXT NOT NULL, claimed_at TEXT NOT NULL, finalized_at TEXT, "
+            "report_sha256 TEXT, private_bundle_sha256 TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO heldout_execution_claims VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
+            (manifest_sha256, "legacy-auth", "IN_PROGRESS", claimed_at),
+        )
+        connection.commit()
+    store = SQLiteHeldoutClaimStore(database)
+    attempts = store.read_attempts(manifest_sha256=manifest_sha256)
+    assert len(attempts) == 1
+    assert attempts[0].status == "IN_PROGRESS"
+    assert attempts[0].authorization_id.value == "legacy-auth"
+    assert attempts[0].claimed_at.isoformat().replace("+00:00", "Z") == claimed_at
+
+
+def test_reconciled_root_allows_exactly_one_successor(tmp_path: Path) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    auth = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    root = store.reconcile_zero_execution(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        reconciled_at=datetime.now(timezone.utc),
+        reason="REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES",
+    )
+    successor = store.create_successor_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+        successor_of=root.attempt_id,
+    )
+    assert successor.successor_of == root.attempt_id
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_successor_in_progress_claim(
+            manifest_sha256=manifest.manifest_sha256,
+            authorization_id=auth.authorization_id,
+            claimed_at=datetime.now(timezone.utc),
+            successor_of=root.attempt_id,
+        )

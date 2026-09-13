@@ -144,11 +144,15 @@ class HeldoutRunResult:
 class HeldoutExecutionClaim:
     manifest_sha256: str
     authorization_id: EvaluationAuthorizationId
-    status: Literal["IN_PROGRESS", "CONSUMED"]
+    status: Literal["IN_PROGRESS", "CONSUMED", "RECONCILED_ZERO_EXECUTION"]
     claimed_at: datetime
     finalized_at: datetime | None
     report_sha256: str | None
     private_bundle_sha256: str | None
+    attempt_id: str = ""
+    successor_of: str | None = None
+    reconciliation_reason: str | None = None
+    executed_case_count: int = 0
 
 
 class HeldoutConsumptionError(Exception):
@@ -194,6 +198,25 @@ class HeldoutClaimStore(Protocol):
         report_sha256: str,
         private_bundle_sha256: str,
         finalized_at: datetime,
+        executed_case_count: int = 0,
+    ) -> HeldoutExecutionClaim: ...
+
+    def reconcile_zero_execution(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        reconciled_at: datetime,
+        reason: str,
+    ) -> HeldoutExecutionClaim: ...
+
+    def create_successor_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+        successor_of: str,
     ) -> HeldoutExecutionClaim: ...
 
 
@@ -297,10 +320,18 @@ _CLOSED_METRIC_KEYS = frozenset(
 )
 
 
-def _validate_case_result(result: CaseResult) -> None:
-    if not result.case_id.startswith("cal-"):
-        raise ValueError("case result must be a calibration result")
-    canonical = {case.case_id: case for case in build_calibration_cases()}.get(result.case_id)
+def _validate_case_result(
+    result: CaseResult,
+    *,
+    canonical_cases: Sequence[Phase6AEvaluationCase] | None = None,
+    prefix: str = "cal-",
+) -> None:
+    if not result.case_id.startswith(prefix):
+        raise ValueError("case result has an invalid split")
+    canonical = {
+        case.case_id: case
+        for case in (canonical_cases if canonical_cases is not None else build_calibration_cases())
+    }.get(result.case_id)
     if canonical is None or (
         result.owner,
         result.category,
@@ -382,13 +413,109 @@ class Phase6AHarness:
             execution.security_probe,
         )
 
+    def execute_heldout_case(self, case: Phase6AEvaluationCase) -> CaseResult:
+        """Evaluate one frozen heldout case with the same trusted fixture semantics."""
+        if not (case.case_id.startswith("hold-") or case.case_id.startswith("synthetic-")):
+            raise ValueError("heldout executor requires a heldout-style case")
+        execution = self._fixture.evaluate(case)
+        metrics: dict[str, MetricValue] = {
+            "capability_approval": execution.capability_approval,
+            "trusted_validation": execution.trusted_validation,
+            "claim_duplicate_prevention": execution.claim_duplicate_prevention,
+            "lifecycle_reconciliation": execution.lifecycle_reconciliation,
+            "security_hard_gate": execution.security_hard_gate,
+            "runtime_import": execution.runtime_import,
+            "latency_ms": execution.latency_ms,
+        }
+        if not execution.security_hard_gate:
+            self.security_hard_gate_failures += 1
+        return CaseResult(
+            case.case_id,
+            case.owner,
+            case.category,
+            case.setup,
+            case.expected_invariant,
+            all(value is True for key, value in metrics.items() if key != "latency_ms"),
+            metrics,
+            execution.security_probe,
+        )
+
 
 class RealHeldoutExecutor:
-    """Explicitly gated future executor; never used by ordinary pytest."""
+    """CLI-gated trusted-core executor for the exact frozen heldout manifest."""
+
+    def __init__(
+        self,
+        *,
+        fixture: TrustedCoreFixture | None = None,
+        allow_synthetic: bool = False,
+    ) -> None:
+        self._fixture = fixture or TrustedCoreFixture()
+        self._allow_synthetic = allow_synthetic
 
     def execute(self, manifest: FrozenEvaluationManifest) -> HeldoutExecutionEvidence:
-        del manifest
-        raise RuntimeError("real heldout execution is unavailable in this acceptance harness")
+        expected_cases = tuple(build_heldout_cases())
+        if self._allow_synthetic:
+            if not all(case.case_id.startswith("synthetic-") for case in manifest.cases):
+                raise ValueError("synthetic executor requires synthetic cases")
+            canonical_cases = tuple(manifest.cases)
+            expected_ids = tuple(case.case_id for case in canonical_cases)
+            prefix = "synthetic-"
+        else:
+            if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+                raise ValueError("heldout manifest fingerprint is not frozen")
+            canonical_cases = expected_cases
+            expected_ids = tuple(case.case_id for case in expected_cases)
+            prefix = "hold-"
+            if tuple(case.case_id for case in manifest.cases) != expected_ids:
+                raise ValueError("heldout case IDs are not canonical")
+        seen: set[str] = set()
+        harness = Phase6AHarness(fixture=self._fixture)
+        results: list[CaseResult] = []
+        for case in manifest.cases:
+            if case.case_id in seen:
+                raise ValueError("duplicate heldout case execution")
+            seen.add(case.case_id)
+            result = (
+                harness.execute_heldout_case(case)
+                if prefix == "hold-"
+                else harness.execute_heldout_case(case)
+            )
+            _validate_case_result(result, canonical_cases=canonical_cases, prefix=prefix)
+            results.append(result)
+        if tuple(result.case_id for result in results) != expected_ids:
+            raise ValueError("heldout cases were skipped or duplicated")
+        report = (
+            json.dumps(
+                _sanitized_summary(results),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        bundle_payload = {
+            "schema_version": "phase6a-trusted-core-private-v1",
+            "evidence": [
+                {
+                    "case_id": result.case_id,
+                    "passed": result.passed,
+                    "category": result.category.value,
+                    "metrics": dict(result.metrics),
+                }
+                for result in results
+            ],
+        }
+        bundle = (
+            json.dumps(bundle_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+        return HeldoutExecutionEvidence(
+            manifest.manifest_sha256,
+            report,
+            bundle,
+            len(results),
+        )
 
 
 class FakeHeldoutClaimStore:
@@ -396,6 +523,7 @@ class FakeHeldoutClaimStore:
 
     def __init__(self) -> None:
         self._claims: dict[str, HeldoutExecutionClaim] = {}
+        self._history: dict[str, HeldoutExecutionClaim] = {}
 
     def read_claim(self, *, manifest_sha256: str) -> HeldoutExecutionClaim | None:
         return self._claims.get(manifest_sha256)
@@ -410,9 +538,17 @@ class FakeHeldoutClaimStore:
         if manifest_sha256 in self._claims:
             raise sqlite3.IntegrityError("duplicate manifest claim")
         claim = HeldoutExecutionClaim(
-            manifest_sha256, authorization_id, "IN_PROGRESS", claimed_at, None, None, None
+            manifest_sha256,
+            authorization_id,
+            "IN_PROGRESS",
+            claimed_at,
+            None,
+            None,
+            None,
+            f"root-{manifest_sha256[:16]}",
         )
         self._claims[manifest_sha256] = claim
+        self._history[claim.attempt_id] = claim
         return claim
 
     def finalize_consumed_claim(
@@ -423,6 +559,7 @@ class FakeHeldoutClaimStore:
         report_sha256: str,
         private_bundle_sha256: str,
         finalized_at: datetime,
+        executed_case_count: int = 0,
     ) -> HeldoutExecutionClaim:
         existing = self._claims.get(manifest_sha256)
         if existing is None or existing.status != "IN_PROGRESS":
@@ -437,8 +574,71 @@ class FakeHeldoutClaimStore:
             finalized_at,
             report_sha256,
             private_bundle_sha256,
+            existing.attempt_id,
+            existing.successor_of,
+            existing.reconciliation_reason,
+            executed_case_count,
         )
         self._claims[manifest_sha256] = claim
+        self._history[claim.attempt_id] = claim
+        return claim
+
+    def reconcile_zero_execution(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        reconciled_at: datetime,
+        reason: str,
+    ) -> HeldoutExecutionClaim:
+        existing = self._claims.get(manifest_sha256)
+        if existing is None or existing.authorization_id != authorization_id:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        if existing.status == "RECONCILED_ZERO_EXECUTION":
+            return existing
+        if existing.status != "IN_PROGRESS":
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        claim = HeldoutExecutionClaim(
+            existing.manifest_sha256,
+            existing.authorization_id,
+            "RECONCILED_ZERO_EXECUTION",
+            existing.claimed_at,
+            reconciled_at,
+            None,
+            None,
+            existing.attempt_id,
+            existing.successor_of,
+            reason,
+            0,
+        )
+        self._claims[manifest_sha256] = claim
+        self._history[claim.attempt_id] = claim
+        return claim
+
+    def create_successor_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+        successor_of: str,
+    ) -> HeldoutExecutionClaim:
+        existing = self._claims.get(manifest_sha256)
+        if existing is None or existing.status != "RECONCILED_ZERO_EXECUTION":
+            raise sqlite3.IntegrityError("successor not allowed")
+        claim = HeldoutExecutionClaim(
+            manifest_sha256,
+            authorization_id,
+            "IN_PROGRESS",
+            claimed_at,
+            None,
+            None,
+            None,
+            f"successor-{manifest_sha256[:16]}",
+            successor_of,
+        )
+        self._claims[manifest_sha256] = claim
+        self._history[claim.attempt_id] = claim
         return claim
 
 
@@ -462,16 +662,21 @@ def _claim_from_row(row: sqlite3.Row) -> HeldoutExecutionClaim:
         _decode_time(row["finalized_at"]) if row["finalized_at"] else None,
         row["report_sha256"],
         row["private_bundle_sha256"],
+        row["attempt_id"],
+        row["successor_of"],
+        row["reconciliation_reason"],
+        int(row["executed_case_count"] or 0),
     )
 
 
 class SQLiteHeldoutClaimStore:
-    """Durable private, manifest-keyed one-shot execution claim store."""
+    """Durable private attempt ledger with legacy-row preservation."""
 
     def __init__(self, database_path: Path) -> None:
         self._database_path = database_path
         database_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute(
@@ -487,6 +692,52 @@ class SQLiteHeldoutClaimStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS heldout_execution_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    manifest_sha256 TEXT NOT NULL,
+                    authorization_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('IN_PROGRESS', 'CONSUMED', 'RECONCILED_ZERO_EXECUTION')
+                    ),
+                    claimed_at TEXT NOT NULL,
+                    finalized_at TEXT,
+                    report_sha256 TEXT,
+                    private_bundle_sha256 TEXT,
+                    successor_of TEXT,
+                    reconciliation_reason TEXT,
+                    executed_case_count INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS one_root_attempt_per_manifest "
+                "ON heldout_execution_attempts(manifest_sha256) WHERE successor_of IS NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS one_successor_per_root "
+                "ON heldout_execution_attempts(successor_of) WHERE successor_of IS NOT NULL"
+            )
+            for row in connection.execute("SELECT * FROM heldout_execution_claims").fetchall():
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO heldout_execution_attempts
+                    (attempt_id, manifest_sha256, authorization_id, status, claimed_at,
+                     finalized_at, report_sha256, private_bundle_sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"legacy-{row['manifest_sha256'][:32]}",
+                        row["manifest_sha256"],
+                        row["authorization_id"],
+                        row["status"],
+                        row["claimed_at"],
+                        row["finalized_at"],
+                        row["report_sha256"],
+                        row["private_bundle_sha256"],
+                    ),
+                )
             connection.commit()
         _fsync_file(database_path)
 
@@ -498,11 +749,21 @@ class SQLiteHeldoutClaimStore:
 
     def read_claim(self, *, manifest_sha256: str) -> HeldoutExecutionClaim | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM heldout_execution_claims WHERE manifest_sha256 = ?",
+            rows = connection.execute(
+                "SELECT * FROM heldout_execution_attempts WHERE manifest_sha256 = ? "
+                "ORDER BY successor_of IS NOT NULL",
                 (manifest_sha256,),
-            ).fetchone()
-        return _claim_from_row(row) if row is not None else None
+            ).fetchall()
+        return _claim_from_row(rows[-1]) if rows else None
+
+    def read_attempts(self, *, manifest_sha256: str) -> tuple[HeldoutExecutionClaim, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM heldout_execution_attempts WHERE manifest_sha256 = ? "
+                "ORDER BY successor_of IS NOT NULL",
+                (manifest_sha256,),
+            ).fetchall()
+        return tuple(_claim_from_row(row) for row in rows)
 
     def create_in_progress_claim(
         self,
@@ -512,12 +773,20 @@ class SQLiteHeldoutClaimStore:
         claimed_at: datetime,
     ) -> HeldoutExecutionClaim:
         connection = self._connect()
+        attempt_id = f"root-{manifest_sha256[:32]}"
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
-                "INSERT INTO heldout_execution_claims "
-                "(manifest_sha256, authorization_id, status, claimed_at) VALUES (?, ?, ?, ?)",
-                (manifest_sha256, authorization_id.value, "IN_PROGRESS", _encode_time(claimed_at)),
+                "INSERT INTO heldout_execution_attempts "
+                "(attempt_id, manifest_sha256, authorization_id, status, claimed_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    manifest_sha256,
+                    authorization_id.value,
+                    "IN_PROGRESS",
+                    _encode_time(claimed_at),
+                ),
             )
             connection.commit()
         except sqlite3.IntegrityError as error:
@@ -531,6 +800,50 @@ class SQLiteHeldoutClaimStore:
             raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
         return claim
 
+    def create_successor_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+        successor_of: str,
+    ) -> HeldoutExecutionClaim:
+        connection = self._connect()
+        attempt_id = f"successor-{manifest_sha256[:32]}"
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            root = connection.execute(
+                "SELECT status FROM heldout_execution_attempts WHERE attempt_id = ? "
+                "AND manifest_sha256 = ?",
+                (successor_of, manifest_sha256),
+            ).fetchone()
+            if root is None or root["status"] != "RECONCILED_ZERO_EXECUTION":
+                raise sqlite3.IntegrityError("successor not allowed")
+            connection.execute(
+                "INSERT INTO heldout_execution_attempts "
+                "(attempt_id, manifest_sha256, authorization_id, status, claimed_at, successor_of) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    manifest_sha256,
+                    authorization_id.value,
+                    "IN_PROGRESS",
+                    _encode_time(claimed_at),
+                    successor_of,
+                ),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        _fsync_file(self._database_path)
+        claim = self.read_claim(manifest_sha256=manifest_sha256)
+        if claim is None or claim.attempt_id != attempt_id:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        return claim
+
     def finalize_consumed_claim(
         self,
         *,
@@ -539,17 +852,19 @@ class SQLiteHeldoutClaimStore:
         report_sha256: str,
         private_bundle_sha256: str,
         finalized_at: datetime,
+        executed_case_count: int = 0,
     ) -> HeldoutExecutionClaim:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
-                "UPDATE heldout_execution_claims SET status = 'CONSUMED', finalized_at = ?, "
-                "report_sha256 = ?, private_bundle_sha256 = ? "
+                "UPDATE heldout_execution_attempts SET status = 'CONSUMED', finalized_at = ?, "
+                "report_sha256 = ?, private_bundle_sha256 = ?, executed_case_count = ? "
                 "WHERE manifest_sha256 = ? AND authorization_id = ? AND status = 'IN_PROGRESS'",
                 (
                     _encode_time(finalized_at),
                     report_sha256,
                     private_bundle_sha256,
+                    executed_case_count,
                     manifest_sha256,
                     authorization_id.value,
                 ),
@@ -561,6 +876,49 @@ class SQLiteHeldoutClaimStore:
         _fsync_file(self._database_path)
         claim = self.read_claim(manifest_sha256=manifest_sha256)
         if claim is None or claim.status != "CONSUMED":
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        return claim
+
+    def reconcile_zero_execution(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        reconciled_at: datetime,
+        reason: str,
+    ) -> HeldoutExecutionClaim:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM heldout_execution_attempts WHERE manifest_sha256 = ? "
+                "ORDER BY successor_of IS NOT NULL DESC LIMIT 1",
+                (manifest_sha256,),
+            ).fetchone()
+            if row is None or row["authorization_id"] != authorization_id.value:
+                raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+            if row["status"] == "RECONCILED_ZERO_EXECUTION":
+                connection.rollback()
+            elif row["status"] != "IN_PROGRESS":
+                raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+            else:
+                connection.execute(
+                    "UPDATE heldout_execution_attempts SET status = ?, finalized_at = ?, "
+                    "reconciliation_reason = ?, executed_case_count = 0 "
+                    "WHERE attempt_id = ? AND status = 'IN_PROGRESS'",
+                    (
+                        "RECONCILED_ZERO_EXECUTION",
+                        _encode_time(reconciled_at),
+                        reason,
+                        row["attempt_id"],
+                    ),
+                )
+                connection.commit()
+        finally:
+            connection.close()
+        _fsync_file(self._database_path)
+        claim = self.read_claim(manifest_sha256=manifest_sha256)
+        if claim is None:
             raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
         return claim
 
@@ -698,12 +1056,16 @@ def consume_heldout_once(
     if authorization.manifest_sha256 != manifest.manifest_sha256:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+    successor_of: str | None = None
     if existing is not None:
-        raise HeldoutConsumptionError(
-            "HELDOUT_RECONCILIATION_REQUIRED"
-            if existing.status == "IN_PROGRESS"
-            else "HELDOUT_ALREADY_CONSUMED"
-        )
+        if existing.status == "IN_PROGRESS":
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        if existing.status == "CONSUMED":
+            raise HeldoutConsumptionError("HELDOUT_ALREADY_CONSUMED")
+        if existing.status == "RECONCILED_ZERO_EXECUTION":
+            successor_of = existing.attempt_id
+        else:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
     marker = _marker_path(manifest.manifest_sha256, report_path)
     if marker.exists():
         raise HeldoutConsumptionError("HELDOUT_ALREADY_CONSUMED")
@@ -714,18 +1076,24 @@ def consume_heldout_once(
     if report_exists or bundle_exists:
         raise HeldoutConsumptionError("HELDOUT_ARTIFACT_EXISTS")
     try:
-        claim_store.create_in_progress_claim(
-            manifest_sha256=manifest.manifest_sha256,
-            authorization_id=authorization.authorization_id,
-            claimed_at=datetime.now(timezone.utc),
-        )
+        if successor_of is None:
+            claim_store.create_in_progress_claim(
+                manifest_sha256=manifest.manifest_sha256,
+                authorization_id=authorization.authorization_id,
+                claimed_at=datetime.now(timezone.utc),
+            )
+        else:
+            claim_store.create_successor_in_progress_claim(
+                manifest_sha256=manifest.manifest_sha256,
+                authorization_id=authorization.authorization_id,
+                claimed_at=datetime.now(timezone.utc),
+                successor_of=successor_of,
+            )
     except sqlite3.IntegrityError:
         conflict = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
-        raise HeldoutConsumptionError(
-            "HELDOUT_RECONCILIATION_REQUIRED"
-            if conflict is None or conflict.status == "IN_PROGRESS"
-            else "HELDOUT_ALREADY_CONSUMED"
-        ) from None
+        if conflict is not None and conflict.status == "CONSUMED":
+            raise HeldoutConsumptionError("HELDOUT_ALREADY_CONSUMED") from None
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED") from None
     try:
         evidence = executor.execute(manifest)
     except Exception:
@@ -742,6 +1110,7 @@ def consume_heldout_once(
         report_sha256=report_sha256,
         private_bundle_sha256=bundle_sha256,
         finalized_at=datetime.now(timezone.utc),
+        executed_case_count=evidence.executed_case_count,
     )
     marker_payload = {
         "manifest_sha256": manifest.manifest_sha256,
@@ -755,6 +1124,37 @@ def consume_heldout_once(
     )
     return HeldoutRunResult(
         manifest.manifest_sha256, report_sha256, bundle_sha256, evidence.executed_case_count
+    )
+
+
+def reconcile_zero_execution_claim(
+    manifest_path: Path,
+    authorization: HeldoutAuthorization,
+    *,
+    claim_store: HeldoutClaimStore,
+    report_path: Path,
+    bundle_path: Path,
+) -> HeldoutExecutionClaim:
+    """Close a proven zero-case infrastructure attempt without rerunning it."""
+    if not isinstance(authorization, HeldoutAuthorization):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    manifest = _load_consumption_manifest(manifest_path)
+    if authorization.manifest_sha256 != manifest.manifest_sha256:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    if report_path.exists() or bundle_path.exists():
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+    if existing is None:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    if existing.status == "RECONCILED_ZERO_EXECUTION":
+        return existing
+    if existing.status != "IN_PROGRESS" or existing.executed_case_count != 0:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    return claim_store.reconcile_zero_execution(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=authorization.authorization_id,
+        reconciled_at=datetime.now(timezone.utc),
+        reason="REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES",
     )
 
 
@@ -1048,7 +1448,13 @@ def artifact_tree_contains_case_ids(output_dir: Path, *, prefix: str) -> bool:
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic Phase 6A acceptance fixtures")
     parser.add_argument(
-        "command", nargs="?", choices=("issue-heldout-authorization", "consume-heldout")
+        "command",
+        nargs="?",
+        choices=(
+            "issue-heldout-authorization",
+            "reconcile-heldout-zero",
+            "consume-heldout",
+        ),
     )
     parser.add_argument("--split", choices=("calibration",))
     parser.add_argument("--manifest", type=Path, required=True)
@@ -1072,6 +1478,25 @@ def _main() -> int:
             )
         )
         return 0
+    if args.command == "reconcile-heldout-zero":
+        if args.authorization is None or args.report is None or args.bundle is None:
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        authorization = load_trusted_authorization_file(args.authorization)
+        manifest = _load_consumption_manifest(args.manifest)
+        if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+            raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+        claim_root = (
+            Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
+        )
+        claim = reconcile_zero_execution_claim(
+            args.manifest,
+            authorization,
+            claim_store=SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite"),
+            report_path=args.report,
+            bundle_path=args.bundle,
+        )
+        print(json.dumps({"attempt_id": claim.attempt_id, "status": claim.status}, sort_keys=True))
+        return 0
     if args.command == "issue-heldout-authorization":
         if args.authorization is None or args.approver_identity is None or args.context_id is None:
             raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
@@ -1091,7 +1516,10 @@ def _main() -> int:
         )
         return 0
     if args.command != "consume-heldout":
-        parser.error("specify --split calibration, issue-heldout-authorization, or consume-heldout")
+        parser.error(
+            "specify --split calibration, issue-heldout-authorization, "
+            "reconcile-heldout-zero, or consume-heldout"
+        )
     if args.authorization is None or args.report is None or args.bundle is None:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     authorization = load_trusted_authorization_file(args.authorization)
