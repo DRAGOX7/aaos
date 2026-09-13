@@ -821,6 +821,16 @@ def _claim_reason(
         or approval.prepared_action_sha256 != action.prepared_action_sha256
     ):
         return TrustedInvalidationReason.BINDING_DRIFT
+    # A definition whose validator no longer accepts the immutable canonical
+    # arguments is schema drift.  Keep this distinction when translating the
+    # public ClaimDecision into the durable trusted reason.
+    try:
+        arguments = json.loads(action.canonical_arguments.decode("utf-8"))
+        canonical = definition.validate_arguments(arguments)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return TrustedInvalidationReason.SCHEMA_VERSION_DRIFT
+    if canonical.bytes != action.canonical_arguments or canonical.sha256 != action.arguments_sha256:
+        return TrustedInvalidationReason.BINDING_DRIFT
     return TrustedInvalidationReason.BINDING_DRIFT
 
 

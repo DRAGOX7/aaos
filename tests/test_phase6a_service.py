@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 import pytest
 from sqlalchemy import Engine, func, select, text
@@ -36,9 +37,11 @@ from aaos.approval.contracts import (
 from aaos.approval.repository import (
     ApprovalRepository,
     PersistenceConflict,
+    load_claim_snapshot,
     read_action_event_history,
 )
 from aaos.approval.service import (
+    ClaimDecision,
     ClaimResult,
     Phase6ServiceError,
     approve_approval,
@@ -48,6 +51,7 @@ from aaos.approval.service import (
     reject_approval,
     request_approval,
     revoke_approval,
+    validate_claim_snapshot,
 )
 from aaos.persistence.academic_models import Base
 from aaos.persistence.approval_models import (
@@ -104,6 +108,29 @@ def fake_definition() -> Phase6ActionDefinition:
         policy_fingerprint="3" * 64,
         timeout_seconds=30,
         argument_validator=validate,
+    )
+
+
+def definition_variant(
+    *,
+    action_type: ActionType | None = None,
+    schema_version: str = "v1",
+    definition_fingerprint: str = "2" * 64,
+    policy_version: str = "phase5-v1",
+    policy_fingerprint: str = "3" * 64,
+    validator: Callable[[Mapping[str, JSONValue]], Mapping[str, JSONValue]] | None = None,
+) -> Phase6ActionDefinition:
+    base = fake_definition()
+    return Phase6ActionDefinition(
+        action_type=action_type or base.action_type,
+        tool_name=base.tool_name,
+        tool_schema_version=schema_version,
+        tool_definition_fingerprint=definition_fingerprint,
+        required_permission=base.required_permission,
+        policy_version=policy_version,
+        policy_fingerprint=policy_fingerprint,
+        timeout_seconds=base.timeout_seconds,
+        argument_validator=validator or base.validate_arguments,
     )
 
 
@@ -604,16 +631,21 @@ def test_claim_is_one_shot_and_duplicate_claim_is_a_safe_conflict(
 ) -> None:
     approval_id = issue(repo)
     approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
-    context = dict(
+    first = claim_action(
+        repo,
+        approved.action_id,
         capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
         definition=fake_definition(),
         now=NOW + timedelta(seconds=2),
-    )
-    first = claim_action(
-        repo, approved.action_id, claim_identity=ClaimIdentity("claim-worker-1"), **context
+        claim_identity=ClaimIdentity("claim-worker-1"),
     )
     second = claim_action(
-        repo, approved.action_id, claim_identity=ClaimIdentity("claim-worker-2"), **context
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-2"),
     )
 
     assert first.claimed is True
@@ -662,7 +694,7 @@ def test_independent_connections_have_exactly_one_claim_winner(
     approval_id = issue(repo)
     approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
 
-    def run(worker: str):
+    def run(worker: str) -> ClaimResult:
         return claim_action(
             repo,
             approved.action_id,
@@ -680,3 +712,163 @@ def test_independent_connections_have_exactly_one_claim_winner(
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 1
         assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 1
+
+
+@pytest.mark.parametrize(
+    ("definition", "reason"),
+    [
+        (definition_variant(schema_version="v2"), TrustedInvalidationReason.SCHEMA_VERSION_DRIFT),
+        (
+            definition_variant(policy_fingerprint="4" * 64),
+            TrustedInvalidationReason.POLICY_VERSION_DRIFT,
+        ),
+        (
+            definition_variant(action_type=ActionType("fake.update")),
+            TrustedInvalidationReason.BINDING_DRIFT,
+        ),
+    ],
+)
+def test_claim_persists_exact_static_drift_reason(
+    repo: ApprovalRepository,
+    sessions: sessionmaker[Session],
+    definition: Phase6ActionDefinition,
+    reason: TrustedInvalidationReason,
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=definition,
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.error_code is Phase6ErrorCode.ACTION_INVALIDATED
+    assert stored_states(sessions, approval_id)[2] == reason.value
+
+
+def test_validator_rejection_is_persisted_as_schema_drift(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+
+    def rejects(_: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
+        raise ValueError("schema changed")
+
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=definition_variant(validator=rejects),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.error_code is Phase6ErrorCode.ACTION_INVALIDATED
+    assert stored_states(sessions, approval_id)[2] == TrustedInvalidationReason.SCHEMA_VERSION_DRIFT.value
+
+
+def test_inconsistent_snapshot_detects_stored_precondition_without_mutating_immutable_row(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    with sessions.begin() as session:
+        snapshot = load_claim_snapshot(session, approved.action_id)
+    altered = replace(snapshot, stored_precondition=RemotePrecondition("fake", "resource-1", "v1", "etag-2"))
+    decision = validate_claim_snapshot(
+        altered,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+    )
+
+    assert decision.invalidates is True
+    assert decision.error_code is Phase6ErrorCode.ACTION_INVALIDATED
+    with sessions() as session:
+        stored = session.get(PreparedActionORM, approved.action_id.value)
+        assert stored is not None
+        assert stored.remote_precondition == '{"etag":"etag-1","provider":"fake","resource":"resource-1","version":"v1"}'
+
+
+def test_claim_rejects_identity_and_hash_mismatches_as_binding_drift(
+    repo: ApprovalRepository,
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    with repo.transaction() as session:
+        snapshot = load_claim_snapshot(session, approved.action_id)
+    mismatched_identity = replace(snapshot.approval, action_id=ActionId("other-action"))
+    mismatched_hash = replace(
+        snapshot.approval,
+        prepared_action_sha256="f" * 64,
+        approval_binding_sha256=compute_approval_binding_sha256(
+            "f" * 64, APPROVER, snapshot.approval.approval_expires_at
+        ),
+    )
+    for approval in (mismatched_identity, mismatched_hash):
+        decision = validate_claim_snapshot(
+            replace(snapshot, approval=approval),
+            capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+            definition=fake_definition(),
+            now=NOW + timedelta(seconds=2),
+        )
+        assert decision == ClaimDecision(True, Phase6ErrorCode.ACTION_INVALIDATED)
+
+
+@pytest.mark.parametrize("failing_method", ("insert_consumption", "mark_approval_consumed", "cas_claimed_and_create_operation", "append_claim_event"))
+def test_claim_rolls_back_after_each_authority_step_failure(
+    repo: ApprovalRepository,
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    failing_method: str,
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+
+    def fail(*args: object, **kwargs: object) -> NoReturn:
+        raise PersistenceConflict()
+
+    monkeypatch.setattr(repo, failing_method, fail)
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.claimed is False
+    assert result.error_code is Phase6ErrorCode.PERSISTENCE_CONFLICT
+    assert stored_states(sessions, approval_id)[:2] == (ApprovalState.APPROVED, ActionState.APPROVED)
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 0
+        assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 0
+
+
+def test_claim_has_no_dispatch_surface_or_live_io(
+    repo: ApprovalRepository, sessions: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    calls: list[str] = []
+    monkeypatch.setattr("socket.create_connection", lambda *args, **kwargs: calls.append("socket"))
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.claimed is True
+    assert calls == []
+    assert not hasattr(__import__("aaos.approval.service", fromlist=["service"]), "dispatch_action")
+    with sessions() as session:
+        operation = session.get(OperationRecordORM, approved.operation_id.value)
+        assert operation is not None and operation.state == "CLAIMED"

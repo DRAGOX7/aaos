@@ -17,6 +17,7 @@ from aaos.approval.contracts import (
     ActionState,
     ActorIdentity,
     ApprovalId,
+    ApprovalState,
     ClaimIdentity,
     EventKind,
     ExecutionOutcome,
@@ -46,8 +47,12 @@ from aaos.approval.repository import (
     ApprovalRepository,
     PersistenceConflict,
     append_action_event,
+    append_claim_event,
     cas_action_lifecycle,
+    cas_claimed_and_create_operation,
     cas_operation,
+    insert_consumption,
+    mark_approval_consumed,
     read_action_event_history,
     read_states,
     read_states_and_outcome,
@@ -58,6 +63,8 @@ from aaos.persistence.approval_models import (
     ActionEventCounterORM,
     ActionEventORM,
     ActionLifecycleORM,
+    ApprovalConsumptionORM,
+    ApprovalRecordORM,
     OperationRecordORM,
     PreparedActionORM,
 )
@@ -375,6 +382,78 @@ def test_read_states_and_outcome_returns_closed_enums(
             OperationState.UNKNOWN_OUTCOME,
             ExecutionOutcome.UNKNOWN_OUTCOME,
         )
+
+
+def test_claim_repository_primitives_share_one_transactional_boundary(
+    sessions: sessionmaker[Session],
+) -> None:
+    seed_action(sessions, action_state=ActionState.APPROVED, action_revision=4)
+    with sessions.begin() as session:
+        session.add(
+            ApprovalRecordORM(
+                approval_id=APPROVAL_ID.value,
+                action_id=ACTION_ID.value,
+                operation_id=OPERATION_ID.value,
+                approver_identity=APPROVER.approver_identity.value,
+                approver_context_id=APPROVER.context_id,
+                prepared_action_sha256=PREPARED_HASH,
+                approval_binding_sha256=APPROVAL_HASH,
+                issued_at=NOW,
+                approval_expires_at=NOW + timedelta(minutes=10),
+                status=ApprovalState.APPROVED.value,
+                decided_at=NOW,
+                reason_code=HumanDecisionReason.USER_APPROVED.value,
+            )
+        )
+        session.flush()
+        insert_consumption(
+            session,
+            approval_id=APPROVAL_ID,
+            action_id=ACTION_ID,
+            operation_id=OPERATION_ID,
+            claim_identity=CLAIM,
+            consumed_at=NOW + timedelta(seconds=1),
+        )
+        mark_approval_consumed(
+            session,
+            approval_id=APPROVAL_ID,
+            expected_status=ApprovalState.APPROVED,
+            consumed_at=NOW + timedelta(seconds=1),
+        )
+        cas_claimed_and_create_operation(
+            session,
+            action_id=ACTION_ID,
+            operation_id=OPERATION_ID,
+            expected_state=ActionState.APPROVED,
+            expected_revision=4,
+            claim_identity=CLAIM,
+            now=NOW + timedelta(seconds=1),
+        )
+        append_claim_event(
+            session,
+            event=ActionEventDraft(
+                action_id=ACTION_ID,
+                operation_id=OPERATION_ID,
+                event_kind=EventKind.APPROVAL_CONSUMED,
+                source=TransitionSource.CLAIM_WORKER,
+                actor=CLAIM,
+                occurred_at=NOW + timedelta(seconds=1),
+                details=ClaimedDetails(
+                    approval_id=APPROVAL_ID,
+                    operation_id=OPERATION_ID,
+                    claim_identity=CLAIM,
+                ),
+            ),
+            expected_action_revision=4,
+        )
+
+    with sessions() as session:
+        assert session.get(ApprovalConsumptionORM, APPROVAL_ID.value) is not None
+        assert session.get(OperationRecordORM, OPERATION_ID.value) is not None
+        lifecycle = session.get(ActionLifecycleORM, ACTION_ID.value)
+        approval = session.get(ApprovalRecordORM, APPROVAL_ID.value)
+        assert lifecycle is not None and (lifecycle.state, lifecycle.revision) == ("CLAIMED", 5)
+        assert approval is not None and approval.status == ApprovalState.CONSUMED.value
 
 
 @pytest.mark.parametrize(
