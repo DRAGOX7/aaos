@@ -676,3 +676,35 @@ def test_reconciled_root_allows_exactly_one_successor(tmp_path: Path) -> None:
             claimed_at=datetime.now(timezone.utc),
             successor_of=root.attempt_id,
         )
+
+
+def test_zero_case_reconciliation_rejects_existing_successor_attempt(tmp_path: Path) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
+    auth = _authorization(manifest.manifest_sha256)
+    store.create_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+    )
+    root = store.reconcile_zero_execution(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        reconciled_at=datetime.now(timezone.utc),
+        reason="REAL_EXECUTOR_UNAVAILABLE_ZERO_CASES",
+    )
+    store.create_successor_in_progress_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=auth.authorization_id,
+        claimed_at=datetime.now(timezone.utc),
+        successor_of=root.attempt_id,
+    )
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_RECONCILIATION_REQUIRED"):
+        reconcile_zero_execution_claim(
+            manifest_path,
+            auth,
+            claim_store=store,
+            report_path=tmp_path / "report.json",
+            bundle_path=tmp_path / "bundle.bin",
+        )

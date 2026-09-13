@@ -476,11 +476,7 @@ class RealHeldoutExecutor:
             if case.case_id in seen:
                 raise ValueError("duplicate heldout case execution")
             seen.add(case.case_id)
-            result = (
-                harness.execute_heldout_case(case)
-                if prefix == "hold-"
-                else harness.execute_heldout_case(case)
-            )
+            result = harness.execute_heldout_case(case)
             _validate_case_result(result, canonical_cases=canonical_cases, prefix=prefix)
             results.append(result)
         if tuple(result.case_id for result in results) != expected_ids:
@@ -890,11 +886,13 @@ class SQLiteHeldoutClaimStore:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM heldout_execution_attempts WHERE manifest_sha256 = ? "
-                "ORDER BY successor_of IS NOT NULL DESC LIMIT 1",
+            rows = connection.execute(
+                "SELECT * FROM heldout_execution_attempts WHERE manifest_sha256 = ?",
                 (manifest_sha256,),
-            ).fetchone()
+            ).fetchall()
+            if any(row["successor_of"] is not None for row in rows):
+                raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+            row = rows[0] if rows else None
             if row is None or row["authorization_id"] != authorization_id.value:
                 raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
             if row["status"] == "RECONCILED_ZERO_EXECUTION":
