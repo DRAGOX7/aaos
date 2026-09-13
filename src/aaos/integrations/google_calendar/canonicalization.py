@@ -57,12 +57,15 @@ def _instant(value: datetime, zone: ZoneInfo, name: str) -> datetime:
         or (zone.key == "UTC" and value.utcoffset() == timedelta(0))
     ):
         raise ValueError(f"{name} timezone must match declared timezone")
-    localized = value.replace(fold=0)
-    if localized.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != value.replace(
-        tzinfo=None
-    ):
+    utc_value = value.astimezone(timezone.utc)
+    roundtrip = utc_value.astimezone(zone)
+    if roundtrip.replace(tzinfo=None) != value.replace(tzinfo=None):
         raise ValueError(f"{name} is nonexistent in declared timezone")
-    return value.astimezone(timezone.utc)
+    if roundtrip.utcoffset() != value.utcoffset():
+        raise ValueError(f"{name} offset is invalid for declared timezone")
+    if roundtrip.fold != value.fold:
+        raise ValueError(f"{name} fold is invalid for declared timezone")
+    return utc_value
 
 
 def _rfc3339(value: datetime) -> str:
@@ -100,6 +103,7 @@ def canonicalize_calendar_request(
 def canonical_event_arguments(event: CanonicalCalendarEvent) -> Mapping[str, JSONValue]:
     if not isinstance(event, CanonicalCalendarEvent):
         raise TypeError("event must be canonical")
+    event._validate()
     return {
         "description": event.description,
         "end": event.end,
