@@ -11,6 +11,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TypeAlias, TypeVar, cast
 
+from aaos.agent.contracts import JSONValue
 from aaos.approval.contracts import (
     ActionId,
     ActorIdentity,
@@ -20,7 +21,6 @@ from aaos.approval.contracts import (
     EventKind,
     ExecutionOutcome,
     HumanDecisionReason,
-    JSONValue,
     OperationId,
     Phase6ErrorCode,
     TrustedApproverContext,

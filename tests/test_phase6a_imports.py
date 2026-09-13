@@ -13,6 +13,7 @@ import asyncio
 import os
 import platform
 import socket
+import sqlite3
 import ssl
 import subprocess
 import sys
@@ -32,6 +33,9 @@ socket.create_connection = blocked
 subprocess.Popen = blocked
 os.system = blocked
 builtins.open = blocked
+for name in ("open", "mkdir", "makedirs", "unlink", "remove", "rmdir", "replace"):
+    setattr(os, name, blocked)
+sqlite3.connect = blocked
 
 for module_name in (
     "aaos.agent.contracts",
