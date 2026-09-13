@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import TypeAlias, TypeVar
+from types import MappingProxyType
+from typing import TypeAlias, TypeVar, cast
 
 from aaos.approval.contracts import (
     ActionId,
@@ -18,6 +20,7 @@ from aaos.approval.contracts import (
     EventKind,
     ExecutionOutcome,
     HumanDecisionReason,
+    JSONValue,
     OperationId,
     Phase6ErrorCode,
     TrustedApproverContext,
@@ -384,6 +387,26 @@ def _details_to_dict(details: ActionEventDetails) -> dict[str, object]:
     raise InvalidEventDetails()
 
 
+def sanitize_event_details(details: ActionEventDetails) -> Mapping[str, JSONValue]:
+    """Project one closed event-detail value into bounded JSON metadata.
+
+    Event details are an application-owned union, not a generic payload
+    channel.  Exact-type validation prevents subclasses or arbitrary objects
+    from acquiring a durable audit representation at this boundary.
+    """
+
+    if type(details) not in _DETAIL_TYPES.values():
+        raise InvalidEventDetails()
+    try:
+        projected = _details_to_dict(details)
+        payload = json.dumps(projected, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        if len(payload) > _MAX_EVENT_PAYLOAD:
+            raise InvalidEventDetails()
+    except (AttributeError, TypeError, ValueError) as error:
+        raise InvalidEventDetails() from error
+    return cast(Mapping[str, JSONValue], MappingProxyType(projected))
+
+
 def _actor_to_dict(actor: EventActor) -> dict[str, str]:
     if isinstance(actor, TrustedApproverContext):
         return {
@@ -606,5 +629,6 @@ __all__ = [
     "OutcomeRecordedDetails",
     "ReconciliationDetails",
     "deserialize_event_payload",
+    "sanitize_event_details",
     "serialize_event_payload",
 ]

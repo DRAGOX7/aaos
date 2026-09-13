@@ -9,10 +9,18 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 COLD_IMPORT_PROBE = r"""
 import builtins
+import asyncio
 import os
+import platform
 import socket
+import ssl
 import subprocess
 import sys
+
+# SQLAlchemy's pure import path asks the standard library for the host
+# machine. Resolve that non-AAOS environment fact before installing the
+# side-effect guards; the target modules themselves remain cold-imported.
+platform.machine()
 
 touched = []
 def blocked(*args, **kwargs):
@@ -25,7 +33,23 @@ subprocess.Popen = blocked
 os.system = blocked
 builtins.open = blocked
 
-import aaos.approval
+for module_name in (
+    "aaos.agent.contracts",
+    "aaos.agent.policy",
+    "aaos.agent.registry",
+    "aaos.agent.proposal",
+    "aaos.agent.orchestrator",
+    "aaos.agent.observations",
+    "aaos.agent.events",
+    "aaos.approval.contracts",
+    "aaos.approval.state",
+    "aaos.approval.events",
+    "aaos.approval.repository",
+    "aaos.approval.service",
+    "aaos.approval.adapters",
+    "aaos.persistence.approval_models",
+):
+    __import__(module_name)
 
 if touched:
     raise SystemExit("side effect guard was touched")
