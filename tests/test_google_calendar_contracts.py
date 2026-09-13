@@ -1,4 +1,4 @@
-# mypy: disable-error-code=call-arg
+# mypy: disable-error-code=call-arg,arg-type
 from datetime import datetime, timezone
 
 import pytest

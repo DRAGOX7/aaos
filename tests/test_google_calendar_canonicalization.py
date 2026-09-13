@@ -1,4 +1,4 @@
-# mypy: disable-error-code=no-untyped-def,no-untyped-call
+# mypy: disable-error-code=no-untyped-def,arg-type
 from datetime import datetime, timedelta, timezone
 
 import pytest
