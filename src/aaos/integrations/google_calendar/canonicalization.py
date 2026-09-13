@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import unicodedata
@@ -9,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aaos.agent.contracts import JSONValue
 from aaos.approval.contracts import OperationId
-from .contracts import CalendarCreateRequest, CanonicalCalendarEvent, _CANONICAL_TOKEN
+from .contracts import _CANONICAL_TOKEN, CalendarCreateRequest, CanonicalCalendarEvent
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -23,6 +24,12 @@ def _text(value: str | None, name: str, limit: int, optional: bool = False) -> s
     if not value or len(value) > limit or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
         raise ValueError(f"{name} is invalid or exceeds its limit")
     return value
+
+
+def _required_text(value: str, name: str, limit: int) -> str:
+    result = _text(value, name, limit)
+    assert result is not None
+    return result
 
 
 def _zone(name: str) -> ZoneInfo:
@@ -69,7 +76,7 @@ def canonicalize_calendar_request(
     if start > current + timedelta(days=365):
         raise ValueError("start exceeds horizon")
     return CanonicalCalendarEvent(
-        _text(request.summary, "summary", 200),
+        _required_text(request.summary, "summary", 200),
         _rfc3339(start),
         _rfc3339(end),
         request.timezone,
@@ -100,4 +107,4 @@ def derive_provider_event_id(operation_id: OperationId, *, derivation_version: s
     digest = hashlib.sha256(
         f"aaos/google-calendar/event/{derivation_version}/{operation_id.value}".encode()
     ).digest()
-    return "aaos-" + __import__("base64").b32hexencode(digest).decode().lower().rstrip("=")[:50]
+    return "aaos" + base64.b32hexencode(digest).decode().lower().rstrip("=")[:50]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from aaos.approval.contracts import OperationId, TargetIdentity
+from aaos.approval.contracts import TargetIdentity
 
 
 @dataclass(frozen=True, slots=True)
