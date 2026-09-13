@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from threading import Barrier, Event
 
 import pytest
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from test_phase6a_adapters import _claimed, _dispatch_context
 from test_phase6a_service import NOW
@@ -21,9 +24,13 @@ from aaos.approval.contracts import (
     ExecutionOutcome,
     OperationId,
     OperationState,
+    Phase6ErrorCode,
+    RemotePrecondition,
 )
-from aaos.approval.repository import ApprovalRepository
+from aaos.approval.repository import ApprovalRepository, PersistenceConflict
 from aaos.approval.service import (
+    OutcomeRecordResult,
+    ReconciliationResult,
     adapter_outcome_to_execution_outcome,
     outcome_to_states,
     reconcile_operation,
@@ -276,3 +283,167 @@ def test_closed_outcome_mappings() -> None:
         )
         is None
     )
+
+
+def test_concurrent_outcome_cas_loss_returns_one_late_result_and_one_event(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    operation_id = _executing(repo)
+    outcome = AdapterExecutionOutcome(AdapterOutcomeKind.SUCCESS, "receipt")
+
+    def persist() -> OutcomeRecordResult:
+        return record_adapter_outcome(repo, operation_id, expected_revision=1, outcome=outcome)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(lambda _: persist(), range(2)))
+    assert sum(result.committed for result in results) == 1
+    assert sum(result.late for result in results) == 1
+    with sessions() as session:
+        events = session.scalars(
+            select(ActionEventORM).where(
+                ActionEventORM.event_kind == EventKind.LATE_RESULT_IGNORED.value
+            )
+        ).all()
+    assert len(events) == 1
+
+
+def test_not_dispatched_preserves_absent_execution_outcome_on_recovery(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id = _executing(repo)
+    record_adapter_outcome(
+        repo,
+        operation_id,
+        expected_revision=1,
+        outcome=AdapterExecutionOutcome(AdapterOutcomeKind.PRECONDITION_STALE, "stale"),
+    )
+    recovered = recover_inflight_operation(repo, operation_id, now=NOW + timedelta(minutes=1))
+    assert recovered.outcome is None
+    assert recovered.reconciliation_required is False
+
+
+def test_not_dispatched_preserves_absent_execution_outcome_on_reconciliation(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id = _executing(repo)
+    record_adapter_outcome(
+        repo,
+        operation_id,
+        expected_revision=1,
+        outcome=AdapterExecutionOutcome(AdapterOutcomeKind.PRECONDITION_STALE, "stale"),
+    )
+    adapter = FakeExternalAdapter(_claimed(repo)[1])
+    result = reconcile_operation(
+        repo, adapter, operation_id, expected_revision=2, now=NOW + timedelta(minutes=2)
+    )
+    assert result.outcome is None
+    assert adapter.execute_count == 0
+
+
+def test_reconciliation_programming_error_is_not_silently_unknown(
+    repo: ApprovalRepository,
+) -> None:
+    operation_id = _executing(repo)
+    record_adapter_outcome(
+        repo,
+        operation_id,
+        expected_revision=1,
+        outcome=AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "uncertain"),
+    )
+
+    class BrokenReconciler(FakeExternalAdapter):
+        def reconcile(self, operation):  # type: ignore[no-untyped-def]
+            raise RuntimeError("programming defect")
+
+    with pytest.raises(RuntimeError, match="programming defect"):
+        reconcile_operation(
+            repo,
+            BrokenReconciler(_claimed(repo)[1]),
+            operation_id,
+            expected_revision=2,
+            now=NOW + timedelta(minutes=2),
+        )
+
+
+def test_concurrent_reconciliation_cas_loss_is_late_and_cannot_overwrite(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    operation_id = _executing(repo)
+    record_adapter_outcome(
+        repo,
+        operation_id,
+        expected_revision=1,
+        outcome=AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "uncertain"),
+    )
+    barrier = Barrier(2)
+    first_started = Event()
+
+    class RacingAdapter(FakeExternalAdapter):
+        def __init__(self, precondition: RemotePrecondition, *, first: bool = False) -> None:
+            super().__init__(precondition)
+            self.first = first
+
+        def reconcile(self, operation):  # type: ignore[no-untyped-def]
+            from aaos.approval.contracts import AdapterReconciliationOutcome
+
+            if self.first:
+                first_started.set()
+            barrier.wait(timeout=5)
+            return AdapterReconciliationOutcome(AdapterOutcomeKind.SUCCESS, "receipt")
+
+    adapters = [
+        RacingAdapter(_claimed(repo)[1], first=True),
+        RacingAdapter(_claimed(repo)[1]),
+    ]
+
+    def reconcile_first(adapter: RacingAdapter) -> ReconciliationResult:
+        return reconcile_operation(
+            repo,
+            adapter,
+            operation_id,
+            expected_revision=2,
+            now=NOW + timedelta(minutes=2),
+        )
+
+    def reconcile_second(adapter: RacingAdapter) -> ReconciliationResult:
+        return reconcile_operation(
+            repo,
+            adapter,
+            operation_id,
+            expected_revision=3,
+            now=NOW + timedelta(minutes=2),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(reconcile_first, adapters[0])
+        assert first_started.wait(timeout=5)
+        second = workers.submit(reconcile_second, adapters[1])
+        results = [first.result(timeout=10), second.result(timeout=10)]
+    assert sum(result.committed for result in results) == 1
+    assert sum(not result.committed for result in results) == 1
+    with sessions() as session:
+        events = session.scalars(
+            select(ActionEventORM).where(
+                ActionEventORM.event_kind == EventKind.LATE_RESULT_IGNORED.value
+            )
+        ).all()
+    assert len(events) == 1
+
+
+def test_db_errors_are_sanitized_to_persistence_conflict(
+    repo: ApprovalRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import aaos.approval.service as service_module
+
+    def broken_rows(*args):  # type: ignore[no-untyped-def]
+        raise SQLAlchemyError("secret database details")
+
+    monkeypatch.setattr(service_module, "_operation_rows", broken_rows)
+    operation_id = OperationId("missing-operation")
+    outcome = AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "bounded")
+    with pytest.raises(PersistenceConflict) as error:
+        record_adapter_outcome(repo, operation_id, expected_revision=1, outcome=outcome)
+    assert str(error.value) == Phase6ErrorCode.PERSISTENCE_CONFLICT.value
+    with pytest.raises(PersistenceConflict) as error:
+        recover_inflight_operation(repo, operation_id, now=NOW)
+    assert str(error.value) == Phase6ErrorCode.PERSISTENCE_CONFLICT.value

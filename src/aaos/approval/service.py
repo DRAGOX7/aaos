@@ -189,7 +189,7 @@ class OutcomeRecordResult:
 @dataclass(frozen=True, slots=True)
 class ReconciliationResult:
     operation_id: OperationId
-    outcome: ExecutionOutcome
+    outcome: ExecutionOutcome | None
     execute_calls: int
     committed: bool
 
@@ -197,9 +197,17 @@ class ReconciliationResult:
 @dataclass(frozen=True, slots=True)
 class RecoveryResult:
     operation_id: OperationId
-    outcome: ExecutionOutcome
+    outcome: ExecutionOutcome | None
     execute_calls: int
     reconciliation_required: bool
+
+
+class _OutcomeCASLost(Exception):
+    """Internal marker used to reopen a transaction for a late-result event."""
+
+
+class _ReconciliationCASLost(Exception):
+    """Internal marker used to reopen a transaction for a late reconcile event."""
 
 
 def _utc(value: object, name: str) -> datetime:
@@ -1079,18 +1087,30 @@ def _outcome_now() -> datetime:
 def _operation_rows(
     session: Session, operation_id: OperationId
 ) -> tuple[OperationRecordORM, ActionLifecycleORM, ApprovalConsumptionORM]:
-    operation = session.get(OperationRecordORM, operation_id.value)
-    if operation is None:
-        raise PersistenceConflict()
-    lifecycle = session.get(ActionLifecycleORM, operation.action_id)
-    consumption = session.scalar(
-        select(ApprovalConsumptionORM).where(
-            ApprovalConsumptionORM.operation_id == operation_id.value
+    try:
+        operation = session.get(OperationRecordORM, operation_id.value)
+        if operation is None:
+            raise PersistenceConflict()
+        lifecycle = session.get(ActionLifecycleORM, operation.action_id)
+        consumption = session.scalar(
+            select(ApprovalConsumptionORM).where(
+                ApprovalConsumptionORM.operation_id == operation_id.value
+            )
         )
-    )
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
     if lifecycle is None or consumption is None:
         raise PersistenceConflict()
     return operation, lifecycle, consumption
+
+
+def _safe_operation_rows(
+    session: Session, operation_id: OperationId
+) -> tuple[OperationRecordORM, ActionLifecycleORM, ApprovalConsumptionORM]:
+    try:
+        return _operation_rows(session, operation_id)
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
 
 
 def _safe_outcome(value: str | None) -> ExecutionOutcome | None:
@@ -1107,7 +1127,7 @@ def _late_outcome_result(
     operation_id: OperationId,
     outcome: AdapterExecutionOutcome,
 ) -> OutcomeRecordResult:
-    operation, lifecycle, consumption = _operation_rows(session, operation_id)
+    operation, lifecycle, consumption = _safe_operation_rows(session, operation_id)
     try:
         action_state = ActionState(lifecycle.state)
         operation_state = OperationState(operation.state)
@@ -1161,86 +1181,93 @@ def record_adapter_outcome(
         raise TypeError("outcome must be an AdapterExecutionOutcome")
     reported = adapter_outcome_to_execution_outcome(outcome)
     now = _outcome_now()
-    with repository.transaction() as session:
-        operation, lifecycle, consumption = _operation_rows(session, operation_id)
-        if (
-            operation.state != OperationState.EXECUTING.value
-            or operation.revision != expected_revision
-        ):
-            return _late_outcome_result(session, operation_id, outcome)
-        action_id = ActionId(operation.action_id)
-        claim_identity = ClaimIdentity(consumption.claim_identity)
-        action_target, operation_target = outcome_to_states(outcome.kind)
-        if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE:
-            event = ActionEventDraft(
+    try:
+        with repository.transaction() as session:
+            operation, lifecycle, consumption = _safe_operation_rows(session, operation_id)
+            if (
+                operation.state != OperationState.EXECUTING.value
+                or operation.revision != expected_revision
+                or lifecycle.state != ActionState.EXECUTING.value
+            ):
+                return _late_outcome_result(session, operation_id, outcome)
+            action_id = ActionId(operation.action_id)
+            claim_identity = ClaimIdentity(consumption.claim_identity)
+            action_target, operation_target = outcome_to_states(outcome.kind)
+            if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE:
+                event = ActionEventDraft(
+                    action_id=action_id,
+                    operation_id=operation_id,
+                    event_kind=EventKind.ACTION_INVALIDATED,
+                    source=TransitionSource.DISPATCH_WORKER,
+                    actor=claim_identity,
+                    occurred_at=now,
+                    details=InvalidatedDetails(Phase6ErrorCode.PRECONDITION_STALE),
+                )
+            else:
+                event = ActionEventDraft(
+                    action_id=action_id,
+                    operation_id=operation_id,
+                    event_kind=EventKind.OUTCOME_RECORDED,
+                    source=TransitionSource.DISPATCH_WORKER,
+                    actor=claim_identity,
+                    occurred_at=now,
+                    details=OutcomeRecordedDetails(
+                        operation_id,
+                        reported,
+                        now,
+                        None
+                        if reported is not ExecutionOutcome.UNKNOWN_OUTCOME
+                        else Phase6ErrorCode.UNKNOWN_OUTCOME,
+                    ),
+                )
+            if not cas_action_lifecycle(
+                session,
                 action_id=action_id,
-                operation_id=operation_id,
-                event_kind=EventKind.ACTION_INVALIDATED,
-                source=TransitionSource.DISPATCH_WORKER,
-                actor=claim_identity,
-                occurred_at=now,
-                details=InvalidatedDetails(Phase6ErrorCode.PRECONDITION_STALE),
-            )
-        else:
-            event = ActionEventDraft(
-                action_id=action_id,
-                operation_id=operation_id,
-                event_kind=EventKind.OUTCOME_RECORDED,
-                source=TransitionSource.DISPATCH_WORKER,
-                actor=claim_identity,
-                occurred_at=now,
-                details=OutcomeRecordedDetails(
-                    operation_id,
-                    reported,
-                    now,
-                    None
-                    if reported is not ExecutionOutcome.UNKNOWN_OUTCOME
-                    else Phase6ErrorCode.UNKNOWN_OUTCOME,
+                expected_state=ActionState(lifecycle.state),
+                expected_revision=lifecycle.revision,
+                new_state=action_target,
+                event=event,
+            ):
+                raise _OutcomeCASLost()
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(OperationRecordORM)
+                    .where(
+                        OperationRecordORM.operation_id == operation_id.value,
+                        OperationRecordORM.state == OperationState.EXECUTING.value,
+                        OperationRecordORM.revision == expected_revision,
+                    )
+                    .values(
+                        state=operation_target.value,
+                        outcome_kind=reported.value if reported is not None else None,
+                        receipt_evidence=outcome.evidence,
+                        outcome_recorded_at=now,
+                        revision=expected_revision + 1,
+                    )
                 ),
             )
-        if not cas_action_lifecycle(
-            session,
-            action_id=action_id,
-            expected_state=ActionState(lifecycle.state),
-            expected_revision=lifecycle.revision,
-            new_state=action_target,
-            event=event,
-        ):
-            raise PersistenceConflict()
-        result = cast(
-            CursorResult[Any],
-            session.execute(
-                update(OperationRecordORM)
-                .where(
-                    OperationRecordORM.operation_id == operation_id.value,
-                    OperationRecordORM.state == OperationState.EXECUTING.value,
-                    OperationRecordORM.revision == expected_revision,
-                )
-                .values(
-                    state=operation_target.value,
-                    outcome_kind=reported.value if reported is not None else None,
-                    receipt_evidence=outcome.evidence,
-                    outcome_recorded_at=now,
-                    revision=expected_revision + 1,
-                )
-            ),
-        )
-        if result.rowcount != 1:
-            raise PersistenceConflict()
-        return OutcomeRecordResult(
-            operation_id,
-            committed=True,
-            late=False,
-            reported_execution_outcome=reported,
-            persisted_execution_outcome=reported,
-            action_state=action_target,
-            operation_state=operation_target,
-            error_code=(
-                Phase6ErrorCode.PRECONDITION_STALE
-                if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE
-                else None
-            ),
-        )
+            if result.rowcount != 1:
+                raise _OutcomeCASLost()
+            return OutcomeRecordResult(
+                operation_id,
+                committed=True,
+                late=False,
+                reported_execution_outcome=reported,
+                persisted_execution_outcome=reported,
+                action_state=action_target,
+                operation_state=operation_target,
+                error_code=(
+                    Phase6ErrorCode.PRECONDITION_STALE
+                    if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE
+                    else None
+                ),
+            )
+    except _OutcomeCASLost:
+        with repository.transaction() as session:
+            return _late_outcome_result(session, operation_id, outcome)
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
 
 
 def _persist_reconciliation(
@@ -1254,79 +1281,119 @@ def _persist_reconciliation(
     outcome_value = adapter_outcome_to_execution_outcome(outcome)
     if outcome_value is None:
         outcome_value = ExecutionOutcome.UNKNOWN_OUTCOME
-    with repository.transaction() as session:
-        operation, lifecycle, consumption = _operation_rows(session, operation_id)
-        try:
-            action_state = ActionState(lifecycle.state)
-            operation_state = OperationState(operation.state)
-        except ValueError:
-            raise PersistenceConflict() from None
-        if (
-            operation_state is not OperationState.RECONCILIATION_PENDING
-            or operation.revision != expected_revision
-        ):
+    try:
+        with repository.transaction() as session:
+            operation, lifecycle, consumption = _safe_operation_rows(session, operation_id)
+            try:
+                action_state = ActionState(lifecycle.state)
+                operation_state = OperationState(operation.state)
+            except ValueError:
+                raise PersistenceConflict() from None
+            if (
+                operation_state is not OperationState.RECONCILIATION_PENDING
+                or operation.revision != expected_revision
+            ):
+                event = ActionEventDraft(
+                    action_id=ActionId(operation.action_id),
+                    operation_id=operation_id,
+                    event_kind=EventKind.LATE_RESULT_IGNORED,
+                    source=TransitionSource.RECONCILIATION_WORKER,
+                    actor=ClaimIdentity(consumption.claim_identity),
+                    occurred_at=now,
+                    details=LateResultIgnoredDetails(
+                        operation_id, outcome_value, Phase6ErrorCode.PERSISTENCE_CONFLICT
+                    ),
+                )
+                append_action_event(session, event, expected_action_revision=None)
+                return ReconciliationResult(
+                    operation_id,
+                    _safe_outcome(operation.outcome_kind)
+                    if operation_state is not OperationState.NOT_DISPATCHED
+                    else None,
+                    0,
+                    False,
+                )
+            action_target, operation_target = outcome_to_states(
+                AdapterOutcomeKind.SUCCESS
+                if outcome_value is ExecutionOutcome.CONFIRMED_SUCCESS
+                else AdapterOutcomeKind.AUTHORITATIVE_FAILURE
+                if outcome_value is ExecutionOutcome.CONFIRMED_FAILURE
+                else AdapterOutcomeKind.UNKNOWN
+            )
             event = ActionEventDraft(
                 action_id=ActionId(operation.action_id),
                 operation_id=operation_id,
-                event_kind=EventKind.LATE_RESULT_IGNORED,
+                event_kind=EventKind.RECONCILIATION_RECORDED,
                 source=TransitionSource.RECONCILIATION_WORKER,
                 actor=ClaimIdentity(consumption.claim_identity),
                 occurred_at=now,
-                details=LateResultIgnoredDetails(
-                    operation_id, outcome_value, Phase6ErrorCode.PERSISTENCE_CONFLICT
+                details=ReconciliationDetails(operation_id, outcome_value, now),
+            )
+            if not cas_action_lifecycle(
+                session,
+                action_id=ActionId(operation.action_id),
+                expected_state=action_state,
+                expected_revision=lifecycle.revision,
+                new_state=action_target,
+                event=event,
+            ):
+                raise _ReconciliationCASLost()
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(OperationRecordORM)
+                    .where(
+                        OperationRecordORM.operation_id == operation_id.value,
+                        OperationRecordORM.state == OperationState.RECONCILIATION_PENDING.value,
+                        OperationRecordORM.revision == expected_revision,
+                    )
+                    .values(
+                        state=operation_target.value,
+                        outcome_kind=outcome_value.value,
+                        receipt_evidence=outcome.evidence,
+                        outcome_recorded_at=now,
+                        reconciliation_at=now,
+                        revision=expected_revision + 1,
+                    )
                 ),
             )
-            append_action_event(session, event, expected_action_revision=None)
-            return ReconciliationResult(
-                operation_id, _safe_outcome(operation.outcome_kind) or outcome_value, 0, False
-            )
-        action_target, operation_target = outcome_to_states(
-            AdapterOutcomeKind.SUCCESS
-            if outcome_value is ExecutionOutcome.CONFIRMED_SUCCESS
-            else AdapterOutcomeKind.AUTHORITATIVE_FAILURE
-            if outcome_value is ExecutionOutcome.CONFIRMED_FAILURE
-            else AdapterOutcomeKind.UNKNOWN
-        )
+            if result.rowcount != 1:
+                raise _ReconciliationCASLost()
+            return ReconciliationResult(operation_id, outcome_value, 0, True)
+    except _ReconciliationCASLost:
+        return _late_reconciliation_result(repository, operation_id, outcome_value, now)
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+
+
+def _late_reconciliation_result(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+    reported: ExecutionOutcome,
+    now: datetime,
+) -> ReconciliationResult:
+    with repository.transaction() as session:
+        operation, _, consumption = _safe_operation_rows(session, operation_id)
+        operation_state = OperationState(operation.state)
+        persisted = _safe_outcome(operation.outcome_kind)
         event = ActionEventDraft(
             action_id=ActionId(operation.action_id),
             operation_id=operation_id,
-            event_kind=EventKind.RECONCILIATION_RECORDED,
+            event_kind=EventKind.LATE_RESULT_IGNORED,
             source=TransitionSource.RECONCILIATION_WORKER,
             actor=ClaimIdentity(consumption.claim_identity),
             occurred_at=now,
-            details=ReconciliationDetails(operation_id, outcome_value, now),
-        )
-        if not cas_action_lifecycle(
-            session,
-            action_id=ActionId(operation.action_id),
-            expected_state=action_state,
-            expected_revision=lifecycle.revision,
-            new_state=action_target,
-            event=event,
-        ):
-            raise PersistenceConflict()
-        result = cast(
-            CursorResult[Any],
-            session.execute(
-                update(OperationRecordORM)
-                .where(
-                    OperationRecordORM.operation_id == operation_id.value,
-                    OperationRecordORM.state == OperationState.RECONCILIATION_PENDING.value,
-                    OperationRecordORM.revision == expected_revision,
-                )
-                .values(
-                    state=operation_target.value,
-                    outcome_kind=outcome_value.value,
-                    receipt_evidence=outcome.evidence,
-                    outcome_recorded_at=now,
-                    reconciliation_at=now,
-                    revision=expected_revision + 1,
-                )
+            details=LateResultIgnoredDetails(
+                operation_id, reported, Phase6ErrorCode.PERSISTENCE_CONFLICT
             ),
         )
-        if result.rowcount != 1:
-            raise PersistenceConflict()
-        return ReconciliationResult(operation_id, outcome_value, 0, True)
+        append_action_event(session, event, expected_action_revision=None)
+        return ReconciliationResult(
+            operation_id,
+            None if operation_state is OperationState.NOT_DISPATCHED else persisted or reported,
+            0,
+            False,
+        )
 
 
 def reconcile_operation(
@@ -1352,7 +1419,7 @@ def reconcile_operation(
         raise ValueError("expected_revision must be a non-negative integer")
     pending_revision = expected_revision
     with repository.transaction() as session:
-        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        operation, lifecycle, consumption = _safe_operation_rows(session, operation_id)
         operation_state = OperationState(operation.state)
         action_state = ActionState(lifecycle.state)
         if operation_state is OperationState.UNKNOWN_OUTCOME:
@@ -1381,42 +1448,47 @@ def reconcile_operation(
                 event=event,
             ):
                 raise PersistenceConflict()
-            updated = cast(
-                CursorResult[Any],
-                session.execute(
-                    update(OperationRecordORM)
-                    .where(
-                        OperationRecordORM.operation_id == operation_id.value,
-                        OperationRecordORM.state == OperationState.UNKNOWN_OUTCOME.value,
-                        OperationRecordORM.revision == expected_revision,
-                    )
-                    .values(
-                        state=OperationState.RECONCILIATION_PENDING.value,
-                        revision=expected_revision + 1,
-                        reconciliation_at=now,
-                    )
-                ),
-            )
+            try:
+                updated = cast(
+                    CursorResult[Any],
+                    session.execute(
+                        update(OperationRecordORM)
+                        .where(
+                            OperationRecordORM.operation_id == operation_id.value,
+                            OperationRecordORM.state == OperationState.UNKNOWN_OUTCOME.value,
+                            OperationRecordORM.revision == expected_revision,
+                        )
+                        .values(
+                            state=OperationState.RECONCILIATION_PENDING.value,
+                            revision=expected_revision + 1,
+                            reconciliation_at=now,
+                        )
+                    ),
+                )
+            except SQLAlchemyError:
+                raise PersistenceConflict() from None
             if updated.rowcount != 1:
                 raise PersistenceConflict()
             pending_revision += 1
         elif operation_state is not OperationState.RECONCILIATION_PENDING:
-            persisted = _safe_outcome(operation.outcome_kind) or ExecutionOutcome.UNKNOWN_OUTCOME
+            persisted = _safe_outcome(operation.outcome_kind)
             return ReconciliationResult(operation_id, persisted, 0, False)
         elif operation.revision != expected_revision:
             return ReconciliationResult(
                 operation_id,
-                _safe_outcome(operation.outcome_kind) or ExecutionOutcome.UNKNOWN_OUTCOME,
+                _safe_outcome(operation.outcome_kind),
                 0,
                 False,
             )
 
     adapter_outcome: AdapterExecutionOutcome
+    from aaos.approval.adapters import AdapterExecutionError
+
     try:
         adapter_outcome = adapter.reconcile(operation_id)
         if not isinstance(adapter_outcome, AdapterExecutionOutcome):
             raise TypeError("adapter returned an invalid typed reconciliation outcome")
-    except Exception:
+    except (AdapterExecutionError, TimeoutError, ConnectionError):
         adapter_outcome = AdapterExecutionOutcome(
             AdapterOutcomeKind.UNKNOWN, "reconciliation unavailable"
         )
@@ -1441,14 +1513,14 @@ def recover_inflight_operation(
         raise TypeError("repository and operation_id must be trusted values")
     now = _utc(now, "now")
     with repository.transaction() as session:
-        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        operation, lifecycle, consumption = _safe_operation_rows(session, operation_id)
         operation_state = OperationState(operation.state)
         action_state = ActionState(lifecycle.state)
         persisted = _safe_outcome(operation.outcome_kind)
         if operation_state is not OperationState.EXECUTING:
             return RecoveryResult(
                 operation_id,
-                persisted or ExecutionOutcome.UNKNOWN_OUTCOME,
+                persisted,
                 0,
                 operation_state
                 in {OperationState.UNKNOWN_OUTCOME, OperationState.RECONCILIATION_PENDING},
@@ -1473,23 +1545,26 @@ def recover_inflight_operation(
             event=event,
         ):
             raise PersistenceConflict()
-        result = cast(
-            CursorResult[Any],
-            session.execute(
-                update(OperationRecordORM)
-                .where(
-                    OperationRecordORM.operation_id == operation_id.value,
-                    OperationRecordORM.state == OperationState.EXECUTING.value,
-                    OperationRecordORM.revision == operation.revision,
-                )
-                .values(
-                    state=OperationState.UNKNOWN_OUTCOME.value,
-                    outcome_kind=ExecutionOutcome.UNKNOWN_OUTCOME.value,
-                    outcome_recorded_at=now,
-                    revision=operation.revision + 1,
-                )
-            ),
-        )
+        try:
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(OperationRecordORM)
+                    .where(
+                        OperationRecordORM.operation_id == operation_id.value,
+                        OperationRecordORM.state == OperationState.EXECUTING.value,
+                        OperationRecordORM.revision == operation.revision,
+                    )
+                    .values(
+                        state=OperationState.UNKNOWN_OUTCOME.value,
+                        outcome_kind=ExecutionOutcome.UNKNOWN_OUTCOME.value,
+                        outcome_recorded_at=now,
+                        revision=operation.revision + 1,
+                    )
+                ),
+            )
+        except SQLAlchemyError:
+            raise PersistenceConflict() from None
         if result.rowcount != 1:
             raise PersistenceConflict()
         return RecoveryResult(operation_id, ExecutionOutcome.UNKNOWN_OUTCOME, 0, True)
