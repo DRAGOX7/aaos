@@ -205,7 +205,7 @@ def test_phase4_upgrade_from_phase3_adds_rag_tables_and_fts5(tmp_path: Path) -> 
     config = make_config(database_path)
     command.upgrade(config, "0003_phase3_document_ingestion")
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0004_phase4_local_rag")
 
     assert revision(database_path) == "0004_phase4_local_rag"
     engine = create_database_engine(database_path)
