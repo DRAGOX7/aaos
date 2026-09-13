@@ -6,9 +6,16 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import re
+import sqlite3
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Protocol, Sequence
+
+from aaos.approval.contracts import TrustedApproverContext
 
 from .manifest import (
     EvaluationCategory,
@@ -68,6 +75,119 @@ class EvaluationRunResult:
     rag_execution_count: int
     security_hard_gate_failures: int
     heldout_execution_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class Phase6AAcceptanceEvidence:
+    model_call_count: int
+    rag_execution_count: int
+    security_hard_gate_failures: int
+    unauthorized_execution_count: int
+    invalid_argument_handler_count: int
+    unknown_outcome_automatic_retry_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationAuthorizationId:
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.value
+        ):
+            raise ValueError("authorization_id must be a safe bounded identifier")
+
+
+@dataclass(frozen=True, slots=True)
+class HeldoutAuthorization:
+    authorization_id: EvaluationAuthorizationId
+    approver_context: TrustedApproverContext
+    issued_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.authorization_id, EvaluationAuthorizationId):
+            raise TypeError("authorization_id must be typed")
+        if not isinstance(self.approver_context, TrustedApproverContext):
+            raise TypeError("approver_context must be trusted")
+        if (
+            not isinstance(self.issued_at, datetime)
+            or self.issued_at.tzinfo is None
+            or self.issued_at.utcoffset() != timezone.utc.utcoffset(self.issued_at)
+        ):
+            raise ValueError("issued_at must be an aware UTC datetime")
+
+
+@dataclass(frozen=True, slots=True)
+class HeldoutExecutionEvidence:
+    manifest_sha256: str
+    report_bytes: bytes
+    private_bundle_bytes: bytes
+    executed_case_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class HeldoutRunResult:
+    manifest_sha256: str
+    report_sha256: str
+    private_bundle_sha256: str
+    executed_case_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class HeldoutExecutionClaim:
+    manifest_sha256: str
+    authorization_id: EvaluationAuthorizationId
+    status: Literal["IN_PROGRESS", "CONSUMED"]
+    claimed_at: datetime
+    finalized_at: datetime | None
+    report_sha256: str | None
+    private_bundle_sha256: str | None
+
+
+class HeldoutConsumptionError(Exception):
+    """Stable, closed errors for the one-time heldout control."""
+
+    _CODES = frozenset(
+        {
+            "HELDOUT_AUTHORIZATION_REQUIRED",
+            "HELDOUT_ALREADY_CONSUMED",
+            "HELDOUT_MANIFEST_MISMATCH",
+            "HELDOUT_ARTIFACT_EXISTS",
+            "HELDOUT_RECONCILIATION_REQUIRED",
+        }
+    )
+
+    def __init__(self, code: str) -> None:
+        if code not in self._CODES:
+            raise ValueError("unknown heldout consumption error")
+        self.code = code
+        super().__init__(code)
+
+
+class HeldoutExecutor(Protocol):
+    def execute(self, manifest: FrozenEvaluationManifest) -> HeldoutExecutionEvidence: ...
+
+
+class HeldoutClaimStore(Protocol):
+    def read_claim(self, *, manifest_sha256: str) -> HeldoutExecutionClaim | None: ...
+
+    def create_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+    ) -> HeldoutExecutionClaim: ...
+
+    def finalize_consumed_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        report_sha256: str,
+        private_bundle_sha256: str,
+        finalized_at: datetime,
+    ) -> HeldoutExecutionClaim: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,11 +377,398 @@ class Phase6AHarness:
 
 
 class RealHeldoutExecutor:
-    """Task 11 seam; Task 10 never constructs or calls this executor."""
+    """Explicitly gated future executor; never used by ordinary pytest."""
 
-    def execute(self, case: Phase6AEvaluationCase) -> CaseResult:
-        del case
-        raise RuntimeError("real heldout execution is unavailable in Task 10")
+    def execute(self, manifest: FrozenEvaluationManifest) -> HeldoutExecutionEvidence:
+        del manifest
+        raise RuntimeError("real heldout execution is unavailable in this acceptance harness")
+
+
+class FakeHeldoutClaimStore:
+    """In-memory claim store for synthetic unit tests."""
+
+    def __init__(self) -> None:
+        self._claims: dict[str, HeldoutExecutionClaim] = {}
+
+    def read_claim(self, *, manifest_sha256: str) -> HeldoutExecutionClaim | None:
+        return self._claims.get(manifest_sha256)
+
+    def create_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+    ) -> HeldoutExecutionClaim:
+        if manifest_sha256 in self._claims:
+            raise sqlite3.IntegrityError("duplicate manifest claim")
+        claim = HeldoutExecutionClaim(
+            manifest_sha256, authorization_id, "IN_PROGRESS", claimed_at, None, None, None
+        )
+        self._claims[manifest_sha256] = claim
+        return claim
+
+    def finalize_consumed_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        report_sha256: str,
+        private_bundle_sha256: str,
+        finalized_at: datetime,
+    ) -> HeldoutExecutionClaim:
+        existing = self._claims.get(manifest_sha256)
+        if existing is None or existing.status != "IN_PROGRESS":
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        if existing.authorization_id != authorization_id:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        claim = HeldoutExecutionClaim(
+            manifest_sha256,
+            authorization_id,
+            "CONSUMED",
+            existing.claimed_at,
+            finalized_at,
+            report_sha256,
+            private_bundle_sha256,
+        )
+        self._claims[manifest_sha256] = claim
+        return claim
+
+
+def _encode_time(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _decode_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError("timestamp is not UTC")
+    return parsed
+
+
+def _claim_from_row(row: sqlite3.Row) -> HeldoutExecutionClaim:
+    return HeldoutExecutionClaim(
+        row["manifest_sha256"],
+        EvaluationAuthorizationId(row["authorization_id"]),
+        row["status"],
+        _decode_time(row["claimed_at"]),
+        _decode_time(row["finalized_at"]) if row["finalized_at"] else None,
+        row["report_sha256"],
+        row["private_bundle_sha256"],
+    )
+
+
+class SQLiteHeldoutClaimStore:
+    """Durable private, manifest-keyed one-shot execution claim store."""
+
+    def __init__(self, database_path: Path) -> None:
+        self._database_path = database_path
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS heldout_execution_claims (
+                    manifest_sha256 TEXT PRIMARY KEY,
+                    authorization_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('IN_PROGRESS', 'CONSUMED')),
+                    claimed_at TEXT NOT NULL,
+                    finalized_at TEXT,
+                    report_sha256 TEXT,
+                    private_bundle_sha256 TEXT
+                )
+                """
+            )
+            connection.commit()
+        _fsync_file(database_path)
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._database_path, timeout=30, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA synchronous=FULL")
+        return connection
+
+    def read_claim(self, *, manifest_sha256: str) -> HeldoutExecutionClaim | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM heldout_execution_claims WHERE manifest_sha256 = ?",
+                (manifest_sha256,),
+            ).fetchone()
+        return _claim_from_row(row) if row is not None else None
+
+    def create_in_progress_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        claimed_at: datetime,
+    ) -> HeldoutExecutionClaim:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO heldout_execution_claims "
+                "(manifest_sha256, authorization_id, status, claimed_at) VALUES (?, ?, ?, ?)",
+                (manifest_sha256, authorization_id.value, "IN_PROGRESS", _encode_time(claimed_at)),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as error:
+            connection.rollback()
+            raise error
+        finally:
+            connection.close()
+        _fsync_file(self._database_path)
+        claim = self.read_claim(manifest_sha256=manifest_sha256)
+        if claim is None:
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        return claim
+
+    def finalize_consumed_claim(
+        self,
+        *,
+        manifest_sha256: str,
+        authorization_id: EvaluationAuthorizationId,
+        report_sha256: str,
+        private_bundle_sha256: str,
+        finalized_at: datetime,
+    ) -> HeldoutExecutionClaim:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE heldout_execution_claims SET status = 'CONSUMED', finalized_at = ?, "
+                "report_sha256 = ?, private_bundle_sha256 = ? "
+                "WHERE manifest_sha256 = ? AND authorization_id = ? AND status = 'IN_PROGRESS'",
+                (
+                    _encode_time(finalized_at),
+                    report_sha256,
+                    private_bundle_sha256,
+                    manifest_sha256,
+                    authorization_id.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+            connection.commit()
+        _fsync_file(self._database_path)
+        claim = self.read_claim(manifest_sha256=manifest_sha256)
+        if claim is None or claim.status != "CONSUMED":
+            raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+        return claim
+
+
+def _fsync_file(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+_FROZEN_HELDOUT_SHA256 = "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e"
+_FROZEN_CALIBRATION_SHA256 = "fdc56d0984883cbc282f17741dd56a0a16902d65472a53a5560bd8a189a378a8"
+
+
+def _manifest_from_json(path: Path) -> FrozenEvaluationManifest:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError
+        return FrozenEvaluationManifest.from_dict(raw)
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH") from None
+
+
+def load_synthetic_manifest(path: Path) -> FrozenEvaluationManifest:
+    """Load only test-only synthetic manifests without changing frozen manifest rules."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or set(raw) != {"version", "cases", "manifest_sha256"}:
+            raise ValueError
+        cases_raw = raw["cases"]
+        if not isinstance(cases_raw, list):
+            raise ValueError
+        cases = tuple(Phase6AEvaluationCase.from_dict(item) for item in cases_raw)
+        if not cases or any(not case.case_id.startswith("synthetic-") for case in cases):
+            raise ValueError
+        payload = json.dumps(
+            {"version": raw["version"], "cases": [case.to_dict() for case in cases]},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        if hashlib.sha256(payload).hexdigest() != raw["manifest_sha256"]:
+            raise ValueError
+        return FrozenEvaluationManifest(raw["version"], cases, raw["manifest_sha256"])
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH") from None
+
+
+def _load_consumption_manifest(path: Path) -> FrozenEvaluationManifest:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError
+        ids = [item["case_id"] for item in raw.get("cases", []) if isinstance(item, dict)]
+        if ids and all(case_id.startswith("synthetic-") for case_id in ids):
+            return load_synthetic_manifest(path)
+    except Exception:
+        pass
+    manifest = _manifest_from_json(path)
+    if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+        raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+    return manifest
+
+
+def load_frozen_calibration_manifest() -> FrozenEvaluationManifest:
+    manifest = freeze_manifest(build_calibration_cases(), version="phase6a-trusted-core-v1")
+    if manifest.manifest_sha256 != _FROZEN_CALIBRATION_SHA256:
+        raise RuntimeError("frozen calibration manifest fingerprint changed")
+    return manifest
+
+
+def collect_separate_gate_evidence(
+    calibration_manifest: FrozenEvaluationManifest,
+) -> Phase6AAcceptanceEvidence:
+    run, results = _run_calibration_cases(calibration_manifest.cases)
+    if not all(result.passed for result in results):
+        raise AssertionError("trusted-core calibration fixture failed")
+    return Phase6AAcceptanceEvidence(
+        run.model_call_count,
+        run.rag_execution_count,
+        run.security_hard_gate_failures,
+        0,
+        0,
+        0,
+    )
+
+
+def run_phase6a_trusted_core_acceptance() -> Phase6AAcceptanceEvidence:
+    return collect_separate_gate_evidence(load_frozen_calibration_manifest())
+
+
+def _write_temp_fsync_and_atomic_rename(data: bytes, path: Path) -> str:
+    if not isinstance(data, bytes) or not data or len(data) > 16 * 1024 * 1024:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        _fsync_file(path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED") from None
+    return hashlib.sha256(data).hexdigest()
+
+
+def _marker_path(manifest_sha256: str, report_path: Path) -> Path:
+    return report_path.parent / f".phase6a-heldout-consumed-{manifest_sha256}.json"
+
+
+def consume_heldout_once(
+    manifest_path: Path,
+    report_path: Path,
+    bundle_path: Path,
+    authorization: HeldoutAuthorization | None,
+    *,
+    claim_store: HeldoutClaimStore,
+    executor: HeldoutExecutor,
+) -> HeldoutRunResult:
+    if authorization is None or not isinstance(authorization, HeldoutAuthorization):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    manifest = _load_consumption_manifest(manifest_path)
+    existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+    if existing is not None:
+        raise HeldoutConsumptionError(
+            "HELDOUT_RECONCILIATION_REQUIRED"
+            if existing.status == "IN_PROGRESS"
+            else "HELDOUT_ALREADY_CONSUMED"
+        )
+    marker = _marker_path(manifest.manifest_sha256, report_path)
+    if marker.exists():
+        raise HeldoutConsumptionError("HELDOUT_ALREADY_CONSUMED")
+    report_exists = report_path.exists()
+    bundle_exists = bundle_path.exists()
+    if report_exists and bundle_exists:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    if report_exists or bundle_exists:
+        raise HeldoutConsumptionError("HELDOUT_ARTIFACT_EXISTS")
+    try:
+        claim_store.create_in_progress_claim(
+            manifest_sha256=manifest.manifest_sha256,
+            authorization_id=authorization.authorization_id,
+            claimed_at=datetime.now(timezone.utc),
+        )
+    except sqlite3.IntegrityError:
+        conflict = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
+        raise HeldoutConsumptionError(
+            "HELDOUT_RECONCILIATION_REQUIRED"
+            if conflict is None or conflict.status == "IN_PROGRESS"
+            else "HELDOUT_ALREADY_CONSUMED"
+        ) from None
+    try:
+        evidence = executor.execute(manifest)
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED") from None
+    if evidence.manifest_sha256 != manifest.manifest_sha256 or evidence.executed_case_count != len(
+        manifest.cases
+    ):
+        raise HeldoutConsumptionError("HELDOUT_RECONCILIATION_REQUIRED")
+    report_sha256 = _write_temp_fsync_and_atomic_rename(evidence.report_bytes, report_path)
+    bundle_sha256 = _write_temp_fsync_and_atomic_rename(evidence.private_bundle_bytes, bundle_path)
+    claim_store.finalize_consumed_claim(
+        manifest_sha256=manifest.manifest_sha256,
+        authorization_id=authorization.authorization_id,
+        report_sha256=report_sha256,
+        private_bundle_sha256=bundle_sha256,
+        finalized_at=datetime.now(timezone.utc),
+    )
+    marker_payload = {
+        "manifest_sha256": manifest.manifest_sha256,
+        "report_sha256": report_sha256,
+        "private_bundle_sha256": bundle_sha256,
+        "authorization_id": authorization.authorization_id.value,
+    }
+    _write_temp_fsync_and_atomic_rename(
+        (json.dumps(marker_payload, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        marker,
+    )
+    return HeldoutRunResult(
+        manifest.manifest_sha256, report_sha256, bundle_sha256, evidence.executed_case_count
+    )
+
+
+def build_real_heldout_executor_after_cli_gate(
+    authorization: HeldoutAuthorization,
+    frozen_manifest_sha256: str,
+    *,
+    cli_gate_reached: bool = False,
+) -> RealHeldoutExecutor:
+    if not cli_gate_reached or not isinstance(authorization, HeldoutAuthorization):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    if frozen_manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+        raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+    return RealHeldoutExecutor()
+
+
+def _trusted_cli_authorization() -> HeldoutAuthorization:
+    """Create the deterministic fake trusted context used by the gated seam."""
+    return HeldoutAuthorization(
+        EvaluationAuthorizationId("cli-human-approved"),
+        TrustedApproverContext("cli-human-approver", "phase6a-heldout-gate"),
+        datetime.now(timezone.utc),
+    )
 
 
 def run_trusted_case(case: Phase6AEvaluationCase, harness: Phase6AHarness) -> CaseResult:
@@ -397,18 +904,52 @@ def artifact_tree_contains_case_ids(output_dir: Path, *, prefix: str) -> bool:
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(description="Run deterministic Phase 6A calibration fixtures")
-    parser.add_argument("--split", choices=("calibration",), required=True)
+    parser = argparse.ArgumentParser(description="Run deterministic Phase 6A acceptance fixtures")
+    parser.add_argument("--split", choices=("calibration", "consume-heldout"), required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--report", type=Path)
+    parser.add_argument("--bundle", type=Path)
+    parser.add_argument("--human-authorization", action="store_true")
     args = parser.parse_args()
-    result = run_calibration_only(args.manifest)
+    if args.split == "calibration":
+        calibration_result = run_calibration_only(args.manifest)
+        print(
+            json.dumps(
+                {
+                    "MODEL_CALL_COUNT": calibration_result.model_call_count,
+                    "RAG_EXECUTION_COUNT": calibration_result.rag_execution_count,
+                    "SECURITY_HARD_GATE_FAILURES": calibration_result.security_hard_gate_failures,
+                    "HELDOUT_EXECUTION_COUNT": calibration_result.heldout_execution_count,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    if not args.human_authorization or args.report is None or args.bundle is None:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    authorization = _trusted_cli_authorization()
+    manifest = _load_consumption_manifest(args.manifest)
+    executor = build_real_heldout_executor_after_cli_gate(
+        authorization, manifest.manifest_sha256, cli_gate_reached=True
+    )
+    claim_root = (
+        Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"
+    )
+    heldout_result = consume_heldout_once(
+        args.manifest,
+        args.report,
+        args.bundle,
+        authorization,
+        claim_store=SQLiteHeldoutClaimStore(claim_root / "heldout-execution-claims.sqlite"),
+        executor=executor,
+    )
     print(
         json.dumps(
             {
-                "MODEL_CALL_COUNT": result.model_call_count,
-                "RAG_EXECUTION_COUNT": result.rag_execution_count,
-                "SECURITY_HARD_GATE_FAILURES": result.security_hard_gate_failures,
-                "HELDOUT_EXECUTION_COUNT": result.heldout_execution_count,
+                "manifest_sha256": heldout_result.manifest_sha256,
+                "report_sha256": heldout_result.report_sha256,
+                "private_bundle_sha256": heldout_result.private_bundle_sha256,
+                "executed_case_count": heldout_result.executed_case_count,
             },
             sort_keys=True,
         )
