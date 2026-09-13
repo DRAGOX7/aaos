@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 from uuid import uuid4
 
 from sqlalchemy import select, update
@@ -29,6 +29,7 @@ from aaos.approval.contracts import (
     ApprovalState,
     ClaimIdentity,
     EventKind,
+    ExecutableAction,
     HumanDecisionReason,
     OperationId,
     Phase6ActionDefinition,
@@ -67,6 +68,9 @@ from aaos.persistence.approval_models import (
     OperationRecordORM,
     PreparedActionORM,
 )
+
+if TYPE_CHECKING:
+    from aaos.approval.adapters import DispatchResult, ExternalAdapter
 
 _SYSTEM_ACTOR = ActorIdentity("phase6a-trusted-system")
 _CAPABILITY_TOOL = {
@@ -999,6 +1003,40 @@ def claim_action(
         return ClaimResult(action_id, None, False, _classify_claim_conflict(repository, action_id))
 
 
+def dispatch_claimed_operation(
+    repository: ApprovalRepository,
+    adapter: ExternalAdapter,
+    operation_id: OperationId,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    now: datetime,
+) -> DispatchResult:
+    """Compatibility entry point for the adapter-owned dispatch service."""
+
+    from aaos.approval.adapters import dispatch_claimed_operation as _dispatch
+
+    return _dispatch(
+        repository,
+        adapter,
+        operation_id,
+        capability_policy=capability_policy,
+        definition=definition,
+        now=now,
+    )
+
+
+def load_executable_action(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+) -> ExecutableAction:
+    """Load only the least-authority projection needed by an adapter."""
+
+    from aaos.approval.adapters import load_executable_action as _load
+
+    return _load(repository, operation_id)
+
+
 __all__ = [
     "ClaimDecision",
     "ClaimResult",
@@ -1006,7 +1044,9 @@ __all__ = [
     "Phase6ServiceError",
     "approve_approval",
     "claim_action",
+    "dispatch_claimed_operation",
     "invalidate_for_trusted_drift",
+    "load_executable_action",
     "prepare_action",
     "reject_approval",
     "request_approval",
