@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, ContextManager, cast
 from uuid import uuid4
 
@@ -16,6 +17,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from aaos.approval.contracts import (
     ActionId,
     ActionState,
+    ApprovalId,
+    ApprovalState,
+    ClaimIdentity,
     EventId,
     EventKind,
     ExecutionOutcome,
@@ -33,13 +37,17 @@ from aaos.approval.events import (
 from aaos.approval.state import (
     TransitionSource,
     validate_action_transition,
+    validate_approval_transition,
     validate_operation_transition,
 )
 from aaos.persistence.approval_models import (
     ActionEventCounterORM,
     ActionEventORM,
     ActionLifecycleORM,
+    ApprovalConsumptionORM,
+    ApprovalRecordORM,
     OperationRecordORM,
+    PreparedActionORM,
 )
 
 _TERMINAL_ACTION_STATES = frozenset(
@@ -245,6 +253,203 @@ def cas_operation(
     return result.rowcount == 1
 
 
+def load_claim_snapshot(session: Session, action_id: ActionId) -> Any:
+    """Load the database-only claim snapshot and reject prior consumption."""
+
+    if not isinstance(session, Session) or not isinstance(action_id, ActionId):
+        raise TypeError("session and action_id must be trusted repository values")
+    try:
+        prepared_row = session.get(PreparedActionORM, action_id.value)
+        lifecycle = session.get(ActionLifecycleORM, action_id.value)
+        approval_row = session.scalar(
+            select(ApprovalRecordORM).where(ApprovalRecordORM.action_id == action_id.value)
+        )
+        consumption = session.scalar(
+            select(ApprovalConsumptionORM).where(ApprovalConsumptionORM.action_id == action_id.value)
+        )
+        operation = session.scalar(
+            select(OperationRecordORM).where(OperationRecordORM.action_id == action_id.value)
+        )
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+    if prepared_row is None or lifecycle is None or approval_row is None:
+        raise PersistenceConflict()
+    if consumption is not None or operation is not None:
+        raise PersistenceConflict()
+    # Import lazily: service owns the typed snapshot to avoid a module cycle.
+    from aaos.approval.service import ClaimSnapshot, _approval_from_orm, _prepared_from_orm
+
+    prepared = _prepared_from_orm(prepared_row)
+    approval = _approval_from_orm(approval_row, prepared)
+    try:
+        lifecycle_state = ActionState(lifecycle.state)
+        revision = _revision(lifecycle.revision)
+    except (TypeError, ValueError):
+        raise PersistenceConflict() from None
+    return ClaimSnapshot(
+        action=prepared,
+        approval=approval,
+        stored_precondition=prepared.remote_precondition,
+        lifecycle_state=lifecycle_state,
+        lifecycle_revision=revision,
+    )
+
+
+def insert_consumption(
+    session: Session,
+    *,
+    approval_id: ApprovalId,
+    action_id: ActionId,
+    operation_id: OperationId,
+    claim_identity: ClaimIdentity,
+    consumed_at: datetime,
+) -> None:
+    """Insert the authoritative one-shot consumption fact."""
+
+    if not all(
+        isinstance(value, (ApprovalId, ActionId, OperationId, ClaimIdentity))
+        for value in (approval_id, action_id, operation_id, claim_identity)
+    ):
+        raise TypeError("consumption identities must be trusted values")
+    session.add(
+        ApprovalConsumptionORM(
+            approval_id=approval_id.value,
+            action_id=action_id.value,
+            operation_id=operation_id.value,
+            claim_identity=claim_identity.value,
+            consumed_at=consumed_at,
+        )
+    )
+    try:
+        session.flush()
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+
+
+def mark_approval_consumed(
+    session: Session,
+    *,
+    approval_id: ApprovalId,
+    expected_status: ApprovalState,
+    consumed_at: datetime,
+) -> None:
+    """CAS an approved record to consumed without an approval revision."""
+
+    if (
+        not isinstance(session, Session)
+        or not isinstance(approval_id, ApprovalId)
+        or not isinstance(expected_status, ApprovalState)
+    ):
+        raise TypeError("invalid approval consumption values")
+    validate_approval_transition(
+        expected_status, ApprovalState.CONSUMED, TransitionSource.CLAIM_WORKER
+    )
+    try:
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(ApprovalRecordORM)
+                .where(
+                    ApprovalRecordORM.approval_id == approval_id.value,
+                    ApprovalRecordORM.status == expected_status.value,
+                )
+                .values(
+                    status=ApprovalState.CONSUMED.value,
+                    decided_at=consumed_at,
+                    reason_code=None,
+                )
+            ),
+        )
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+    if result.rowcount != 1:
+        raise PersistenceConflict()
+
+
+def cas_claimed_and_create_operation(
+    session: Session,
+    *,
+    action_id: ActionId,
+    operation_id: OperationId,
+    expected_state: ActionState,
+    expected_revision: int,
+    claim_identity: ClaimIdentity,
+    now: datetime,
+) -> None:
+    """CAS an action to CLAIMED and create its single CLAIMED operation."""
+
+    if (
+        not isinstance(session, Session)
+        or not isinstance(action_id, ActionId)
+        or not isinstance(operation_id, OperationId)
+        or not isinstance(expected_state, ActionState)
+        or not isinstance(claim_identity, ClaimIdentity)
+    ):
+        raise TypeError("invalid claim CAS values")
+    revision = _revision(expected_revision)
+    validate_action_transition(
+        expected_state, ActionState.CLAIMED, TransitionSource.CLAIM_WORKER
+    )
+    try:
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(ActionLifecycleORM)
+                .where(
+                    ActionLifecycleORM.action_id == action_id.value,
+                    ActionLifecycleORM.state == expected_state.value,
+                    ActionLifecycleORM.revision == revision,
+                )
+                .values(
+                    state=ActionState.CLAIMED.value,
+                    revision=revision + 1,
+                    updated_at=now,
+                    terminal_at=None,
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            raise PersistenceConflict()
+        session.add(
+            OperationRecordORM(
+                operation_id=operation_id.value,
+                action_id=action_id.value,
+                state=OperationState.CLAIMED.value,
+                outcome_kind=None,
+                receipt_evidence=None,
+                dispatch_started_at=None,
+                outcome_recorded_at=None,
+                reconciliation_at=None,
+                revision=0,
+            )
+        )
+        session.flush()
+    except PersistenceConflict:
+        raise
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+
+
+def append_claim_event(
+    session: Session,
+    *,
+    event: ActionEventDraft,
+    expected_action_revision: int,
+) -> None:
+    """Append the claim event after the claim CAS without a second revision."""
+
+    if not isinstance(session, Session) or not isinstance(event, ActionEventDraft):
+        raise TypeError("session and event must be trusted repository values")
+    revision = _revision(expected_action_revision)
+    try:
+        row = session.get(ActionLifecycleORM, event.action_id.value)
+    except SQLAlchemyError:
+        raise PersistenceConflict() from None
+    if row is None or row.state != ActionState.CLAIMED.value or row.revision != revision + 1:
+        raise PersistenceConflict()
+    _insert_action_event(session, event)
+
+
 def _operation_source(expected_state: OperationState) -> TransitionSource:
     """Resolve the unique worker source encoded by the frozen operation graph."""
 
@@ -377,6 +582,23 @@ class ApprovalRepository:
     def transaction(self) -> ContextManager[Session]:
         return _transaction(self._session_factory)
 
+    # These wrappers keep the transaction boundary explicit while exposing the
+    # claim primitives as repository-owned operations.
+    def load_claim_snapshot(self, session: Session, action_id: ActionId) -> Any:
+        return load_claim_snapshot(session, action_id)
+
+    def insert_consumption(self, session: Session, **kwargs: Any) -> None:
+        insert_consumption(session, **kwargs)
+
+    def mark_approval_consumed(self, session: Session, **kwargs: Any) -> None:
+        mark_approval_consumed(session, **kwargs)
+
+    def cas_claimed_and_create_operation(self, session: Session, **kwargs: Any) -> None:
+        cas_claimed_and_create_operation(session, **kwargs)
+
+    def append_claim_event(self, session: Session, **kwargs: Any) -> None:
+        append_claim_event(session, **kwargs)
+
 
 __all__ = [
     "ApprovalRepository",
@@ -385,6 +607,11 @@ __all__ = [
     "append_action_event",
     "cas_action_lifecycle",
     "cas_operation",
+    "load_claim_snapshot",
+    "insert_consumption",
+    "mark_approval_consumed",
+    "cas_claimed_and_create_operation",
+    "append_claim_event",
     "read_action_event_history",
     "read_states",
     "read_states_and_outcome",

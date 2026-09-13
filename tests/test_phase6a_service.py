@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
@@ -21,6 +22,7 @@ from aaos.approval.contracts import (
     ApprovalDecision,
     ApprovalId,
     ApprovalState,
+    ClaimIdentity,
     HumanDecisionReason,
     Phase6ActionDefinition,
     Phase6ErrorCode,
@@ -37,8 +39,10 @@ from aaos.approval.repository import (
     read_action_event_history,
 )
 from aaos.approval.service import (
+    ClaimResult,
     Phase6ServiceError,
     approve_approval,
+    claim_action,
     invalidate_for_trusted_drift,
     prepare_action,
     reject_approval,
@@ -49,7 +53,9 @@ from aaos.persistence.academic_models import Base
 from aaos.persistence.approval_models import (
     ActionEventORM,
     ActionLifecycleORM,
+    ApprovalConsumptionORM,
     ApprovalRecordORM,
+    OperationRecordORM,
     PreparedActionORM,
 )
 from aaos.persistence.database import create_database_engine, create_session_factory
@@ -480,3 +486,197 @@ def test_trusted_drift_rejects_expiry_as_invalidation_reason(
         ApprovalState.APPROVED,
         ActionState.APPROVED,
     )
+
+
+def test_claim_action_consumes_approval_and_creates_claimed_operation(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.claimed is True
+    assert result.action_id == approved.action_id
+    assert result.operation_id == approved.operation_id
+    assert result.error_code is None
+    with sessions() as session:
+        consumption = session.get(ApprovalConsumptionORM, approval_id.value)
+        operation = session.get(OperationRecordORM, approved.operation_id.value)
+        lifecycle = session.get(ActionLifecycleORM, approved.action_id.value)
+        assert consumption is not None
+        assert operation is not None
+        assert lifecycle is not None
+        assert consumption.claim_identity == "claim-worker-1"
+        assert operation.state == "CLAIMED"
+        assert lifecycle.state == ActionState.CLAIMED.value
+
+
+def test_claim_rechecks_capability_and_invalidates_before_consumption(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.READ_ONLY),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result == ClaimResult(approved.action_id, None, False, Phase6ErrorCode.CAPABILITY_DENIED)
+    assert stored_states(sessions, approval_id) == (
+        ApprovalState.REVOKED,
+        ActionState.INVALIDATED,
+        TrustedInvalidationReason.CAPABILITY_REVOKED.value,
+    )
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 0
+        assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 0
+
+
+def test_claim_expiry_coherently_expires_approval_and_action(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(
+        repo,
+        action_expires_at=NOW + timedelta(minutes=2),
+        approval_expires_at=NOW + timedelta(minutes=1),
+    )
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(minutes=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.error_code is Phase6ErrorCode.APPROVAL_EXPIRED
+    assert result.claimed is False
+    assert stored_states(sessions, approval_id) == (
+        ApprovalState.EXPIRED,
+        ActionState.EXPIRED,
+        TrustedInvalidationReason.ACTION_EXPIRED.value,
+    )
+
+
+def test_claim_rejects_human_revocation_without_creating_operation(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    revoke_approval(
+        repo,
+        approval_id,
+        APPROVER,
+        NOW + timedelta(seconds=2),
+        HumanDecisionReason.USER_REVOKED,
+    )
+
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=3),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result == ClaimResult(approved.action_id, None, False, Phase6ErrorCode.APPROVAL_REVOKED)
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 0
+
+
+def test_claim_is_one_shot_and_duplicate_claim_is_a_safe_conflict(
+    repo: ApprovalRepository,
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    context = dict(
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+    )
+    first = claim_action(
+        repo, approved.action_id, claim_identity=ClaimIdentity("claim-worker-1"), **context
+    )
+    second = claim_action(
+        repo, approved.action_id, claim_identity=ClaimIdentity("claim-worker-2"), **context
+    )
+
+    assert first.claimed is True
+    assert second.claimed is False
+    assert second.error_code is Phase6ErrorCode.CLAIM_CONFLICT
+
+
+def test_claim_event_failure_rolls_back_consumption_and_all_state_changes(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+    with sessions.begin() as session:
+        session.execute(
+            text(
+                "CREATE TRIGGER fail_claim_event BEFORE INSERT ON action_events "
+                "WHEN NEW.event_kind = 'APPROVAL_CONSUMED' "
+                "BEGIN SELECT RAISE(ABORT, 'forced'); END"
+            )
+        )
+
+    result = claim_action(
+        repo,
+        approved.action_id,
+        capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+        definition=fake_definition(),
+        now=NOW + timedelta(seconds=2),
+        claim_identity=ClaimIdentity("claim-worker-1"),
+    )
+
+    assert result.claimed is False
+    assert result.error_code is Phase6ErrorCode.PERSISTENCE_CONFLICT
+    assert stored_states(sessions, approval_id) == (
+        ApprovalState.APPROVED,
+        ActionState.APPROVED,
+        HumanDecisionReason.USER_APPROVED.value,
+    )
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 0
+        assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 0
+
+
+def test_independent_connections_have_exactly_one_claim_winner(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    approval_id = issue(repo)
+    approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
+
+    def run(worker: str):
+        return claim_action(
+            repo,
+            approved.action_id,
+            capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
+            definition=fake_definition(),
+            now=NOW + timedelta(seconds=2),
+            claim_identity=ClaimIdentity(worker),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(run, ("claim-worker-1", "claim-worker-2")))
+
+    assert [result.claimed for result in results].count(True) == 1
+    assert [result.claimed for result in results].count(False) == 1
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 1
+        assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 1

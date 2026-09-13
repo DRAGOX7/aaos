@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, NoReturn, cast
 from uuid import uuid4
@@ -26,6 +27,7 @@ from aaos.approval.contracts import (
     ApprovalId,
     ApprovalRecord,
     ApprovalState,
+    ClaimIdentity,
     EventKind,
     HumanDecisionReason,
     OperationId,
@@ -39,12 +41,14 @@ from aaos.approval.contracts import (
     TrustedInvalidationReason,
     build_prepared_action,
     compute_approval_binding_sha256,
+    compute_prepared_action_sha256,
 )
 from aaos.approval.events import (
     ActionEventDraft,
     ActionPreparedDetails,
     ApprovalDecisionDetails,
     ApprovalRequestedDetails,
+    ClaimedDetails,
     InvalidatedDetails,
 )
 from aaos.approval.repository import (
@@ -60,6 +64,7 @@ from aaos.approval.state import (
 from aaos.persistence.approval_models import (
     ActionLifecycleORM,
     ApprovalRecordORM,
+    OperationRecordORM,
     PreparedActionORM,
 )
 
@@ -97,6 +102,63 @@ class Phase6ServiceError(RuntimeError):
 
 def _raise(code: Phase6ErrorCode) -> NoReturn:
     raise Phase6ServiceError(code)
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSnapshot:
+    """Database-only values used to authorize one approval claim."""
+
+    action: PreparedAction
+    approval: ApprovalRecord
+    stored_precondition: RemotePrecondition
+    lifecycle_state: ActionState
+    lifecycle_revision: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, PreparedAction):
+            raise TypeError("action must be a PreparedAction")
+        if not isinstance(self.approval, ApprovalRecord):
+            raise TypeError("approval must be an ApprovalRecord")
+        if not isinstance(self.stored_precondition, RemotePrecondition):
+            raise TypeError("stored_precondition must be a RemotePrecondition")
+        if not isinstance(self.lifecycle_state, ActionState):
+            raise TypeError("lifecycle_state must be an ActionState")
+        if (
+            isinstance(self.lifecycle_revision, bool)
+            or not isinstance(self.lifecycle_revision, int)
+            or self.lifecycle_revision < 0
+        ):
+            raise ValueError("lifecycle_revision must be a non-negative integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimDecision:
+    invalidates: bool
+    error_code: Phase6ErrorCode | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.invalidates, bool):
+            raise TypeError("invalidates must be a bool")
+        if self.error_code is not None and not isinstance(self.error_code, Phase6ErrorCode):
+            raise TypeError("error_code must be a Phase6ErrorCode or None")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimResult:
+    action_id: ActionId
+    operation_id: OperationId | None
+    claimed: bool
+    error_code: Phase6ErrorCode | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action_id, ActionId):
+            raise TypeError("action_id must be an ActionId")
+        if self.operation_id is not None and not isinstance(self.operation_id, OperationId):
+            raise TypeError("operation_id must be an OperationId or None")
+        if not isinstance(self.claimed, bool):
+            raise TypeError("claimed must be a bool")
+        if self.error_code is not None and not isinstance(self.error_code, Phase6ErrorCode):
+            raise TypeError("error_code must be a Phase6ErrorCode or None")
 
 
 def _utc(value: object, name: str) -> datetime:
@@ -229,6 +291,99 @@ def _approval_from_orm(row: ApprovalRecordORM, prepared: PreparedAction) -> Appr
         )
     except (TypeError, ValueError):
         raise PersistenceConflict() from None
+
+
+def _claim_invalidated(reason: TrustedInvalidationReason) -> ClaimDecision:
+    # The public result stays at the closed ACTION_INVALIDATED code; the
+    # durable approval reason carries the more specific trusted cause.
+    return ClaimDecision(True, Phase6ErrorCode.ACTION_INVALIDATED)
+
+
+def validate_claim_snapshot(
+    snapshot: ClaimSnapshot,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    now: datetime,
+) -> ClaimDecision:
+    """Purely validate the durable claim boundary; never perform live I/O."""
+
+    if not isinstance(snapshot, ClaimSnapshot):
+        raise TypeError("snapshot must be a ClaimSnapshot")
+    if not isinstance(capability_policy, PermissionPolicy):
+        raise TypeError("capability_policy must be a PermissionPolicy")
+    if not isinstance(definition, Phase6ActionDefinition):
+        raise TypeError("definition must be a Phase6ActionDefinition")
+    now = _utc(now, "now")
+
+    # Terminal human decisions are authoritative and are not rewritten by a
+    # claim worker, even when their deadline has also elapsed.
+    approval_state = snapshot.approval.status
+    if approval_state is ApprovalState.REVOKED:
+        return ClaimDecision(False, Phase6ErrorCode.APPROVAL_REVOKED)
+    if approval_state is ApprovalState.REJECTED:
+        return ClaimDecision(False, Phase6ErrorCode.HUMAN_REJECTED)
+    if approval_state is ApprovalState.CONSUMED:
+        return ClaimDecision(False, Phase6ErrorCode.APPROVAL_ALREADY_CONSUMED)
+    if approval_state is ApprovalState.EXPIRED:
+        return ClaimDecision(False, Phase6ErrorCode.APPROVAL_EXPIRED)
+    if approval_state is not ApprovalState.APPROVED:
+        return ClaimDecision(False, Phase6ErrorCode.INVALID_STATE_TRANSITION)
+
+    if snapshot.lifecycle_state is not ActionState.APPROVED:
+        return ClaimDecision(False, Phase6ErrorCode.INVALID_STATE_TRANSITION)
+    if (
+        snapshot.action.action_expires_at <= now
+        or snapshot.approval.approval_expires_at <= now
+    ):
+        return ClaimDecision(True, Phase6ErrorCode.APPROVAL_EXPIRED)
+
+    action = snapshot.action
+    approval = snapshot.approval
+    if (
+        approval.action_id != action.action_id
+        or approval.operation_id != action.operation_id
+        or approval.prepared_action_sha256 != action.prepared_action_sha256
+    ):
+        return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+    try:
+        if compute_approval_binding_sha256(
+            approval.prepared_action_sha256, approval.approver, approval.approval_expires_at
+        ) != approval.approval_binding_sha256:
+            return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+        if compute_prepared_action_sha256(action) != action.prepared_action_sha256:
+            return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+    except (TypeError, ValueError):
+        return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+
+    if action.tool_schema_version != definition.tool_schema_version:
+        return _claim_invalidated(TrustedInvalidationReason.SCHEMA_VERSION_DRIFT)
+    if (
+        action.policy_version != definition.policy_version
+        or action.policy_fingerprint != definition.policy_fingerprint
+        or capability_policy.policy_version != action.policy_version
+    ):
+        return _claim_invalidated(TrustedInvalidationReason.POLICY_VERSION_DRIFT)
+    if (
+        action.action_type != definition.action_type
+        or action.tool_name != definition.tool_name
+        or action.tool_definition_fingerprint != definition.tool_definition_fingerprint
+    ):
+        return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+    if snapshot.stored_precondition != action.remote_precondition:
+        return _claim_invalidated(TrustedInvalidationReason.STORED_PRECONDITION_DRIFT)
+
+    capability = capability_policy.evaluate(_capability_projection(definition))
+    if not capability.allowed or capability.required_permission is not definition.required_permission:
+        return ClaimDecision(True, Phase6ErrorCode.CAPABILITY_DENIED)
+    try:
+        arguments = json.loads(action.canonical_arguments.decode("utf-8"))
+        canonical = definition.validate_arguments(arguments)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return _claim_invalidated(TrustedInvalidationReason.SCHEMA_VERSION_DRIFT)
+    if canonical.bytes != action.canonical_arguments or canonical.sha256 != action.arguments_sha256:
+        return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
+    return ClaimDecision(False, None)
 
 
 def _load_action(
@@ -632,12 +787,219 @@ def invalidate_for_trusted_drift(
     return ActionRecord(prepared, ActionState.INVALIDATED, approval=approval)
 
 
+def _claim_reason(
+    snapshot: ClaimSnapshot,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    decision: ClaimDecision,
+) -> TrustedInvalidationReason:
+    if decision.error_code is Phase6ErrorCode.APPROVAL_EXPIRED:
+        return TrustedInvalidationReason.ACTION_EXPIRED
+    if decision.error_code is Phase6ErrorCode.CAPABILITY_DENIED:
+        return TrustedInvalidationReason.CAPABILITY_REVOKED
+    action = snapshot.action
+    approval = snapshot.approval
+    if (
+        action.tool_schema_version != definition.tool_schema_version
+        or (
+            action.policy_version != definition.policy_version
+            or action.policy_fingerprint != definition.policy_fingerprint
+            or capability_policy.policy_version != action.policy_version
+        )
+    ):
+        return (
+            TrustedInvalidationReason.SCHEMA_VERSION_DRIFT
+            if action.tool_schema_version != definition.tool_schema_version
+            else TrustedInvalidationReason.POLICY_VERSION_DRIFT
+        )
+    if snapshot.stored_precondition != action.remote_precondition:
+        return TrustedInvalidationReason.STORED_PRECONDITION_DRIFT
+    if (
+        approval.action_id != action.action_id
+        or approval.operation_id != action.operation_id
+        or approval.prepared_action_sha256 != action.prepared_action_sha256
+    ):
+        return TrustedInvalidationReason.BINDING_DRIFT
+    return TrustedInvalidationReason.BINDING_DRIFT
+
+
+def _invalidate_claim(
+    session: Session,
+    snapshot: ClaimSnapshot,
+    *,
+    reason: TrustedInvalidationReason,
+    now: datetime,
+) -> None:
+    target = (
+        ApprovalState.EXPIRED
+        if reason is TrustedInvalidationReason.ACTION_EXPIRED
+        else ApprovalState.REVOKED
+    )
+    action_target = (
+        ActionState.EXPIRED
+        if reason is TrustedInvalidationReason.ACTION_EXPIRED
+        else ActionState.INVALIDATED
+    )
+    _cas_approval(
+        session,
+        approval_id=snapshot.approval.approval_id,
+        expected_state=ApprovalState.APPROVED,
+        new_state=target,
+        decided_at=now,
+        reason=reason,
+        source=TransitionSource.TRUSTED_SYSTEM,
+    )
+    event = ActionEventDraft(
+        action_id=snapshot.action.action_id,
+        operation_id=None,
+        event_kind=EventKind.ACTION_INVALIDATED,
+        source=TransitionSource.TRUSTED_SYSTEM,
+        actor=_SYSTEM_ACTOR,
+        occurred_at=now,
+        details=InvalidatedDetails(reason),
+    )
+    if not cas_action_lifecycle(
+        session,
+        action_id=snapshot.action.action_id,
+        expected_state=ActionState.APPROVED,
+        expected_revision=snapshot.lifecycle_revision,
+        new_state=action_target,
+        event=event,
+    ):
+        raise PersistenceConflict()
+
+
+def _classify_claim_conflict(
+    repository: ApprovalRepository, action_id: ActionId
+) -> Phase6ErrorCode:
+    """Distinguish a one-shot loser from an untouched persistence failure."""
+
+    try:
+        with repository.transaction() as session:
+            lifecycle = session.get(ActionLifecycleORM, action_id.value)
+            consumed = session.scalar(
+                select(ApprovalRecordORM).where(ApprovalRecordORM.action_id == action_id.value)
+            )
+            operation = session.scalar(
+                select(OperationRecordORM).where(OperationRecordORM.action_id == action_id.value)
+            )
+            if lifecycle is not None and (
+                lifecycle.state != ActionState.APPROVED.value
+                or (consumed is not None and consumed.status == ApprovalState.CONSUMED.value)
+                or operation is not None
+            ):
+                return Phase6ErrorCode.CLAIM_CONFLICT
+    except (PersistenceConflict, SQLAlchemyError):
+        return Phase6ErrorCode.PERSISTENCE_CONFLICT
+    return Phase6ErrorCode.PERSISTENCE_CONFLICT
+
+
+def claim_action(
+    repository: ApprovalRepository,
+    action_id: ActionId,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    now: datetime,
+    claim_identity: ClaimIdentity,
+) -> ClaimResult:
+    """Atomically consume an approved action without dispatching it."""
+
+    if not isinstance(repository, ApprovalRepository) or not isinstance(action_id, ActionId):
+        raise TypeError("repository and action_id must be trusted values")
+    if not isinstance(capability_policy, PermissionPolicy):
+        raise TypeError("capability_policy must be a PermissionPolicy")
+    if not isinstance(definition, Phase6ActionDefinition):
+        raise TypeError("definition must be a Phase6ActionDefinition")
+    if not isinstance(claim_identity, ClaimIdentity):
+        raise TypeError("claim_identity must be a ClaimIdentity")
+    now = _utc(now, "now")
+
+    try:
+        with repository.transaction() as session:
+            snapshot = repository.load_claim_snapshot(session, action_id)
+            decision = validate_claim_snapshot(
+                snapshot,
+                capability_policy=capability_policy,
+                definition=definition,
+                now=now,
+            )
+            if decision.invalidates:
+                _invalidate_claim(
+                    session,
+                    snapshot,
+                    reason=_claim_reason(
+                        snapshot,
+                        capability_policy=capability_policy,
+                        definition=definition,
+                        decision=decision,
+                    ),
+                    now=now,
+                )
+                return ClaimResult(action_id, None, False, decision.error_code)
+            if decision.error_code is not None:
+                return ClaimResult(action_id, None, False, decision.error_code)
+
+            approval_id = snapshot.approval.approval_id
+            operation_id = snapshot.action.operation_id
+            event = ActionEventDraft(
+                action_id=action_id,
+                operation_id=operation_id,
+                event_kind=EventKind.APPROVAL_CONSUMED,
+                source=TransitionSource.CLAIM_WORKER,
+                actor=claim_identity,
+                occurred_at=now,
+                details=ClaimedDetails(
+                    approval_id=approval_id,
+                    operation_id=operation_id,
+                    claim_identity=claim_identity,
+                ),
+            )
+            repository.insert_consumption(
+                session,
+                approval_id=approval_id,
+                action_id=action_id,
+                operation_id=operation_id,
+                claim_identity=claim_identity,
+                consumed_at=now,
+            )
+            repository.mark_approval_consumed(
+                session,
+                approval_id=approval_id,
+                expected_status=ApprovalState.APPROVED,
+                consumed_at=now,
+            )
+            repository.cas_claimed_and_create_operation(
+                session,
+                action_id=action_id,
+                operation_id=operation_id,
+                expected_state=ActionState.APPROVED,
+                expected_revision=snapshot.lifecycle_revision,
+                claim_identity=claim_identity,
+                now=now,
+            )
+            repository.append_claim_event(
+                session,
+                event=event,
+                expected_action_revision=snapshot.lifecycle_revision,
+            )
+            return ClaimResult(action_id, operation_id, True, None)
+    except PersistenceConflict:
+        return ClaimResult(action_id, None, False, _classify_claim_conflict(repository, action_id))
+
+
 __all__ = [
+    "ClaimDecision",
+    "ClaimResult",
+    "ClaimSnapshot",
     "Phase6ServiceError",
     "approve_approval",
+    "claim_action",
     "invalidate_for_trusted_drift",
     "prepare_action",
     "reject_approval",
     "request_approval",
     "revoke_approval",
+    "validate_claim_snapshot",
 ]
