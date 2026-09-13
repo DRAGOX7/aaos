@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aaos.agent.contracts import JSONValue
 from aaos.approval.contracts import OperationId
 
-from .contracts import _CANONICAL_TOKEN, CalendarCreateRequest, CanonicalCalendarEvent
+from .contracts import CalendarCreateRequest, CanonicalCalendarEvent
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -87,19 +87,18 @@ def canonicalize_calendar_request(
         raise ValueError("start cannot be in the past")
     if start > current + timedelta(days=365):
         raise ValueError("start exceeds horizon")
-    return CanonicalCalendarEvent(
+    return CanonicalCalendarEvent._create(
         _required_text(request.summary, "summary", 200),
         _rfc3339(start),
         _rfc3339(end),
         request.timezone,
         _text(request.description, "description", 2000, True),
         _text(request.location, "location", 300, True),
-        _CANONICAL_TOKEN,
     )
 
 
 def canonical_event_arguments(event: CanonicalCalendarEvent) -> Mapping[str, JSONValue]:
-    if not isinstance(event, CanonicalCalendarEvent) or event._token is not _CANONICAL_TOKEN:
+    if not isinstance(event, CanonicalCalendarEvent):
         raise TypeError("event must be canonical")
     return {
         "description": event.description,

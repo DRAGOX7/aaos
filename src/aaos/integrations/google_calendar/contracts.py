@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 from aaos.approval.contracts import TargetIdentity
@@ -29,7 +29,7 @@ class CalendarCreateRequest:
             raise TypeError("location must be a string")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class CanonicalCalendarEvent:
     summary: str
     start: str
@@ -37,13 +37,30 @@ class CanonicalCalendarEvent:
     timezone: str
     description: str | None
     location: str | None
-    _token: object = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def _create(
+        cls,
+        summary: str,
+        start: str,
+        end: str,
+        timezone: str,
+        description: str | None,
+        location: str | None,
+    ) -> "CanonicalCalendarEvent":
+        value = object.__new__(cls)
+        for name, item in (
+            ("summary", summary),
+            ("start", start),
+            ("end", end),
+            ("timezone", timezone),
+            ("description", description),
+            ("location", location),
+        ):
+            object.__setattr__(value, name, item)
+        return value
 
     def __post_init__(self) -> None:
-        if self._token is not _CANONICAL_TOKEN:
-            raise ValueError(
-                "CanonicalCalendarEvent must be created by canonicalize_calendar_request"
-            )
         if not all(
             isinstance(getattr(self, n), str) and getattr(self, n)
             for n in ("summary", "start", "end", "timezone")
@@ -91,7 +108,6 @@ def calendar_target(config: GoogleCalendarConfig) -> TargetIdentity:
     return TargetIdentity("google-calendar", account, resource)
 
 
-_CANONICAL_TOKEN = object()
 __all__ = [
     "CalendarCreateRequest",
     "CanonicalCalendarEvent",
