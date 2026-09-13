@@ -768,7 +768,10 @@ def test_validator_rejection_is_persisted_as_schema_drift(
     )
 
     assert result.error_code is Phase6ErrorCode.ACTION_INVALIDATED
-    assert stored_states(sessions, approval_id)[2] == TrustedInvalidationReason.SCHEMA_VERSION_DRIFT.value
+    assert (
+        stored_states(sessions, approval_id)[2]
+        == TrustedInvalidationReason.SCHEMA_VERSION_DRIFT.value
+    )
 
 
 def test_inconsistent_snapshot_detects_stored_precondition_without_mutating_immutable_row(
@@ -778,7 +781,9 @@ def test_inconsistent_snapshot_detects_stored_precondition_without_mutating_immu
     approved = approve_approval(repo, approval_id, APPROVER, NOW + timedelta(seconds=1))
     with sessions.begin() as session:
         snapshot = load_claim_snapshot(session, approved.action_id)
-    altered = replace(snapshot, stored_precondition=RemotePrecondition("fake", "resource-1", "v1", "etag-2"))
+    altered = replace(
+        snapshot, stored_precondition=RemotePrecondition("fake", "resource-1", "v1", "etag-2")
+    )
     decision = validate_claim_snapshot(
         altered,
         capability_policy=policy(PermissionClass.LOCAL_STATE_WRITE),
@@ -791,7 +796,10 @@ def test_inconsistent_snapshot_detects_stored_precondition_without_mutating_immu
     with sessions() as session:
         stored = session.get(PreparedActionORM, approved.action_id.value)
         assert stored is not None
-        assert stored.remote_precondition == '{"etag":"etag-1","provider":"fake","resource":"resource-1","version":"v1"}'
+        assert (
+            stored.remote_precondition
+            == '{"etag":"etag-1","provider":"fake","resource":"resource-1","version":"v1"}'
+        )
 
 
 def test_claim_rejects_identity_and_hash_mismatches_as_binding_drift(
@@ -819,7 +827,15 @@ def test_claim_rejects_identity_and_hash_mismatches_as_binding_drift(
         assert decision == ClaimDecision(True, Phase6ErrorCode.ACTION_INVALIDATED)
 
 
-@pytest.mark.parametrize("failing_method", ("insert_consumption", "mark_approval_consumed", "cas_claimed_and_create_operation", "append_claim_event"))
+@pytest.mark.parametrize(
+    "failing_method",
+    (
+        "insert_consumption",
+        "mark_approval_consumed",
+        "cas_claimed_and_create_operation",
+        "append_claim_event",
+    ),
+)
 def test_claim_rolls_back_after_each_authority_step_failure(
     repo: ApprovalRepository,
     sessions: sessionmaker[Session],
@@ -844,7 +860,10 @@ def test_claim_rolls_back_after_each_authority_step_failure(
 
     assert result.claimed is False
     assert result.error_code is Phase6ErrorCode.PERSISTENCE_CONFLICT
-    assert stored_states(sessions, approval_id)[:2] == (ApprovalState.APPROVED, ActionState.APPROVED)
+    assert stored_states(sessions, approval_id)[:2] == (
+        ApprovalState.APPROVED,
+        ActionState.APPROVED,
+    )
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ApprovalConsumptionORM)) == 0
         assert session.scalar(select(func.count()).select_from(OperationRecordORM)) == 0

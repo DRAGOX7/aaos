@@ -332,10 +332,7 @@ def validate_claim_snapshot(
 
     if snapshot.lifecycle_state is not ActionState.APPROVED:
         return ClaimDecision(False, Phase6ErrorCode.INVALID_STATE_TRANSITION)
-    if (
-        snapshot.action.action_expires_at <= now
-        or snapshot.approval.approval_expires_at <= now
-    ):
+    if snapshot.action.action_expires_at <= now or snapshot.approval.approval_expires_at <= now:
         return ClaimDecision(True, Phase6ErrorCode.APPROVAL_EXPIRED)
 
     action = snapshot.action
@@ -347,9 +344,12 @@ def validate_claim_snapshot(
     ):
         return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
     try:
-        if compute_approval_binding_sha256(
-            approval.prepared_action_sha256, approval.approver, approval.approval_expires_at
-        ) != approval.approval_binding_sha256:
+        if (
+            compute_approval_binding_sha256(
+                approval.prepared_action_sha256, approval.approver, approval.approval_expires_at
+            )
+            != approval.approval_binding_sha256
+        ):
             return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
         if compute_prepared_action_sha256(action) != action.prepared_action_sha256:
             return _claim_invalidated(TrustedInvalidationReason.BINDING_DRIFT)
@@ -374,7 +374,10 @@ def validate_claim_snapshot(
         return _claim_invalidated(TrustedInvalidationReason.STORED_PRECONDITION_DRIFT)
 
     capability = capability_policy.evaluate(_capability_projection(definition))
-    if not capability.allowed or capability.required_permission is not definition.required_permission:
+    if (
+        not capability.allowed
+        or capability.required_permission is not definition.required_permission
+    ):
         return ClaimDecision(True, Phase6ErrorCode.CAPABILITY_DENIED)
     try:
         arguments = json.loads(action.canonical_arguments.decode("utf-8"))
@@ -800,13 +803,10 @@ def _claim_reason(
         return TrustedInvalidationReason.CAPABILITY_REVOKED
     action = snapshot.action
     approval = snapshot.approval
-    if (
-        action.tool_schema_version != definition.tool_schema_version
-        or (
-            action.policy_version != definition.policy_version
-            or action.policy_fingerprint != definition.policy_fingerprint
-            or capability_policy.policy_version != action.policy_version
-        )
+    if action.tool_schema_version != definition.tool_schema_version or (
+        action.policy_version != definition.policy_version
+        or action.policy_fingerprint != definition.policy_fingerprint
+        or capability_policy.policy_version != action.policy_version
     ):
         return (
             TrustedInvalidationReason.SCHEMA_VERSION_DRIFT

@@ -265,7 +265,9 @@ def load_claim_snapshot(session: Session, action_id: ActionId) -> Any:
             select(ApprovalRecordORM).where(ApprovalRecordORM.action_id == action_id.value)
         )
         consumption = session.scalar(
-            select(ApprovalConsumptionORM).where(ApprovalConsumptionORM.action_id == action_id.value)
+            select(ApprovalConsumptionORM).where(
+                ApprovalConsumptionORM.action_id == action_id.value
+            )
         )
         operation = session.scalar(
             select(OperationRecordORM).where(OperationRecordORM.action_id == action_id.value)
@@ -387,9 +389,7 @@ def cas_claimed_and_create_operation(
     ):
         raise TypeError("invalid claim CAS values")
     revision = _revision(expected_revision)
-    validate_action_transition(
-        expected_state, ActionState.CLAIMED, TransitionSource.CLAIM_WORKER
-    )
+    validate_action_transition(expected_state, ActionState.CLAIMED, TransitionSource.CLAIM_WORKER)
     try:
         result = cast(
             CursorResult[Any],
