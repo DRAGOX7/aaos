@@ -605,6 +605,142 @@ def test_approval_expiry_update_guard_orders_fractional_utc_timestamps_chronolog
                 )
 
 
+def test_local_expiry_checks_preserve_exact_microsecond_ordering(tmp_path: Path) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                prepared_at="2026-09-12T10:00:00.000001Z",
+                action_expires_at="2026-09-12T10:00:00.000499Z",
+            )
+            insert_approval(
+                connection,
+                issued_at="2026-09-12T10:00:00.000001Z",
+                approval_expires_at="2026-09-12T10:00:00.000499Z",
+            )
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_prepared(
+                    connection,
+                    action_id="action-micro-invalid",
+                    operation_id="operation-micro-invalid",
+                    prepared_at="2026-09-12T11:00:00.000499Z",
+                    action_expires_at="2026-09-12T11:00:00.000001Z",
+                    prepared_action_sha256="f" * 64,
+                )
+
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_id="action-approval-micro-invalid",
+                operation_id="operation-approval-micro-invalid",
+                action_expires_at="2026-09-12T12:00:01Z",
+                prepared_action_sha256="2" * 64,
+            )
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                insert_approval(
+                    connection,
+                    approval_id="approval-micro-invalid",
+                    action_id="action-approval-micro-invalid",
+                    operation_id="operation-approval-micro-invalid",
+                    issued_at="2026-09-12T12:00:00.000499Z",
+                    approval_expires_at="2026-09-12T12:00:00.000001Z",
+                    prepared_action_sha256="2" * 64,
+                    approval_binding_sha256="3" * 64,
+                )
+
+
+def test_approval_expiry_insert_guard_preserves_exact_microsecond_ordering(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_expires_at="2026-09-12T12:00:00.000499Z",
+            )
+            insert_approval(
+                connection,
+                issued_at="2026-09-12T11:00:00Z",
+                approval_expires_at="2026-09-12T12:00:00.000001Z",
+            )
+            insert_prepared(
+                connection,
+                action_id="action-micro-later-approval",
+                operation_id="operation-micro-later-approval",
+                action_expires_at="2026-09-12T13:00:00.000001Z",
+                prepared_action_sha256="f" * 64,
+            )
+
+        with pytest.raises(IntegrityError, match="approval expiry exceeds action expiry"):
+            with engine.begin() as connection:
+                insert_approval(
+                    connection,
+                    approval_id="approval-micro-later",
+                    action_id="action-micro-later-approval",
+                    operation_id="operation-micro-later-approval",
+                    issued_at="2026-09-12T12:00:00Z",
+                    approval_expires_at="2026-09-12T13:00:00.000499Z",
+                    prepared_action_sha256="f" * 64,
+                    approval_binding_sha256="1" * 64,
+                )
+
+
+def test_approval_expiry_update_guard_preserves_exact_microsecond_ordering(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "phase6a.db"
+    with phase6a_database(database_path) as engine:
+        with engine.begin() as connection:
+            insert_prepared(
+                connection,
+                action_expires_at="2026-09-12T12:00:00.000499Z",
+            )
+            insert_approval(connection, approval_expires_at="2026-09-12T11:00:00Z")
+            insert_prepared(
+                connection,
+                action_id="action-micro-later-update",
+                operation_id="operation-micro-later-update",
+                action_expires_at="2026-09-12T13:00:00.000001Z",
+                prepared_action_sha256="f" * 64,
+            )
+            insert_approval(
+                connection,
+                approval_id="approval-micro-later-update",
+                action_id="action-micro-later-update",
+                operation_id="operation-micro-later-update",
+                approval_expires_at="2026-09-12T12:00:00Z",
+                prepared_action_sha256="f" * 64,
+                approval_binding_sha256="1" * 64,
+            )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE approval_records SET approval_expires_at=:expiry "
+                    "WHERE approval_id=:approval"
+                ),
+                {"approval": APPROVAL_ID, "expiry": "2026-09-12T12:00:00.000001Z"},
+            )
+
+        with pytest.raises(IntegrityError, match="approval expiry exceeds action expiry"):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE approval_records SET approval_expires_at=:expiry "
+                        "WHERE approval_id=:approval"
+                    ),
+                    {
+                        "approval": "approval-micro-later-update",
+                        "expiry": "2026-09-12T13:00:00.000499Z",
+                    },
+                )
+
+
 def test_phase6a_schema_enforces_consumption_and_event_uniqueness(tmp_path: Path) -> None:
     database_path = tmp_path / "phase6a.db"
     with phase6a_database(database_path) as engine:

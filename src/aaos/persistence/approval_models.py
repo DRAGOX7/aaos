@@ -34,6 +34,17 @@ def _sql_enum_values(enum_type: type[StrEnum]) -> str:
     return ",".join(f"'{member.value}'" for member in enum_type)
 
 
+def _canonical_utc_text(column: str) -> str:
+    """Normalize UTCDateTime text to a fixed-width, microsecond-safe value."""
+
+    fraction = (
+        f"CASE WHEN instr({column}, '.') = 0 THEN '000000' "
+        f"ELSE substr(substr({column}, instr({column}, '.') + 1, "
+        f"length({column}) - instr({column}, '.') - 1) || '000000', 1, 6) END"
+    )
+    return f"(substr({column}, 1, 19) || '.' || {fraction} || 'Z')"
+
+
 _HASH_CHECK = "length({column}) = 64 AND {column} NOT GLOB '*[^0-9a-f]*'"
 _APPROVAL_REASONS = (*HumanDecisionReason, *TrustedInvalidationReason)
 _APPROVAL_REASON_SQL = ",".join(f"'{reason.value}'" for reason in _APPROVAL_REASONS)
@@ -75,9 +86,8 @@ class PreparedActionORM(Base):
             name="ck_prepared_actions_remote_precondition",
         ),
         CheckConstraint(
-            "julianday(action_expires_at) IS NOT NULL "
-            "AND julianday(prepared_at) IS NOT NULL "
-            "AND julianday(action_expires_at) > julianday(prepared_at)",
+            f"{_canonical_utc_text('action_expires_at')} > "
+            f"{_canonical_utc_text('prepared_at')}",
             name="ck_prepared_actions_expiry",
         ),
         Index("ix_prepared_actions_actor", "actor_identity"),
@@ -159,9 +169,8 @@ class ApprovalRecordORM(Base):
             name="ck_approval_records_reason_code",
         ),
         CheckConstraint(
-            "julianday(approval_expires_at) IS NOT NULL "
-            "AND julianday(issued_at) IS NOT NULL "
-            "AND julianday(approval_expires_at) > julianday(issued_at)",
+            f"{_canonical_utc_text('approval_expires_at')} > "
+            f"{_canonical_utc_text('issued_at')}",
             name="ck_approval_records_expiry",
         ),
         Index("ix_approval_records_action_status", "action_id", "status"),

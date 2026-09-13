@@ -29,6 +29,17 @@ def _hash_check(column: str) -> str:
     return f"length({column}) = 64 AND {column} NOT GLOB '*[^0-9a-f]*'"
 
 
+def _canonical_utc_text(column: str) -> str:
+    """Normalize UTC text to fixed-width microsecond precision for SQLite."""
+
+    fraction = (
+        f"CASE WHEN instr({column}, '.') = 0 THEN '000000' "
+        f"ELSE substr(substr({column}, instr({column}, '.') + 1, "
+        f"length({column}) - instr({column}, '.') - 1) || '000000', 1, 6) END"
+    )
+    return f"(substr({column}, 1, 19) || '.' || {fraction} || 'Z')"
+
+
 def upgrade() -> None:
     op.create_table(
         "prepared_actions",
@@ -79,9 +90,8 @@ def upgrade() -> None:
             name="ck_prepared_actions_remote_precondition",
         ),
         sa.CheckConstraint(
-            "julianday(action_expires_at) IS NOT NULL "
-            "AND julianday(prepared_at) IS NOT NULL "
-            "AND julianday(action_expires_at) > julianday(prepared_at)",
+            f"{_canonical_utc_text('action_expires_at')} > "
+            f"{_canonical_utc_text('prepared_at')}",
             name="ck_prepared_actions_expiry",
         ),
     )
@@ -157,9 +167,8 @@ def upgrade() -> None:
             name="ck_approval_records_reason_code",
         ),
         sa.CheckConstraint(
-            "julianday(approval_expires_at) IS NOT NULL "
-            "AND julianday(issued_at) IS NOT NULL "
-            "AND julianday(approval_expires_at) > julianday(issued_at)",
+            f"{_canonical_utc_text('approval_expires_at')} > "
+            f"{_canonical_utc_text('issued_at')}",
             name="ck_approval_records_expiry",
         ),
     )
@@ -278,19 +287,21 @@ def upgrade() -> None:
         "BEFORE DELETE ON prepared_actions "
         "BEGIN SELECT RAISE(ABORT, 'immutable prepared action'); END"
     )
+    approval_expiry = _canonical_utc_text("NEW.approval_expires_at")
+    action_expiry = _canonical_utc_text(
+        "(SELECT action_expires_at FROM prepared_actions WHERE action_id = NEW.action_id)"
+    )
     op.execute(
         "CREATE TRIGGER approval_expiry_guard_insert "
         "BEFORE INSERT ON approval_records "
-        "WHEN julianday(NEW.approval_expires_at) > julianday(("
-        "SELECT action_expires_at FROM prepared_actions WHERE action_id = NEW.action_id"
-        ")) BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
+        f"WHEN {approval_expiry} > {action_expiry} "
+        "BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
     )
     op.execute(
         "CREATE TRIGGER approval_expiry_guard_update "
         "BEFORE UPDATE OF approval_expires_at, action_id ON approval_records "
-        "WHEN julianday(NEW.approval_expires_at) > julianday(("
-        "SELECT action_expires_at FROM prepared_actions WHERE action_id = NEW.action_id"
-        ")) BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
+        f"WHEN {approval_expiry} > {action_expiry} "
+        "BEGIN SELECT RAISE(ABORT, 'approval expiry exceeds action expiry'); END"
     )
     op.execute(
         "CREATE TRIGGER phase6a_action_events_no_update "
