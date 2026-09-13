@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -749,26 +750,65 @@ def consume_heldout_once(
     )
 
 
+class _CliGateToken:
+    __slots__ = ()
+
+
+_CLI_GATE_TOKEN = _CliGateToken()
+
+
 def build_real_heldout_executor_after_cli_gate(
     authorization: HeldoutAuthorization,
     frozen_manifest_sha256: str,
-    *,
-    cli_gate_reached: bool = False,
 ) -> RealHeldoutExecutor:
-    if not cli_gate_reached or not isinstance(authorization, HeldoutAuthorization):
+    """Public compatibility name that cannot construct the real executor."""
+    del authorization, frozen_manifest_sha256
+    raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+
+
+def _build_real_heldout_executor_after_cli_gate(
+    authorization: HeldoutAuthorization,
+    frozen_manifest_sha256: str,
+    *,
+    gate_token: _CliGateToken,
+) -> RealHeldoutExecutor:
+    if gate_token is not _CLI_GATE_TOKEN or not isinstance(authorization, HeldoutAuthorization):
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     if frozen_manifest_sha256 != _FROZEN_HELDOUT_SHA256:
         raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
     return RealHeldoutExecutor()
 
 
-def _trusted_cli_authorization() -> HeldoutAuthorization:
-    """Create the deterministic fake trusted context used by the gated seam."""
-    return HeldoutAuthorization(
-        EvaluationAuthorizationId("cli-human-approved"),
-        TrustedApproverContext("cli-human-approver", "phase6a-heldout-gate"),
-        datetime.now(timezone.utc),
-    )
+def load_trusted_authorization_file(path: Path) -> HeldoutAuthorization:
+    """Authenticate a bounded authorization document using trusted process configuration."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        fields = {"authorization_id", "approver_identity", "context_id", "issued_at", "signature"}
+        if not isinstance(raw, dict) or set(raw) != fields:
+            raise ValueError
+        signature = raw["signature"]
+        if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError
+        key = os.environ.get("AAOS_PHASE6A_AUTHORIZATION_KEY")
+        if not key:
+            raise ValueError
+        payload = {
+            "authorization_id": raw["authorization_id"],
+            "approver_identity": raw["approver_identity"],
+            "context_id": raw["context_id"],
+            "issued_at": raw["issued_at"],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        expected = hmac.new(key.encode(), encoded, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError
+        return HeldoutAuthorization(
+            EvaluationAuthorizationId(raw["authorization_id"]),
+            TrustedApproverContext(raw["approver_identity"], raw["context_id"]),
+            _decode_time(raw["issued_at"]),
+        )
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
 
 
 def run_trusted_case(case: Phase6AEvaluationCase, harness: Phase6AHarness) -> CaseResult:
@@ -905,13 +945,14 @@ def artifact_tree_contains_case_ids(output_dir: Path, *, prefix: str) -> bool:
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic Phase 6A acceptance fixtures")
-    parser.add_argument("--split", choices=("calibration", "consume-heldout"), required=True)
+    parser.add_argument("command", nargs="?", choices=("consume-heldout",))
+    parser.add_argument("--split", choices=("calibration",))
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--bundle", type=Path)
-    parser.add_argument("--human-authorization", action="store_true")
+    parser.add_argument("--authorization", type=Path)
     args = parser.parse_args()
-    if args.split == "calibration":
+    if args.split == "calibration" and args.command is None:
         calibration_result = run_calibration_only(args.manifest)
         print(
             json.dumps(
@@ -925,12 +966,14 @@ def _main() -> int:
             )
         )
         return 0
-    if not args.human_authorization or args.report is None or args.bundle is None:
+    if args.command != "consume-heldout":
+        parser.error("specify --split calibration or the consume-heldout command")
+    if args.authorization is None or args.report is None or args.bundle is None:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
-    authorization = _trusted_cli_authorization()
+    authorization = load_trusted_authorization_file(args.authorization)
     manifest = _load_consumption_manifest(args.manifest)
-    executor = build_real_heldout_executor_after_cli_gate(
-        authorization, manifest.manifest_sha256, cli_gate_reached=True
+    executor = _build_real_heldout_executor_after_cli_gate(
+        authorization, manifest.manifest_sha256, gate_token=_CLI_GATE_TOKEN
     )
     claim_root = (
         Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "aaos-phase6a-acceptance"

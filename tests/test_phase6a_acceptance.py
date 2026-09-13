@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from phase6a_evaluation.harness import (
     build_real_heldout_executor_after_cli_gate,
     consume_heldout_once,
     load_synthetic_manifest,
+    load_trusted_authorization_file,
     run_manifest,
     run_phase6a_trusted_core_acceptance,
 )
@@ -276,3 +278,26 @@ def test_real_executor_factory_requires_explicit_cli_gate() -> None:
             _authorization(),
             "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e",
         )
+
+
+def test_authorization_file_requires_trusted_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = {
+        "authorization_id": "signed-auth",
+        "approver_identity": "signed-approver",
+        "context_id": "signed-context",
+        "issued_at": "2026-09-13T00:00:00Z",
+    }
+    key = "synthetic-test-key"
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    signed = dict(payload)
+    signed["signature"] = hmac.new(key.encode(), encoded, hashlib.sha256).hexdigest()
+    path = tmp_path / "authorization.json"
+    path.write_text(json.dumps(signed), encoding="utf-8")
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", key)
+    authorization = load_trusted_authorization_file(path)
+    assert authorization.authorization_id.value == "signed-auth"
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "wrong-key")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_trusted_authorization_file(path)
