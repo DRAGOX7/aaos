@@ -23,6 +23,8 @@ from aaos.approval.contracts import (
     ActionState,
     ActionType,
     ActorIdentity,
+    AdapterExecutionOutcome,
+    AdapterOutcomeKind,
     ApprovalDecision,
     ApprovalId,
     ApprovalRecord,
@@ -30,8 +32,10 @@ from aaos.approval.contracts import (
     ClaimIdentity,
     EventKind,
     ExecutableAction,
+    ExecutionOutcome,
     HumanDecisionReason,
     OperationId,
+    OperationState,
     Phase6ActionDefinition,
     Phase6ErrorCode,
     PreparedAction,
@@ -51,6 +55,9 @@ from aaos.approval.events import (
     ApprovalRequestedDetails,
     ClaimedDetails,
     InvalidatedDetails,
+    LateResultIgnoredDetails,
+    OutcomeRecordedDetails,
+    ReconciliationDetails,
 )
 from aaos.approval.repository import (
     ApprovalRepository,
@@ -61,9 +68,11 @@ from aaos.approval.repository import (
 from aaos.approval.state import (
     TransitionSource,
     validate_approval_transition,
+    validate_operation_transition,
 )
 from aaos.persistence.approval_models import (
     ActionLifecycleORM,
+    ApprovalConsumptionORM,
     ApprovalRecordORM,
     OperationRecordORM,
     PreparedActionORM,
@@ -163,6 +172,34 @@ class ClaimResult:
             raise TypeError("claimed must be a bool")
         if self.error_code is not None and not isinstance(self.error_code, Phase6ErrorCode):
             raise TypeError("error_code must be a Phase6ErrorCode or None")
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeRecordResult:
+    operation_id: OperationId
+    committed: bool
+    late: bool
+    reported_execution_outcome: ExecutionOutcome | None
+    persisted_execution_outcome: ExecutionOutcome | None
+    action_state: ActionState
+    operation_state: OperationState
+    error_code: Phase6ErrorCode | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationResult:
+    operation_id: OperationId
+    outcome: ExecutionOutcome
+    execute_calls: int
+    committed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryResult:
+    operation_id: OperationId
+    outcome: ExecutionOutcome
+    execute_calls: int
+    reconciliation_required: bool
 
 
 def _utc(value: object, name: str) -> datetime:
@@ -1003,6 +1040,461 @@ def claim_action(
         return ClaimResult(action_id, None, False, _classify_claim_conflict(repository, action_id))
 
 
+def outcome_to_states(
+    kind: AdapterOutcomeKind,
+) -> tuple[ActionState, OperationState]:
+    """Map a closed adapter outcome to the corresponding durable states."""
+
+    if not isinstance(kind, AdapterOutcomeKind):
+        raise TypeError("kind must be an AdapterOutcomeKind")
+    if kind is AdapterOutcomeKind.SUCCESS:
+        return ActionState.CONFIRMED_SUCCESS, OperationState.CONFIRMED_SUCCESS
+    if kind is AdapterOutcomeKind.AUTHORITATIVE_FAILURE:
+        return ActionState.CONFIRMED_FAILURE, OperationState.CONFIRMED_FAILURE
+    if kind is AdapterOutcomeKind.PRECONDITION_STALE:
+        return ActionState.INVALIDATED, OperationState.NOT_DISPATCHED
+    return ActionState.UNKNOWN_OUTCOME, OperationState.UNKNOWN_OUTCOME
+
+
+def adapter_outcome_to_execution_outcome(
+    outcome: AdapterExecutionOutcome,
+) -> ExecutionOutcome | None:
+    """Map adapter evidence without inventing an outcome for stale dispatch."""
+
+    if not isinstance(outcome, AdapterExecutionOutcome):
+        raise TypeError("outcome must be an AdapterExecutionOutcome")
+    if outcome.kind is AdapterOutcomeKind.SUCCESS:
+        return ExecutionOutcome.CONFIRMED_SUCCESS
+    if outcome.kind is AdapterOutcomeKind.AUTHORITATIVE_FAILURE:
+        return ExecutionOutcome.CONFIRMED_FAILURE
+    if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE:
+        return None
+    return ExecutionOutcome.UNKNOWN_OUTCOME
+
+
+def _outcome_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _operation_rows(
+    session: Session, operation_id: OperationId
+) -> tuple[OperationRecordORM, ActionLifecycleORM, ApprovalConsumptionORM]:
+    operation = session.get(OperationRecordORM, operation_id.value)
+    if operation is None:
+        raise PersistenceConflict()
+    lifecycle = session.get(ActionLifecycleORM, operation.action_id)
+    consumption = session.scalar(
+        select(ApprovalConsumptionORM).where(
+            ApprovalConsumptionORM.operation_id == operation_id.value
+        )
+    )
+    if lifecycle is None or consumption is None:
+        raise PersistenceConflict()
+    return operation, lifecycle, consumption
+
+
+def _safe_outcome(value: str | None) -> ExecutionOutcome | None:
+    if value is None:
+        return None
+    try:
+        return ExecutionOutcome(value)
+    except ValueError:
+        raise PersistenceConflict() from None
+
+
+def _late_outcome_result(
+    session: Session,
+    operation_id: OperationId,
+    outcome: AdapterExecutionOutcome,
+) -> OutcomeRecordResult:
+    operation, lifecycle, consumption = _operation_rows(session, operation_id)
+    try:
+        action_state = ActionState(lifecycle.state)
+        operation_state = OperationState(operation.state)
+    except ValueError:
+        raise PersistenceConflict() from None
+    reported = adapter_outcome_to_execution_outcome(outcome)
+    event = ActionEventDraft(
+        action_id=ActionId(operation.action_id),
+        operation_id=operation_id,
+        event_kind=EventKind.LATE_RESULT_IGNORED,
+        source=TransitionSource.DISPATCH_WORKER,
+        actor=ClaimIdentity(consumption.claim_identity),
+        occurred_at=_outcome_now(),
+        details=LateResultIgnoredDetails(
+            operation_id,
+            reported,
+            Phase6ErrorCode.PERSISTENCE_CONFLICT,
+        ),
+    )
+    append_action_event(session, event, expected_action_revision=None)
+    return OutcomeRecordResult(
+        operation_id,
+        committed=False,
+        late=True,
+        reported_execution_outcome=reported,
+        persisted_execution_outcome=_safe_outcome(operation.outcome_kind),
+        action_state=action_state,
+        operation_state=operation_state,
+        error_code=Phase6ErrorCode.PERSISTENCE_CONFLICT,
+    )
+
+
+def record_adapter_outcome(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+    *,
+    expected_revision: int,
+    outcome: AdapterExecutionOutcome,
+) -> OutcomeRecordResult:
+    """Persist one adapter result using the executing-operation CAS."""
+
+    if not isinstance(repository, ApprovalRepository) or not isinstance(operation_id, OperationId):
+        raise TypeError("repository and operation_id must be trusted values")
+    if (
+        isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or expected_revision < 0
+    ):
+        raise ValueError("expected_revision must be a non-negative integer")
+    if not isinstance(outcome, AdapterExecutionOutcome):
+        raise TypeError("outcome must be an AdapterExecutionOutcome")
+    reported = adapter_outcome_to_execution_outcome(outcome)
+    now = _outcome_now()
+    with repository.transaction() as session:
+        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        if (
+            operation.state != OperationState.EXECUTING.value
+            or operation.revision != expected_revision
+        ):
+            return _late_outcome_result(session, operation_id, outcome)
+        action_id = ActionId(operation.action_id)
+        claim_identity = ClaimIdentity(consumption.claim_identity)
+        action_target, operation_target = outcome_to_states(outcome.kind)
+        if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE:
+            event = ActionEventDraft(
+                action_id=action_id,
+                operation_id=operation_id,
+                event_kind=EventKind.ACTION_INVALIDATED,
+                source=TransitionSource.DISPATCH_WORKER,
+                actor=claim_identity,
+                occurred_at=now,
+                details=InvalidatedDetails(Phase6ErrorCode.PRECONDITION_STALE),
+            )
+        else:
+            event = ActionEventDraft(
+                action_id=action_id,
+                operation_id=operation_id,
+                event_kind=EventKind.OUTCOME_RECORDED,
+                source=TransitionSource.DISPATCH_WORKER,
+                actor=claim_identity,
+                occurred_at=now,
+                details=OutcomeRecordedDetails(
+                    operation_id,
+                    reported,
+                    now,
+                    None
+                    if reported is not ExecutionOutcome.UNKNOWN_OUTCOME
+                    else Phase6ErrorCode.UNKNOWN_OUTCOME,
+                ),
+            )
+        if not cas_action_lifecycle(
+            session,
+            action_id=action_id,
+            expected_state=ActionState(lifecycle.state),
+            expected_revision=lifecycle.revision,
+            new_state=action_target,
+            event=event,
+        ):
+            raise PersistenceConflict()
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(OperationRecordORM)
+                .where(
+                    OperationRecordORM.operation_id == operation_id.value,
+                    OperationRecordORM.state == OperationState.EXECUTING.value,
+                    OperationRecordORM.revision == expected_revision,
+                )
+                .values(
+                    state=operation_target.value,
+                    outcome_kind=reported.value if reported is not None else None,
+                    receipt_evidence=outcome.evidence,
+                    outcome_recorded_at=now,
+                    revision=expected_revision + 1,
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            raise PersistenceConflict()
+        return OutcomeRecordResult(
+            operation_id,
+            committed=True,
+            late=False,
+            reported_execution_outcome=reported,
+            persisted_execution_outcome=reported,
+            action_state=action_target,
+            operation_state=operation_target,
+            error_code=(
+                Phase6ErrorCode.PRECONDITION_STALE
+                if outcome.kind is AdapterOutcomeKind.PRECONDITION_STALE
+                else None
+            ),
+        )
+
+
+def _persist_reconciliation(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+    *,
+    expected_revision: int,
+    outcome: AdapterExecutionOutcome,
+    now: datetime,
+) -> ReconciliationResult:
+    outcome_value = adapter_outcome_to_execution_outcome(outcome)
+    if outcome_value is None:
+        outcome_value = ExecutionOutcome.UNKNOWN_OUTCOME
+    with repository.transaction() as session:
+        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        try:
+            action_state = ActionState(lifecycle.state)
+            operation_state = OperationState(operation.state)
+        except ValueError:
+            raise PersistenceConflict() from None
+        if (
+            operation_state is not OperationState.RECONCILIATION_PENDING
+            or operation.revision != expected_revision
+        ):
+            event = ActionEventDraft(
+                action_id=ActionId(operation.action_id),
+                operation_id=operation_id,
+                event_kind=EventKind.LATE_RESULT_IGNORED,
+                source=TransitionSource.RECONCILIATION_WORKER,
+                actor=ClaimIdentity(consumption.claim_identity),
+                occurred_at=now,
+                details=LateResultIgnoredDetails(
+                    operation_id, outcome_value, Phase6ErrorCode.PERSISTENCE_CONFLICT
+                ),
+            )
+            append_action_event(session, event, expected_action_revision=None)
+            return ReconciliationResult(
+                operation_id, _safe_outcome(operation.outcome_kind) or outcome_value, 0, False
+            )
+        action_target, operation_target = outcome_to_states(
+            AdapterOutcomeKind.SUCCESS
+            if outcome_value is ExecutionOutcome.CONFIRMED_SUCCESS
+            else AdapterOutcomeKind.AUTHORITATIVE_FAILURE
+            if outcome_value is ExecutionOutcome.CONFIRMED_FAILURE
+            else AdapterOutcomeKind.UNKNOWN
+        )
+        event = ActionEventDraft(
+            action_id=ActionId(operation.action_id),
+            operation_id=operation_id,
+            event_kind=EventKind.RECONCILIATION_RECORDED,
+            source=TransitionSource.RECONCILIATION_WORKER,
+            actor=ClaimIdentity(consumption.claim_identity),
+            occurred_at=now,
+            details=ReconciliationDetails(operation_id, outcome_value, now),
+        )
+        if not cas_action_lifecycle(
+            session,
+            action_id=ActionId(operation.action_id),
+            expected_state=action_state,
+            expected_revision=lifecycle.revision,
+            new_state=action_target,
+            event=event,
+        ):
+            raise PersistenceConflict()
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(OperationRecordORM)
+                .where(
+                    OperationRecordORM.operation_id == operation_id.value,
+                    OperationRecordORM.state == OperationState.RECONCILIATION_PENDING.value,
+                    OperationRecordORM.revision == expected_revision,
+                )
+                .values(
+                    state=operation_target.value,
+                    outcome_kind=outcome_value.value,
+                    receipt_evidence=outcome.evidence,
+                    outcome_recorded_at=now,
+                    reconciliation_at=now,
+                    revision=expected_revision + 1,
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            raise PersistenceConflict()
+        return ReconciliationResult(operation_id, outcome_value, 0, True)
+
+
+def reconcile_operation(
+    repository: ApprovalRepository,
+    adapter: ExternalAdapter,
+    operation_id: OperationId,
+    *,
+    expected_revision: int,
+    now: datetime,
+) -> ReconciliationResult:
+    """Reconcile only an uncertain operation; never call adapter.execute."""
+
+    if not isinstance(repository, ApprovalRepository) or not isinstance(operation_id, OperationId):
+        raise TypeError("repository and operation_id must be trusted values")
+    if not hasattr(adapter, "reconcile"):
+        raise TypeError("adapter must provide reconcile")
+    now = _utc(now, "now")
+    if (
+        isinstance(expected_revision, bool)
+        or not isinstance(expected_revision, int)
+        or expected_revision < 0
+    ):
+        raise ValueError("expected_revision must be a non-negative integer")
+    pending_revision = expected_revision
+    with repository.transaction() as session:
+        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        operation_state = OperationState(operation.state)
+        action_state = ActionState(lifecycle.state)
+        if operation_state is OperationState.UNKNOWN_OUTCOME:
+            validate_operation_transition(
+                operation_state,
+                OperationState.RECONCILIATION_PENDING,
+                TransitionSource.RECONCILIATION_WORKER,
+            )
+            event = ActionEventDraft(
+                action_id=ActionId(operation.action_id),
+                operation_id=operation_id,
+                event_kind=EventKind.OUTCOME_RECORDED,
+                source=TransitionSource.RECONCILIATION_WORKER,
+                actor=ClaimIdentity(consumption.claim_identity),
+                occurred_at=now,
+                details=OutcomeRecordedDetails(
+                    operation_id, None, now, Phase6ErrorCode.RECONCILIATION_REQUIRED
+                ),
+            )
+            if not cas_action_lifecycle(
+                session,
+                action_id=ActionId(operation.action_id),
+                expected_state=action_state,
+                expected_revision=lifecycle.revision,
+                new_state=ActionState.RECONCILIATION_PENDING,
+                event=event,
+            ):
+                raise PersistenceConflict()
+            updated = cast(
+                CursorResult[Any],
+                session.execute(
+                    update(OperationRecordORM)
+                    .where(
+                        OperationRecordORM.operation_id == operation_id.value,
+                        OperationRecordORM.state == OperationState.UNKNOWN_OUTCOME.value,
+                        OperationRecordORM.revision == expected_revision,
+                    )
+                    .values(
+                        state=OperationState.RECONCILIATION_PENDING.value,
+                        revision=expected_revision + 1,
+                        reconciliation_at=now,
+                    )
+                ),
+            )
+            if updated.rowcount != 1:
+                raise PersistenceConflict()
+            pending_revision += 1
+        elif operation_state is not OperationState.RECONCILIATION_PENDING:
+            persisted = _safe_outcome(operation.outcome_kind) or ExecutionOutcome.UNKNOWN_OUTCOME
+            return ReconciliationResult(operation_id, persisted, 0, False)
+        elif operation.revision != expected_revision:
+            return ReconciliationResult(
+                operation_id,
+                _safe_outcome(operation.outcome_kind) or ExecutionOutcome.UNKNOWN_OUTCOME,
+                0,
+                False,
+            )
+
+    adapter_outcome: AdapterExecutionOutcome
+    try:
+        adapter_outcome = adapter.reconcile(operation_id)
+        if not isinstance(adapter_outcome, AdapterExecutionOutcome):
+            raise TypeError("adapter returned an invalid typed reconciliation outcome")
+    except Exception:
+        adapter_outcome = AdapterExecutionOutcome(
+            AdapterOutcomeKind.UNKNOWN, "reconciliation unavailable"
+        )
+    return _persist_reconciliation(
+        repository,
+        operation_id,
+        expected_revision=pending_revision,
+        outcome=adapter_outcome,
+        now=now,
+    )
+
+
+def recover_inflight_operation(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+    *,
+    now: datetime,
+) -> RecoveryResult:
+    """Recover durable in-flight state without invoking an adapter."""
+
+    if not isinstance(repository, ApprovalRepository) or not isinstance(operation_id, OperationId):
+        raise TypeError("repository and operation_id must be trusted values")
+    now = _utc(now, "now")
+    with repository.transaction() as session:
+        operation, lifecycle, consumption = _operation_rows(session, operation_id)
+        operation_state = OperationState(operation.state)
+        action_state = ActionState(lifecycle.state)
+        persisted = _safe_outcome(operation.outcome_kind)
+        if operation_state is not OperationState.EXECUTING:
+            return RecoveryResult(
+                operation_id,
+                persisted or ExecutionOutcome.UNKNOWN_OUTCOME,
+                0,
+                operation_state
+                in {OperationState.UNKNOWN_OUTCOME, OperationState.RECONCILIATION_PENDING},
+            )
+        event = ActionEventDraft(
+            action_id=ActionId(operation.action_id),
+            operation_id=operation_id,
+            event_kind=EventKind.OUTCOME_RECORDED,
+            source=TransitionSource.DISPATCH_WORKER,
+            actor=ClaimIdentity(consumption.claim_identity),
+            occurred_at=now,
+            details=OutcomeRecordedDetails(
+                operation_id, ExecutionOutcome.UNKNOWN_OUTCOME, now, Phase6ErrorCode.UNKNOWN_OUTCOME
+            ),
+        )
+        if not cas_action_lifecycle(
+            session,
+            action_id=ActionId(operation.action_id),
+            expected_state=action_state,
+            expected_revision=lifecycle.revision,
+            new_state=ActionState.UNKNOWN_OUTCOME,
+            event=event,
+        ):
+            raise PersistenceConflict()
+        result = cast(
+            CursorResult[Any],
+            session.execute(
+                update(OperationRecordORM)
+                .where(
+                    OperationRecordORM.operation_id == operation_id.value,
+                    OperationRecordORM.state == OperationState.EXECUTING.value,
+                    OperationRecordORM.revision == operation.revision,
+                )
+                .values(
+                    state=OperationState.UNKNOWN_OUTCOME.value,
+                    outcome_kind=ExecutionOutcome.UNKNOWN_OUTCOME.value,
+                    outcome_recorded_at=now,
+                    revision=operation.revision + 1,
+                )
+            ),
+        )
+        if result.rowcount != 1:
+            raise PersistenceConflict()
+        return RecoveryResult(operation_id, ExecutionOutcome.UNKNOWN_OUTCOME, 0, True)
+
+
 def dispatch_claimed_operation(
     repository: ApprovalRepository,
     adapter: ExternalAdapter,
@@ -1041,13 +1533,21 @@ __all__ = [
     "ClaimDecision",
     "ClaimResult",
     "ClaimSnapshot",
+    "OutcomeRecordResult",
+    "ReconciliationResult",
+    "RecoveryResult",
     "Phase6ServiceError",
     "approve_approval",
     "claim_action",
+    "adapter_outcome_to_execution_outcome",
     "dispatch_claimed_operation",
     "invalidate_for_trusted_drift",
     "load_executable_action",
     "prepare_action",
+    "outcome_to_states",
+    "record_adapter_outcome",
+    "reconcile_operation",
+    "recover_inflight_operation",
     "reject_approval",
     "request_approval",
     "revoke_approval",
