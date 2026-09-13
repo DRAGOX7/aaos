@@ -35,7 +35,10 @@ def _zone(name: str) -> ZoneInfo:
 def _instant(value: datetime, zone: ZoneInfo, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
-    if not (getattr(value.tzinfo, "key", None) == zone.key or (zone.key == "UTC" and value.utcoffset() == timedelta(0))):
+    if not (
+        getattr(value.tzinfo, "key", None) == zone.key
+        or (zone.key == "UTC" and value.utcoffset() == timedelta(0))
+    ):
         raise ValueError(f"{name} timezone must match declared timezone")
     localized = value.replace(fold=0)
     if localized.astimezone(zone).replace(tzinfo=None) != value.replace(tzinfo=None):
@@ -47,7 +50,9 @@ def _rfc3339(value: datetime) -> str:
     return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def canonicalize_calendar_request(request: CalendarCreateRequest, *, now: datetime) -> CanonicalCalendarEvent:
+def canonicalize_calendar_request(
+    request: CalendarCreateRequest, *, now: datetime
+) -> CanonicalCalendarEvent:
     if not isinstance(request, CalendarCreateRequest):
         raise TypeError("request must be a CalendarCreateRequest")
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
@@ -55,20 +60,44 @@ def canonicalize_calendar_request(request: CalendarCreateRequest, *, now: dateti
     zone = _zone(request.timezone)
     start, end = _instant(request.start, zone, "start"), _instant(request.end, zone, "end")
     current = now.astimezone(timezone.utc)
-    if start >= end: raise ValueError("start must precede end")
-    if end - start > timedelta(hours=24): raise ValueError("duration must not exceed 24 hours")
-    if start < current: raise ValueError("start cannot be in the past")
-    if start > current + timedelta(days=365): raise ValueError("start exceeds horizon")
-    return CanonicalCalendarEvent(_text(request.summary, "summary", 200), _rfc3339(start), _rfc3339(end), request.timezone, _text(request.description, "description", 2000, True), _text(request.location, "location", 300, True), _CANONICAL_TOKEN)
+    if start >= end:
+        raise ValueError("start must precede end")
+    if end - start > timedelta(hours=24):
+        raise ValueError("duration must not exceed 24 hours")
+    if start < current:
+        raise ValueError("start cannot be in the past")
+    if start > current + timedelta(days=365):
+        raise ValueError("start exceeds horizon")
+    return CanonicalCalendarEvent(
+        _text(request.summary, "summary", 200),
+        _rfc3339(start),
+        _rfc3339(end),
+        request.timezone,
+        _text(request.description, "description", 2000, True),
+        _text(request.location, "location", 300, True),
+        _CANONICAL_TOKEN,
+    )
 
 
 def canonical_event_arguments(event: CanonicalCalendarEvent) -> Mapping[str, JSONValue]:
-    if not isinstance(event, CanonicalCalendarEvent) or event._token is not _CANONICAL_TOKEN: raise TypeError("event must be canonical")
-    return {"description": event.description, "end": event.end, "location": event.location, "start": event.start, "summary": event.summary, "timezone": event.timezone}
+    if not isinstance(event, CanonicalCalendarEvent) or event._token is not _CANONICAL_TOKEN:
+        raise TypeError("event must be canonical")
+    return {
+        "description": event.description,
+        "end": event.end,
+        "location": event.location,
+        "start": event.start,
+        "summary": event.summary,
+        "timezone": event.timezone,
+    }
 
 
 def derive_provider_event_id(operation_id: OperationId, *, derivation_version: str) -> str:
-    if not isinstance(operation_id, OperationId): raise TypeError("operation_id must be an OperationId")
-    if not isinstance(derivation_version, str) or not _ID.fullmatch(derivation_version): raise ValueError("invalid derivation version")
-    digest = hashlib.sha256(f"aaos/google-calendar/event/{derivation_version}/{operation_id.value}".encode()).digest()
+    if not isinstance(operation_id, OperationId):
+        raise TypeError("operation_id must be an OperationId")
+    if not isinstance(derivation_version, str) or not _ID.fullmatch(derivation_version):
+        raise ValueError("invalid derivation version")
+    digest = hashlib.sha256(
+        f"aaos/google-calendar/event/{derivation_version}/{operation_id.value}".encode()
+    ).digest()
     return "aaos-" + __import__("base64").b32hexencode(digest).decode().lower().rstrip("=")[:50]
