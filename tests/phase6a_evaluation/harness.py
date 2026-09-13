@@ -894,7 +894,7 @@ def issue_trusted_authorization_file(
     try:
         manifest = _load_consumption_manifest(manifest_path)
         if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
-            raise ValueError
+            raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
         issued = issued_at or datetime.now(timezone.utc)
         _decode_time(_encode_time(issued))
         authorization = HeldoutAuthorization(
