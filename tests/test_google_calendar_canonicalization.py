@@ -31,7 +31,7 @@ def test_summary_limit():
     with pytest.raises(ValueError):
         canonicalize_calendar_request(
             CalendarCreateRequest(
-                "x" * 101, NOW + timedelta(hours=1), NOW + timedelta(hours=2), "UTC"
+                "x" * 201, NOW + timedelta(hours=1), NOW + timedelta(hours=2), "UTC"
             ),
             now=NOW,
         )
