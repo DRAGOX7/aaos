@@ -44,6 +44,15 @@ class CanonicalCalendarEvent:
             raise ValueError(
                 "CanonicalCalendarEvent must be created by canonicalize_calendar_request"
             )
+        if not all(
+            isinstance(getattr(self, n), str) and getattr(self, n)
+            for n in ("summary", "start", "end", "timezone")
+        ):
+            raise TypeError("invalid canonical event fields")
+        if self.description is not None and not isinstance(self.description, str):
+            raise TypeError("description must be a string")
+        if self.location is not None and not isinstance(self.location, str):
+            raise TypeError("location must be a string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +76,8 @@ class GoogleCalendarConfig:
             )
         ) or not isinstance(self.enabled, bool):
             raise TypeError("invalid Google Calendar config fields")
+        if self.oauth_scope != "https://www.googleapis.com/auth/calendar.events":
+            raise ValueError("oauth_scope must be the calendar events scope")
 
 
 def calendar_target(config: GoogleCalendarConfig) -> TargetIdentity:
