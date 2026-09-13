@@ -1,5 +1,5 @@
-# mypy: disable-error-code=no-untyped-def,arg-type
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 import pytest
 
@@ -16,7 +16,7 @@ NOW = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
 
 def req(**kw: object) -> CalendarCreateRequest:
     return CalendarCreateRequest(
-        "Meeting", NOW + timedelta(hours=1), NOW + timedelta(hours=2), "UTC", **kw
+        "Meeting", NOW + timedelta(hours=1), NOW + timedelta(hours=2), "UTC", **cast(Any, kw)
     )
 
 

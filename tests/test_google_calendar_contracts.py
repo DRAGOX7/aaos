@@ -1,5 +1,5 @@
-# mypy: disable-error-code=call-arg,arg-type
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import pytest
 
@@ -28,7 +28,7 @@ def test_valid_complete_request() -> None:
 def test_unknown_fields_are_rejected(kwargs: dict[str, object]) -> None:
     with pytest.raises(TypeError):
         CalendarCreateRequest(
-            "x", datetime.now(timezone.utc), datetime.now(timezone.utc), "UTC", **kwargs
+            "x", datetime.now(timezone.utc), datetime.now(timezone.utc), "UTC", **cast(Any, kwargs)
         )
 
 
