@@ -58,6 +58,7 @@ class CanonicalCalendarEvent:
             ("location", location),
         ):
             object.__setattr__(value, name, item)
+        value.__post_init__()
         return value
 
     def __post_init__(self) -> None:
