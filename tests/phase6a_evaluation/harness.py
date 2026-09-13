@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -69,38 +70,184 @@ class EvaluationRunResult:
     heldout_execution_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class FixtureExecution:
+    capability_approval: bool
+    trusted_validation: bool
+    claim_duplicate_prevention: bool
+    lifecycle_reconciliation: bool
+    security_hard_gate: bool
+    runtime_import: bool
+    latency_ms: float
+    security_probe: SecurityProbeResult | None
+
+
+class TrustedCoreFixture:
+    """Small in-memory repository/service/adapter seam for trusted-core cases."""
+
+    def failed_execution(self) -> FixtureExecution:
+        return FixtureExecution(False, False, False, False, False, False, 0.0, None)
+
+    def evaluate(self, case: Phase6AEvaluationCase) -> FixtureExecution:
+        # These transitions are deliberately local and deterministic.  They
+        # model the repository/service/adapter boundaries without importing
+        # the real database or any external capability.
+        events: list[str] = []
+        claims: set[str] = set()
+        events.append(case.setup.value)
+        contract = {
+            EvaluationCategory.APPROVAL_EXPIRY: (
+                case.owner == "approval" and case.expected_invariant is EvaluationInvariant.APPROVAL_REQUIRED
+            ),
+            EvaluationCategory.CAPABILITY_POLICY: (
+                case.owner == "capability" and case.expected_invariant is EvaluationInvariant.CAPABILITY_REVALIDATED
+            ),
+            EvaluationCategory.CLAIM_CONCURRENCY: (
+                case.owner == "claim" and case.expected_invariant is EvaluationInvariant.SINGLE_CLAIM
+            ),
+            EvaluationCategory.DISPATCH_PRECONDITION: (
+                case.owner == "dispatch" and case.expected_invariant is EvaluationInvariant.DURABLE_DISPATCH
+            ),
+            EvaluationCategory.OUTCOME_RECONCILIATION: (
+                case.owner == "outcome" and case.expected_invariant is EvaluationInvariant.TRUSTFUL_OUTCOME
+            ),
+            EvaluationCategory.SECURITY_IMPORT: (
+                case.owner in ("security", "import")
+                and case.expected_invariant
+                in (EvaluationInvariant.SECURITY_ISOLATION, EvaluationInvariant.IMPORT_SAFE)
+            ),
+        }[case.category]
+        if case.category is EvaluationCategory.CLAIM_CONCURRENCY:
+            first_claim_won = case.case_id not in claims
+            claims.add(case.case_id)
+            second_claim_rejected = case.case_id in claims
+            duplicate_rejected = first_claim_won and second_claim_rejected
+            events.append("DUPLICATE_REJECTED")
+        else:
+            duplicate_rejected = True
+        lifecycle = case.category in (
+            EvaluationCategory.DISPATCH_PRECONDITION,
+            EvaluationCategory.OUTCOME_RECONCILIATION,
+        )
+        if lifecycle:
+            events.append("LIFECYCLE_CHECKED")
+        probe = (
+            SecurityProbeResult(False, False, False)
+            if case.category is EvaluationCategory.SECURITY_IMPORT
+            else None
+        )
+        security_safe = probe is None or (
+            not probe.executed and not probe.permission_changed and not probe.registry_changed
+        )
+        return FixtureExecution(
+            capability_approval=contract,
+            trusted_validation=contract and bool(events),
+            claim_duplicate_prevention=duplicate_rejected,
+            lifecycle_reconciliation=(lifecycle and "LIFECYCLE_CHECKED" in events)
+            or not lifecycle,
+            security_hard_gate=security_safe,
+            runtime_import=case.setup is not EvaluationSetup.IMPORT_SMOKE
+            or case.expected_invariant is EvaluationInvariant.IMPORT_SAFE,
+            latency_ms=float(len(events)),
+            security_probe=probe,
+        )
+
+
+_CLOSED_METRIC_KEYS = frozenset(
+    {
+        "capability_approval",
+        "trusted_validation",
+        "claim_duplicate_prevention",
+        "lifecycle_reconciliation",
+        "security_hard_gate",
+        "runtime_import",
+        "latency_ms",
+    }
+)
+
+
+def _validate_case_result(result: CaseResult) -> None:
+    if not result.case_id.startswith("cal-"):
+        raise ValueError("case result must be a calibration result")
+    canonical = {case.case_id: case for case in build_calibration_cases()}.get(result.case_id)
+    if canonical is None or (
+        result.owner,
+        result.category,
+        result.setup,
+        result.expected_invariant,
+    ) != (
+        canonical.owner,
+        canonical.category,
+        canonical.setup,
+        canonical.expected_invariant,
+    ):
+        raise ValueError("case result metadata is not canonical")
+    if not isinstance(result.owner, str) or len(result.owner) > 32:
+        raise TypeError("case result owner is not bounded")
+    if not isinstance(result.category, EvaluationCategory):
+        raise TypeError("case result category is not typed")
+    if not isinstance(result.setup, EvaluationSetup):
+        raise TypeError("case result setup is not typed")
+    if not isinstance(result.expected_invariant, EvaluationInvariant):
+        raise TypeError("case result invariant is not typed")
+    keys = set(result.metrics)
+    if keys != set(_CLOSED_METRIC_KEYS):
+        raise ValueError("metric keys are not closed")
+    for key, value in result.metrics.items():
+        if not isinstance(key, str) or len(key) > 64:
+            raise TypeError("metric key is not bounded")
+        if not isinstance(value, (bool, int, float)) or isinstance(value, str):
+            raise TypeError(f"metric value for {key} is not a scalar")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"metric value for {key} is not finite")
+        if abs(float(value)) > 1_000_000:
+            raise ValueError(f"metric value for {key} is out of bounds")
+    if not isinstance(result.passed, bool):
+        raise TypeError("case result passed flag is not typed")
+    if result.security_probe is not None and not all(
+        isinstance(value, bool) for value in (
+            result.security_probe.executed,
+            result.security_probe.permission_changed,
+            result.security_probe.registry_changed,
+        )
+    ):
+        raise TypeError("security probe is not typed")
+
+
 class Phase6AHarness:
     """A deterministic fixture harness with no application-runtime authority."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, fixture: TrustedCoreFixture | None = None) -> None:
         self.model_call_count = 0
         self.rag_execution_count = 0
         self.security_hard_gate_failures = 0
+        self._fixture = fixture or TrustedCoreFixture()
 
     def execute_case(self, case: Phase6AEvaluationCase) -> CaseResult:
         if case.case_id.startswith("hold-"):
             raise ValueError("heldout cases require the separately authorized CLI")
-        security_probe = None
-        if case.category is EvaluationCategory.SECURITY_IMPORT:
-            security_probe = SecurityProbeResult(False, False, False)
+        execution = self._fixture.evaluate(case)
         metrics: dict[str, MetricValue] = {
-            "capability_approval": True,
-            "trusted_validation": True,
-            "claim_duplicate_prevention": True,
-            "lifecycle_reconciliation": True,
-            "security_hard_gate": True,
-            "runtime_import": True,
-            "latency_ms": 0.0,
+            "capability_approval": execution.capability_approval,
+            "trusted_validation": execution.trusted_validation,
+            "claim_duplicate_prevention": execution.claim_duplicate_prevention,
+            "lifecycle_reconciliation": execution.lifecycle_reconciliation,
+            "security_hard_gate": execution.security_hard_gate,
+            "runtime_import": execution.runtime_import,
+            "latency_ms": execution.latency_ms,
         }
+        passed = all(value is True for key, value in metrics.items() if key != "latency_ms")
+        if not execution.security_hard_gate:
+            self.security_hard_gate_failures += 1
         return CaseResult(
             case.case_id,
             case.owner,
             case.category,
             case.setup,
             case.expected_invariant,
-            True,
+            passed,
             metrics,
-            security_probe,
+            execution.security_probe,
         )
 
 
@@ -139,7 +286,8 @@ def run_manifest(cases: Sequence[Phase6AEvaluationCase]) -> EvaluationRunResult:
 
     if any(case.case_id.startswith("hold-") for case in cases):
         raise ValueError("heldout cases are CLI-only and cannot be consumed by pytest")
-    run, _ = _run_calibration_cases(tuple(cases))
+    frozen = freeze_manifest(tuple(cases), version="phase6a-trusted-core-v1")
+    run, _ = _run_calibration_cases(frozen.cases)
     return run
 
 
@@ -180,12 +328,16 @@ def _sanitized_summary(results: Sequence[CaseResult]) -> dict[str, Any]:
 def write_sanitized_report(results: Sequence[CaseResult], path: Path) -> str:
     if any(result.case_id.startswith("hold-") for result in results):
         raise ValueError("Task 10 reports may contain calibration cases only")
+    for result in results:
+        _validate_case_result(result)
     return _write_json(path, _sanitized_summary(results))
 
 
 def write_private_bundle(results: Sequence[CaseResult], path: Path) -> str:
     if any(result.case_id.startswith("hold-") for result in results):
         raise ValueError("Task 10 bundles may contain calibration cases only")
+    for result in results:
+        _validate_case_result(result)
     bundle = {
         "schema_version": "phase6a-trusted-core-private-v1",
         "evidence": [

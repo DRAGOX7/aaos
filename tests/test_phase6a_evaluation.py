@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from phase6a_evaluation.harness import (
+    CaseResult,
+    FixtureExecution,
+    Phase6AHarness,
+    TrustedCoreFixture,
     artifact_tree_contains_case_ids,
     run_calibration_and_retain_synthetic_artifacts,
     run_manifest,
+    write_private_bundle,
+    write_sanitized_report,
 )
 from phase6a_evaluation.manifest import (
     build_calibration_cases,
@@ -112,6 +120,55 @@ def test_normal_pytest_path_cannot_reach_real_heldout_executor(
     )
     result = run_manifest(build_calibration_cases())
     assert result.heldout_execution_count == 0
+
+
+def test_freeze_manifest_rejects_relabelled_calibration_case() -> None:
+    cases = list(build_calibration_cases())
+    cases[0] = replace(cases[0], owner="capability")
+    with pytest.raises(ValueError, match="canonical"):
+        freeze_manifest(cases, version="phase6a-trusted-core-v1")
+
+
+def test_freeze_manifest_rejects_relabelled_heldout_case() -> None:
+    cases = list(build_heldout_cases())
+    cases[-1] = replace(cases[-1], setup=cases[-1].setup.ADVERSARIAL_TEXT)
+    with pytest.raises(ValueError, match="canonical"):
+        freeze_manifest(cases, version="phase6a-trusted-core-v1")
+
+
+def test_run_manifest_rejects_relabelled_calibration_case() -> None:
+    cases = list(build_calibration_cases())
+    cases[0] = replace(cases[0], expected_invariant=cases[0].expected_invariant.CAPABILITY_REVALIDATED)
+    with pytest.raises(ValueError, match="canonical"):
+        run_manifest(cases)
+
+
+def test_artifact_writers_reject_open_ended_or_sensitive_metrics(tmp_path: Path) -> None:
+    case = build_calibration_cases()[0]
+    result = CaseResult(
+        case.case_id,
+        case.owner,
+        case.category,
+        case.setup,
+        case.expected_invariant,
+        True,
+        cast(Mapping[str, bool | int | float], {"raw_secret": "do-not-persist"}),
+    )
+    with pytest.raises((TypeError, ValueError), match="metric"):
+        write_sanitized_report((result,), tmp_path / "report.json")
+    with pytest.raises((TypeError, ValueError), match="metric"):
+        write_private_bundle((result,), tmp_path / "bundle.json")
+
+
+def test_trusted_fixture_result_is_failure_sensitive() -> None:
+    class BrokenFixture(TrustedCoreFixture):
+        def evaluate(self, case: object) -> FixtureExecution:
+            del case
+            return self.failed_execution()
+
+    case = build_calibration_cases()[0]
+    result = Phase6AHarness(fixture=BrokenFixture()).execute_case(case)
+    assert result.passed is False
 
 
 def _forbid_model_and_rag_import(

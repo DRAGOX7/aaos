@@ -116,6 +116,8 @@ def _canonical_json(value: object) -> str:
 
 def freeze_manifest(cases: Sequence[Phase6AEvaluationCase], *, version: str) -> FrozenEvaluationManifest:
     version = _require_text(version, "version", 64)
+    if version != MANIFEST_VERSION:
+        raise ValueError("manifest version is not the frozen Phase 6A version")
     ordered = tuple(sorted(cases, key=lambda case: case.case_id))
     if len({case.case_id for case in ordered}) != len(ordered):
         raise ValueError("manifest case IDs must be unique")
@@ -135,6 +137,10 @@ def freeze_manifest(cases: Sequence[Phase6AEvaluationCase], *, version: str) -> 
             raise TypeError("case setup must be an EvaluationSetup")
         if not isinstance(case.expected_invariant, EvaluationInvariant):
             raise TypeError("case invariant must be an EvaluationInvariant")
+    prefixes = {case.case_id.split("-", 1)[0] for case in ordered}
+    if prefixes not in ({"cal"}, {"hold"}):
+        raise ValueError("manifest must contain exactly one canonical split")
+    _validate_canonical_matrix(ordered, next(iter(prefixes)))
     payload = _canonical_json({"version": version, "cases": [case.to_dict() for case in ordered]}).encode()
     return FrozenEvaluationManifest(version, ordered, hashlib.sha256(payload).hexdigest())
 
@@ -176,6 +182,66 @@ def _build_cases(prefix: Literal["cal", "hold"], group_size: int) -> tuple[Phase
             EvaluationInvariant.SECURITY_ISOLATION if security else EvaluationInvariant.IMPORT_SAFE))
         number += 1
     return tuple(cases)
+
+
+def _validate_canonical_matrix(
+    cases: Sequence[Phase6AEvaluationCase], prefix: Literal["cal", "hold"] | str
+) -> None:
+    """Validate labels against the independently declared frozen ID ranges."""
+
+    group_size = 8 if prefix == "cal" else 4
+    expected_count = CALIBRATION_CASE_COUNT if prefix == "cal" else HELDOUT_CASE_COUNT
+    if len(cases) != expected_count:
+        raise ValueError("canonical manifest case count changed")
+    if tuple(case.case_id for case in cases) != tuple(
+        f"{prefix}-{index:03d}" for index in range(1, expected_count + 1)
+    ):
+        raise ValueError("canonical manifest IDs changed")
+    for case in cases:
+        index = int(case.case_id.rsplit("-", 1)[1])
+        if index <= group_size:
+            spec_index = 0
+        elif index <= group_size * 2:
+            spec_index = 1
+        elif index <= group_size * 3:
+            spec_index = 2
+        elif index <= group_size * 4:
+            spec_index = 3
+        elif index <= group_size * 5:
+            spec_index = 4
+        else:
+            offset = index - (group_size * 5) - 1
+            security_count = 4 if prefix == "cal" else 2
+            expected_owner = "security" if offset < security_count else "import"
+            expected_setup = (
+                EvaluationSetup.ADVERSARIAL_TEXT
+                if offset < security_count
+                else EvaluationSetup.IMPORT_SMOKE
+            )
+            expected_invariant = (
+                EvaluationInvariant.SECURITY_ISOLATION
+                if offset < security_count
+                else EvaluationInvariant.IMPORT_SAFE
+            )
+            expected_language = "en" if offset < group_size // 2 else "ar"
+            if (case.owner, case.setup, case.expected_invariant, case.language_fixture) != (
+                expected_owner,
+                expected_setup,
+                expected_invariant,
+                expected_language,
+            ):
+                raise ValueError("case labels do not match the canonical manifest")
+            continue
+        category, owner, invariant, setups = _CATEGORY_SPECS[spec_index]
+        offset = (index - 1) % group_size
+        if (case.category, case.owner, case.expected_invariant, case.setup, case.language_fixture) != (
+            category,
+            owner,
+            invariant,
+            setups[offset % len(setups)],
+            None,
+        ):
+            raise ValueError("case labels do not match the canonical manifest")
 
 
 def _validate_built_matrix(cases: Sequence[Phase6AEvaluationCase], *, prefix: Literal["cal", "hold"], expected: int) -> tuple[Phase6AEvaluationCase, ...]:
