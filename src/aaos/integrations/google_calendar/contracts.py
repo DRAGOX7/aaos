@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 
 from aaos.approval.contracts import TargetIdentity
 
@@ -67,6 +68,10 @@ class CanonicalCalendarEvent:
             for n in ("summary", "start", "end", "timezone")
         ):
             raise TypeError("invalid canonical event fields")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*Z", self.start) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T.*Z", self.end
+        ):
+            raise ValueError("canonical instants must be RFC3339 UTC")
         if self.description is not None and not isinstance(self.description, str):
             raise TypeError("description must be a string")
         if self.location is not None and not isinstance(self.location, str):
