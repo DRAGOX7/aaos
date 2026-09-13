@@ -22,7 +22,16 @@ def _text(value: str | None, name: str, limit: int, optional: bool = False) -> s
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string")
     value = unicodedata.normalize("NFKC", value)
-    if not value or len(value) > limit or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
+    if optional and value == "":
+        return None
+    if (
+        not value
+        or len(value) > limit
+        or any(
+            ord(c) < 32 or 127 <= ord(c) <= 159 or unicodedata.category(c) in {"Cc", "Cf"}
+            for c in value
+        )
+    ):
         raise ValueError(f"{name} is invalid or exceeds its limit")
     return value
 
@@ -49,7 +58,9 @@ def _instant(value: datetime, zone: ZoneInfo, name: str) -> datetime:
     ):
         raise ValueError(f"{name} timezone must match declared timezone")
     localized = value.replace(fold=0)
-    if localized.astimezone(zone).replace(tzinfo=None) != value.replace(tzinfo=None):
+    if localized.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != value.replace(
+        tzinfo=None
+    ):
         raise ValueError(f"{name} is nonexistent in declared timezone")
     return value.astimezone(timezone.utc)
 
