@@ -15,8 +15,8 @@ _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _RFC3339_UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 
 
-def _has_control(value: str) -> bool:
-    return any(unicodedata.category(character) in {"Cc", "Cf"} for character in value)
+def _has_disallowed_unicode(value: str) -> bool:
+    return any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value)
 
 
 def _canonical_text(
@@ -34,7 +34,7 @@ def _canonical_text(
         not value
         or len(value) > limit
         or unicodedata.normalize("NFKC", value) != value
-        or _has_control(value)
+        or _has_disallowed_unicode(value)
     ):
         raise ValueError(f"{name} is not canonical")
 
@@ -56,7 +56,7 @@ def _canonical_instant(value: object, name: str) -> datetime:
 def _config_text(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string")
-    if not value or len(value) > _CONFIG_VALUE_LIMIT or _has_control(value):
+    if not value or len(value) > _CONFIG_VALUE_LIMIT or _has_disallowed_unicode(value):
         raise ValueError(f"{name} is invalid or exceeds its limit")
     return value
 

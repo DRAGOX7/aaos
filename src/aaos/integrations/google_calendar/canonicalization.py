@@ -28,7 +28,7 @@ def _text(value: str | None, name: str, limit: int, optional: bool = False) -> s
         not value
         or len(value) > limit
         or any(
-            ord(c) < 32 or 127 <= ord(c) <= 159 or unicodedata.category(c) in {"Cc", "Cf"}
+            ord(c) < 32 or 127 <= ord(c) <= 159 or unicodedata.category(c) in {"Cc", "Cf", "Cs"}
             for c in value
         )
     ):
@@ -52,10 +52,7 @@ def _zone(name: str) -> ZoneInfo:
 def _instant(value: datetime, zone: ZoneInfo, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
-    if not (
-        getattr(value.tzinfo, "key", None) == zone.key
-        or (zone.key == "UTC" and value.utcoffset() == timedelta(0))
-    ):
+    if getattr(value.tzinfo, "key", None) != zone.key:
         raise ValueError(f"{name} timezone must match declared timezone")
     utc_value = value.astimezone(timezone.utc)
     roundtrip = utc_value.astimezone(zone)

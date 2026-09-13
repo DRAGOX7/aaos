@@ -121,6 +121,9 @@ def test_canonical_event_rejects_direct_construction() -> None:
     "overrides",
     [
         pytest.param({"summary": "Meeting\u202e"}, id="format-control"),
+        pytest.param({"summary": "Meeting\ud800"}, id="surrogate"),
+        pytest.param({"description": "Agenda\ud800"}, id="description-surrogate"),
+        pytest.param({"location": "Room\ud800"}, id="location-surrogate"),
         pytest.param({"summary": "Å"}, id="noncanonical-unicode"),
         pytest.param({"start": "not-rfc3339"}, id="malformed-start"),
         pytest.param({"end": "2026-09-14T12:00:00.000000Z"}, id="reversed-instants"),
@@ -189,6 +192,15 @@ def test_google_calendar_config_adapter_version_is_safe_and_bounded() -> None:
     for version in ("", "_v1", "v 1", "v" * 129):
         with pytest.raises(ValueError):
             config(provider_adapter_version=version)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["calendar_id", "expected_service_identity", "credential_path"],
+)
+def test_google_calendar_config_rejects_unicode_surrogates(field: str) -> None:
+    with pytest.raises(ValueError):
+        config(**{field: "trusted\ud800value"})
 
 
 def test_calendar_target_is_a_trusted_deterministic_projection() -> None:

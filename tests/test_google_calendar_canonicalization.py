@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -16,7 +16,7 @@ from aaos.integrations.google_calendar.contracts import (
     CanonicalCalendarEvent,
 )
 
-NOW = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, 12, tzinfo=ZoneInfo("UTC"))
 DEFAULT_START = NOW + timedelta(hours=1)
 DEFAULT_END = NOW + timedelta(hours=2)
 
@@ -79,8 +79,11 @@ def test_location_limit() -> None:
         pytest.param("summary", "bad\x00text", id="nul"),
         pytest.param("summary", "bad\ntext", id="unicode-cc"),
         pytest.param("summary", "invoice\u202efdp", id="unicode-cf"),
+        pytest.param("summary", "bad\ud800text", id="unicode-surrogate"),
         pytest.param("description", "agenda\u2066hidden", id="description-format-control"),
+        pytest.param("description", "agenda\ud800hidden", id="description-surrogate"),
         pytest.param("location", "room\u0085hidden", id="location-control"),
+        pytest.param("location", "room\ud800hidden", id="location-surrogate"),
     ],
 )
 def test_nul_and_control_text_rejected(field: str, payload: str) -> None:
@@ -95,9 +98,10 @@ def test_nul_and_control_text_rejected(field: str, payload: str) -> None:
         canonicalize_calendar_request(invalid_request, now=NOW)
 
 
-def test_invalid_timezone_rejected() -> None:
-    with pytest.raises(ValueError):
-        canonicalize_calendar_request(request(timezone_name="No/Such"), now=NOW)
+@pytest.mark.parametrize("timezone_name", ["No/Such", "bad\ud800zone"])
+def test_invalid_timezone_rejected(timezone_name: str) -> None:
+    with pytest.raises(ValueError, match="timezone must be a valid IANA timezone"):
+        canonicalize_calendar_request(request(timezone_name=timezone_name), now=NOW)
 
 
 @pytest.mark.parametrize("field", ["start", "end"])
@@ -118,6 +122,21 @@ def test_mixed_timezone_identity_rejected() -> None:
                 start=datetime(2026, 3, 8, 3, 30, tzinfo=new_york),
                 end=datetime(2026, 3, 8, 4, 30, tzinfo=new_york),
                 timezone_name="America/Chicago",
+            ),
+            now=NOW,
+        )
+
+
+def test_zero_offset_foreign_timezone_identity_rejected() -> None:
+    london = ZoneInfo("Europe/London")
+    utc = ZoneInfo("UTC")
+
+    with pytest.raises(ValueError, match="timezone must match"):
+        canonicalize_calendar_request(
+            request(
+                start=datetime(2026, 1, 15, 13, tzinfo=london),
+                end=datetime(2026, 1, 15, 14, tzinfo=utc),
+                timezone_name="UTC",
             ),
             now=NOW,
         )
