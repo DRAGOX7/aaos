@@ -1313,6 +1313,12 @@ def _persist_reconciliation(
                     0,
                     False,
                 )
+            # A concurrent reconciler may have terminally advanced the action
+            # while this operation row still appears pending.  Do not ask the
+            # transition validator to evaluate a same-state terminal write;
+            # classify this stale adapter report as a CAS loser instead.
+            if action_state is not ActionState.RECONCILIATION_PENDING:
+                raise _ReconciliationCASLost()
             action_target, operation_target = outcome_to_states(
                 AdapterOutcomeKind.SUCCESS
                 if outcome_value is ExecutionOutcome.CONFIRMED_SUCCESS
@@ -1388,9 +1394,13 @@ def _late_reconciliation_result(
             ),
         )
         append_action_event(session, event, expected_action_revision=None)
+        # Only the value already persisted by the winning reconciler is
+        # durable truth.  A stale adapter report must not masquerade as the
+        # current outcome when no persisted outcome exists (for example while
+        # a terminal action and a pending operation are briefly inconsistent).
         return ReconciliationResult(
             operation_id,
-            None if operation_state is OperationState.NOT_DISPATCHED else persisted or reported,
+            None if operation_state is OperationState.NOT_DISPATCHED else persisted,
             0,
             False,
         )

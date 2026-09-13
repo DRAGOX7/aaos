@@ -38,7 +38,7 @@ from aaos.approval.service import (
     recover_inflight_operation,
 )
 from aaos.persistence.academic_models import Base
-from aaos.persistence.approval_models import ActionEventORM, OperationRecordORM
+from aaos.persistence.approval_models import ActionEventORM, ActionLifecycleORM, OperationRecordORM
 from aaos.persistence.database import create_database_engine, create_session_factory
 
 
@@ -447,3 +447,53 @@ def test_db_errors_are_sanitized_to_persistence_conflict(
     with pytest.raises(PersistenceConflict) as error:
         recover_inflight_operation(repo, operation_id, now=NOW)
     assert str(error.value) == Phase6ErrorCode.PERSISTENCE_CONFLICT.value
+
+
+def test_reconciliation_terminal_action_interleaving_is_safe_late_result(
+    repo: ApprovalRepository, sessions: sessionmaker[Session]
+) -> None:
+    operation_id = _executing(repo)
+    record_adapter_outcome(
+        repo,
+        operation_id,
+        expected_revision=1,
+        outcome=AdapterExecutionOutcome(AdapterOutcomeKind.UNKNOWN, "uncertain"),
+    )
+    # Two independent committed sessions model a reconciliation race where an
+    # action terminal write is visible before the stale operation snapshot.
+    with sessions() as session:
+        operation = session.scalar(
+            select(OperationRecordORM).where(OperationRecordORM.operation_id == operation_id.value)
+        )
+        assert operation is not None
+        operation.state = OperationState.RECONCILIATION_PENDING.value
+        operation.revision = 3
+        operation.outcome_kind = None
+        lifecycle = session.get(ActionLifecycleORM, operation.action_id)
+        assert lifecycle is not None
+        lifecycle.state = ActionState.CONFIRMED_SUCCESS.value
+        lifecycle.revision += 1
+        session.commit()
+
+    class SuccessfulReconciler(FakeExternalAdapter):
+        def reconcile(self, operation):  # type: ignore[no-untyped-def]
+            from aaos.approval.contracts import AdapterReconciliationOutcome
+
+            return AdapterReconciliationOutcome(AdapterOutcomeKind.SUCCESS, "stale-winner")
+
+    result = reconcile_operation(
+        repo,
+        SuccessfulReconciler(_claimed(repo)[1]),
+        operation_id,
+        expected_revision=3,
+        now=NOW + timedelta(minutes=2),
+    )
+    assert result.committed is False
+    assert result.outcome is None
+    with sessions() as session:
+        events = session.scalars(
+            select(ActionEventORM).where(
+                ActionEventORM.event_kind == EventKind.LATE_RESULT_IGNORED.value
+            )
+        ).all()
+    assert len(events) == 1
