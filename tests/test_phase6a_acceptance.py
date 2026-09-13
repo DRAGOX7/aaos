@@ -50,12 +50,14 @@ def _synthetic_manifest_path(tmp_path: Path, case_ids: tuple[str, ...]) -> Path:
     return path
 
 
-def _authorization() -> HeldoutAuthorization:
+def _authorization(
+    manifest_sha256: str = "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e",
+) -> HeldoutAuthorization:
     return HeldoutAuthorization(
         EvaluationAuthorizationId("synthetic-auth"),
         TrustedApproverContext("synthetic-approver", "synthetic-context"),
         datetime.now(timezone.utc),
-        "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e",
+        manifest_sha256,
     )
 
 
@@ -99,13 +101,14 @@ def test_synthetic_consumption_requires_authorization(tmp_path: Path) -> None:
 
 def test_synthetic_consumption_is_one_time_and_filename_independent(tmp_path: Path) -> None:
     manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001", "synthetic-002"))
+    manifest = load_synthetic_manifest(manifest_path)
     store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
     executor = FakeHeldoutExecutor()
     first = consume_heldout_once(
         manifest_path,
         tmp_path / "report-a.json",
         tmp_path / "bundle-a.bin",
-        _authorization(),
+        _authorization(manifest.manifest_sha256),
         claim_store=store,
         executor=executor,
     )
@@ -116,14 +119,38 @@ def test_synthetic_consumption_is_one_time_and_filename_independent(tmp_path: Pa
             manifest_path,
             tmp_path / "report-b.json",
             tmp_path / "bundle-b.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=store,
             executor=FakeHeldoutExecutor(),
         )
 
 
+def test_authorization_for_one_manifest_cannot_consume_another(
+    tmp_path: Path,
+) -> None:
+    manifest_a_dir = tmp_path / "manifest-a"
+    manifest_b_dir = tmp_path / "manifest-b"
+    manifest_a_dir.mkdir()
+    manifest_b_dir.mkdir()
+    manifest_a_path = _synthetic_manifest_path(manifest_a_dir, ("synthetic-a",))
+    manifest_b_path = _synthetic_manifest_path(manifest_b_dir, ("synthetic-b",))
+    manifest_a = load_synthetic_manifest(manifest_a_path)
+    executor = FakeHeldoutExecutor()
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        consume_heldout_once(
+            manifest_b_path,
+            tmp_path / "report.json",
+            tmp_path / "bundle.bin",
+            _authorization(manifest_a.manifest_sha256),
+            claim_store=FakeHeldoutClaimStore(),
+            executor=executor,
+        )
+    assert executor.call_count == 0
+
+
 def test_preexisting_single_artifact_is_rejected_before_claim(tmp_path: Path) -> None:
     manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
     (tmp_path / "report.json").write_text("pre-existing", encoding="utf-8")
     executor = FakeHeldoutExecutor()
     with pytest.raises(HeldoutConsumptionError, match="HELDOUT_ARTIFACT_EXISTS"):
@@ -131,7 +158,7 @@ def test_preexisting_single_artifact_is_rejected_before_claim(tmp_path: Path) ->
             manifest_path,
             tmp_path / "report.json",
             tmp_path / "bundle.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=FakeHeldoutClaimStore(),
             executor=executor,
         )
@@ -144,7 +171,7 @@ def test_existing_in_progress_claim_blocks_rerun(tmp_path: Path) -> None:
     store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
     store.create_in_progress_claim(
         manifest_sha256=manifest.manifest_sha256,
-        authorization_id=_authorization().authorization_id,
+        authorization_id=_authorization(manifest.manifest_sha256).authorization_id,
         claimed_at=datetime.now(timezone.utc),
     )
     executor = FakeHeldoutExecutor()
@@ -153,7 +180,7 @@ def test_existing_in_progress_claim_blocks_rerun(tmp_path: Path) -> None:
             manifest_path,
             tmp_path / "report.json",
             tmp_path / "bundle.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=store,
             executor=executor,
         )
@@ -162,6 +189,7 @@ def test_existing_in_progress_claim_blocks_rerun(tmp_path: Path) -> None:
 
 def test_crash_after_executor_start_leaves_durable_claim(tmp_path: Path) -> None:
     manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
     claim_db = tmp_path / "claims.sqlite"
     store = SQLiteHeldoutClaimStore(claim_db)
 
@@ -180,7 +208,7 @@ def test_crash_after_executor_start_leaves_durable_claim(tmp_path: Path) -> None
             manifest_path,
             tmp_path / "report.json",
             tmp_path / "bundle.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=store,
             executor=crashing,
         )
@@ -191,7 +219,7 @@ def test_crash_after_executor_start_leaves_durable_claim(tmp_path: Path) -> None
             manifest_path,
             tmp_path / "report-retry.json",
             tmp_path / "bundle-retry.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=reopened,
             executor=second,
         )
@@ -200,16 +228,17 @@ def test_crash_after_executor_start_leaves_durable_claim(tmp_path: Path) -> None
 
 
 def test_orphaned_artifacts_fail_closed_without_execution(tmp_path: Path) -> None:
-    manifest = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
     (tmp_path / "report.json").write_text("orphan", encoding="utf-8")
     (tmp_path / "bundle.bin").write_bytes(b"orphan")
     executor = FakeHeldoutExecutor()
     with pytest.raises(HeldoutConsumptionError, match="HELDOUT_RECONCILIATION_REQUIRED"):
         consume_heldout_once(
-            manifest,
+            manifest_path,
             tmp_path / "report.json",
             tmp_path / "bundle.bin",
-            _authorization(),
+            _authorization(manifest.manifest_sha256),
             claim_store=FakeHeldoutClaimStore(),
             executor=executor,
         )
@@ -232,6 +261,7 @@ def test_changed_manifest_is_rejected(tmp_path: Path) -> None:
 
 def test_concurrent_consumers_create_one_claim_and_execute_once(tmp_path: Path) -> None:
     manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
     store = SQLiteHeldoutClaimStore(tmp_path / "claims.sqlite")
 
     def consume(index: int) -> str:
@@ -241,7 +271,7 @@ def test_concurrent_consumers_create_one_claim_and_execute_once(tmp_path: Path) 
                 manifest_path,
                 tmp_path / f"report-{index}.json",
                 tmp_path / f"bundle-{index}.bin",
-                _authorization(),
+                _authorization(manifest.manifest_sha256),
                 claim_store=store,
                 executor=executor,
             )

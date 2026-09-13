@@ -695,10 +695,7 @@ def consume_heldout_once(
     if authorization is None or not isinstance(authorization, HeldoutAuthorization):
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     manifest = _load_consumption_manifest(manifest_path)
-    if (
-        manifest.manifest_sha256 == _FROZEN_HELDOUT_SHA256
-        and authorization.manifest_sha256 != manifest.manifest_sha256
-    ):
+    if authorization.manifest_sha256 != manifest.manifest_sha256:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
     if existing is not None:
