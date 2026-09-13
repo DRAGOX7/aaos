@@ -356,6 +356,9 @@ def _transaction(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     else:
         try:
             session.commit()
+        except SQLAlchemyError:
+            session.rollback()
+            raise PersistenceConflict() from None
         except BaseException:
             session.rollback()
             raise

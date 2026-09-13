@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import traceback
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier, Lock
 from typing import cast
 
 import pytest
@@ -520,6 +523,67 @@ def test_repository_transaction_commits_or_rolls_back_exactly_once(engine: Engin
         with repository.transaction():
             raise RuntimeError("forced")
     assert (CountingSession.commits, CountingSession.rollbacks) == (1, 1)
+
+
+def test_repository_transaction_translates_commit_time_database_failure(
+    engine: Engine,
+) -> None:
+    repository = ApprovalRepository(create_session_factory(engine))
+
+    with pytest.raises(PersistenceConflict) as error:
+        with repository.transaction() as session:
+            session.add(
+                ActionEventORM(
+                    event_id="orphan-event",
+                    action_id="missing-action",
+                    sequence=0,
+                    event_kind=EventKind.ACTION_PREPARED.value,
+                    detail_payload="{}",
+                    occurred_at=NOW,
+                    actor_identity=ACTOR.value,
+                )
+            )
+
+    assert error.value.code is Phase6ErrorCode.PERSISTENCE_CONFLICT
+    assert str(error.value) == Phase6ErrorCode.PERSISTENCE_CONFLICT.value
+    rendered_error = "".join(traceback.format_exception(error.value))
+    assert "INSERT" not in rendered_error
+    assert "missing-action" not in rendered_error
+
+
+def test_concurrent_connections_allocate_unique_monotonic_event_sequences(
+    sessions: sessionmaker[Session],
+) -> None:
+    seed_action(sessions)
+    repository = ApprovalRepository(sessions)
+    ready = Barrier(2)
+    results_lock = Lock()
+    connection_ids: list[int] = []
+
+    def append_from_independent_connection() -> int:
+        with repository.transaction() as session:
+            connection_id = id(session.connection())
+            with results_lock:
+                connection_ids.append(connection_id)
+            ready.wait(timeout=10)
+            return append_action_event(
+                session,
+                prepared_event(),
+                expected_action_revision=None,
+            ).sequence
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(append_from_independent_connection) for _ in range(2)]
+        allocated = [future.result(timeout=20) for future in futures]
+
+    assert len(set(connection_ids)) == 2
+    assert sorted(allocated) == [0, 1]
+    with sessions() as session:
+        history = read_action_event_history(session, ACTION_ID)
+        assert [record.sequence for record in history] == [0, 1]
+        counter = session.get(ActionEventCounterORM, ACTION_ID.value)
+        assert counter is not None
+        assert counter.next_sequence == 2
 
 
 def test_event_history_query_is_ordered_by_sequence(sessions: sessionmaker[Session]) -> None:
