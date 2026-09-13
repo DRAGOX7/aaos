@@ -56,13 +56,25 @@ class Phase6AEvaluationCase:
     expected_invariant: EvaluationInvariant
 
     def to_dict(self) -> dict[str, str | None]:
-        return {"case_id": self.case_id, "owner": self.owner, "category": self.category.value,
-                "language_fixture": self.language_fixture, "setup": self.setup.value,
-                "expected_invariant": self.expected_invariant.value}
+        return {
+            "case_id": self.case_id,
+            "owner": self.owner,
+            "category": self.category.value,
+            "language_fixture": self.language_fixture,
+            "setup": self.setup.value,
+            "expected_invariant": self.expected_invariant.value,
+        }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> Phase6AEvaluationCase:
-        expected = {"case_id", "owner", "category", "language_fixture", "setup", "expected_invariant"}
+        expected = {
+            "case_id",
+            "owner",
+            "category",
+            "language_fixture",
+            "setup",
+            "expected_invariant",
+        }
         if set(raw) != expected:
             raise ValueError("evaluation case has unknown or missing fields")
         language = raw["language_fixture"]
@@ -72,9 +84,14 @@ class Phase6AEvaluationCase:
         owners = ("approval", "capability", "claim", "dispatch", "outcome", "security", "import")
         if owner not in owners:
             raise ValueError("invalid case owner")
-        return cls(_require_text(raw["case_id"], "case_id", 64), cast(Owner, owner),
-                   EvaluationCategory(raw["category"]), cast(LanguageFixture | None, language),
-                   EvaluationSetup(raw["setup"]), EvaluationInvariant(raw["expected_invariant"]))
+        return cls(
+            _require_text(raw["case_id"], "case_id", 64),
+            cast(Owner, owner),
+            EvaluationCategory(raw["category"]),
+            cast(LanguageFixture | None, language),
+            EvaluationSetup(raw["setup"]),
+            EvaluationInvariant(raw["expected_invariant"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,8 +104,11 @@ class FrozenEvaluationManifest:
         object.__setattr__(self, "cases", tuple(self.cases))
 
     def to_dict(self) -> dict[str, Any]:
-        return {"version": self.version, "cases": [case.to_dict() for case in self.cases],
-                "manifest_sha256": self.manifest_sha256}
+        return {
+            "version": self.version,
+            "cases": [case.to_dict() for case in self.cases],
+            "manifest_sha256": self.manifest_sha256,
+        }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> FrozenEvaluationManifest:
@@ -97,8 +117,10 @@ class FrozenEvaluationManifest:
         cases_raw = raw["cases"]
         if not isinstance(cases_raw, list):
             raise TypeError("manifest cases must be a list")
-        manifest = freeze_manifest(tuple(Phase6AEvaluationCase.from_dict(case) for case in cases_raw),
-                                   version=_require_text(raw["version"], "version", 64))
+        manifest = freeze_manifest(
+            tuple(Phase6AEvaluationCase.from_dict(case) for case in cases_raw),
+            version=_require_text(raw["version"], "version", 64),
+        )
         if manifest.manifest_sha256 != raw["manifest_sha256"]:
             raise ValueError("manifest fingerprint mismatch")
         return manifest
@@ -114,7 +136,9 @@ def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def freeze_manifest(cases: Sequence[Phase6AEvaluationCase], *, version: str) -> FrozenEvaluationManifest:
+def freeze_manifest(
+    cases: Sequence[Phase6AEvaluationCase], *, version: str
+) -> FrozenEvaluationManifest:
     version = _require_text(version, "version", 64)
     if version != MANIFEST_VERSION:
         raise ValueError("manifest version is not the frozen Phase 6A version")
@@ -127,7 +151,15 @@ def freeze_manifest(cases: Sequence[Phase6AEvaluationCase], *, version: str) -> 
         _require_text(case.case_id, "case_id", 64)
         if not re.fullmatch(r"(?:cal|hold)-\d{3}", case.case_id):
             raise ValueError("case_id must use the cal-NNN or hold-NNN form")
-        if case.owner not in ("approval", "capability", "claim", "dispatch", "outcome", "security", "import"):
+        if case.owner not in (
+            "approval",
+            "capability",
+            "claim",
+            "dispatch",
+            "outcome",
+            "security",
+            "import",
+        ):
             raise ValueError("invalid case owner")
         if not isinstance(case.category, EvaluationCategory):
             raise TypeError("case category must be an EvaluationCategory")
@@ -141,45 +173,99 @@ def freeze_manifest(cases: Sequence[Phase6AEvaluationCase], *, version: str) -> 
     if prefixes not in ({"cal"}, {"hold"}):
         raise ValueError("manifest must contain exactly one canonical split")
     _validate_canonical_matrix(ordered, next(iter(prefixes)))
-    payload = _canonical_json({"version": version, "cases": [case.to_dict() for case in ordered]}).encode()
+    payload = _canonical_json(
+        {"version": version, "cases": [case.to_dict() for case in ordered]}
+    ).encode()
     return FrozenEvaluationManifest(version, ordered, hashlib.sha256(payload).hexdigest())
 
 
-_CATEGORY_SPECS: tuple[tuple[EvaluationCategory, Owner, EvaluationInvariant, tuple[EvaluationSetup, ...]], ...] = (
-    (EvaluationCategory.APPROVAL_EXPIRY, "approval", EvaluationInvariant.APPROVAL_REQUIRED,
-     (EvaluationSetup.PREPARED, EvaluationSetup.APPROVAL_PENDING, EvaluationSetup.APPROVED,
-      EvaluationSetup.APPROVAL_PENDING, EvaluationSetup.APPROVED, EvaluationSetup.APPROVAL_PENDING,
-      EvaluationSetup.APPROVED, EvaluationSetup.APPROVAL_PENDING)),
-    (EvaluationCategory.CAPABILITY_POLICY, "capability", EvaluationInvariant.CAPABILITY_REVALIDATED,
-     (EvaluationSetup.PREPARED, EvaluationSetup.APPROVAL_PENDING, EvaluationSetup.APPROVED,
-      EvaluationSetup.PREPARED, EvaluationSetup.APPROVAL_PENDING, EvaluationSetup.APPROVED,
-      EvaluationSetup.PREPARED, EvaluationSetup.APPROVED)),
-    (EvaluationCategory.CLAIM_CONCURRENCY, "claim", EvaluationInvariant.SINGLE_CLAIM,
-     (EvaluationSetup.APPROVED, EvaluationSetup.CLAIMED) * 4),
-    (EvaluationCategory.DISPATCH_PRECONDITION, "dispatch", EvaluationInvariant.DURABLE_DISPATCH,
-     (EvaluationSetup.CLAIMED, EvaluationSetup.EXECUTING) * 4),
-    (EvaluationCategory.OUTCOME_RECONCILIATION, "outcome", EvaluationInvariant.TRUSTFUL_OUTCOME,
-     (EvaluationSetup.EXECUTING, EvaluationSetup.RECONCILIATION) * 4),
+_CATEGORY_SPECS: tuple[
+    tuple[EvaluationCategory, Owner, EvaluationInvariant, tuple[EvaluationSetup, ...]], ...
+] = (
+    (
+        EvaluationCategory.APPROVAL_EXPIRY,
+        "approval",
+        EvaluationInvariant.APPROVAL_REQUIRED,
+        (
+            EvaluationSetup.PREPARED,
+            EvaluationSetup.APPROVAL_PENDING,
+            EvaluationSetup.APPROVED,
+            EvaluationSetup.APPROVAL_PENDING,
+            EvaluationSetup.APPROVED,
+            EvaluationSetup.APPROVAL_PENDING,
+            EvaluationSetup.APPROVED,
+            EvaluationSetup.APPROVAL_PENDING,
+        ),
+    ),
+    (
+        EvaluationCategory.CAPABILITY_POLICY,
+        "capability",
+        EvaluationInvariant.CAPABILITY_REVALIDATED,
+        (
+            EvaluationSetup.PREPARED,
+            EvaluationSetup.APPROVAL_PENDING,
+            EvaluationSetup.APPROVED,
+            EvaluationSetup.PREPARED,
+            EvaluationSetup.APPROVAL_PENDING,
+            EvaluationSetup.APPROVED,
+            EvaluationSetup.PREPARED,
+            EvaluationSetup.APPROVED,
+        ),
+    ),
+    (
+        EvaluationCategory.CLAIM_CONCURRENCY,
+        "claim",
+        EvaluationInvariant.SINGLE_CLAIM,
+        (EvaluationSetup.APPROVED, EvaluationSetup.CLAIMED) * 4,
+    ),
+    (
+        EvaluationCategory.DISPATCH_PRECONDITION,
+        "dispatch",
+        EvaluationInvariant.DURABLE_DISPATCH,
+        (EvaluationSetup.CLAIMED, EvaluationSetup.EXECUTING) * 4,
+    ),
+    (
+        EvaluationCategory.OUTCOME_RECONCILIATION,
+        "outcome",
+        EvaluationInvariant.TRUSTFUL_OUTCOME,
+        (EvaluationSetup.EXECUTING, EvaluationSetup.RECONCILIATION) * 4,
+    ),
 )
 
 
-def _build_cases(prefix: Literal["cal", "hold"], group_size: int) -> tuple[Phase6AEvaluationCase, ...]:
+def _build_cases(
+    prefix: Literal["cal", "hold"], group_size: int
+) -> tuple[Phase6AEvaluationCase, ...]:
     cases: list[Phase6AEvaluationCase] = []
     number = 1
     for category, owner, invariant, setups in _CATEGORY_SPECS:
         for offset in range(group_size):
-            cases.append(Phase6AEvaluationCase(f"{prefix}-{number:03d}", owner, category, None,
-                                               setups[offset % len(setups)], invariant))
+            cases.append(
+                Phase6AEvaluationCase(
+                    f"{prefix}-{number:03d}",
+                    owner,
+                    category,
+                    None,
+                    setups[offset % len(setups)],
+                    invariant,
+                )
+            )
             number += 1
     security_count = 4 if prefix == "cal" else 2
     for offset in range(group_size):
         security = offset < security_count
-        cases.append(Phase6AEvaluationCase(
-            f"{prefix}-{number:03d}", "security" if security else "import",
-            EvaluationCategory.SECURITY_IMPORT,
-            "en" if offset < group_size // 2 else "ar",
-            EvaluationSetup.ADVERSARIAL_TEXT if security else EvaluationSetup.IMPORT_SMOKE,
-            EvaluationInvariant.SECURITY_ISOLATION if security else EvaluationInvariant.IMPORT_SAFE))
+        cases.append(
+            Phase6AEvaluationCase(
+                f"{prefix}-{number:03d}",
+                "security" if security else "import",
+                EvaluationCategory.SECURITY_IMPORT,
+                "en" if offset < group_size // 2 else "ar",
+                EvaluationSetup.ADVERSARIAL_TEXT if security else EvaluationSetup.IMPORT_SMOKE,
+                EvaluationInvariant.SECURITY_ISOLATION
+                if security
+                else EvaluationInvariant.IMPORT_SAFE,
+            )
+        )
         number += 1
     return tuple(cases)
 
@@ -234,7 +320,13 @@ def _validate_canonical_matrix(
             continue
         category, owner, invariant, setups = _CATEGORY_SPECS[spec_index]
         offset = (index - 1) % group_size
-        if (case.category, case.owner, case.expected_invariant, case.setup, case.language_fixture) != (
+        if (
+            case.category,
+            case.owner,
+            case.expected_invariant,
+            case.setup,
+            case.language_fixture,
+        ) != (
             category,
             owner,
             invariant,
@@ -244,10 +336,14 @@ def _validate_canonical_matrix(
             raise ValueError("case labels do not match the canonical manifest")
 
 
-def _validate_built_matrix(cases: Sequence[Phase6AEvaluationCase], *, prefix: Literal["cal", "hold"], expected: int) -> tuple[Phase6AEvaluationCase, ...]:
+def _validate_built_matrix(
+    cases: Sequence[Phase6AEvaluationCase], *, prefix: Literal["cal", "hold"], expected: int
+) -> tuple[Phase6AEvaluationCase, ...]:
     if len(cases) != expected:
         raise AssertionError(f"{prefix} manifest has the wrong case count")
-    if tuple(case.case_id for case in cases) != tuple(f"{prefix}-{index:03d}" for index in range(1, expected + 1)):
+    if tuple(case.case_id for case in cases) != tuple(
+        f"{prefix}-{index:03d}" for index in range(1, expected + 1)
+    ):
         raise AssertionError("manifest IDs are not deterministic")
     per_category = 8 if prefix == "cal" else 4
     expected_counts = {category.value: per_category for category, *_ in _CATEGORY_SPECS}
@@ -267,11 +363,15 @@ def _validate_built_matrix(cases: Sequence[Phase6AEvaluationCase], *, prefix: Li
 
 
 def build_calibration_cases() -> Sequence[Phase6AEvaluationCase]:
-    return _validate_built_matrix(_build_cases("cal", 8), prefix="cal", expected=CALIBRATION_CASE_COUNT)
+    return _validate_built_matrix(
+        _build_cases("cal", 8), prefix="cal", expected=CALIBRATION_CASE_COUNT
+    )
 
 
 def build_heldout_cases() -> Sequence[Phase6AEvaluationCase]:
-    return _validate_built_matrix(_build_cases("hold", 4), prefix="hold", expected=HELDOUT_CASE_COUNT)
+    return _validate_built_matrix(
+        _build_cases("hold", 4), prefix="hold", expected=HELDOUT_CASE_COUNT
+    )
 
 
 def category_counts(cases: Sequence[Phase6AEvaluationCase]) -> Mapping[str, int]:

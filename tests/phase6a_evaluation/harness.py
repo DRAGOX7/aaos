@@ -97,19 +97,24 @@ class TrustedCoreFixture:
         events.append(case.setup.value)
         contract = {
             EvaluationCategory.APPROVAL_EXPIRY: (
-                case.owner == "approval" and case.expected_invariant is EvaluationInvariant.APPROVAL_REQUIRED
+                case.owner == "approval"
+                and case.expected_invariant is EvaluationInvariant.APPROVAL_REQUIRED
             ),
             EvaluationCategory.CAPABILITY_POLICY: (
-                case.owner == "capability" and case.expected_invariant is EvaluationInvariant.CAPABILITY_REVALIDATED
+                case.owner == "capability"
+                and case.expected_invariant is EvaluationInvariant.CAPABILITY_REVALIDATED
             ),
             EvaluationCategory.CLAIM_CONCURRENCY: (
-                case.owner == "claim" and case.expected_invariant is EvaluationInvariant.SINGLE_CLAIM
+                case.owner == "claim"
+                and case.expected_invariant is EvaluationInvariant.SINGLE_CLAIM
             ),
             EvaluationCategory.DISPATCH_PRECONDITION: (
-                case.owner == "dispatch" and case.expected_invariant is EvaluationInvariant.DURABLE_DISPATCH
+                case.owner == "dispatch"
+                and case.expected_invariant is EvaluationInvariant.DURABLE_DISPATCH
             ),
             EvaluationCategory.OUTCOME_RECONCILIATION: (
-                case.owner == "outcome" and case.expected_invariant is EvaluationInvariant.TRUSTFUL_OUTCOME
+                case.owner == "outcome"
+                and case.expected_invariant is EvaluationInvariant.TRUSTFUL_OUTCOME
             ),
             EvaluationCategory.SECURITY_IMPORT: (
                 case.owner in ("security", "import")
@@ -143,8 +148,7 @@ class TrustedCoreFixture:
             capability_approval=contract,
             trusted_validation=contract and bool(events),
             claim_duplicate_prevention=duplicate_rejected,
-            lifecycle_reconciliation=(lifecycle and "LIFECYCLE_CHECKED" in events)
-            or not lifecycle,
+            lifecycle_reconciliation=(lifecycle and "LIFECYCLE_CHECKED" in events) or not lifecycle,
             security_hard_gate=security_safe,
             runtime_import=case.setup is not EvaluationSetup.IMPORT_SMOKE
             or case.expected_invariant is EvaluationInvariant.IMPORT_SAFE,
@@ -205,7 +209,8 @@ def _validate_case_result(result: CaseResult) -> None:
     if not isinstance(result.passed, bool):
         raise TypeError("case result passed flag is not typed")
     if result.security_probe is not None and not all(
-        isinstance(value, bool) for value in (
+        isinstance(value, bool)
+        for value in (
             result.security_probe.executed,
             result.security_probe.permission_changed,
             result.security_probe.registry_changed,
@@ -397,12 +402,17 @@ def _main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     args = parser.parse_args()
     result = run_calibration_only(args.manifest)
-    print(json.dumps({
-        "MODEL_CALL_COUNT": result.model_call_count,
-        "RAG_EXECUTION_COUNT": result.rag_execution_count,
-        "SECURITY_HARD_GATE_FAILURES": result.security_hard_gate_failures,
-        "HELDOUT_EXECUTION_COUNT": result.heldout_execution_count,
-    }, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "MODEL_CALL_COUNT": result.model_call_count,
+                "RAG_EXECUTION_COUNT": result.rag_execution_count,
+                "SECURITY_HARD_GATE_FAILURES": result.security_hard_gate_failures,
+                "HELDOUT_EXECUTION_COUNT": result.heldout_execution_count,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

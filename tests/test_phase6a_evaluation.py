@@ -138,7 +138,9 @@ def test_freeze_manifest_rejects_relabelled_heldout_case() -> None:
 
 def test_run_manifest_rejects_relabelled_calibration_case() -> None:
     cases = list(build_calibration_cases())
-    cases[0] = replace(cases[0], expected_invariant=cases[0].expected_invariant.CAPABILITY_REVALIDATED)
+    cases[0] = replace(
+        cases[0], expected_invariant=cases[0].expected_invariant.CAPABILITY_REVALIDATED
+    )
     with pytest.raises(ValueError, match="canonical"):
         run_manifest(cases)
 
