@@ -19,6 +19,7 @@ from phase6a_evaluation.harness import (
     SQLiteHeldoutClaimStore,
     build_real_heldout_executor_after_cli_gate,
     consume_heldout_once,
+    issue_trusted_authorization_file,
     load_synthetic_manifest,
     load_trusted_authorization_file,
     run_manifest,
@@ -54,6 +55,7 @@ def _authorization() -> HeldoutAuthorization:
         EvaluationAuthorizationId("synthetic-auth"),
         TrustedApproverContext("synthetic-approver", "synthetic-context"),
         datetime.now(timezone.utc),
+        "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e",
     )
 
 
@@ -288,6 +290,7 @@ def test_authorization_file_requires_trusted_signature(
         "approver_identity": "signed-approver",
         "context_id": "signed-context",
         "issued_at": "2026-09-13T00:00:00Z",
+        "manifest_sha256": "438a6059a4a94b480fa840987ac18511ff869235fad6a253fb1d657598c26d2e",
     }
     key = "synthetic-test-key"
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -301,3 +304,188 @@ def test_authorization_file_requires_trusted_signature(
     monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "wrong-key")
     with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
         load_trusted_authorization_file(path)
+
+
+def test_issue_authorization_creates_signed_manifest_bound_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    authorization = issue_trusted_authorization_file(
+        manifest_path,
+        destination,
+        TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        issued_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+    )
+    assert destination.exists()
+    assert authorization.manifest_sha256 == manifest.manifest_sha256
+    assert load_trusted_authorization_file(destination) == authorization
+
+
+def test_issue_authorization_requires_signing_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.delenv("AAOS_PHASE6A_AUTHORIZATION_KEY", raising=False)
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        issue_trusted_authorization_file(
+            manifest_path,
+            tmp_path / "authorization.json",
+            TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        )
+
+
+def test_issue_authorization_rejects_existing_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    destination.write_text("existing", encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_ARTIFACT_EXISTS"):
+        issue_trusted_authorization_file(
+            manifest_path,
+            destination,
+            TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        )
+
+
+def test_issued_authorization_binds_manifest_and_rejects_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    issue_trusted_authorization_file(
+        manifest_path,
+        destination,
+        TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        issued_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+    )
+    raw = json.loads(destination.read_text(encoding="utf-8"))
+    raw["manifest_sha256"] = "0" * 64
+    destination.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_trusted_authorization_file(destination)
+
+
+def test_issue_authorization_has_no_claim_or_execution_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    issue_trusted_authorization_file(
+        manifest_path,
+        destination,
+        TrustedApproverContext("synthetic-approver", "synthetic-context"),
+    )
+    claim_db = tmp_path / "claims.sqlite"
+    assert not claim_db.exists()
+    assert not (tmp_path / "report.json").exists()
+    assert not (tmp_path / "bundle.bin").exists()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("authorization_id", "tampered-auth"),
+        ("approver_identity", "tampered-approver"),
+        ("context_id", "tampered-context"),
+        ("issued_at", "2026-09-14T00:00:00Z"),
+        ("manifest_sha256", "0" * 64),
+    ],
+)
+def test_authorization_signature_covers_every_trusted_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    issue_trusted_authorization_file(
+        manifest_path,
+        destination,
+        TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        issued_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+    )
+    raw = json.loads(destination.read_text(encoding="utf-8"))
+    raw[field] = value
+    destination.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_trusted_authorization_file(destination)
+
+
+def test_authorization_rejects_unknown_fields_and_malformed_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    manifest = load_synthetic_manifest(manifest_path)
+    monkeypatch.setattr(
+        "phase6a_evaluation.harness._FROZEN_HELDOUT_SHA256", manifest.manifest_sha256
+    )
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    issue_trusted_authorization_file(
+        manifest_path,
+        destination,
+        TrustedApproverContext("synthetic-approver", "synthetic-context"),
+    )
+    raw = json.loads(destination.read_text(encoding="utf-8"))
+    raw["unexpected"] = "authority"
+    destination.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_trusted_authorization_file(destination)
+    raw.pop("unexpected")
+    raw["signature"] = "not-a-signature"
+    destination.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_AUTHORIZATION_REQUIRED"):
+        load_trusted_authorization_file(destination)
+
+
+def test_issue_authorization_rejects_non_frozen_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _synthetic_manifest_path(tmp_path, ("synthetic-001",))
+    monkeypatch.setenv("AAOS_PHASE6A_AUTHORIZATION_KEY", "synthetic-issue-key")
+    destination = tmp_path / "authorization.json"
+    with pytest.raises(HeldoutConsumptionError, match="HELDOUT_MANIFEST_MISMATCH"):
+        issue_trusted_authorization_file(
+            manifest_path,
+            destination,
+            TrustedApproverContext("synthetic-approver", "synthetic-context"),
+        )
+
+
+def test_issuance_cli_is_distinct_from_consumption() -> None:
+    from phase6a_evaluation import harness
+
+    assert "issue-heldout-authorization" in harness._main.__code__.co_consts
+    assert "consume-heldout" in harness._main.__code__.co_consts

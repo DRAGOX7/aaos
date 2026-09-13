@@ -11,6 +11,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,7 @@ class HeldoutAuthorization:
     authorization_id: EvaluationAuthorizationId
     approver_context: TrustedApproverContext
     issued_at: datetime
+    manifest_sha256: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.authorization_id, EvaluationAuthorizationId):
@@ -116,6 +118,10 @@ class HeldoutAuthorization:
             or self.issued_at.utcoffset() != timezone.utc.utcoffset(self.issued_at)
         ):
             raise ValueError("issued_at must be an aware UTC datetime")
+        if not isinstance(self.manifest_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.manifest_sha256
+        ):
+            raise ValueError("manifest_sha256 must be a lowercase SHA-256 digest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +695,11 @@ def consume_heldout_once(
     if authorization is None or not isinstance(authorization, HeldoutAuthorization):
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     manifest = _load_consumption_manifest(manifest_path)
+    if (
+        manifest.manifest_sha256 == _FROZEN_HELDOUT_SHA256
+        and authorization.manifest_sha256 != manifest.manifest_sha256
+    ):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     existing = claim_store.read_claim(manifest_sha256=manifest.manifest_sha256)
     if existing is not None:
         raise HeldoutConsumptionError(
@@ -776,6 +787,8 @@ def _build_real_heldout_executor_after_cli_gate(
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     if frozen_manifest_sha256 != _FROZEN_HELDOUT_SHA256:
         raise HeldoutConsumptionError("HELDOUT_MANIFEST_MISMATCH")
+    if authorization.manifest_sha256 != frozen_manifest_sha256:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     return RealHeldoutExecutor()
 
 
@@ -783,11 +796,25 @@ def load_trusted_authorization_file(path: Path) -> HeldoutAuthorization:
     """Authenticate a bounded authorization document using trusted process configuration."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        fields = {"authorization_id", "approver_identity", "context_id", "issued_at", "signature"}
+        fields = {
+            "authorization_id",
+            "approver_identity",
+            "context_id",
+            "issued_at",
+            "manifest_sha256",
+            "signature",
+        }
         if not isinstance(raw, dict) or set(raw) != fields:
             raise ValueError
         signature = raw["signature"]
         if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError
+        manifest_sha256 = raw["manifest_sha256"]
+        if not isinstance(manifest_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", manifest_sha256
+        ):
+            raise ValueError
+        if manifest_sha256 != _FROZEN_HELDOUT_SHA256:
             raise ValueError
         key = os.environ.get("AAOS_PHASE6A_AUTHORIZATION_KEY")
         if not key:
@@ -797,6 +824,7 @@ def load_trusted_authorization_file(path: Path) -> HeldoutAuthorization:
             "approver_identity": raw["approver_identity"],
             "context_id": raw["context_id"],
             "issued_at": raw["issued_at"],
+            "manifest_sha256": manifest_sha256,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         expected = hmac.new(key.encode(), encoded, hashlib.sha256).hexdigest()
@@ -806,9 +834,86 @@ def load_trusted_authorization_file(path: Path) -> HeldoutAuthorization:
             EvaluationAuthorizationId(raw["authorization_id"]),
             TrustedApproverContext(raw["approver_identity"], raw["context_id"]),
             _decode_time(raw["issued_at"]),
+            manifest_sha256,
         )
     except Exception:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+
+
+def _authorization_payload(authorization: HeldoutAuthorization) -> dict[str, str]:
+    return {
+        "authorization_id": authorization.authorization_id.value,
+        "approver_identity": authorization.approver_context.approver_identity.value,
+        "context_id": authorization.approver_context.context_id,
+        "issued_at": _encode_time(authorization.issued_at),
+        "manifest_sha256": authorization.manifest_sha256,
+    }
+
+
+def _validate_authorization_destination(path: Path) -> None:
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    if path.exists():
+        raise HeldoutConsumptionError("HELDOUT_ARTIFACT_EXISTS")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.json", path.name):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    if not path.parent.exists() or not path.parent.is_dir() or path.parent.is_symlink():
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+
+
+def _write_new_authorization_file(path: Path, encoded: bytes) -> None:
+    try:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except OSError:
+        if path.exists():
+            raise HeldoutConsumptionError("HELDOUT_ARTIFACT_EXISTS") from None
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        path.unlink(missing_ok=True)
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+    _fsync_file(path)
+
+
+def issue_trusted_authorization_file(
+    manifest_path: Path,
+    destination: Path,
+    approver_context: TrustedApproverContext,
+    *,
+    issued_at: datetime | None = None,
+) -> HeldoutAuthorization:
+    """Issue one manifest-bound authorization artifact without execution authority."""
+    key = os.environ.get("AAOS_PHASE6A_AUTHORIZATION_KEY")
+    if not key or not isinstance(approver_context, TrustedApproverContext):
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+    _validate_authorization_destination(destination)
+    try:
+        manifest = _load_consumption_manifest(manifest_path)
+        if manifest.manifest_sha256 != _FROZEN_HELDOUT_SHA256:
+            raise ValueError
+        issued = issued_at or datetime.now(timezone.utc)
+        _decode_time(_encode_time(issued))
+        authorization = HeldoutAuthorization(
+            EvaluationAuthorizationId(f"auth-{uuid.uuid4().hex}"),
+            approver_context,
+            issued,
+            manifest.manifest_sha256,
+        )
+        payload = _authorization_payload(authorization)
+        encoded_payload = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        signed = dict(payload)
+        signed["signature"] = hmac.new(key.encode(), encoded_payload, hashlib.sha256).hexdigest()
+        encoded = (json.dumps(signed, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    except HeldoutConsumptionError:
+        raise
+    except Exception:
+        raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED") from None
+    _write_new_authorization_file(destination, encoded)
+    return authorization
 
 
 def run_trusted_case(case: Phase6AEvaluationCase, harness: Phase6AHarness) -> CaseResult:
@@ -945,12 +1050,16 @@ def artifact_tree_contains_case_ids(output_dir: Path, *, prefix: str) -> bool:
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic Phase 6A acceptance fixtures")
-    parser.add_argument("command", nargs="?", choices=("consume-heldout",))
+    parser.add_argument(
+        "command", nargs="?", choices=("issue-heldout-authorization", "consume-heldout")
+    )
     parser.add_argument("--split", choices=("calibration",))
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--authorization", type=Path)
+    parser.add_argument("--approver-identity")
+    parser.add_argument("--context-id")
     args = parser.parse_args()
     if args.split == "calibration" and args.command is None:
         calibration_result = run_calibration_only(args.manifest)
@@ -966,8 +1075,26 @@ def _main() -> int:
             )
         )
         return 0
+    if args.command == "issue-heldout-authorization":
+        if args.authorization is None or args.approver_identity is None or args.context_id is None:
+            raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
+        authorization = issue_trusted_authorization_file(
+            args.manifest,
+            args.authorization,
+            TrustedApproverContext(args.approver_identity, args.context_id),
+        )
+        print(
+            json.dumps(
+                {
+                    "authorization_id": authorization.authorization_id.value,
+                    "manifest_sha256": authorization.manifest_sha256,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command != "consume-heldout":
-        parser.error("specify --split calibration or the consume-heldout command")
+        parser.error("specify --split calibration, issue-heldout-authorization, or consume-heldout")
     if args.authorization is None or args.report is None or args.bundle is None:
         raise HeldoutConsumptionError("HELDOUT_AUTHORIZATION_REQUIRED")
     authorization = load_trusted_authorization_file(args.authorization)
