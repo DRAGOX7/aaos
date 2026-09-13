@@ -418,6 +418,48 @@ class Phase6ActionDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class PrepareActionRequest:
+    """Trusted application inputs for preparing one approval-bound action."""
+
+    actor_identity: ActorIdentity
+    target_identity: TargetIdentity
+    arguments: Mapping[str, JSONValue]
+    remote_precondition: RemotePrecondition
+    action_expires_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.actor_identity, ActorIdentity):
+            raise TypeError("actor_identity must be an ActorIdentity")
+        if not isinstance(self.target_identity, TargetIdentity):
+            raise TypeError("target_identity must be a TargetIdentity")
+        if not isinstance(self.remote_precondition, RemotePrecondition):
+            raise TypeError("remote_precondition must be a RemotePrecondition")
+        if not isinstance(self.arguments, Mapping):
+            raise TypeError("arguments must be a mapping")
+        canonicalize_arguments(self.arguments)
+        _utc(self.action_expires_at, "action_expires_at")
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    """A closed human decision command from an authenticated approver boundary."""
+
+    approval_id: ApprovalId
+    approver: TrustedApproverContext
+    reason: HumanDecisionReason
+    decided_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.approval_id, ApprovalId):
+            raise TypeError("approval_id must be an ApprovalId")
+        if not isinstance(self.approver, TrustedApproverContext):
+            raise TypeError("approver must be a TrustedApproverContext")
+        if not isinstance(self.reason, HumanDecisionReason):
+            raise TypeError("reason must be a HumanDecisionReason")
+        _utc(self.decided_at, "decided_at")
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedActionBinding:
     action_id: ActionId
     operation_id: OperationId
