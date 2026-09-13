@@ -25,7 +25,16 @@ from aaos.persistence.document_models import (
 
 
 def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
-    assert set(CourseORM.metadata.tables) == {
+    phase6a_tables = {
+        "prepared_actions",
+        "action_lifecycles",
+        "approval_records",
+        "approval_consumptions",
+        "operation_records",
+        "action_event_counters",
+        "action_events",
+    }
+    assert set(CourseORM.metadata.tables) - phase6a_tables == {
         "courses",
         "assignments",
         "announcements",

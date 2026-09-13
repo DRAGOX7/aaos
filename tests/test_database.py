@@ -147,6 +147,13 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "rag_chunks",
             "rag_chunk_source_spans",
             "rag_chunks_fts",
+            "prepared_actions",
+            "action_lifecycles",
+            "approval_records",
+            "approval_consumptions",
+            "operation_records",
+            "action_event_counters",
+            "action_events",
         }
     finally:
         engine.dispose()
