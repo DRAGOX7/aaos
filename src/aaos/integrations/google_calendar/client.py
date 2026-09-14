@@ -6,7 +6,7 @@ import re
 import socket
 import time
 import unicodedata
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -195,14 +195,6 @@ class _GoogleService(Protocol):
     def events(self) -> _GoogleEventsResource: ...
 
 
-class _GoogleCredential(Protocol):
-    @property
-    def service_account_email(self) -> str: ...
-
-    @property
-    def scopes(self) -> Sequence[str] | None: ...
-
-
 class _Urllib3Response(Protocol):
     @property
     def status(self) -> int: ...
@@ -217,7 +209,7 @@ class _Urllib3Response(Protocol):
     def data(self) -> bytes: ...
 
 
-class _AuthorizedUrllib3Http(Protocol):
+class _Urllib3Http(Protocol):
     def request(
         self,
         method: str,
@@ -228,6 +220,54 @@ class _AuthorizedUrllib3Http(Protocol):
         json: object = None,
         **kwargs: object,
     ) -> _Urllib3Response: ...
+
+
+class _CredentialRefreshRequest:
+    """Private non-logging transport used only for credential refresh."""
+
+    def __init__(
+        self,
+        http: _Urllib3Http,
+    ) -> None:
+        self._http = http
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: object = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: object = None,
+        **_: object,
+    ) -> _Urllib3Response:
+        # The pool already owns the trusted finite timeout. Do not permit
+        # Google Auth to widen it through its default timeout argument.
+        del timeout
+
+        return self._http.request(
+            method,
+            url,
+            body=body,
+            headers=headers,
+            retries=False,
+            redirect=False,
+        )
+
+
+class _GoogleCredential(Protocol):
+    @property
+    def service_account_email(self) -> str: ...
+
+    @property
+    def scopes(self) -> Sequence[str] | None: ...
+
+    def before_request(
+        self,
+        request: _CredentialRefreshRequest,
+        method: str,
+        url: str,
+        headers: MutableMapping[str, str],
+    ) -> None: ...
 
 
 class _GoogleApiCompatResponse(Mapping[str, str]):
@@ -255,13 +295,16 @@ class _GoogleApiCompatResponse(Mapping[str, str]):
 
 
 class _GoogleApiCompatHttp:
-    """googleapiclient HTTP seam with transport/auth replay disabled."""
+    """Authenticated googleapiclient seam with logging/replay disabled."""
 
     def __init__(
         self,
-        authorized_http: _AuthorizedUrllib3Http,
+        credentials: _GoogleCredential,
+        http: _Urllib3Http,
     ) -> None:
-        self._authorized_http = authorized_http
+        self._credentials = credentials
+        self._http = http
+        self._refresh_request = _CredentialRefreshRequest(http)
 
     def request(
         self,
@@ -271,11 +314,20 @@ class _GoogleApiCompatHttp:
         headers: Mapping[str, str] | None = None,
         **_: object,
     ) -> tuple[_GoogleApiCompatResponse, bytes]:
-        response = self._authorized_http.request(
+        request_headers: MutableMapping[str, str] = dict(headers or {})
+
+        self._credentials.before_request(
+            self._refresh_request,
+            method,
+            uri,
+            request_headers,
+        )
+
+        response = self._http.request(
             method,
             uri,
             body=body,
-            headers=headers,
+            headers=request_headers,
             retries=False,
             redirect=False,
         )
@@ -302,6 +354,7 @@ class _GoogleApiCompatHttp:
         for key, value in response_headers.items():
             if not isinstance(key, str) or not isinstance(value, str):
                 raise TypeError
+
             projected_headers[key] = value
 
         return (
@@ -831,8 +884,6 @@ def _build_official_sdk(
 
         service_account_module = importlib.import_module("google.oauth2.service_account")
 
-        authorized_http_module = importlib.import_module("google.auth.transport.urllib3")
-
         discovery_module = importlib.import_module("googleapiclient.discovery")
 
         credentials_type = getattr(
@@ -853,14 +904,6 @@ def _build_official_sdk(
             getattr(
                 urllib3_module,
                 "PoolManager",
-            ),
-        )
-
-        authorized_http_factory = cast(
-            Callable[..., _AuthorizedUrllib3Http],
-            getattr(
-                authorized_http_module,
-                "AuthorizedHttp",
             ),
         )
 
@@ -893,21 +936,15 @@ def _build_official_sdk(
             retries=False,
         )
 
-        get_authorized_http = authorized_http_factory(
+        get_http = _GoogleApiCompatHttp(
             credentials,
-            http=get_pool,
-            max_refresh_attempts=0,
+            cast(_Urllib3Http, get_pool),
         )
 
-        insert_authorized_http = authorized_http_factory(
+        insert_http = _GoogleApiCompatHttp(
             credentials,
-            http=insert_pool,
-            max_refresh_attempts=0,
+            cast(_Urllib3Http, insert_pool),
         )
-
-        get_http = _GoogleApiCompatHttp(get_authorized_http)
-
-        insert_http = _GoogleApiCompatHttp(insert_authorized_http)
 
         get_service = cast(
             _GoogleService,

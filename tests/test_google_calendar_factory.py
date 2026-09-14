@@ -369,33 +369,14 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
 ) -> None:
     trusted_config = config(tmp_path)
 
+    token_uri = "https://oauth2.example.invalid/token"
+    calendar_uri = "https://www.googleapis.com/calendar/v3/calendars/test/events"
+
     requested_modules: list[str] = []
     pool_options: list[dict[str, object]] = []
-    refresh_limits: list[int] = []
     provider_calls: list[dict[str, object]] = []
+    before_request_calls: list[tuple[str, str]] = []
     service_http: list[object] = []
-
-    class FakeCredential:
-        service_account_email = trusted_config.expected_service_identity
-        scopes = (trusted_config.oauth_scope,)
-
-    class FakeCredentialsType:
-        @staticmethod
-        def from_service_account_info(
-            info: dict[str, object],
-            *,
-            scopes: list[str],
-        ) -> FakeCredential:
-            del info
-            assert scopes == [trusted_config.oauth_scope]
-            return FakeCredential()
-
-    class FakeServiceAccountModule:
-        Credentials = FakeCredentialsType
-
-    class FakePoolManager:
-        def __init__(self, **kwargs: object) -> None:
-            pool_options.append(dict(kwargs))
 
     class FakeProviderResponse:
         status = 200
@@ -403,17 +384,10 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
         headers = {"content-type": "application/json"}
         data = b"{}"
 
-    class FakeAuthorizedHttp:
-        def __init__(
-            self,
-            credentials: object,
-            http: object = None,
-            *,
-            max_refresh_attempts: int = 2,
-            **kwargs: object,
-        ) -> None:
-            del credentials, http, kwargs
-            refresh_limits.append(max_refresh_attempts)
+    class FakePoolManager:
+        def __init__(self, **kwargs: object) -> None:
+            self._options = dict(kwargs)
+            pool_options.append(self._options)
 
         def request(
             self,
@@ -433,13 +407,63 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
                     "fields": fields,
                     "headers": headers,
                     "json": json,
+                    "pool_options": dict(self._options),
                     **kwargs,
                 }
             )
+
             return FakeProviderResponse()
 
-    class FakeAuthorizedHttpModule:
-        AuthorizedHttp = FakeAuthorizedHttp
+    class FakeCredential:
+        service_account_email = trusted_config.expected_service_identity
+        scopes = (trusted_config.oauth_scope,)
+
+        def before_request(
+            self,
+            request: object,
+            method: str,
+            url: str,
+            headers: object,
+        ) -> None:
+            before_request_calls.append(
+                (
+                    method,
+                    url,
+                )
+            )
+
+            refresh_request = request
+            assert callable(refresh_request)
+
+            refresh_request(
+                token_uri,
+                method="POST",
+                body=b"test-assertion",
+                headers={
+                    "content-type": "application/x-www-form-urlencoded",
+                },
+            )
+
+            assert isinstance(headers, dict)
+            headers["authorization"] = "Bearer AAOS_TEST_TOKEN"
+
+    class FakeCredentialsType:
+        @staticmethod
+        def from_service_account_info(
+            info: dict[str, object],
+            *,
+            scopes: list[str],
+        ) -> FakeCredential:
+            del info
+
+            assert scopes == [
+                trusted_config.oauth_scope,
+            ]
+
+            return FakeCredential()
+
+    class FakeServiceAccountModule:
+        Credentials = FakeCredentialsType
 
     class FakeUrllib3Module:
         PoolManager = FakePoolManager
@@ -463,13 +487,14 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
             assert api_name == "calendar"
             assert version == "v3"
             assert cache_discovery is False
+
             service_http.append(http)
+
             return FakeService()
 
     modules: dict[str, object] = {
         "urllib3": FakeUrllib3Module,
         "google.oauth2.service_account": FakeServiceAccountModule,
-        "google.auth.transport.urllib3": FakeAuthorizedHttpModule,
         "googleapiclient.discovery": FakeDiscoveryModule,
     }
 
@@ -491,11 +516,12 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
         },
     )
 
-    assert "google_auth_httplib2" not in requested_modules
-    assert "google.auth.transport.urllib3" in requested_modules
     assert "urllib3" in requested_modules
+    assert "google.oauth2.service_account" in requested_modules
+    assert "googleapiclient.discovery" in requested_modules
 
-    assert refresh_limits == [0, 0]
+    assert "google.auth.transport.urllib3" not in requested_modules
+    assert "google_auth_httplib2" not in requested_modules
 
     assert pool_options == [
         {
@@ -510,11 +536,15 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
 
     assert len(service_http) == 2
 
-    request = getattr(service_http[1], "request", None)
+    request = getattr(
+        service_http[1],
+        "request",
+        None,
+    )
     assert callable(request)
 
     response, content = request(
-        "https://www.googleapis.com/calendar/v3/calendars/test/events",
+        calendar_uri,
         method="POST",
         body=b"{}",
         headers={},
@@ -523,8 +553,283 @@ def test_official_sdk_transport_has_zero_hidden_calendar_replay(
     assert response.status == 200
     assert content == b"{}"
 
-    assert len(provider_calls) == 1
+    assert before_request_calls == [
+        (
+            "POST",
+            calendar_uri,
+        )
+    ]
 
-    provider_call = provider_calls[0]
-    assert provider_call["retries"] is False
-    assert provider_call["redirect"] is False
+    # Exactly two transport calls:
+    # 1. one explicit credential refresh
+    # 2. one Calendar request
+    #
+    # Neither transport boundary may retry or follow redirects.
+    assert len(provider_calls) == 2
+
+    refresh_call = provider_calls[0]
+
+    assert refresh_call["method"] == "POST"
+    assert refresh_call["url"] == token_uri
+    assert refresh_call["retries"] is False
+    assert refresh_call["redirect"] is False
+    assert refresh_call["pool_options"] == {
+        "timeout": 10.0,
+        "retries": False,
+    }
+
+    calendar_call = provider_calls[1]
+
+    assert calendar_call["method"] == "POST"
+    assert calendar_call["url"] == calendar_uri
+    assert calendar_call["body"] == b"{}"
+    assert calendar_call["retries"] is False
+    assert calendar_call["redirect"] is False
+    assert calendar_call["pool_options"] == {
+        "timeout": 10.0,
+        "retries": False,
+    }
+
+    calendar_headers = calendar_call["headers"]
+
+    assert isinstance(calendar_headers, dict)
+    assert calendar_headers["authorization"] == "Bearer AAOS_TEST_TOKEN"
+
+
+def test_fresh_service_account_refresh_never_logs_secret_material(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import logging
+    from urllib.parse import parse_qs
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    trusted_config = config(tmp_path)
+
+    token_uri = "https://oauth2.example.invalid/token"
+    calendar_uri = "https://www.googleapis.com/calendar/v3/calendars/test/events"
+
+    access_token = "AAOS_TEST_ACCESS_TOKEN_DO_NOT_LOG"
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+    credential_info: dict[str, object] = {
+        "type": "service_account",
+        "client_email": trusted_config.expected_service_identity,
+        "private_key": private_key_pem,
+        "private_key_id": "aaos-test-key",
+        "token_uri": token_uri,
+        "client_id": "1234567890",
+    }
+
+    assertions: list[str] = []
+    service_http: list[object] = []
+
+    class FakePoolResponse:
+        def __init__(
+            self,
+            *,
+            data: bytes,
+        ) -> None:
+            self.status = 200
+            self.reason = "OK"
+            self.headers = {
+                "content-type": "application/json",
+            }
+            self.data = data
+
+    class FakePoolManager:
+        def __init__(
+            self,
+            **kwargs: object,
+        ) -> None:
+            del kwargs
+
+        def _send(
+            self,
+            method: str,
+            url: str,
+            body: object = None,
+            headers: object = None,
+            **kwargs: object,
+        ) -> FakePoolResponse:
+            del method, headers, kwargs
+
+            if url == token_uri:
+                if isinstance(body, bytes):
+                    body_text = body.decode("utf-8")
+                elif isinstance(body, str):
+                    body_text = body
+                else:
+                    raise AssertionError("token refresh body must be bytes or str")
+
+                parsed = parse_qs(body_text)
+
+                assertion_values = parsed.get("assertion")
+                assert assertion_values is not None
+                assert len(assertion_values) == 1
+
+                assertions.append(assertion_values[0])
+
+                return FakePoolResponse(
+                    data=json.dumps(
+                        {
+                            "access_token": access_token,
+                            "expires_in": 3600,
+                            "token_type": "Bearer",
+                        }
+                    ).encode("utf-8")
+                )
+
+            if url == calendar_uri:
+                return FakePoolResponse(
+                    data=b"{}",
+                )
+
+            raise AssertionError(f"unexpected provider URL: {url}")
+
+        def request(
+            self,
+            method: str,
+            url: str,
+            body: object = None,
+            headers: object = None,
+            **kwargs: object,
+        ) -> FakePoolResponse:
+            return self._send(
+                method,
+                url,
+                body=body,
+                headers=headers,
+                **kwargs,
+            )
+
+        def urlopen(
+            self,
+            method: str,
+            url: str,
+            body: object = None,
+            headers: object = None,
+            **kwargs: object,
+        ) -> FakePoolResponse:
+            return self._send(
+                method,
+                url,
+                body=body,
+                headers=headers,
+                **kwargs,
+            )
+
+    class FakeUrllib3Module:
+        PoolManager = FakePoolManager
+
+    class FakeEventsResource:
+        pass
+
+    class FakeService:
+        def events(self) -> FakeEventsResource:
+            return FakeEventsResource()
+
+    class FakeDiscoveryModule:
+        @staticmethod
+        def build(
+            api_name: str,
+            version: str,
+            *,
+            http: object,
+            cache_discovery: bool,
+        ) -> FakeService:
+            assert api_name == "calendar"
+            assert version == "v3"
+            assert cache_discovery is False
+
+            service_http.append(http)
+
+            return FakeService()
+
+    real_service_account_module = importlib.import_module("google.oauth2.service_account")
+    real_google_urllib3_module = importlib.import_module("google.auth.transport.urllib3")
+
+    modules: dict[str, object] = {
+        "urllib3": FakeUrllib3Module,
+        "google.oauth2.service_account": real_service_account_module,
+        "google.auth.transport.urllib3": real_google_urllib3_module,
+        "googleapiclient.discovery": FakeDiscoveryModule,
+    }
+
+    def fake_import(name: str) -> object:
+        return modules[name]
+
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        fake_import,
+    )
+
+    google_logger = logging.getLogger("google")
+
+    # Simulate an application explicitly enabling Google/Auth DEBUG logging.
+    # Google Auth's logger does not necessarily propagate to the root logger,
+    # so attach pytest's capture handler directly.
+    caplog.set_level(
+        logging.DEBUG,
+        logger="google",
+    )
+    google_logger.addHandler(caplog.handler)
+    caplog.clear()
+
+    try:
+        calendar_client._build_official_sdk(
+            trusted_config,
+            credential_info,
+        )
+
+        assert len(service_http) == 2
+
+        request = getattr(
+            service_http[1],
+            "request",
+            None,
+        )
+        assert callable(request)
+
+        request(
+            calendar_uri,
+            method="POST",
+            body=b"{}",
+            headers={},
+        )
+    finally:
+        google_logger.removeHandler(caplog.handler)
+
+    assert len(assertions) == 1
+
+    signed_assertion = assertions[0]
+
+    # Google Auth records request details as structured LogRecord extras.
+    # Inspecting only record.getMessage() would miss secrets placed under
+    # fields such as httpRequest.
+    logged_record_state = "\n".join(repr(record.__dict__) for record in caplog.records)
+
+    leaked_material = {
+        "signed service-account assertion": signed_assertion,
+        "private key": private_key_pem,
+        "access token": access_token,
+        "Authorization header": f"Bearer {access_token}",
+    }
+
+    for label, sensitive_value in leaked_material.items():
+        if sensitive_value in logged_record_state:
+            pytest.fail(f"{label} entered Google/Auth structured logging")
