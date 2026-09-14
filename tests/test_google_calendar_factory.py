@@ -833,3 +833,119 @@ def test_fresh_service_account_refresh_never_logs_secret_material(
     for label, sensitive_value in leaked_material.items():
         if sensitive_value in logged_record_state:
             pytest.fail(f"{label} entered Google/Auth structured logging")
+
+
+def test_raw_google_error_body_never_reaches_googleapiclient_logging(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    google_http = importlib.import_module("googleapiclient.http")
+
+    raw_marker = "AAOS_RAW_GOOGLE_ERROR_BODY_MUST_NEVER_LOG"
+    raw_body = raw_marker.encode("utf-8")
+
+    provider_calls: list[dict[str, object]] = []
+
+    class FakeCredential:
+        service_account_email = TRUSTED_IDENTITY
+        scopes = (EVENTS_SCOPE,)
+
+        def before_request(
+            self,
+            request: object,
+            method: str,
+            url: str,
+            headers: object,
+        ) -> None:
+            del request, method, url, headers
+
+    class FakeProviderResponse:
+        status = 403
+        reason = "Forbidden"
+        headers = {
+            "content-type": "text/plain",
+        }
+        data = raw_body
+
+    class FakePool:
+        def request(
+            self,
+            method: str,
+            url: str,
+            body: object = None,
+            fields: object = None,
+            headers: object = None,
+            json: object = None,
+            **kwargs: object,
+        ) -> FakeProviderResponse:
+            provider_calls.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "body": body,
+                    "fields": fields,
+                    "headers": headers,
+                    "json": json,
+                    **kwargs,
+                }
+            )
+
+            return FakeProviderResponse()
+
+    compat_http_type = getattr(
+        calendar_client,
+        "_GoogleApiCompatHttp",
+    )
+
+    compat_http = compat_http_type(
+        FakeCredential(),
+        FakePool(),
+    )
+
+    def postproc(
+        response: object,
+        content: bytes,
+    ) -> object:
+        del response, content
+        return object()
+
+    google_http = importlib.import_module("googleapiclient.http")
+
+    http_request_type = getattr(
+        google_http,
+        "HttpRequest",
+    )
+    assert callable(http_request_type)
+
+    request = http_request_type(
+        compat_http,
+        postproc,
+        "https://www.googleapis.com/calendar/v3/calendars/test/events/abcde",
+        method="GET",
+        headers={},
+    )
+
+    caplog.set_level(
+        logging.WARNING,
+        logger="googleapiclient.http",
+    )
+    caplog.clear()
+
+    with pytest.raises(GoogleProviderError) as exc_info:
+        request.execute(num_retries=0)
+
+    assert exc_info.value.kind is GoogleProviderErrorKind.PERMISSION_REJECTED
+
+    assert len(provider_calls) == 1
+
+    provider_call = provider_calls[0]
+
+    assert provider_call["retries"] is False
+    assert provider_call["redirect"] is False
+
+    logged_state = "\n".join(
+        (record.getMessage() + "\n" + repr(record.__dict__)) for record in caplog.records
+    )
+
+    assert raw_marker not in logged_state

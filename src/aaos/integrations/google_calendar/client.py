@@ -349,6 +349,16 @@ class _GoogleApiCompatHttp:
         if not isinstance(content, bytes):
             raise TypeError
 
+        if not 200 <= status <= 299:
+            kind = _provider_error_kind_from_status(
+                status,
+                reasons=_google_error_reasons_from_content(content),
+            )
+            raise GoogleProviderError(
+                kind,
+                _FAILURE_REASONS[kind],
+            )
+
         projected_headers: dict[str, str] = {}
 
         for key, value in response_headers.items():
@@ -450,11 +460,9 @@ def _http_status(error: Exception) -> int | None:
     return status if isinstance(status, int) else None
 
 
-def _google_error_reasons(
-    error: Exception,
+def _google_error_reasons_from_content(
+    content: object,
 ) -> frozenset[str]:
-    content = getattr(error, "content", None)
-
     if not isinstance(content, bytes):
         return frozenset()
 
@@ -491,6 +499,49 @@ def _google_error_reasons(
     return frozenset(reasons)
 
 
+def _google_error_reasons(
+    error: Exception,
+) -> frozenset[str]:
+    return _google_error_reasons_from_content(
+        getattr(error, "content", None),
+    )
+
+
+def _provider_error_kind_from_status(
+    status: int | None,
+    *,
+    reasons: frozenset[str] = frozenset(),
+) -> GoogleProviderErrorKind:
+    if status == 401:
+        return GoogleProviderErrorKind.AUTHENTICATION_REJECTED
+
+    if status == 403:
+        if reasons & _RATE_LIMIT_REASONS:
+            return GoogleProviderErrorKind.RATE_LIMITED
+
+        return GoogleProviderErrorKind.PERMISSION_REJECTED
+
+    if status == 404:
+        return GoogleProviderErrorKind.NOT_FOUND
+
+    if status == 408:
+        return GoogleProviderErrorKind.TIMEOUT
+
+    if status == 409:
+        return GoogleProviderErrorKind.ALREADY_EXISTS
+
+    if status == 429:
+        return GoogleProviderErrorKind.RATE_LIMITED
+
+    if status is not None and 500 <= status <= 599:
+        return GoogleProviderErrorKind.SERVER_ERROR
+
+    if status is not None and 400 <= status <= 499:
+        return GoogleProviderErrorKind.INVALID_REQUEST
+
+    return GoogleProviderErrorKind.TRANSPORT_ERROR
+
+
 def _provider_error_from_exception(
     error: Exception,
 ) -> GoogleProviderError:
@@ -500,39 +551,10 @@ def _provider_error_from_exception(
     if isinstance(error, (TimeoutError, socket.timeout)):
         kind = GoogleProviderErrorKind.TIMEOUT
     else:
-        status = _http_status(error)
-
-        if status == 401:
-            kind = GoogleProviderErrorKind.AUTHENTICATION_REJECTED
-
-        elif status == 403:
-            reasons = _google_error_reasons(error)
-
-            if reasons & _RATE_LIMIT_REASONS:
-                kind = GoogleProviderErrorKind.RATE_LIMITED
-            else:
-                kind = GoogleProviderErrorKind.PERMISSION_REJECTED
-
-        elif status == 404:
-            kind = GoogleProviderErrorKind.NOT_FOUND
-
-        elif status == 408:
-            kind = GoogleProviderErrorKind.TIMEOUT
-
-        elif status == 409:
-            kind = GoogleProviderErrorKind.ALREADY_EXISTS
-
-        elif status == 429:
-            kind = GoogleProviderErrorKind.RATE_LIMITED
-
-        elif status is not None and 500 <= status <= 599:
-            kind = GoogleProviderErrorKind.SERVER_ERROR
-
-        elif status is not None and 400 <= status <= 499:
-            kind = GoogleProviderErrorKind.INVALID_REQUEST
-
-        else:
-            kind = GoogleProviderErrorKind.TRANSPORT_ERROR
+        kind = _provider_error_kind_from_status(
+            _http_status(error),
+            reasons=_google_error_reasons(error),
+        )
 
     return GoogleProviderError(
         kind,
@@ -648,6 +670,12 @@ class _OfficialGoogleSdkFacade:
                 calendarId=calendar_id,
                 eventId=provider_event_id,
             ).execute(num_retries=0)
+
+        except GoogleProviderError as error:
+            if error.kind is GoogleProviderErrorKind.NOT_FOUND:
+                return None
+
+            raise
 
         except Exception as error:
             if _http_status(error) == 404:
