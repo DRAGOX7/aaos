@@ -352,10 +352,9 @@ def test_provider_error_contract_rejects_untrusted_shapes() -> None:
         )
 
 
-def test_client_module_has_no_network_credential_or_sdk_authority() -> None:
-    module = inspect.getmodule(FakeGoogleCalendarClient)
-    assert module is not None
-    source = inspect.getsource(module)
+def test_fake_client_has_no_network_credential_or_sdk_authority() -> None:
+    source = inspect.getsource(FakeGoogleCalendarClient)
+
     forbidden = (
         "googleapiclient",
         "google.auth",

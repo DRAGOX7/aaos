@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import importlib
+import json
 import re
+import socket
+import time
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
-from typing import Protocol
+from typing import Protocol, cast
 
-from .contracts import CanonicalCalendarEvent
+from .contracts import CanonicalCalendarEvent, GoogleCalendarConfig
 from .errors import GoogleProviderError, GoogleProviderErrorKind
 
 _PROVIDER_EVENT_ID = re.compile(r"^[0-9a-v]{5,1024}$")
@@ -41,6 +47,30 @@ _FAILURE_REASONS = {
     GoogleProviderErrorKind.MALFORMED_RESPONSE: _MALFORMED_RESPONSE_REASON,
 }
 
+REAL_ADAPTER_UNAVAILABLE = "REAL_ADAPTER_UNAVAILABLE"
+_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+_SUPPORTED_ADAPTER_VERSION = "calendar-adapter-v1"
+_GET_TIMEOUT_SECONDS = 5.0
+_INSERT_TIMEOUT_SECONDS = 10.0
+_GET_MAX_ATTEMPTS = 2
+_GET_RETRY_BACKOFF_SECONDS = 0.05
+_CREDENTIAL_SIZE_LIMIT = 128 * 1024
+_TRANSIENT_GET_ERRORS = {
+    GoogleProviderErrorKind.RATE_LIMITED,
+    GoogleProviderErrorKind.SERVER_ERROR,
+    GoogleProviderErrorKind.TIMEOUT,
+    GoogleProviderErrorKind.TRANSPORT_ERROR,
+}
+_RATE_LIMIT_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "quotaExceeded",
+    }
+)
+_PROVIDER_ERROR_CONTENT_LIMIT = 16 * 1024
+_PROVIDER_ERROR_REASON_LIMIT = 128
+
 
 def _validate_provider_event_id(value: object) -> str:
     if not isinstance(value, str):
@@ -60,6 +90,22 @@ def _validate_calendar_id(value: object) -> str:
     ):
         raise ValueError("calendar_id is invalid or exceeds its limit")
     return value
+
+
+def _validate_trusted_text(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError
+    if (
+        not value
+        or len(value) > 4096
+        or any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value)
+    ):
+        raise ValueError
+    return value
+
+
+def _unavailable() -> RuntimeError:
+    return RuntimeError(REAL_ADAPTER_UNAVAILABLE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +141,41 @@ class GoogleCalendarClient(Protocol):
     ) -> ObservedGoogleEvent: ...
 
 
+class GoogleSdkFacade(Protocol):
+    """Least-authority SDK seam: exactly the two approved Calendar operations."""
+
+    def get_event(self, calendar_id: str, provider_event_id: str) -> object | None: ...
+
+    def insert_event(
+        self,
+        calendar_id: str,
+        event: CanonicalCalendarEvent,
+        provider_event_id: str,
+    ) -> object: ...
+
+
+class _GoogleRequest(Protocol):
+    def execute(self, *, num_retries: int = 0) -> object: ...
+
+
+class _GoogleEventsResource(Protocol):
+    def get(self, *, calendarId: str, eventId: str) -> _GoogleRequest: ...
+
+    def insert(self, *, calendarId: str, body: Mapping[str, object]) -> _GoogleRequest: ...
+
+
+class _GoogleService(Protocol):
+    def events(self) -> _GoogleEventsResource: ...
+
+
+class _GoogleCredential(Protocol):
+    @property
+    def service_account_email(self) -> str: ...
+
+    @property
+    def scopes(self) -> Sequence[str] | None: ...
+
+
 def _projection_value(raw: Mapping[object, object], name: str) -> object:
     if name in raw:
         return raw[name]
@@ -113,7 +194,7 @@ def _project_observed_event(raw: object) -> ObservedGoogleEvent:
     summary = _projection_value(raw, "summary")
     start = _projection_value(raw, "start")
     end = _projection_value(raw, "end")
-    timezone = _projection_value(raw, "timezone")
+    timezone_name = _projection_value(raw, "timezone")
     description = _projection_value(raw, "description")
     location = _projection_value(raw, "location")
     if not isinstance(provider_event_id, str):
@@ -124,7 +205,7 @@ def _project_observed_event(raw: object) -> ObservedGoogleEvent:
         raise TypeError
     if not isinstance(end, str):
         raise TypeError
-    if not isinstance(timezone, str):
+    if not isinstance(timezone_name, str):
         raise TypeError
     if description is not None and not isinstance(description, str):
         raise TypeError
@@ -135,7 +216,7 @@ def _project_observed_event(raw: object) -> ObservedGoogleEvent:
         summary=summary,
         start=start,
         end=end,
-        timezone=timezone,
+        timezone=timezone_name,
         description=description,
         location=location,
     )
@@ -157,6 +238,438 @@ def project_observed_event(raw: object) -> ObservedGoogleEvent:
         ) from None
     assert projection is not None
     return projection
+
+
+def _http_status(error: Exception) -> int | None:
+    response = getattr(error, "resp", None)
+    status = getattr(response, "status", None)
+    return status if isinstance(status, int) else None
+
+
+def _google_error_reason(error: Exception) -> str | None:
+    content = getattr(error, "content", None)
+
+    if not isinstance(content, bytes):
+        return None
+
+    if len(content) > _PROVIDER_ERROR_CONTENT_LIMIT:
+        return None
+
+    try:
+        parsed = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(parsed, Mapping):
+        return None
+
+    error_payload = parsed.get("error")
+    if not isinstance(error_payload, Mapping):
+        return None
+
+    errors = error_payload.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+
+    first_error = errors[0]
+    if not isinstance(first_error, Mapping):
+        return None
+
+    reason = first_error.get("reason")
+    if not isinstance(reason, str) or not reason or len(reason) > _PROVIDER_ERROR_REASON_LIMIT:
+        return None
+
+    return reason
+
+
+def _provider_error_from_exception(error: Exception) -> GoogleProviderError:
+    if isinstance(error, GoogleProviderError):
+        return error
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        kind = GoogleProviderErrorKind.TIMEOUT
+    else:
+        status = _http_status(error)
+        if status == 401:
+            kind = GoogleProviderErrorKind.AUTHENTICATION_REJECTED
+        elif status == 403:
+            reason = _google_error_reason(error)
+            if reason in _RATE_LIMIT_REASONS:
+                kind = GoogleProviderErrorKind.RATE_LIMITED
+            else:
+                kind = GoogleProviderErrorKind.PERMISSION_REJECTED
+        elif status == 404:
+            kind = GoogleProviderErrorKind.NOT_FOUND
+        elif status == 408:
+            kind = GoogleProviderErrorKind.TIMEOUT
+        elif status == 409:
+            kind = GoogleProviderErrorKind.ALREADY_EXISTS
+        elif status == 429:
+            kind = GoogleProviderErrorKind.RATE_LIMITED
+        elif status is not None and 500 <= status <= 599:
+            kind = GoogleProviderErrorKind.SERVER_ERROR
+        elif status is not None and 400 <= status <= 499:
+            kind = GoogleProviderErrorKind.INVALID_REQUEST
+        else:
+            kind = GoogleProviderErrorKind.TRANSPORT_ERROR
+    return GoogleProviderError(kind, _FAILURE_REASONS[kind])
+
+
+def _canonical_provider_instant(value: object) -> str:
+    if not isinstance(value, str):
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        ) from None
+    if parsed.tzinfo is None:
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        )
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _google_projection(raw: object) -> Mapping[str, object]:
+    try:
+        if not isinstance(raw, Mapping):
+            raise TypeError
+        provider_event_id = raw["id"]
+        summary = raw["summary"]
+        start_raw = raw["start"]
+        end_raw = raw["end"]
+        if not isinstance(provider_event_id, str) or not isinstance(summary, str):
+            raise TypeError
+        if not isinstance(start_raw, Mapping) or not isinstance(end_raw, Mapping):
+            raise TypeError
+        start = _canonical_provider_instant(start_raw.get("dateTime"))
+        end = _canonical_provider_instant(end_raw.get("dateTime"))
+        start_timezone = start_raw.get("timeZone")
+        end_timezone = end_raw.get("timeZone")
+        if (
+            not isinstance(start_timezone, str)
+            or not isinstance(end_timezone, str)
+            or start_timezone != end_timezone
+        ):
+            raise TypeError
+        description = raw.get("description")
+        location = raw.get("location")
+        if description is not None and not isinstance(description, str):
+            raise TypeError
+        if location is not None and not isinstance(location, str):
+            raise TypeError
+        return {
+            "provider_event_id": provider_event_id,
+            "summary": summary,
+            "start": start,
+            "end": end,
+            "timezone": start_timezone,
+            "description": description,
+            "location": location,
+        }
+    except GoogleProviderError:
+        raise
+    except Exception:
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        ) from None
+
+
+class _OfficialGoogleSdkFacade:
+    def __init__(
+        self,
+        *,
+        get_events: _GoogleEventsResource,
+        insert_events: _GoogleEventsResource,
+    ) -> None:
+        self._get_events = get_events
+        self._insert_events = insert_events
+
+    def get_event(self, calendar_id: str, provider_event_id: str) -> object | None:
+        try:
+            raw = self._get_events.get(
+                calendarId=calendar_id,
+                eventId=provider_event_id,
+            ).execute(num_retries=0)
+        except Exception as error:
+            if _http_status(error) == 404:
+                return None
+            raise _provider_error_from_exception(error) from None
+        return _google_projection(raw)
+
+    def insert_event(
+        self,
+        calendar_id: str,
+        event: CanonicalCalendarEvent,
+        provider_event_id: str,
+    ) -> object:
+        body: dict[str, object] = {
+            "id": provider_event_id,
+            "summary": event.summary,
+            "start": {
+                "dateTime": event.start,
+                "timeZone": event.timezone,
+            },
+            "end": {
+                "dateTime": event.end,
+                "timeZone": event.timezone,
+            },
+        }
+        if event.description is not None:
+            body["description"] = event.description
+        if event.location is not None:
+            body["location"] = event.location
+        try:
+            raw = self._insert_events.insert(
+                calendarId=calendar_id,
+                body=body,
+            ).execute(num_retries=0)
+        except Exception as error:
+            raise _provider_error_from_exception(error) from None
+        return _google_projection(raw)
+
+
+class RealGoogleCalendarClient:
+    """Calendar client bound to one trusted calendar and one narrow SDK facade."""
+
+    def __init__(self, sdk: GoogleSdkFacade, calendar_id: str) -> None:
+        if not callable(getattr(sdk, "get_event", None)) or not callable(
+            getattr(sdk, "insert_event", None)
+        ):
+            raise _unavailable()
+        self._sdk = sdk
+        self._calendar_id = _validate_calendar_id(calendar_id)
+
+    def _require_calendar(self, calendar_id: str) -> str:
+        try:
+            selected = _validate_calendar_id(calendar_id)
+        except (TypeError, ValueError):
+            raise _unavailable() from None
+        if selected != self._calendar_id:
+            raise _unavailable()
+        return selected
+
+    @staticmethod
+    def _project_result(raw: object, provider_event_id: str) -> ObservedGoogleEvent:
+        if isinstance(raw, ObservedGoogleEvent):
+            observed = raw
+        else:
+            observed = project_observed_event(raw)
+        if observed.provider_event_id != provider_event_id:
+            raise GoogleProviderError(
+                GoogleProviderErrorKind.MALFORMED_RESPONSE,
+                _MALFORMED_RESPONSE_REASON,
+            )
+        return observed
+
+    def get_event(self, calendar_id: str, provider_event_id: str) -> ObservedGoogleEvent | None:
+        trusted_calendar_id = self._require_calendar(calendar_id)
+        trusted_provider_event_id = _validate_provider_event_id(provider_event_id)
+
+        for attempt in range(_GET_MAX_ATTEMPTS):
+            try:
+                raw = self._sdk.get_event(trusted_calendar_id, trusted_provider_event_id)
+            except Exception as error:
+                provider_error = _provider_error_from_exception(error)
+                if provider_error.kind in _TRANSIENT_GET_ERRORS and attempt + 1 < _GET_MAX_ATTEMPTS:
+                    time.sleep(_GET_RETRY_BACKOFF_SECONDS)
+                    continue
+                raise provider_error from None
+
+            if raw is None:
+                return None
+            return self._project_result(raw, trusted_provider_event_id)
+
+        raise AssertionError("bounded get retry loop exhausted unexpectedly")
+
+    def insert_event(
+        self,
+        calendar_id: str,
+        event: CanonicalCalendarEvent,
+        provider_event_id: str,
+    ) -> ObservedGoogleEvent:
+        trusted_calendar_id = self._require_calendar(calendar_id)
+        trusted_provider_event_id = _validate_provider_event_id(provider_event_id)
+        if not isinstance(event, CanonicalCalendarEvent):
+            raise TypeError("event must be a CanonicalCalendarEvent")
+        event._validate()
+        try:
+            raw = self._sdk.insert_event(
+                trusted_calendar_id,
+                event,
+                trusted_provider_event_id,
+            )
+        except Exception as error:
+            raise _provider_error_from_exception(error) from None
+        return self._project_result(raw, trusted_provider_event_id)
+
+
+def _validate_factory_config(config: GoogleCalendarConfig) -> None:
+    if not isinstance(config, GoogleCalendarConfig):
+        raise _unavailable()
+    try:
+        _validate_calendar_id(config.calendar_id)
+        _validate_trusted_text(config.expected_service_identity)
+        _validate_trusted_text(config.credential_path)
+        _validate_trusted_text(config.provider_adapter_version)
+    except (TypeError, ValueError):
+        raise _unavailable() from None
+    if not config.enabled:
+        raise _unavailable()
+    if config.oauth_scope != _EVENTS_SCOPE:
+        raise _unavailable()
+    if config.provider_adapter_version != _SUPPORTED_ADAPTER_VERSION:
+        raise _unavailable()
+
+
+def _load_credential_info(config: GoogleCalendarConfig) -> dict[str, object]:
+    try:
+        path = Path(config.credential_path)
+        if not path.is_absolute():
+            raise ValueError
+        resolved = path.resolve(strict=True)
+        repository_root = Path(__file__).resolve().parents[4]
+        if resolved.is_relative_to(repository_root):
+            raise ValueError
+        if not resolved.is_file() or resolved.stat().st_size > _CREDENTIAL_SIZE_LIMIT:
+            raise ValueError
+        raw = resolved.read_bytes()
+        parsed: object = json.loads(raw.decode("utf-8"))
+        if not isinstance(parsed, dict) or not all(isinstance(key, str) for key in parsed):
+            raise ValueError
+        credential_type = parsed.get("type")
+        client_email = parsed.get("client_email")
+        if credential_type != "service_account":
+            raise ValueError
+        if client_email != config.expected_service_identity:
+            raise ValueError
+        return cast(dict[str, object], parsed)
+    except Exception:
+        raise _unavailable() from None
+
+
+def _build_official_sdk(
+    config: GoogleCalendarConfig,
+    credential_info: Mapping[str, object],
+) -> GoogleSdkFacade:
+    try:
+        httplib2_module = importlib.import_module("httplib2")
+        service_account_module = importlib.import_module("google.oauth2.service_account")
+        authorized_http_module = importlib.import_module("google_auth_httplib2")
+        discovery_module = importlib.import_module("googleapiclient.discovery")
+
+        credentials_type = getattr(
+            service_account_module,
+            "Credentials",
+        )
+
+        credential_factory = cast(
+            Callable[..., _GoogleCredential],
+            getattr(
+                credentials_type,
+                "from_service_account_info",
+            ),
+        )
+
+        http_factory = cast(
+            Callable[..., object],
+            getattr(httplib2_module, "Http"),
+        )
+
+        authorized_http_factory = cast(
+            Callable[..., object],
+            getattr(
+                authorized_http_module,
+                "AuthorizedHttp",
+            ),
+        )
+
+        service_builder = cast(
+            Callable[..., object],
+            getattr(discovery_module, "build"),
+        )
+
+        credentials = credential_factory(
+            dict(credential_info),
+            scopes=[config.oauth_scope],
+        )
+
+        if credentials.service_account_email != config.expected_service_identity:
+            raise ValueError
+
+        if tuple(credentials.scopes or ()) != (config.oauth_scope,):
+            raise ValueError
+
+        get_http = authorized_http_factory(
+            credentials,
+            http=http_factory(
+                timeout=_GET_TIMEOUT_SECONDS,
+            ),
+        )
+
+        insert_http = authorized_http_factory(
+            credentials,
+            http=http_factory(
+                timeout=_INSERT_TIMEOUT_SECONDS,
+            ),
+        )
+
+        get_service = cast(
+            _GoogleService,
+            service_builder(
+                "calendar",
+                "v3",
+                http=get_http,
+                cache_discovery=False,
+            ),
+        )
+
+        insert_service = cast(
+            _GoogleService,
+            service_builder(
+                "calendar",
+                "v3",
+                http=insert_http,
+                cache_discovery=False,
+            ),
+        )
+
+        return _OfficialGoogleSdkFacade(
+            get_events=get_service.events(),
+            insert_events=insert_service.events(),
+        )
+
+    except Exception:
+        raise _unavailable() from None
+
+
+class GoogleCalendarClientFactory:
+    """Explicit fail-closed factory for the real Calendar integration."""
+
+    @staticmethod
+    def build(
+        config: GoogleCalendarConfig,
+        *,
+        sdk: GoogleSdkFacade | None = None,
+    ) -> GoogleCalendarClient:
+        _validate_factory_config(config)
+
+        if sdk is not None:
+            if not callable(getattr(sdk, "get_event", None)) or not callable(
+                getattr(sdk, "insert_event", None)
+            ):
+                raise _unavailable()
+            return RealGoogleCalendarClient(sdk, config.calendar_id)
+
+        credential_info = _load_credential_info(config)
+        real_sdk = _build_official_sdk(config, credential_info)
+        return RealGoogleCalendarClient(real_sdk, config.calendar_id)
 
 
 class FakeGoogleCalendarClient:
@@ -261,6 +774,10 @@ class FakeGoogleCalendarClient:
 __all__ = [
     "FakeGoogleCalendarClient",
     "GoogleCalendarClient",
+    "GoogleCalendarClientFactory",
+    "GoogleSdkFacade",
     "ObservedGoogleEvent",
+    "REAL_ADAPTER_UNAVAILABLE",
+    "RealGoogleCalendarClient",
     "project_observed_event",
 ]
