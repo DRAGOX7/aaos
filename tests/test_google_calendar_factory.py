@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from aaos.integrations.google_calendar.canonicalization import (
 from aaos.integrations.google_calendar.client import (
     REAL_ADAPTER_UNAVAILABLE,
     GoogleCalendarClientFactory,
+    RealGoogleCalendarClient,
 )
 from aaos.integrations.google_calendar.contracts import (
     CalendarCreateRequest,
@@ -103,6 +105,57 @@ class NarrowSdk:
         self.insert_calls += 1
         self.last_calendar_id = calendar_id
         return observed(canonical_event, provider_event_id)
+
+
+def test_real_client_cannot_be_constructed_outside_trusted_factory() -> None:
+    with pytest.raises(RuntimeError) as exc_info:
+        RealGoogleCalendarClient(
+            NarrowSdk(),
+            TRUSTED_CALENDAR,
+        )
+
+    assert str(exc_info.value) == REAL_ADAPTER_UNAVAILABLE
+
+
+def test_google_403_rate_limit_in_later_error_entry_is_rate_limited(
+    tmp_path: Path,
+) -> None:
+    class MultiReasonSdk(NarrowSdk):
+        def insert_event(
+            self,
+            calendar_id: str,
+            canonical_event: CanonicalCalendarEvent,
+            provider_event_id: str,
+        ) -> object:
+            error = ProviderHttpError(
+                403,
+                reason="forbidden",
+            )
+            error.content = json.dumps(
+                {
+                    "error": {
+                        "errors": [
+                            {"reason": "forbidden"},
+                            {"reason": "rateLimitExceeded"},
+                        ]
+                    }
+                }
+            ).encode("utf-8")
+            raise error
+
+    client = GoogleCalendarClientFactory.build(
+        config(tmp_path),
+        sdk=MultiReasonSdk(),
+    )
+
+    with pytest.raises(GoogleProviderError) as exc_info:
+        client.insert_event(
+            TRUSTED_CALENDAR,
+            event(),
+            PROVIDER_EVENT_ID,
+        )
+
+    assert exc_info.value.kind is GoogleProviderErrorKind.RATE_LIMITED
 
 
 class ProviderResponse:
@@ -308,3 +361,170 @@ def test_factory_uses_only_two_sdk_operations(tmp_path: Path) -> None:
     assert sdk.get_calls == 1
     assert sdk.insert_calls == 1
     assert sdk.last_calendar_id == TRUSTED_CALENDAR
+
+
+def test_official_sdk_transport_has_zero_hidden_calendar_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trusted_config = config(tmp_path)
+
+    requested_modules: list[str] = []
+    pool_options: list[dict[str, object]] = []
+    refresh_limits: list[int] = []
+    provider_calls: list[dict[str, object]] = []
+    service_http: list[object] = []
+
+    class FakeCredential:
+        service_account_email = trusted_config.expected_service_identity
+        scopes = (trusted_config.oauth_scope,)
+
+    class FakeCredentialsType:
+        @staticmethod
+        def from_service_account_info(
+            info: dict[str, object],
+            *,
+            scopes: list[str],
+        ) -> FakeCredential:
+            del info
+            assert scopes == [trusted_config.oauth_scope]
+            return FakeCredential()
+
+    class FakeServiceAccountModule:
+        Credentials = FakeCredentialsType
+
+    class FakePoolManager:
+        def __init__(self, **kwargs: object) -> None:
+            pool_options.append(dict(kwargs))
+
+    class FakeProviderResponse:
+        status = 200
+        reason = "OK"
+        headers = {"content-type": "application/json"}
+        data = b"{}"
+
+    class FakeAuthorizedHttp:
+        def __init__(
+            self,
+            credentials: object,
+            http: object = None,
+            *,
+            max_refresh_attempts: int = 2,
+            **kwargs: object,
+        ) -> None:
+            del credentials, http, kwargs
+            refresh_limits.append(max_refresh_attempts)
+
+        def request(
+            self,
+            method: str,
+            url: str,
+            body: object = None,
+            fields: object = None,
+            headers: object = None,
+            json: object = None,
+            **kwargs: object,
+        ) -> FakeProviderResponse:
+            provider_calls.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "body": body,
+                    "fields": fields,
+                    "headers": headers,
+                    "json": json,
+                    **kwargs,
+                }
+            )
+            return FakeProviderResponse()
+
+    class FakeAuthorizedHttpModule:
+        AuthorizedHttp = FakeAuthorizedHttp
+
+    class FakeUrllib3Module:
+        PoolManager = FakePoolManager
+
+    class FakeEventsResource:
+        pass
+
+    class FakeService:
+        def events(self) -> FakeEventsResource:
+            return FakeEventsResource()
+
+    class FakeDiscoveryModule:
+        @staticmethod
+        def build(
+            api_name: str,
+            version: str,
+            *,
+            http: object,
+            cache_discovery: bool,
+        ) -> FakeService:
+            assert api_name == "calendar"
+            assert version == "v3"
+            assert cache_discovery is False
+            service_http.append(http)
+            return FakeService()
+
+    modules: dict[str, object] = {
+        "urllib3": FakeUrllib3Module,
+        "google.oauth2.service_account": FakeServiceAccountModule,
+        "google.auth.transport.urllib3": FakeAuthorizedHttpModule,
+        "googleapiclient.discovery": FakeDiscoveryModule,
+    }
+
+    def fake_import(name: str) -> object:
+        requested_modules.append(name)
+        return modules[name]
+
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        fake_import,
+    )
+
+    calendar_client._build_official_sdk(
+        trusted_config,
+        {
+            "type": "service_account",
+            "client_email": trusted_config.expected_service_identity,
+        },
+    )
+
+    assert "google_auth_httplib2" not in requested_modules
+    assert "google.auth.transport.urllib3" in requested_modules
+    assert "urllib3" in requested_modules
+
+    assert refresh_limits == [0, 0]
+
+    assert pool_options == [
+        {
+            "timeout": 5.0,
+            "retries": False,
+        },
+        {
+            "timeout": 10.0,
+            "retries": False,
+        },
+    ]
+
+    assert len(service_http) == 2
+
+    request = getattr(service_http[1], "request", None)
+    assert callable(request)
+
+    response, content = request(
+        "https://www.googleapis.com/calendar/v3/calendars/test/events",
+        method="POST",
+        body=b"{}",
+        headers={},
+    )
+
+    assert response.status == 200
+    assert content == b"{}"
+
+    assert len(provider_calls) == 1
+
+    provider_call = provider_calls[0]
+    assert provider_call["retries"] is False
+    assert provider_call["redirect"] is False
