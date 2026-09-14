@@ -117,8 +117,49 @@ def observed(
     )
 
 
-def adapter(client: GoogleCalendarClient) -> GoogleCalendarAdapter:
-    return GoogleCalendarAdapter(client, config(), derivation_version=DERIVATION_VERSION)
+def adapter(
+    client: GoogleCalendarClient,
+    *,
+    expected_action: ExecutableAction | None = None,
+) -> GoogleCalendarAdapter:
+    selected = expected_action or action()
+
+    def load_expected(operation_id: OperationId) -> ExecutableAction | None:
+        if selected.operation_id != operation_id:
+            return None
+        return selected
+
+    return GoogleCalendarAdapter(
+        client,
+        config(),
+        derivation_version=DERIVATION_VERSION,
+        expected_action_loader=load_expected,
+    )
+
+
+def test_fresh_adapter_reconciles_from_reloaded_expected_action() -> None:
+    executable = action()
+    client = FakeGoogleCalendarClient(
+        initial_events=((config().calendar_id, observed(executable)),)
+    )
+
+    def load_expected(operation_id: OperationId) -> ExecutableAction | None:
+        if operation_id != executable.operation_id:
+            return None
+        return executable
+
+    fresh_adapter = GoogleCalendarAdapter(
+        client,
+        config(),
+        derivation_version=DERIVATION_VERSION,
+        expected_action_loader=load_expected,
+    )
+
+    outcome = fresh_adapter.reconcile(executable.operation_id)
+
+    assert outcome.kind is AdapterOutcomeKind.SUCCESS
+    assert client.get_count == 1
+    assert client.insert_count == 0
 
 
 def test_adapter_accepts_only_executable_action() -> None:
