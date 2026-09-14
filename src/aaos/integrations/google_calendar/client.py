@@ -101,52 +101,62 @@ def _projection_value(raw: Mapping[object, object], name: str) -> object:
     return None
 
 
+def _project_observed_event(raw: object) -> ObservedGoogleEvent:
+    if not isinstance(raw, Mapping):
+        raise TypeError
+    keys = set(raw)
+    if not all(isinstance(key, str) for key in keys):
+        raise TypeError
+    if not _PROJECTION_REQUIRED_FIELDS.issubset(keys) or not keys.issubset(_PROJECTION_FIELDS):
+        raise ValueError
+    provider_event_id = _projection_value(raw, "provider_event_id")
+    summary = _projection_value(raw, "summary")
+    start = _projection_value(raw, "start")
+    end = _projection_value(raw, "end")
+    timezone = _projection_value(raw, "timezone")
+    description = _projection_value(raw, "description")
+    location = _projection_value(raw, "location")
+    if not isinstance(provider_event_id, str):
+        raise TypeError
+    if not isinstance(summary, str):
+        raise TypeError
+    if not isinstance(start, str):
+        raise TypeError
+    if not isinstance(end, str):
+        raise TypeError
+    if not isinstance(timezone, str):
+        raise TypeError
+    if description is not None and not isinstance(description, str):
+        raise TypeError
+    if location is not None and not isinstance(location, str):
+        raise TypeError
+    return ObservedGoogleEvent(
+        provider_event_id=provider_event_id,
+        summary=summary,
+        start=start,
+        end=end,
+        timezone=timezone,
+        description=description,
+        location=location,
+    )
+
+
 def project_observed_event(raw: object) -> ObservedGoogleEvent:
     """Project an untrusted provider-shaped value into the closed observation DTO."""
 
+    projection: ObservedGoogleEvent | None = None
+    malformed = False
     try:
-        if not isinstance(raw, Mapping):
-            raise TypeError
-        keys = set(raw)
-        if not all(isinstance(key, str) for key in keys):
-            raise TypeError
-        if not _PROJECTION_REQUIRED_FIELDS.issubset(keys) or not keys.issubset(_PROJECTION_FIELDS):
-            raise ValueError
-        provider_event_id = _projection_value(raw, "provider_event_id")
-        summary = _projection_value(raw, "summary")
-        start = _projection_value(raw, "start")
-        end = _projection_value(raw, "end")
-        timezone = _projection_value(raw, "timezone")
-        description = _projection_value(raw, "description")
-        location = _projection_value(raw, "location")
-        if not isinstance(provider_event_id, str):
-            raise TypeError
-        if not isinstance(summary, str):
-            raise TypeError
-        if not isinstance(start, str):
-            raise TypeError
-        if not isinstance(end, str):
-            raise TypeError
-        if not isinstance(timezone, str):
-            raise TypeError
-        if description is not None and not isinstance(description, str):
-            raise TypeError
-        if location is not None and not isinstance(location, str):
-            raise TypeError
-        return ObservedGoogleEvent(
-            provider_event_id=provider_event_id,
-            summary=summary,
-            start=start,
-            end=end,
-            timezone=timezone,
-            description=description,
-            location=location,
-        )
-    except (TypeError, ValueError):
+        projection = _project_observed_event(raw)
+    except Exception:
+        malformed = True
+    if malformed:
         raise GoogleProviderError(
             GoogleProviderErrorKind.MALFORMED_RESPONSE,
             _MALFORMED_RESPONSE_REASON,
         ) from None
+    assert projection is not None
+    return projection
 
 
 class FakeGoogleCalendarClient:

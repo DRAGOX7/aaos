@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator, Mapping
 from dataclasses import fields
 from typing import Any, cast
 
@@ -198,6 +199,29 @@ def test_malformed_response_is_typed() -> None:
         captured.value.safe_reason
         == "provider response did not match the approved event projection"
     )
+
+
+class HostileMapping(Mapping[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise RuntimeError("provider secret and transport details")
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("provider secret and transport details")
+
+    def __len__(self) -> int:
+        raise RuntimeError("provider secret and transport details")
+
+
+def test_hostile_provider_mapping_is_closed_without_exception_leakage() -> None:
+    with pytest.raises(GoogleProviderError) as captured:
+        project_observed_event(HostileMapping())
+
+    error = captured.value
+    assert error.kind is GoogleProviderErrorKind.MALFORMED_RESPONSE
+    assert error.safe_reason == "provider response did not match the approved event projection"
+    assert "provider secret" not in repr(error)
+    assert error.__cause__ is None
+    assert error.__context__ is None
 
 
 def test_observed_projection_has_only_approved_fields() -> None:
