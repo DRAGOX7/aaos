@@ -16,6 +16,7 @@ from aaos.approval.contracts import (
 from aaos.integrations.google_calendar.adapter import (
     CalendarAdapterExecutionTrace,
     GoogleCalendarAdapter,
+    _semantics_match,
     decode_calendar_action,
 )
 from aaos.integrations.google_calendar.canonicalization import (
@@ -375,3 +376,191 @@ def test_raw_provider_error_is_not_returned() -> None:
     assert outcome.kind is AdapterOutcomeKind.UNKNOWN
     assert secret not in outcome.evidence
     assert set(field.name for field in fields(type(outcome))) == {"kind", "evidence"}
+
+
+def test_google_second_precision_matches_approved_fractional_instant() -> None:
+    expected = canonicalize_calendar_request(
+        CalendarCreateRequest(
+            summary="AAOS Phase 6B Acceptance",
+            start=datetime(
+                2026,
+                9,
+                14,
+                12,
+                0,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            end=datetime(
+                2026,
+                9,
+                14,
+                12,
+                15,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            timezone="UTC",
+            description="AAOS_PHASE6B_REAL_ACCEPTANCE",
+            location=None,
+        ),
+        now=NOW,
+    )
+
+    observed = ObservedGoogleEvent(
+        provider_event_id="abcde",
+        summary=expected.summary,
+        start="2026-09-14T12:00:00.000000Z",
+        end="2026-09-14T12:15:00.000000Z",
+        timezone=expected.timezone,
+        description=expected.description,
+        location=expected.location,
+    )
+
+    assert _semantics_match(
+        observed,
+        expected,
+    )
+
+
+def test_google_second_precision_does_not_hide_real_time_drift() -> None:
+    expected = canonicalize_calendar_request(
+        CalendarCreateRequest(
+            summary="AAOS Phase 6B Acceptance",
+            start=datetime(
+                2026,
+                9,
+                14,
+                12,
+                0,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            end=datetime(
+                2026,
+                9,
+                14,
+                12,
+                15,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            timezone="UTC",
+            description="AAOS_PHASE6B_REAL_ACCEPTANCE",
+            location=None,
+        ),
+        now=NOW,
+    )
+
+    observed = ObservedGoogleEvent(
+        provider_event_id="abcde",
+        summary=expected.summary,
+        start="2026-09-14T12:00:01.000000Z",
+        end="2026-09-14T12:15:00.000000Z",
+        timezone=expected.timezone,
+        description=expected.description,
+        location=expected.location,
+    )
+
+    assert not _semantics_match(
+        observed,
+        expected,
+    )
+
+
+def test_google_second_precision_does_not_accept_fractional_provider_drift() -> None:
+    expected = canonicalize_calendar_request(
+        CalendarCreateRequest(
+            summary="AAOS Phase 6B Acceptance",
+            start=datetime(
+                2026,
+                9,
+                14,
+                12,
+                0,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            end=datetime(
+                2026,
+                9,
+                14,
+                12,
+                15,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            timezone="UTC",
+            description="AAOS_PHASE6B_REAL_ACCEPTANCE",
+            location=None,
+        ),
+        now=NOW,
+    )
+
+    observed = ObservedGoogleEvent(
+        provider_event_id="abcde",
+        summary=expected.summary,
+        start="2026-09-14T12:00:00.500000Z",
+        end="2026-09-14T12:15:00.000000Z",
+        timezone=expected.timezone,
+        description=expected.description,
+        location=expected.location,
+    )
+
+    assert not _semantics_match(
+        observed,
+        expected,
+    )
+
+
+def test_exact_fractional_instants_remain_exact_semantic_match() -> None:
+    expected = canonicalize_calendar_request(
+        CalendarCreateRequest(
+            summary="AAOS Phase 6B Acceptance",
+            start=datetime(
+                2026,
+                9,
+                14,
+                12,
+                0,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            end=datetime(
+                2026,
+                9,
+                14,
+                12,
+                15,
+                0,
+                352445,
+                tzinfo=ZoneInfo("UTC"),
+            ),
+            timezone="UTC",
+            description="AAOS_PHASE6B_REAL_ACCEPTANCE",
+            location=None,
+        ),
+        now=NOW,
+    )
+
+    observed = ObservedGoogleEvent(
+        provider_event_id="abcde",
+        summary=expected.summary,
+        start=expected.start,
+        end=expected.end,
+        timezone=expected.timezone,
+        description=expected.description,
+        location=expected.location,
+    )
+
+    assert _semantics_match(
+        observed,
+        expected,
+    )

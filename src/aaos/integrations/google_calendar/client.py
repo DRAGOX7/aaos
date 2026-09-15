@@ -17,6 +17,12 @@ from .contracts import CanonicalCalendarEvent, GoogleCalendarConfig
 from .errors import GoogleProviderError, GoogleProviderErrorKind
 
 _PROVIDER_EVENT_ID = re.compile(r"^[0-9a-v]{5,1024}$")
+_RAW_PROVIDER_RFC3339_INSTANT = re.compile(
+    r"^\d{4}-\d{2}-\d{2}"
+    r"T\d{2}:\d{2}:\d{2}"
+    r"(?:\.(?P<fraction>\d{1,9}))?"
+    r"(?:Z|[+-]\d{2}:\d{2})$"
+)
 _PROJECTION_FIELDS = {
     "provider_event_id",
     "summary",
@@ -569,15 +575,35 @@ def _canonical_provider_instant(value: object) -> str:
             _MALFORMED_RESPONSE_REASON,
         )
 
+    # Establish the raw provider representation before parsing.
+    # datetime.fromisoformat() must never be allowed to discard
+    # provider precision first.
+    match = _RAW_PROVIDER_RFC3339_INSTANT.fullmatch(value)
+
+    if match is None:
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        )
+
+    fraction = match.group("fraction")
+
+    if fraction is not None and any(digit != "0" for digit in fraction):
+        raise GoogleProviderError(
+            GoogleProviderErrorKind.MALFORMED_RESPONSE,
+            _MALFORMED_RESPONSE_REASON,
+        )
+
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         raise GoogleProviderError(
             GoogleProviderErrorKind.MALFORMED_RESPONSE,
             _MALFORMED_RESPONSE_REASON,
         ) from None
 
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise GoogleProviderError(
             GoogleProviderErrorKind.MALFORMED_RESPONSE,
             _MALFORMED_RESPONSE_REASON,

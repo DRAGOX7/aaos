@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+import aaos.integrations.google_calendar.client as calendar_client
 from aaos.integrations.google_calendar.client import (
     FakeGoogleCalendarClient,
     GoogleCalendarClient,
@@ -370,3 +371,24 @@ def test_fake_client_has_no_network_credential_or_sdk_authority() -> None:
     )
 
     assert all(term not in source for term in forbidden)
+
+
+def test_provider_instant_rejects_submicrosecond_nonzero_fraction() -> None:
+    with pytest.raises(GoogleProviderError) as captured:
+        calendar_client._canonical_provider_instant("2026-09-14T12:00:00.0000001Z")
+
+    assert captured.value.kind is GoogleProviderErrorKind.MALFORMED_RESPONSE
+
+
+def test_provider_instant_rejects_timestamp_without_explicit_seconds() -> None:
+    with pytest.raises(GoogleProviderError) as captured:
+        calendar_client._canonical_provider_instant("2026-09-14T12:00+00:00")
+
+    assert captured.value.kind is GoogleProviderErrorKind.MALFORMED_RESPONSE
+
+
+def test_provider_instant_accepts_zero_fraction_with_equivalent_offset() -> None:
+    assert (
+        calendar_client._canonical_provider_instant("2026-09-14T15:00:00.000000+03:00")
+        == "2026-09-14T12:00:00.000000Z"
+    )

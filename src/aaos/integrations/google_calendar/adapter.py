@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Protocol
 
@@ -134,14 +135,57 @@ def decode_calendar_action(
     )
 
 
+def _utc_instant(value: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+
+    parsed = datetime.fromisoformat(normalized)
+
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("calendar instant must be timezone-aware")
+
+    return parsed.astimezone(timezone.utc)
+
+
+def _provider_instants_match(
+    observed: str,
+    expected: str,
+) -> bool:
+    # Canonical trusted DTOs may preserve the approved
+    # fractional instant exactly. Exact equality must remain
+    # valid before applying the narrower Google whole-second
+    # read-back normalization.
+    if observed == expected:
+        return True
+
+    try:
+        observed_instant = _utc_instant(observed)
+        expected_instant = _utc_instant(expected)
+    except (TypeError, ValueError):
+        return False
+
+    # Live Google Calendar demonstrated whole-second response
+    # precision. Accept only that exact provider representation;
+    # do not introduce a fuzzy time tolerance.
+    if observed_instant.microsecond != 0:
+        return False
+
+    return observed_instant == expected_instant.replace(microsecond=0)
+
+
 def _semantics_match(
     observed: ObservedGoogleEvent,
     expected: CanonicalCalendarEvent,
 ) -> bool:
     return (
         observed.summary == expected.summary
-        and observed.start == expected.start
-        and observed.end == expected.end
+        and _provider_instants_match(
+            observed.start,
+            expected.start,
+        )
+        and _provider_instants_match(
+            observed.end,
+            expected.end,
+        )
         and observed.timezone == expected.timezone
         and observed.description == expected.description
         and observed.location == expected.location

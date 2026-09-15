@@ -827,7 +827,7 @@ def _build_cli_acceptance_request() -> CalendarCreateRequest:
     except ZoneInfoNotFoundError:
         raise RuntimeError("REAL_ACCEPTANCE_OPERATOR_CONTEXT_REQUIRED") from None
 
-    now = datetime.now(zone)
+    now = datetime.now(zone).replace(microsecond=0)
     start = now + timedelta(minutes=10)
     end = start + timedelta(minutes=15)
 
