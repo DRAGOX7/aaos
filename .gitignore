@@ -46,3 +46,4 @@ lcov.info
 Thumbs.db
 Desktop.ini
 frontend/node_modules/
+frontend/*.tsbuildinfo
