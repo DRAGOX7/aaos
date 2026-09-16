@@ -37,7 +37,11 @@ terminology, not evidence of a freeze tag.
 - Phase 3 — **FROZEN** at `phase-03-passed` / `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`.
 - Phase 4 — **FROZEN** at `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`.
 - Phase 5 — **PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED**; Slices 1–5 human approved, Slice 6 not yet approved.
-- Phases 6–9 — **PLANNED / NOT STARTED**.
+- Phase 6A — **IMPLEMENTED / VERIFIED** as the durable approval/execution prerequisite consumed by Phase 6B; no separate freeze tag is recorded here.
+- Phase 6B — **FROZEN** at `phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`.
+- Phase 6C — **OPTIONAL / NOT PURSUED**.
+- Phase 7 — **AUTHORIZED / SPECIFICATION IN PROGRESS**; production implementation awaits explicit human approval of the written design.
+- Phases 8–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
 
@@ -295,13 +299,18 @@ The production REPL remains disabled.
 
 ## PHASE 6 — Durable Approval Core and Gated External Integrations
 
-**Current status: PLANNED / NOT STARTED.**
+**Current status: 6A IMPLEMENTED / VERIFIED; 6B FROZEN at
+`phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`;
+6C OPTIONAL / NOT PURSUED.**
 
 ### Purpose
 
 Introduce carefully controlled external writes.
 
-Phase 6 is NOT AUTHORIZED and cannot begin until Phase 5 passes.
+The historical pre-Phase-6 sequencing gate is superseded for current status
+by the authoritative governance ledger and the frozen Phase 6B evidence. This
+does not manufacture Phase 5 acceptance or remove unresolved Phase 5
+constraints from later consumers.
 
 ### Internal gates
 
@@ -333,8 +342,8 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 - Remote-state revalidation.
 - Idempotency.
 - Google Calendar official API.
-- Official GitHub MCP integration.
-- GitHub starts read-only.
+- Optional official GitHub MCP integration if 6C is pursued.
+- If 6C is pursued, GitHub starts read-only.
 - Narrowly scoped write tools only after approval.
 
 ### Acceptance gate
@@ -343,17 +352,23 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 - An approved payload cannot change.
 - Expired proposals cannot execute.
 - Duplicate Calendar events are prevented.
-- GitHub begins read-only.
+- If optional 6C is pursued, GitHub begins read-only; otherwise this criterion
+  is non-blocking.
 - Credentials are never exposed to the model or frontend.
 - Retries do not duplicate completed writes.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: PLANNED / NOT STARTED.**
+**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.**
 
 ### Purpose
 
 Build the user interface only after the backend workflows are proven.
+
+The frozen Phase 6B baseline is the starting point for Phase 7 design.
+Production implementation remains blocked until the written Phase 7 design
+specification is explicitly human approved. Optional Phase 6C is not a
+prerequisite for this dashboard scope.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is

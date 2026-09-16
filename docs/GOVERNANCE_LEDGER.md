@@ -32,7 +32,11 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 3 | FROZEN: `phase-03-passed`, `12a27f7a77ed79a3e638d9fc6bf4509840a9b326` | No reopening |
 | Phase 4 | FROZEN: `phase-04-passed`, `e99c494628952e0a1ebcafa2450c87611b4dc6c8` | No reopening or held-out rerun |
 | Phase 5 | AUTHORIZED; partially IMPLEMENTED; not PASSED/FROZEN | Corrective gate blocks Slice 7 / Slice 8 acceptance work |
-| Phases 6–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | Phase 6 cannot start before Phase 5 passes |
+| Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
+| Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
+| Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
+| Phase 7 | AUTHORIZED / SPECIFICATION IN PROGRESS | Production implementation remains blocked until the written Phase 7 design is explicitly human approved |
+| Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
 new acceptance adjudications. Tags are historical evidence; a misleading tag
@@ -74,6 +78,16 @@ approval source without fabricating a historical verification report.
 
 ## Decisions and explicit supersession
 
+- 2026-09-16: HUMAN_APPROVED sequencing decision: use the frozen
+  `phase-06b-passed` baseline at
+  `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` for Phase 7 design work;
+  optional Phase 6C is not pursued. This records actual repository evidence
+  and the human direction to proceed without manufacturing Phase 5 PASSED or
+  withdrawing any unresolved Phase 5 limitation.
+- 2026-09-16: Phase 7 dashboard/operational-visibility architecture sections
+  1–7 are HUMAN_APPROVED in conversation. The written design specification is
+  still a separate review gate; production implementation remains blocked
+  until that exact written specification is explicitly human approved.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.
