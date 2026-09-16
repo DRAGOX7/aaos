@@ -24,4 +24,11 @@ describe("AAOS root providers", () => {
       "<AppShell>{children}</AppShell>",
     );
   });
+
+  it("provides TanStack Query at the application boundary", () => {
+    expect(layout).toContain(
+      'import { QueryProvider } from "@/components/providers/query-provider";',
+    );
+    expect(layout).toContain("<QueryProvider>");
+  });
 });
