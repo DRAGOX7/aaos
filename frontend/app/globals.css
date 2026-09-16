@@ -1,41 +1,139 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
   color-scheme: light;
-  --aaos-background: #f7f8fb;
+
+  /* AAOS visual source of truth */
+  --aaos-background: #f6f9fd;
   --aaos-surface: #ffffff;
-  --aaos-surface-soft: #f3f5f8;
-  --aaos-text: #182230;
-  --aaos-text-muted: #667085;
-  --aaos-border: #e6e9ef;
-  --aaos-accent: #6f74df;
-  --aaos-accent-soft: #eeefff;
-  --aaos-success: #287a5f;
-  --aaos-warning: #a46818;
-  --aaos-danger: #b54747;
+  --aaos-surface-soft: #f3f7fc;
+
+  --aaos-text: #10214b;
+  --aaos-text-muted: #66779a;
+  --aaos-border: #dfe8f4;
+
+  --aaos-primary: #1677f2;
+  --aaos-primary-soft: #eaf3ff;
+
+  --aaos-teal: #0b9ea8;
+  --aaos-teal-soft: #e7f8f7;
+
+  --aaos-success: #0aa56f;
+  --aaos-warning: #ee9412;
+  --aaos-danger: #e5484d;
+
+  --aaos-radius-control: 0.75rem;
   --aaos-radius-card: 1rem;
-  --aaos-shadow-card: 0 10px 30px rgb(28 39 54 / 0.06);
+
+  --aaos-shadow-card:
+    0 10px 30px rgb(28 52 91 / 0.06);
+
+  /* shadcn semantic contract -> AAOS identity */
+  --background: var(--aaos-background);
+  --foreground: var(--aaos-text);
+
+  --card: var(--aaos-surface);
+  --card-foreground: var(--aaos-text);
+
+  --popover: var(--aaos-surface);
+  --popover-foreground: var(--aaos-text);
+
+  --primary: var(--aaos-primary);
+  --primary-foreground: #ffffff;
+
+  --secondary: var(--aaos-primary-soft);
+  --secondary-foreground: var(--aaos-text);
+
+  --muted: var(--aaos-surface-soft);
+  --muted-foreground: var(--aaos-text-muted);
+
+  --accent: var(--aaos-teal-soft);
+  --accent-foreground: var(--aaos-teal);
+
+  --destructive: var(--aaos-danger);
+
+  --border: var(--aaos-border);
+  --input: var(--aaos-border);
+  --ring: var(--aaos-primary);
+
+  --radius: var(--aaos-radius-control);
+
+  --sidebar: var(--aaos-surface);
+  --sidebar-foreground: var(--aaos-text);
+  --sidebar-primary: var(--aaos-primary);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--aaos-primary-soft);
+  --sidebar-accent-foreground: var(--aaos-primary);
+  --sidebar-border: var(--aaos-border);
+  --sidebar-ring: var(--aaos-primary);
 }
 
-* {
-  box-sizing: border-box;
+@theme inline {
+  --font-heading: var(--font-inter);
+  --font-sans: var(--font-inter);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground:
+    var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground:
+    var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.35);
+  --radius-2xl: calc(var(--radius) * 1.7);
+  --radius-3xl: calc(var(--radius) * 2);
 }
 
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-}
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
 
-body {
-  background: var(--aaos-background);
-  color: var(--aaos-text);
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  html {
+    @apply font-sans;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    min-height: 100%;
+  }
 }
