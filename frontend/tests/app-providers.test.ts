@@ -13,8 +13,15 @@ describe("AAOS root providers", () => {
     expect(layout).toContain(
       'import { TooltipProvider } from "@/components/ui/tooltip";',
     );
+    expect(layout).toContain("<TooltipProvider>");
+  });
+
+  it("composes the AAOS shell at the root boundary", () => {
     expect(layout).toContain(
-      "<TooltipProvider>{children}</TooltipProvider>",
+      'import { AppShell } from "@/components/aaos/app-shell";',
+    );
+    expect(layout).toContain(
+      "<AppShell>{children}</AppShell>",
     );
   });
 });
