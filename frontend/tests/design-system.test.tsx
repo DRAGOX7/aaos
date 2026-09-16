@@ -68,4 +68,3 @@ describe("AAOS design system foundation", () => {
     ).toBeInTheDocument();
   });
 });
-

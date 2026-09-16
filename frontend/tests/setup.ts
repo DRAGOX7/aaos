@@ -10,4 +10,3 @@ Object.defineProperty(globalThis, "ResizeObserver", {
   writable: true,
   value: ResizeObserverMock,
 });
-
