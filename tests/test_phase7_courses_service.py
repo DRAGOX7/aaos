@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aaos.persistence.academic_models import Base, CourseORM
@@ -256,3 +256,69 @@ def test_list_courses_normalizes_updated_at_to_utc(
     )
     assert updated_at is not None
     assert updated_at.utcoffset() == timedelta(0)
+
+def test_list_courses_does_not_mutate_persisted_courses(
+    sessions: sessionmaker[Session],
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=101,
+            source_system="moodle",
+            source_id="course-101",
+            title="Deep Learning",
+            code="AI342",
+            description="Original description.",
+            is_active=True,
+        ),
+        CourseORM(
+            id=102,
+            source_system="moodle",
+            source_id="course-102",
+            title="Inactive Course",
+            code="AI999",
+            description=None,
+            is_active=False,
+        ),
+    )
+
+    def snapshot() -> tuple[
+        tuple[
+            int,
+            str,
+            str,
+            str,
+            str | None,
+            str | None,
+            bool,
+            datetime | None,
+        ],
+        ...,
+    ]:
+        with sessions() as session:
+            rows = session.scalars(
+                select(CourseORM).order_by(CourseORM.id)
+            ).all()
+
+            return tuple(
+                (
+                    row.id,
+                    row.source_system,
+                    row.source_id,
+                    row.title,
+                    row.code,
+                    row.description,
+                    row.is_active,
+                    row.source_updated_at,
+                )
+                for row in rows
+            )
+
+    before = snapshot()
+
+    AcademicReadService(sessions).list_courses()
+
+    after = snapshot()
+
+    assert after == before
+
