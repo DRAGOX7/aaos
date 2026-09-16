@@ -51,6 +51,7 @@ eslint=9.39.5
 eslint-config-next=16.3.5
 @types/react=19.3.0
 @types/react-dom=19.3.0
+@types/node=22.20.3
 openapi-typescript=7.13.0
 ```
 
@@ -61,6 +62,16 @@ the direct ESLint CLI (`eslint .`). ESLint 10.10.0 was also rejected
 after `npm ls eslint --all` proved peer incompatibility with the current
 Next.js ESLint plugin stack; Phase 7B therefore exact-pins the newest
 compatible `eslint@9.39.5` release resolved from the registry.
+
+
+Next.js 16.3.5 production build verified two additional TypeScript
+requirements: `@types/node@22.20.3` is required for Node globals used by
+Next/Vitest configuration, and Next requires `"jsx": "react-jsx"`.
+The build also adds `.next/dev/types/**/*.ts` to the TypeScript include
+set. These verified framework requirements are accepted as part of Task 1.
+`*.tsbuildinfo` is generated compiler state and must remain untracked.
+The Vitest config is stored as `vitest.config.mts` so its ESM syntax is
+unambiguous without changing the package-wide module mode.
 
 Do not approve or bypass npm install scripts merely to silence the
 `allow-scripts` warning. If a later lint/build command demonstrates that a
@@ -74,7 +85,7 @@ specific failure before changing npm script permissions.
 - Modify: `frontend/package.json`, `frontend/package-lock.json`
 - Create: `frontend/tsconfig.json`, `frontend/next-env.d.ts`, `frontend/next.config.ts`, `frontend/postcss.config.mjs`, `frontend/eslint.config.mjs`
 - Create: `frontend/app/layout.tsx`, `frontend/app/page.tsx`, `frontend/app/globals.css`
-- Create: `frontend/vitest.config.ts`, `frontend/tests/setup.ts`, `frontend/tests/proxy-config.test.ts`
+- Create: `frontend/vitest.config.mts`, `frontend/tests/setup.ts`, `frontend/tests/proxy-config.test.ts`
 
 **Interfaces:**
 - Produces `npm run dev`, `build`, `typecheck`, `test`, `lint`, `check:api-types`.
