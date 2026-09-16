@@ -1,0 +1,10 @@
+{
+  "name": "aaos-frontend-contracts",
+  "private": true,
+  "scripts": {
+    "generate:api": "openapi-typescript openapi/aaos-v1.json -o types/api.generated.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}

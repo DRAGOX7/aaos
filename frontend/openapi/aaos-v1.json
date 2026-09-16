@@ -1,0 +1,150 @@
+{
+  "components": {
+    "schemas": {
+      "CourseListResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe course collection response.",
+        "properties": {
+          "courses": {
+            "items": {
+              "$ref": "#/components/schemas/CourseSummary"
+            },
+            "title": "Courses",
+            "type": "array"
+          }
+        },
+        "required": [
+          "courses"
+        ],
+        "title": "CourseListResponse",
+        "type": "object"
+      },
+      "CourseSummary": {
+        "additionalProperties": false,
+        "description": "Browser-safe projection of an active academic course.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "code",
+          "description",
+          "updated_at"
+        ],
+        "title": "CourseSummary",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Stable response contract for process-level health checks.",
+        "properties": {
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "service",
+          "version"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "aaos",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/courses": {
+      "get": {
+        "operationId": "list_courses_api_v1_courses_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Courses"
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Report that the AAOS API process is alive.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    }
+  }
+}
