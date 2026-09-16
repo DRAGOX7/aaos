@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.web.errors import install_error_boundary
 
 
 class HealthResponse(BaseModel):
@@ -21,6 +22,7 @@ class HealthResponse(BaseModel):
 def create_app(settings: AppSettings = DEFAULT_SETTINGS) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
     application = FastAPI(title=settings.application_name, version=settings.application_version)
+    install_error_boundary(application)
 
     @application.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
