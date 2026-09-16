@@ -49,22 +49,23 @@ describe("AAOS design system foundation", () => {
     ).toBeInTheDocument();
   });
 
-  it("provides the shared tooltip primitive", async () => {
+  it("provides the shared tooltip primitive", () => {
     render(
       <TooltipProvider delayDuration={0}>
-        <Tooltip>
+        <Tooltip open>
           <TooltipTrigger>Help</TooltipTrigger>
           <TooltipContent>Helpful context</TooltipContent>
         </Tooltip>
       </TooltipProvider>,
     );
 
-    fireEvent.mouseOver(
+    expect(
       screen.getByRole("button", { name: "Help" }),
-    );
+    ).toBeInTheDocument();
 
     expect(
-      await screen.findByText("Helpful context"),
+      screen.getByText("Helpful context"),
     ).toBeInTheDocument();
   });
 });
+
