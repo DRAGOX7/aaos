@@ -47,7 +47,7 @@ vitest=5.0.1
 @testing-library/react=16.3.3
 @testing-library/jest-dom=7.0.1
 jsdom=30.0.1
-eslint=10.10.0
+eslint=9.39.5
 eslint-config-next=16.3.5
 @types/react=19.3.0
 @types/react-dom=19.3.0
@@ -57,7 +57,10 @@ openapi-typescript=7.13.0
 `typescript@7.0.2` was rejected after npm exposed the
 `openapi-typescript@7.13.0 -> typescript@^5.x` peer requirement.
 `next lint` was verified absent in Next.js 16.3.5, so the lint gate is
-the direct ESLint CLI (`eslint .`).
+the direct ESLint CLI (`eslint .`). ESLint 10.10.0 was also rejected
+after `npm ls eslint --all` proved peer incompatibility with the current
+Next.js ESLint plugin stack; Phase 7B therefore exact-pins the newest
+compatible `eslint@9.39.5` release resolved from the registry.
 
 Do not approve or bypass npm install scripts merely to silence the
 `allow-scripts` warning. If a later lint/build command demonstrates that a
