@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / SPECIFICATION IN PROGRESS | Production implementation remains blocked until the written Phase 7 design is explicitly human approved |
+| Phase 7 | AUTHORIZED / DESIGN HUMAN_APPROVED at `095979f` | Production implementation may proceed slice-by-slice through reviewed implementation plans; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -85,9 +85,9 @@ approval source without fabricating a historical verification report.
   and the human direction to proceed without manufacturing Phase 5 PASSED or
   withdrawing any unresolved Phase 5 limitation.
 - 2026-09-16: Phase 7 dashboard/operational-visibility architecture sections
-  1–7 are HUMAN_APPROVED in conversation. The written design specification is
-  still a separate review gate; production implementation remains blocked
-  until that exact written specification is explicitly human approved.
+  1–7 and the exact written design specification at commit `095979f` are
+  HUMAN_APPROVED. Production implementation is authorized slice-by-slice via
+  reviewed implementation plans; no Phase 7 PASSED/FROZEN claim is implied.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.

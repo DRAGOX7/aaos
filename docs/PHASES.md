@@ -40,7 +40,7 @@ terminology, not evidence of a freeze tag.
 - Phase 6A — **IMPLEMENTED / VERIFIED** as the durable approval/execution prerequisite consumed by Phase 6B; no separate freeze tag is recorded here.
 - Phase 6B — **FROZEN** at `phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`.
 - Phase 6C — **OPTIONAL / NOT PURSUED**.
-- Phase 7 — **AUTHORIZED / SPECIFICATION IN PROGRESS**; production implementation awaits explicit human approval of the written design.
+- Phase 7 — **AUTHORIZED / DESIGN HUMAN_APPROVED** at `095979f`; production implementation proceeds slice-by-slice through reviewed implementation plans.
 - Phases 8–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
@@ -359,16 +359,17 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.**
+**Current status: AUTHORIZED / DESIGN HUMAN_APPROVED at `095979f`; IMPLEMENTATION IN PROGRESS.**
 
 ### Purpose
 
 Build the user interface only after the backend workflows are proven.
 
-The frozen Phase 6B baseline is the starting point for Phase 7 design.
-Production implementation remains blocked until the written Phase 7 design
-specification is explicitly human approved. Optional Phase 6C is not a
-prerequisite for this dashboard scope.
+The frozen Phase 6B baseline is the starting point for Phase 7. The exact
+written Phase 7 design specification at commit `095979f` was explicitly
+human-approved on 2026-09-16. Production implementation proceeds
+slice-by-slice through reviewed plans. Optional Phase 6C is not a prerequisite
+for this dashboard scope.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is
