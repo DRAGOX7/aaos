@@ -2,7 +2,9 @@
   "name": "aaos-frontend-contracts",
   "private": true,
   "scripts": {
-    "generate:api": "openapi-typescript openapi/aaos-v1.json -o types/api.generated.ts"
+    "generate:openapi": "uv run python ../scripts/export_openapi.py",
+    "generate:api-types": "npm run generate:openapi && openapi-typescript openapi/aaos-v1.json -o types/api.generated.ts",
+    "check:api-types": "npm run generate:api-types && git diff --exit-code -- openapi/aaos-v1.json types/api.generated.ts"
   },
   "devDependencies": {
     "openapi-typescript": "7.13.0"

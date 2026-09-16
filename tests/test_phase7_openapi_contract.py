@@ -153,14 +153,19 @@ def test_frontend_contract_generation_workspace_is_frozen() -> None:
     package = json.loads(package_path.read_text(encoding="utf-8"))
 
     assert package["private"] is True
-    assert set(package["scripts"]) >= {
-        "generate:api",
+    assert package["scripts"] == {
+        "generate:openapi": "uv run python ../scripts/export_openapi.py",
+        "generate:api-types": (
+            "npm run generate:openapi && "
+            "openapi-typescript openapi/aaos-v1.json "
+            "-o types/api.generated.ts"
+        ),
+        "check:api-types": (
+            "npm run generate:api-types && "
+            "git diff --exit-code -- "
+            "openapi/aaos-v1.json types/api.generated.ts"
+        ),
     }
-
-    assert (
-        package["scripts"]["generate:api"]
-        == "openapi-typescript openapi/aaos-v1.json -o types/api.generated.ts"
-    )
 
     dev_dependencies = package["devDependencies"]
 
@@ -196,7 +201,7 @@ def test_generated_types_are_byte_reproducible() -> None:
         [
             npm_executable,
             "run",
-            "generate:api",
+            "generate:api-types",
         ],
         cwd="frontend",
         check=False,
