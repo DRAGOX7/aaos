@@ -57,4 +57,3 @@ describe("AAOS application shell", () => {
     ).toBeInTheDocument();
   });
 });
-
