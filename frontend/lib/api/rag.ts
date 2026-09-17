@@ -4,6 +4,7 @@ import { createApiError } from "@/lib/api/errors";
 
 export type RagQueryRequest = components["schemas"]["RagQueryRequest"];
 export type RagAnswerResponse = components["schemas"]["RagAnswerResponse"];
+export type RagCitation = components["schemas"]["RagCitation"];
 
 function requirePositiveInteger(value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -39,4 +40,3 @@ export async function fetchRagQuery(
   }
   return (await response.json()) as RagAnswerResponse;
 }
-

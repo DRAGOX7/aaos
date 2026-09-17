@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/aaos/page-header";
+import { AskCitation } from "@/components/aaos/ask-citation";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
@@ -126,9 +127,10 @@ export function AskView() {
           {answer.citations.length ? (
             <ul className="mt-4 space-y-2 border-t border-border pt-4" aria-label="Citations">
               {answer.citations.map((citation) => (
-                <li key={`${citation.document_id}-${citation.page_start}-${citation.page_end}`} className="text-sm text-muted-foreground">
-                  {citation.document_title} · pages {citation.page_start}–{citation.page_end}
-                </li>
+                <AskCitation
+                  key={`${citation.document_id}-${citation.page_start}-${citation.page_end}`}
+                  citation={citation}
+                />
               ))}
             </ul>
           ) : null}
@@ -137,4 +139,3 @@ export function AskView() {
     </div>
   );
 }
-
