@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import {
   CourseDetailView,
@@ -74,6 +74,18 @@ describe("AAOS course read views", () => {
 
       expect(
         screen.getByRole("heading", { level: 1, name: "Courses" }),
+      ).toBeInTheDocument();
+      const pageHeader = screen.getByRole("banner");
+      expect(
+        within(pageHeader).getByRole("heading", {
+          level: 1,
+          name: "Courses",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(pageHeader).getByText(
+          "Active courses in your academic workspace.",
+        ),
       ).toBeInTheDocument();
       expect(screen.getByLabelText("Loading courses")).toBeInTheDocument();
     });

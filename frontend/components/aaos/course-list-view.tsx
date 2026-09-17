@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { CourseCard } from "@/components/aaos/course-card";
+import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { courseListQueryOptions } from "@/lib/query/courses";
@@ -14,14 +15,10 @@ export function CourseListView() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          Courses
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Active courses in your academic workspace.
-        </p>
-      </div>
+      <PageHeader
+        title="Courses"
+        description="Active courses in your academic workspace."
+      />
 
       <SectionCard title="Active courses">
         {isPending ? (

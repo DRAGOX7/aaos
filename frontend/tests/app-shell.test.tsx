@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { AppShell } from "@/components/aaos/app-shell";
+import { PageHeader } from "@/components/aaos/page-header";
 
 describe("AAOS application shell", () => {
   it("provides the required application landmarks", () => {
@@ -38,6 +39,20 @@ describe("AAOS application shell", () => {
       }),
     ).toBeInTheDocument();
 
+    expect(
+      screen.getByText("Your academic workspace"),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves PageHeader defaults when rendered directly", () => {
+    render(<PageHeader />);
+
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Overview",
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Your academic workspace"),
     ).toBeInTheDocument();
