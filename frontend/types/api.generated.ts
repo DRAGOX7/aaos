@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/rag/queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask Rag */
+        post: operations["ask_rag_api_v1_rag_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -237,6 +254,72 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /**
+         * RagAnswerResponse
+         * @description Validated final answer projection safe for browser rendering.
+         */
+        RagAnswerResponse: {
+            /** Answer Text */
+            answer_text: string;
+            /** Citations */
+            citations: components["schemas"]["RagCitation"][];
+            /** Language */
+            language: string;
+            status: components["schemas"]["RagAnswerStatus"];
+        };
+        /**
+         * RagAnswerStatus
+         * @enum {string}
+         */
+        RagAnswerStatus: "ANSWER" | "PARTIAL_ANSWER" | "INSUFFICIENT_EVIDENCE";
+        /**
+         * RagCitation
+         * @description Safe public citation target resolved by trusted backend code.
+         */
+        RagCitation: {
+            /** Document Id */
+            document_id: number;
+            /** Document Title */
+            document_title: string;
+            /** Page End */
+            page_end: number;
+            /** Page Start */
+            page_start: number;
+        };
+        /**
+         * RagCourseScopeRequest
+         * @description Browser request selecting one trusted active-course scope.
+         */
+        RagCourseScopeRequest: {
+            /** Course Id */
+            course_id: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "course";
+        };
+        /**
+         * RagGlobalScopeRequest
+         * @description Browser request selecting the trusted global academic scope.
+         */
+        RagGlobalScopeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "global";
+        };
+        /**
+         * RagQueryRequest
+         * @description Closed browser input for one read-only validated RAG query.
+         */
+        RagQueryRequest: {
+            /** Question */
+            question: string;
+            /** Scope */
+            scope: components["schemas"]["RagGlobalScopeRequest"] | components["schemas"]["RagCourseScopeRequest"];
         };
         /** ValidationError */
         ValidationError: {
@@ -391,6 +474,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_rag_api_v1_rag_queries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RagQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RagAnswerResponse"];
                 };
             };
             /** @description Validation Error */

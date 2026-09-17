@@ -4,6 +4,7 @@ from typing import Protocol
 
 from fastapi import APIRouter, Path, Query
 
+from aaos.rag.contracts import RagOperationalError
 from aaos.web.contracts import (
     AssignmentListResponse,
     AssignmentSummary,
@@ -11,7 +12,11 @@ from aaos.web.contracts import (
     CourseSummary,
     DocumentListResponse,
     DocumentSummary,
+    RagAnswerResponse,
+    RagQueryRequest,
 )
+from aaos.web.errors import Phase7ApiError
+from aaos.web.rag import AcademicRagReader
 
 
 class CourseReader(Protocol):
@@ -52,6 +57,7 @@ def create_api_v1_router(
     *,
     academic_reader: AcademicReader | None = None,
     document_reader: DocumentReader | None = None,
+    rag_reader: AcademicRagReader | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -106,5 +112,21 @@ def create_api_v1_router(
             document_id: int = Path(..., gt=0),
         ) -> DocumentSummary:
             return document_reader.get_document(document_id)
+
+    if rag_reader is not None:
+
+        @router.post(
+            "/rag/queries",
+            response_model=RagAnswerResponse,
+        )
+        async def ask_rag(request: RagQueryRequest) -> RagAnswerResponse:
+            try:
+                return await rag_reader.ask(request)
+            except RagOperationalError as error:
+                raise Phase7ApiError(
+                    503,
+                    "RAG_UNAVAILABLE",
+                    "AAOS could not answer from the local knowledge base.",
+                ) from error
 
     return router

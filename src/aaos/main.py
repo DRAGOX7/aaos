@@ -8,8 +8,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
-from aaos.web.contracts import AssignmentSummary, CourseSummary, DocumentSummary
+from aaos.web.contracts import (
+    AssignmentSummary,
+    CourseSummary,
+    DocumentSummary,
+    RagAnswerResponse,
+    RagQueryRequest,
+)
 from aaos.web.errors import install_error_boundary
+from aaos.web.rag import AcademicRagReader, RagReadService
 from aaos.web.routes import (
     AcademicReader,
     CourseReader,
@@ -20,6 +27,8 @@ from aaos.web.routes import (
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session, sessionmaker
+
+    from aaos.rag.factory import ConfiguredPhase4Runtime
 
 
 class HealthResponse(BaseModel):
@@ -87,10 +96,46 @@ class _LazyDefaultCourseReader:
             self._engine.dispose()
 
 
+class _LazyDefaultRagReader:
+    """Create the Phase 4 RAG runtime only when the browser asks a question."""
+
+    def __init__(self, sessions: sessionmaker[Session] | None = None) -> None:
+        self._sessions = sessions
+        self._engine: Engine | None = None
+        self._runtime: ConfiguredPhase4Runtime | None = None
+        self._delegate: RagReadService | None = None
+
+    def _ensure_delegate(self) -> RagReadService:
+        if self._delegate is None:
+            from aaos.persistence.database import (
+                create_database_engine,
+                create_session_factory,
+            )
+            from aaos.rag.factory import build_configured_phase4_runtime
+
+            sessions = self._sessions
+            if sessions is None:
+                self._engine = create_database_engine()
+                sessions = create_session_factory(self._engine)
+            self._runtime = build_configured_phase4_runtime()
+            self._delegate = RagReadService(self._runtime.service, sessions)
+        return self._delegate
+
+    async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
+        return await self._ensure_delegate().ask(request)
+
+    def dispose(self) -> None:
+        if self._runtime is not None:
+            self._runtime.close()
+        if self._engine is not None:
+            self._engine.dispose()
+
+
 def create_app(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
     session_factory: sessionmaker[Session] | None = None,
+    rag_reader: AcademicRagReader | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -104,6 +149,7 @@ def create_app(
     course_reader: CourseReader
     academic_reader: AcademicReader
     document_reader: DocumentReader
+    resolved_rag_reader = rag_reader
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
@@ -123,11 +169,17 @@ def create_app(
         course_reader = academic_reader
         document_reader = DocumentReadService(session_factory)
 
+    if resolved_rag_reader is None:
+        lazy_rag_reader = _LazyDefaultRagReader(session_factory)
+        resolved_rag_reader = lazy_rag_reader
+        application.router.add_event_handler("shutdown", lazy_rag_reader.dispose)
+
     application.include_router(
         create_api_v1_router(
             course_reader,
             academic_reader=academic_reader,
             document_reader=document_reader,
+            rag_reader=resolved_rag_reader,
         )
     )
 

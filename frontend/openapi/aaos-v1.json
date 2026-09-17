@@ -334,6 +334,160 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "RagAnswerResponse": {
+        "additionalProperties": false,
+        "description": "Validated final answer projection safe for browser rendering.",
+        "properties": {
+          "answer_text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Answer Text",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/RagCitation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "language": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Language",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RagAnswerStatus"
+          }
+        },
+        "required": [
+          "status",
+          "answer_text",
+          "language",
+          "citations"
+        ],
+        "title": "RagAnswerResponse",
+        "type": "object"
+      },
+      "RagAnswerStatus": {
+        "enum": [
+          "ANSWER",
+          "PARTIAL_ANSWER",
+          "INSUFFICIENT_EVIDENCE"
+        ],
+        "title": "RagAnswerStatus",
+        "type": "string"
+      },
+      "RagCitation": {
+        "additionalProperties": false,
+        "description": "Safe public citation target resolved by trusted backend code.",
+        "properties": {
+          "document_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "document_title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Document Title",
+            "type": "string"
+          },
+          "page_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Page End",
+            "type": "integer"
+          },
+          "page_start": {
+            "exclusiveMinimum": 0.0,
+            "title": "Page Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "document_title",
+          "page_start",
+          "page_end"
+        ],
+        "title": "RagCitation",
+        "type": "object"
+      },
+      "RagCourseScopeRequest": {
+        "additionalProperties": false,
+        "description": "Browser request selecting one trusted active-course scope.",
+        "properties": {
+          "course_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "type": {
+            "const": "course",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "course_id"
+        ],
+        "title": "RagCourseScopeRequest",
+        "type": "object"
+      },
+      "RagGlobalScopeRequest": {
+        "additionalProperties": false,
+        "description": "Browser request selecting the trusted global academic scope.",
+        "properties": {
+          "type": {
+            "const": "global",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "RagGlobalScopeRequest",
+        "type": "object"
+      },
+      "RagQueryRequest": {
+        "additionalProperties": false,
+        "description": "Closed browser input for one read-only validated RAG query.",
+        "properties": {
+          "question": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "scope": {
+            "discriminator": {
+              "mapping": {
+                "course": "#/components/schemas/RagCourseScopeRequest",
+                "global": "#/components/schemas/RagGlobalScopeRequest"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RagGlobalScopeRequest"
+              },
+              {
+                "$ref": "#/components/schemas/RagCourseScopeRequest"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "question",
+          "scope"
+        ],
+        "title": "RagQueryRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -572,6 +726,44 @@
           }
         },
         "summary": "Get Document"
+      }
+    },
+    "/api/v1/rag/queries": {
+      "post": {
+        "operationId": "ask_rag_api_v1_rag_queries_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagAnswerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask Rag"
       }
     },
     "/health": {
