@@ -380,8 +380,14 @@ Phase 7B (frontend shell/design system and production browser acceptance) was
 human-accepted at `0f887a2f867648f95e69abe534978a1482f69df1` on 2026-09-17
 after its documented frontend, backend, static, runtime, responsive, and
 browser evidence passed. This accepts 7B only; Phase 7 remains not
-PASSED/FROZEN, and Phase 7C requires a separate reviewed plan and explicit
-authorization.
+PASSED/FROZEN.
+
+Phase 7C (academic read-only experience and production browser acceptance)
+was human-accepted at `26e517bb8967527de435ffba11a77ff1c00000a0` on
+2026-09-18 after its documented implementation, route-boundary correction,
+runtime, responsive, and browser evidence passed. This accepts 7C only;
+Phase 7 remains not PASSED/FROZEN and 7D is the next independently governed
+slice.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is

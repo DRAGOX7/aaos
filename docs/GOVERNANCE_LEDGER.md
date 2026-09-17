@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1` | 7C requires its own reviewed implementation plan and authorization; Phase 7 is not PASSED/FROZEN |
+| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0` | 7D remains independently authorized and in progress; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -105,6 +105,13 @@ approval source without fabricating a historical verification report.
   the final worktree was clean. The broader `mypy src tests` command remains
   a non-blocking pre-existing Phase 6B diagnostic warning. This accepts 7B
   only; it does not mark Phase 7 PASSED/FROZEN or authorize 7C.
+- 2026-09-18: Phase 7C academic read-only experience and production browser
+  acceptance was HUMAN_ACCEPTED at
+  `26e517bb8967527de435ffba11a77ff1c00000a0` after the server/client route
+  parser defect was corrected and the complete Task 9 evidence passed. Tasks
+  1–8 were implemented and reviewed; the accepted boundary contains no 7D
+  behavior, no external writes, and a clean worktree after disposable fixture
+  cleanup. This accepts 7C only; Phase 7 remains not PASSED/FROZEN.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.
