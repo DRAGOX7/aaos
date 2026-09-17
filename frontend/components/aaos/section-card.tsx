@@ -18,7 +18,7 @@ export function SectionCard({
   return (
     <section
       className={cn(
-        "rounded-[var(--aaos-card-radius)] border border-border bg-card shadow-[var(--aaos-card-shadow)]",
+        "rounded-[var(--aaos-radius-card)] border border-border bg-card shadow-[var(--aaos-shadow-card)]",
         className,
       )}
     >
