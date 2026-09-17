@@ -1,9 +1,12 @@
 """Browser-safe Phase 7 API contracts."""
 
 from datetime import datetime
+from typing import Annotated, Literal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from aaos.rag.contracts import RagAnswerStatus
 
 
 class ApiErrorDetail(BaseModel):
@@ -119,3 +122,76 @@ class DocumentListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     documents: tuple[DocumentSummary, ...]
+
+
+class RagGlobalScopeRequest(BaseModel):
+    """Browser request selecting the trusted global academic scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    type: Literal["global"]
+
+
+class RagCourseScopeRequest(BaseModel):
+    """Browser request selecting one trusted active-course scope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    type: Literal["course"]
+    course_id: int = Field(gt=0)
+
+
+RagScopeRequest = Annotated[
+    RagGlobalScopeRequest | RagCourseScopeRequest,
+    Field(discriminator="type"),
+]
+
+
+class RagQueryRequest(BaseModel):
+    """Closed browser input for one read-only validated RAG query."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    question: str = Field(min_length=1, max_length=4096)
+    scope: RagScopeRequest
+
+    @field_validator("question")
+    @classmethod
+    def _question_must_contain_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must contain text")
+        return value
+
+
+class RagCitation(BaseModel):
+    """Safe public citation target resolved by trusted backend code."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    document_id: int = Field(gt=0)
+    document_title: str = Field(min_length=1, max_length=500)
+    page_start: int = Field(gt=0)
+    page_end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _page_range_is_ordered(self) -> "RagCitation":
+        if self.page_end < self.page_start:
+            raise ValueError("page_end must not precede page_start")
+        return self
+
+
+class RagAnswerResponse(BaseModel):
+    """Validated final answer projection safe for browser rendering."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    status: RagAnswerStatus
+    answer_text: str = Field(min_length=1, max_length=20000)
+    language: str = Field(min_length=1, max_length=32)
+    citations: tuple[RagCitation, ...]
+
+    @model_validator(mode="after")
+    def _insufficient_evidence_has_no_citations(self) -> "RagAnswerResponse":
+        if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE and self.citations:
+            raise ValueError("insufficient evidence cannot contain citations")
+        return self

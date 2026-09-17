@@ -1,12 +1,14 @@
 export type SafeApiErrorCode =
   | "COURSE_NOT_FOUND"
   | "DOCUMENT_NOT_FOUND"
+  | "RAG_UNAVAILABLE"
   | "INVALID_REQUEST"
   | "INTERNAL_ERROR";
 
 const SAFE_MESSAGES: Record<SafeApiErrorCode, string> = {
   COURSE_NOT_FOUND: "The requested course is not available.",
   DOCUMENT_NOT_FOUND: "The requested document is not available.",
+  RAG_UNAVAILABLE: "AAOS could not answer from the local knowledge base.",
   INVALID_REQUEST: "The request is invalid.",
   INTERNAL_ERROR: "AAOS could not complete the request.",
 };
@@ -15,6 +17,7 @@ function isSafeApiErrorCode(value: unknown): value is SafeApiErrorCode {
   return (
     value === "COURSE_NOT_FOUND" ||
     value === "DOCUMENT_NOT_FOUND" ||
+    value === "RAG_UNAVAILABLE" ||
     value === "INVALID_REQUEST" ||
     value === "INTERNAL_ERROR"
   );
@@ -26,6 +29,9 @@ function matchesStatus(code: SafeApiErrorCode, status: number): boolean {
   }
   if (code === "COURSE_NOT_FOUND" || code === "DOCUMENT_NOT_FOUND") {
     return status === 404;
+  }
+  if (code === "RAG_UNAVAILABLE") {
+    return status === 503;
   }
   return status === 500;
 }
