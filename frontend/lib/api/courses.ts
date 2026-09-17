@@ -1,5 +1,7 @@
 import type { components } from "@/types/api.generated";
 
+import { createApiError } from "@/lib/api/errors";
+
 export type CourseSummary =
   components["schemas"]["CourseSummary"];
 
@@ -18,9 +20,7 @@ export async function fetchCourses(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `AAOS courses request failed (${response.status})`,
-    );
+    throw await createApiError(response, "courses");
   }
 
   return (await response.json()) as CourseListResponse;

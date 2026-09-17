@@ -13,10 +13,11 @@ export const academicKeys = {
       : (["assignments", courseId] as const),
   documents: (courseId?: number) =>
     courseId === undefined
-      ? (["documents"] as const)
-      : (["documents", courseId] as const),
+      ? (["documents", "list"] as const)
+      : (["documents", "list", courseId] as const),
   document: (documentId: number) => [
     "documents",
+    "detail",
     documentId,
   ] as const,
 };

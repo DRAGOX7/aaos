@@ -18,15 +18,23 @@ describe("AAOS academic query keys", () => {
 
   it("omits course_id from unfiltered assignment and document keys", () => {
     expect(academicKeys.assignments()).toEqual(["assignments"]);
-    expect(academicKeys.documents()).toEqual(["documents"]);
+    expect(academicKeys.documents()).toEqual(["documents", "list"]);
     expect(academicKeys.assignments()).not.toContain(undefined);
     expect(academicKeys.documents()).not.toContain(undefined);
   });
 
   it("includes a validated course_id in filtered keys", () => {
     expect(academicKeys.assignments(42)).toEqual(["assignments", 42]);
-    expect(academicKeys.documents(42)).toEqual(["documents", 42]);
-    expect(academicKeys.document(7)).toEqual(["documents", 7]);
+    expect(academicKeys.documents(42)).toEqual(["documents", "list", 42]);
+    expect(academicKeys.document(7)).toEqual(["documents", "detail", 7]);
+  });
+
+  it("keeps filtered document lists separate from document details", () => {
+    expect(academicKeys.documents(7)).not.toEqual(academicKeys.document(7));
+    expect(academicKeys.documents(7)).not.toEqual(
+      academicKeys.documents(8),
+    );
+    expect(academicKeys.document(7)).not.toEqual(academicKeys.document(8));
   });
 });
 
@@ -47,6 +55,9 @@ describe("AAOS academic query options", () => {
     );
     expect(documentQueryOptions(7).queryKey).toEqual(
       academicKeys.document(7),
+    );
+    expect(documentsQueryOptions(7).queryKey).not.toEqual(
+      documentQueryOptions(7).queryKey,
     );
   });
 });

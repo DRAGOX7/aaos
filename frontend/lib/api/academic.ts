@@ -1,5 +1,7 @@
 import type { components } from "@/types/api.generated";
 
+import { createApiError } from "@/lib/api/errors";
+
 export type CourseSummary = components["schemas"]["CourseSummary"];
 export type AssignmentListResponse =
   components["schemas"]["AssignmentListResponse"];
@@ -28,9 +30,7 @@ async function getJson<T>(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `AAOS academic request failed (${response.status})`,
-    );
+    throw await createApiError(response, "academic");
   }
 
   return (await response.json()) as T;

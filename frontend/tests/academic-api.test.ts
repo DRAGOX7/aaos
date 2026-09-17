@@ -157,6 +157,59 @@ describe("AAOS academic API clients", () => {
     expect(text).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "course not found",
+      404,
+      "COURSE_NOT_FOUND",
+      "The requested course is not available.",
+      () => fetchCourse(42),
+    ],
+    [
+      "document not found",
+      404,
+      "DOCUMENT_NOT_FOUND",
+      "The requested document is not available.",
+      () => fetchDocument(7),
+    ],
+    [
+      "invalid request",
+      422,
+      "INVALID_REQUEST",
+      "The request is invalid.",
+      () => fetchDocuments(),
+    ],
+    [
+      "internal failure",
+      500,
+      "INTERNAL_ERROR",
+      "AAOS could not complete the request.",
+      () => fetchAssignments(),
+    ],
+  ])(
+    "retains only safe status/code information for %s",
+    async (_label, status, code, message, request) => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status,
+        json: vi.fn().mockResolvedValue({
+          error: {
+            code,
+            message: "private traceback, SQL, and local path",
+          },
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const error = await request().catch((value: unknown) => value);
+
+      expect(error).toMatchObject({ status, code, message });
+      expect(String(error)).not.toContain("private traceback");
+      expect(String(error)).not.toContain("SQL");
+      expect(String(error)).not.toContain("local path");
+    },
+  );
+
   it("does not add credentials or provider authority to requests", async () => {
     const fetchMock = stubJsonResponse(documents);
 
