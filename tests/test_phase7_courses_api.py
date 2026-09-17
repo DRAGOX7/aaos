@@ -96,6 +96,87 @@ def test_courses_endpoint_returns_exact_safe_contract(
     }
 
 
+def test_course_detail_endpoint_returns_exact_safe_contract(
+    sessions: sessionmaker[Session],
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=7,
+            source_system="private-source",
+            source_id="private-course-7",
+            title="Deep Learning",
+            code="AI342",
+            description="Neural networks.",
+            is_active=True,
+        ),
+    )
+
+    response = _client(sessions).get("/api/v1/courses/7")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": 7,
+        "title": "Deep Learning",
+        "code": "AI342",
+        "description": "Neural networks.",
+        "updated_at": None,
+    }
+    assert "private-source" not in response.text
+    assert "private-course-7" not in response.text
+
+
+def test_course_detail_missing_and_inactive_use_same_not_found_error(
+    sessions: sessionmaker[Session],
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=2,
+            source_system="moodle",
+            source_id="inactive-course",
+            title="Hidden Course",
+            code="AI999",
+            description=None,
+            is_active=False,
+        ),
+    )
+
+    inactive = _client(sessions).get("/api/v1/courses/2")
+    missing = _client(sessions).get("/api/v1/courses/404")
+
+    assert inactive.status_code == 404
+    assert missing.status_code == 404
+
+    inactive_error = inactive.json()["error"]
+    missing_error = missing.json()["error"]
+
+    assert set(inactive.json()) == {"error"}
+    assert set(missing.json()) == {"error"}
+    assert inactive_error["code"] == "COURSE_NOT_FOUND"
+    assert missing_error["code"] == "COURSE_NOT_FOUND"
+    assert inactive_error["message"] == missing_error["message"]
+    assert "Hidden Course" not in inactive.text
+    assert "inactive-course" not in inactive.text
+
+
+@pytest.mark.parametrize("course_id", ["0", "-1", "not-an-integer"])
+def test_course_detail_rejects_invalid_path_ids_with_safe_validation_error(
+    sessions: sessionmaker[Session],
+    course_id: str,
+) -> None:
+    response = _client(sessions).get(f"/api/v1/courses/{course_id}")
+
+    assert response.status_code == 422
+    assert set(response.json()) == {"error"}
+    assert set(response.json()["error"]) == {
+        "code",
+        "message",
+        "request_id",
+    }
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+
+
 def test_courses_endpoint_excludes_inactive_courses(
     sessions: sessionmaker[Session],
 ) -> None:
