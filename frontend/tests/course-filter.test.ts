@@ -14,6 +14,13 @@ describe("assignment course filter", () => {
     });
   });
 
+  it("accepts a leading-zero ID deterministically as its numeric value", () => {
+    expect(parseCourseIdParam("01")).toEqual({
+      kind: "VALID",
+      courseId: 1,
+    });
+  });
+
   it.each(["0", "-1", "1.5", "abc", "", " 42 ", "+1"])(
     "rejects an invalid course filter: %s",
     (value) => {
