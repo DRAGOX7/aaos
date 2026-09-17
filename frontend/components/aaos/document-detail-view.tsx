@@ -7,21 +7,11 @@ import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import { documentQueryOptions } from "@/lib/query/academic";
+import { parseDocumentRouteId } from "@/lib/routing/route-ids";
 
 type DocumentDetailViewProps = Readonly<{
   documentId: number | null;
 }>;
-
-export function parseDocumentRouteId(value: string): number | null {
-  if (!/^[0-9]+$/.test(value)) {
-    return null;
-  }
-
-  const documentId = Number(value);
-  return Number.isSafeInteger(documentId) && documentId > 0
-    ? documentId
-    : null;
-}
 
 function DocumentDetailQuery({ documentId }: { documentId: number }) {
   const { data, error, isError, isPending } = useQuery(

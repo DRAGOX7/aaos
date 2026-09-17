@@ -7,22 +7,11 @@ import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import { courseQueryOptions } from "@/lib/query/academic";
+import { parseCourseRouteId } from "@/lib/routing/route-ids";
 
 type CourseDetailViewProps = Readonly<{
   courseId: number | null;
 }>;
-
-export function parseCourseRouteId(value: string): number | null {
-  if (!/^[0-9]+$/.test(value)) {
-    return null;
-  }
-
-  const courseId = Number(value);
-
-  return Number.isSafeInteger(courseId) && courseId > 0
-    ? courseId
-    : null;
-}
 
 function CourseDetailQuery({ courseId }: { courseId: number }) {
   const {

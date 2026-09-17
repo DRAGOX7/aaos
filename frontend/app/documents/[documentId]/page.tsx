@@ -1,7 +1,5 @@
-import {
-  DocumentDetailView,
-  parseDocumentRouteId,
-} from "@/components/aaos/document-detail-view";
+import { DocumentDetailView } from "@/components/aaos/document-detail-view";
+import { parseDocumentRouteId } from "@/lib/routing/route-ids";
 
 type DocumentPageProps = Readonly<{
   params: Promise<{

@@ -1,7 +1,5 @@
-import {
-  CourseDetailView,
-  parseCourseRouteId,
-} from "@/components/aaos/course-detail-view";
+import { CourseDetailView } from "@/components/aaos/course-detail-view";
+import { parseCourseRouteId } from "@/lib/routing/route-ids";
 
 type CourseDetailPageProps = Readonly<{
   params: Promise<{

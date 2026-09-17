@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 
-import {
-  CourseDetailView,
-  parseCourseRouteId,
-} from "@/components/aaos/course-detail-view";
+import { CourseDetailView } from "@/components/aaos/course-detail-view";
 import { CourseListView } from "@/components/aaos/course-list-view";
 import { ApiError } from "@/lib/api/errors";
 import type { CourseListResponse, CourseSummary } from "@/lib/api/courses";
+import { parseCourseRouteId } from "@/lib/routing/route-ids";
 
 const { useQueryMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),

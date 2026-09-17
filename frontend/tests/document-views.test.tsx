@@ -3,16 +3,14 @@ import { render, screen, within } from "@testing-library/react";
 
 import DocumentsPage from "@/app/documents/page";
 import DocumentDetailPage from "@/app/documents/[documentId]/page";
-import {
-  DocumentDetailView,
-  parseDocumentRouteId,
-} from "@/components/aaos/document-detail-view";
+import { DocumentDetailView } from "@/components/aaos/document-detail-view";
 import { DocumentList } from "@/components/aaos/document-list";
 import type {
   DocumentListResponse,
   DocumentSummary,
 } from "@/lib/api/academic";
 import { ApiError } from "@/lib/api/errors";
+import { parseDocumentRouteId } from "@/lib/routing/route-ids";
 
 const { useQueryMock } = vi.hoisted(() => ({
   useQueryMock: vi.fn(),
