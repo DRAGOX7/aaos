@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0` | 7B may proceed only through its reviewed implementation plan; Phase 7 is not PASSED/FROZEN |
+| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1` | 7C requires its own reviewed implementation plan and authorization; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -93,6 +93,18 @@ approval source without fabricating a historical verification report.
   repository pytest, Ruff, strict mypy, uv lock check, deterministic OpenAPI
   -> TypeScript drift, browser-artifact leak scan, import-inert startup
   regression coverage, and a clean worktree. This accepts 7A only.
+- 2026-09-17: Phase 7B frontend shell/design-system/browser acceptance was
+  HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`. Evidence
+  included frontend tests (26/26), full pytest (2091 passed, 5 skipped,
+  1 warning), canonical mypy gates, lint/typecheck/production build/API
+  drift, Ruff, uv lock and diff checks, browser-artifact leak scanning,
+  production backend/proxy/frontend runtime checks, 1440/768/390 browser
+  acceptance, keyboard/focus/overflow checks, fake-content audit, and the
+  SectionCard token correction at that SHA. No external writes occurred; the
+  disposable browser acceptance database was removed after evidence capture;
+  the final worktree was clean. The broader `mypy src tests` command remains
+  a non-blocking pre-existing Phase 6B diagnostic warning. This accepts 7B
+  only; it does not mark Phase 7 PASSED/FROZEN or authorize 7C.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.

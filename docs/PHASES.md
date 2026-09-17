@@ -40,7 +40,7 @@ terminology, not evidence of a freeze tag.
 - Phase 6A — **IMPLEMENTED / VERIFIED** as the durable approval/execution prerequisite consumed by Phase 6B; no separate freeze tag is recorded here.
 - Phase 6B — **FROZEN** at `phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`.
 - Phase 6C — **OPTIONAL / NOT PURSUED**.
-- Phase 7 — **AUTHORIZED / IMPLEMENTATION IN PROGRESS**; 7A **HUMAN_ACCEPTED** at `61313d0`; subsequent slices proceed through reviewed implementation plans.
+- Phase 7 — **AUTHORIZED / IMPLEMENTATION IN PROGRESS**; 7A **HUMAN_ACCEPTED** at `61313d0`; 7B **HUMAN_ACCEPTED** at `0f887a2f867648f95e69abe534978a1482f69df1`; subsequent slices proceed through reviewed implementation plans.
 - Phases 8–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
@@ -359,7 +359,7 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`.**
+**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`.**
 
 ### Purpose
 
@@ -375,6 +375,13 @@ Phase 7A (browser/API foundation) passed its technical acceptance gate and was
 human-accepted at `61313d0` on 2026-09-16. This does not mark Phase 7
 as PASSED/FROZEN; 7B and later slices retain independent plan and acceptance
 gates.
+
+Phase 7B (frontend shell/design system and production browser acceptance) was
+human-accepted at `0f887a2f867648f95e69abe534978a1482f69df1` on 2026-09-17
+after its documented frontend, backend, static, runtime, responsive, and
+browser evidence passed. This accepts 7B only; Phase 7 remains not
+PASSED/FROZEN, and Phase 7C requires a separate reviewed plan and explicit
+authorization.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is
