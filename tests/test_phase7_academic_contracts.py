@@ -16,7 +16,6 @@ from aaos.web.contracts import (
     DocumentSummary,
 )
 
-
 UTC = timezone.utc
 UPDATED_AT = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
@@ -125,6 +124,24 @@ def test_document_summary_has_exact_closed_field_set() -> None:
 
     with pytest.raises(ValidationError):
         document.title = "mutated"
+
+
+def test_document_list_response_is_a_tuple_of_safe_documents() -> None:
+    document = DocumentSummary.model_validate(_document())
+
+    response = DocumentListResponse(documents=(document,))
+
+    assert set(DocumentListResponse.model_fields) == {"documents"}
+    assert response.documents == (document,)
+    assert isinstance(response.documents, tuple)
+
+    with pytest.raises(ValidationError):
+        DocumentListResponse.model_validate(
+            {"documents": (document,), "permission": "READ_ONLY"}
+        )
+
+    with pytest.raises(ValidationError):
+        response.documents = ()
 
 
 @pytest.mark.parametrize(
