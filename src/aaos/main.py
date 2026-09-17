@@ -8,9 +8,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
-from aaos.web.contracts import CourseSummary
+from aaos.web.contracts import AssignmentSummary, CourseSummary
 from aaos.web.errors import install_error_boundary
-from aaos.web.routes import CourseReader, create_api_v1_router
+from aaos.web.routes import AcademicReader, CourseReader, create_api_v1_router
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -29,10 +29,10 @@ class _LazyDefaultCourseReader:
     """Create default academic persistence only when courses are requested."""
 
     def __init__(self) -> None:
-        self._delegate: CourseReader | None = None
+        self._delegate: AcademicReader | None = None
         self._engine: Engine | None = None
 
-    def list_courses(self) -> tuple[CourseSummary, ...]:
+    def _ensure_delegate(self) -> AcademicReader:
         if self._delegate is None:
             from aaos.persistence.database import (
                 create_database_engine,
@@ -46,7 +46,19 @@ class _LazyDefaultCourseReader:
             self._engine = engine
             self._delegate = AcademicReadService(sessions)
 
-        return self._delegate.list_courses()
+        return self._delegate
+
+    def list_courses(self) -> tuple[CourseSummary, ...]:
+        return self._ensure_delegate().list_courses()
+
+    def get_course(self, course_id: int) -> CourseSummary:
+        return self._ensure_delegate().get_course(course_id)
+
+    def list_assignments(
+        self,
+        course_id: int | None = None,
+    ) -> tuple[AssignmentSummary, ...]:
+        return self._ensure_delegate().list_assignments(course_id)
 
     def dispose(self) -> None:
         if self._engine is not None:
@@ -68,10 +80,12 @@ def create_app(
     install_error_boundary(application)
 
     course_reader: CourseReader
+    academic_reader: AcademicReader
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
         course_reader = lazy_course_reader
+        academic_reader = lazy_course_reader
 
         application.router.add_event_handler(
             "shutdown",
@@ -80,10 +94,14 @@ def create_app(
     else:
         from aaos.web.academic import AcademicReadService
 
-        course_reader = AcademicReadService(session_factory)
+        academic_reader = AcademicReadService(session_factory)
+        course_reader = academic_reader
 
     application.include_router(
-        create_api_v1_router(course_reader)
+        create_api_v1_router(
+            course_reader,
+            academic_reader=academic_reader,
+        )
     )
 
     @application.get("/health", response_model=HealthResponse)

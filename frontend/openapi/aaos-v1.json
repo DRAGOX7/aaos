@@ -1,6 +1,87 @@
 {
   "components": {
     "schemas": {
+      "AssignmentListResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe assignment collection response.",
+        "properties": {
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentSummary"
+            },
+            "title": "Assignments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignments"
+        ],
+        "title": "AssignmentListResponse",
+        "type": "object"
+      },
+      "AssignmentSummary": {
+        "additionalProperties": false,
+        "description": "Browser-safe projection of one authoritative academic assignment.",
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "title",
+          "description",
+          "due_at",
+          "updated_at"
+        ],
+        "title": "AssignmentSummary",
+        "type": "object"
+      },
       "CourseListResponse": {
         "additionalProperties": false,
         "description": "Browser-safe course collection response.",
@@ -76,6 +157,19 @@
         "title": "CourseSummary",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthResponse": {
         "description": "Stable response contract for process-level health checks.",
         "properties": {
@@ -100,6 +194,46 @@
         ],
         "title": "HealthResponse",
         "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
       }
     }
   },
@@ -109,6 +243,53 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/assignments": {
+      "get": {
+        "operationId": "list_assignments_api_v1_assignments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "course_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Course Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Assignments"
+      }
+    },
     "/api/v1/courses": {
       "get": {
         "operationId": "list_courses_api_v1_courses_get",
@@ -125,6 +306,46 @@
           }
         },
         "summary": "List Courses"
+      }
+    },
+    "/api/v1/courses/{course_id}": {
+      "get": {
+        "operationId": "get_course_api_v1_courses__course_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Course"
       }
     },
     "/health": {

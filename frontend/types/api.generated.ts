@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assignments */
+        get: operations["list_assignments_api_v1_assignments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses": {
         parameters: {
             query?: never;
@@ -13,6 +30,23 @@ export interface paths {
         };
         /** List Courses */
         get: operations["list_courses_api_v1_courses_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Course */
+        get: operations["get_course_api_v1_courses__course_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -46,6 +80,32 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AssignmentListResponse
+         * @description Browser-safe assignment collection response.
+         */
+        AssignmentListResponse: {
+            /** Assignments */
+            assignments: components["schemas"]["AssignmentSummary"][];
+        };
+        /**
+         * AssignmentSummary
+         * @description Browser-safe projection of one authoritative academic assignment.
+         */
+        AssignmentSummary: {
+            /** Course Id */
+            course_id: number;
+            /** Description */
+            description: string | null;
+            /** Due At */
+            due_at: string | null;
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /**
          * CourseListResponse
          * @description Browser-safe course collection response.
          */
@@ -69,6 +129,11 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /**
          * HealthResponse
          * @description Stable response contract for process-level health checks.
@@ -84,6 +149,19 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -93,6 +171,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_assignments_api_v1_assignments_get: {
+        parameters: {
+            query?: {
+                course_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_courses_api_v1_courses_get: {
         parameters: {
             query?: never;
@@ -109,6 +218,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CourseListResponse"];
+                };
+            };
+        };
+    };
+    get_course_api_v1_courses__course_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

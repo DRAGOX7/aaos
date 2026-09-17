@@ -8,13 +8,14 @@ import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aaos.persistence.academic_models import Base, CourseORM
+from aaos.persistence.academic_models import AssignmentORM, Base, CourseORM
 from aaos.persistence.database import (
     create_database_engine,
     create_session_factory,
 )
 from aaos.web.academic import AcademicReadService
 from aaos.web.contracts import CourseSummary
+from aaos.web.errors import Phase7ApiError
 
 
 @pytest.fixture
@@ -186,9 +187,7 @@ def test_list_courses_projects_only_browser_safe_fields(
     assert summary.id == 7
     assert summary.title == "Deep Learning"
     assert summary.code == "AI342"
-    assert summary.description == (
-        "Neural networks and representation learning."
-    )
+    assert summary.description == ("Neural networks and representation learning.")
 
 
 def test_list_courses_preserves_nullable_code_and_description(
@@ -257,6 +256,7 @@ def test_list_courses_normalizes_updated_at_to_utc(
     assert updated_at is not None
     assert updated_at.utcoffset() == timedelta(0)
 
+
 def test_list_courses_does_not_mutate_persisted_courses(
     sessions: sessionmaker[Session],
 ) -> None:
@@ -296,9 +296,7 @@ def test_list_courses_does_not_mutate_persisted_courses(
         ...,
     ]:
         with sessions() as session:
-            rows = session.scalars(
-                select(CourseORM).order_by(CourseORM.id)
-            ).all()
+            rows = session.scalars(select(CourseORM).order_by(CourseORM.id)).all()
 
             return tuple(
                 (
@@ -322,3 +320,165 @@ def test_list_courses_does_not_mutate_persisted_courses(
 
     assert after == before
 
+
+def test_get_course_returns_only_active_course_summary(
+    sessions: sessionmaker[Session],
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=7,
+            source_system="moodle",
+            source_id="course-7",
+            title="Deep Learning",
+            code="AI342",
+            description="Neural networks.",
+            is_active=True,
+        ),
+    )
+
+    course = AcademicReadService(sessions).get_course(7)
+
+    assert course.id == 7
+    assert course.title == "Deep Learning"
+    assert course.code == "AI342"
+    assert course.description == "Neural networks."
+
+
+@pytest.mark.parametrize("course_id", [7, 99])
+def test_get_course_hides_missing_and_inactive_courses(
+    sessions: sessionmaker[Session],
+    course_id: int,
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=7,
+            source_system="moodle",
+            source_id="course-7",
+            title="Hidden Course",
+            code="AI999",
+            description=None,
+            is_active=False,
+        ),
+    )
+
+    with pytest.raises(Phase7ApiError) as raised:
+        AcademicReadService(sessions).get_course(course_id)
+
+    assert raised.value.status_code == 404
+    assert raised.value.code == "COURSE_NOT_FOUND"
+
+
+def test_list_assignments_filters_active_courses_and_orders_deterministically(
+    sessions: sessionmaker[Session],
+) -> None:
+    due = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=1,
+            source_system="moodle",
+            source_id="course-1",
+            title="Active",
+            code="AI101",
+            description=None,
+            is_active=True,
+        ),
+        CourseORM(
+            id=2,
+            source_system="moodle",
+            source_id="course-2",
+            title="Inactive",
+            code="AI102",
+            description=None,
+            is_active=False,
+        ),
+    )
+    with sessions() as session:
+        session.add_all(
+            (
+                AssignmentORM(
+                    id=4,
+                    course_id=1,
+                    source_system="moodle",
+                    source_id="assignment-4",
+                    title="No due date",
+                    description=None,
+                    due_at=None,
+                    is_active=True,
+                ),
+                AssignmentORM(
+                    id=2,
+                    course_id=1,
+                    source_system="moodle",
+                    source_id="assignment-2",
+                    title="Second tie",
+                    description=None,
+                    due_at=due,
+                    is_active=True,
+                ),
+                AssignmentORM(
+                    id=1,
+                    course_id=1,
+                    source_system="moodle",
+                    source_id="assignment-1",
+                    title="First tie",
+                    description="Read-only description.",
+                    due_at=due,
+                    is_active=True,
+                ),
+                AssignmentORM(
+                    id=3,
+                    course_id=1,
+                    source_system="moodle",
+                    source_id="assignment-3",
+                    title="Inactive assignment",
+                    description=None,
+                    due_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                    is_active=False,
+                ),
+                AssignmentORM(
+                    id=5,
+                    course_id=2,
+                    source_system="moodle",
+                    source_id="assignment-5",
+                    title="Hidden course assignment",
+                    description=None,
+                    due_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                    is_active=True,
+                ),
+            )
+        )
+        session.commit()
+
+    assignments = AcademicReadService(sessions).list_assignments()
+
+    assert [assignment.id for assignment in assignments] == [1, 2, 4]
+    assert assignments[0].description == "Read-only description."
+
+    filtered = AcademicReadService(sessions).list_assignments(course_id=1)
+    assert [assignment.id for assignment in filtered] == [1, 2, 4]
+
+
+def test_list_assignments_rejects_missing_or_inactive_course_filter(
+    sessions: sessionmaker[Session],
+) -> None:
+    _store_courses(
+        sessions,
+        CourseORM(
+            id=2,
+            source_system="moodle",
+            source_id="course-2",
+            title="Inactive",
+            code=None,
+            description=None,
+            is_active=False,
+        ),
+    )
+
+    for course_id in (2, 404):
+        with pytest.raises(Phase7ApiError) as raised:
+            AcademicReadService(sessions).list_assignments(course_id)
+        assert raised.value.status_code == 404
+        assert raised.value.code == "COURSE_NOT_FOUND"
