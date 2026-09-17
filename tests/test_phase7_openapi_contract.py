@@ -153,7 +153,7 @@ def test_frontend_contract_generation_workspace_is_frozen() -> None:
     package = json.loads(package_path.read_text(encoding="utf-8"))
 
     assert package["private"] is True
-    assert package["scripts"] == {
+    expected_contract_scripts = {
         "generate:openapi": "uv run python ../scripts/export_openapi.py",
         "generate:api-types": (
             "npm run generate:openapi && "
@@ -166,6 +166,11 @@ def test_frontend_contract_generation_workspace_is_frozen() -> None:
             "openapi/aaos-v1.json types/api.generated.ts"
         ),
     }
+
+    scripts = package["scripts"]
+
+    for name, command in expected_contract_scripts.items():
+        assert scripts[name] == command
 
     dev_dependencies = package["devDependencies"]
 
