@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Documents */
+        get: operations["list_documents_api_v1_documents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document */
+        get: operations["get_document_api_v1_documents__document_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -128,6 +162,61 @@ export interface components {
             title: string;
             /** Updated At */
             updated_at: string | null;
+        };
+        /**
+         * DocumentExtractionStatusView
+         * @description Persisted document-extraction states safe for browser projection.
+         * @enum {string}
+         */
+        DocumentExtractionStatusView: "SUCCESS" | "PARTIAL" | "NO_TEXT";
+        /**
+         * DocumentIndexCoverageView
+         * @description Persisted index coverage states safe for browser projection.
+         * @enum {string}
+         */
+        DocumentIndexCoverageView: "FULL" | "PARTIAL" | "NONE";
+        /**
+         * DocumentIndexReadinessView
+         * @description Persisted per-document index states safe for browser projection.
+         * @enum {string}
+         */
+        DocumentIndexReadinessView: "PREPARING" | "READY" | "NOT_SEARCHABLE" | "FAILED";
+        /**
+         * DocumentIngestionStatusView
+         * @description Persisted document-ingestion states safe for browser projection.
+         * @enum {string}
+         */
+        DocumentIngestionStatusView: "NEVER_ATTEMPTED" | "READY" | "FAILED";
+        /**
+         * DocumentListResponse
+         * @description Browser-safe document collection response.
+         */
+        DocumentListResponse: {
+            /** Documents */
+            documents: components["schemas"]["DocumentSummary"][];
+        };
+        /**
+         * DocumentSummary
+         * @description Browser-safe projection of document readiness metadata.
+         */
+        DocumentSummary: {
+            /** Course Id */
+            course_id: number;
+            extraction_status: components["schemas"]["DocumentExtractionStatusView"] | null;
+            /** Id */
+            id: number;
+            index_coverage: components["schemas"]["DocumentIndexCoverageView"] | null;
+            index_readiness: components["schemas"]["DocumentIndexReadinessView"] | null;
+            ingestion_status: components["schemas"]["DocumentIngestionStatusView"];
+            /** Page Count */
+            page_count: number | null;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -240,6 +329,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CourseSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_documents_api_v1_documents_get: {
+        parameters: {
+            query?: {
+                course_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_api_v1_documents__document_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentSummary"];
                 };
             };
             /** @description Validation Error */

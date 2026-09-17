@@ -157,6 +157,145 @@
         "title": "CourseSummary",
         "type": "object"
       },
+      "DocumentExtractionStatusView": {
+        "description": "Persisted document-extraction states safe for browser projection.",
+        "enum": [
+          "SUCCESS",
+          "PARTIAL",
+          "NO_TEXT"
+        ],
+        "title": "DocumentExtractionStatusView",
+        "type": "string"
+      },
+      "DocumentIndexCoverageView": {
+        "description": "Persisted index coverage states safe for browser projection.",
+        "enum": [
+          "FULL",
+          "PARTIAL",
+          "NONE"
+        ],
+        "title": "DocumentIndexCoverageView",
+        "type": "string"
+      },
+      "DocumentIndexReadinessView": {
+        "description": "Persisted per-document index states safe for browser projection.",
+        "enum": [
+          "PREPARING",
+          "READY",
+          "NOT_SEARCHABLE",
+          "FAILED"
+        ],
+        "title": "DocumentIndexReadinessView",
+        "type": "string"
+      },
+      "DocumentIngestionStatusView": {
+        "description": "Persisted document-ingestion states safe for browser projection.",
+        "enum": [
+          "NEVER_ATTEMPTED",
+          "READY",
+          "FAILED"
+        ],
+        "title": "DocumentIngestionStatusView",
+        "type": "string"
+      },
+      "DocumentListResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe document collection response.",
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSummary"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents"
+        ],
+        "title": "DocumentListResponse",
+        "type": "object"
+      },
+      "DocumentSummary": {
+        "additionalProperties": false,
+        "description": "Browser-safe projection of document readiness metadata.",
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "extraction_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentExtractionStatusView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "index_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentIndexCoverageView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index_readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentIndexReadinessView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ingestion_status": {
+            "$ref": "#/components/schemas/DocumentIngestionStatusView"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "title",
+          "ingestion_status",
+          "extraction_status",
+          "page_count",
+          "index_readiness",
+          "index_coverage",
+          "updated_at"
+        ],
+        "title": "DocumentSummary",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -346,6 +485,93 @@
           }
         },
         "summary": "Get Course"
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "operationId": "list_documents_api_v1_documents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "course_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Course Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Documents"
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "get": {
+        "operationId": "get_document_api_v1_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Document Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document"
       }
     },
     "/health": {

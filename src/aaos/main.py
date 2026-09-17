@@ -8,9 +8,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
-from aaos.web.contracts import AssignmentSummary, CourseSummary
+from aaos.web.contracts import AssignmentSummary, CourseSummary, DocumentSummary
 from aaos.web.errors import install_error_boundary
-from aaos.web.routes import AcademicReader, CourseReader, create_api_v1_router
+from aaos.web.routes import (
+    AcademicReader,
+    CourseReader,
+    DocumentReader,
+    create_api_v1_router,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -30,6 +35,7 @@ class _LazyDefaultCourseReader:
 
     def __init__(self) -> None:
         self._delegate: AcademicReader | None = None
+        self._document_delegate: DocumentReader | None = None
         self._engine: Engine | None = None
 
     def _ensure_delegate(self) -> AcademicReader:
@@ -39,14 +45,21 @@ class _LazyDefaultCourseReader:
                 create_session_factory,
             )
             from aaos.web.academic import AcademicReadService
+            from aaos.web.documents import DocumentReadService
 
             engine = create_database_engine()
             sessions = create_session_factory(engine)
 
             self._engine = engine
             self._delegate = AcademicReadService(sessions)
+            self._document_delegate = DocumentReadService(sessions)
 
         return self._delegate
+
+    def _ensure_document_delegate(self) -> DocumentReader:
+        self._ensure_delegate()
+        assert self._document_delegate is not None
+        return self._document_delegate
 
     def list_courses(self) -> tuple[CourseSummary, ...]:
         return self._ensure_delegate().list_courses()
@@ -59,6 +72,15 @@ class _LazyDefaultCourseReader:
         course_id: int | None = None,
     ) -> tuple[AssignmentSummary, ...]:
         return self._ensure_delegate().list_assignments(course_id)
+
+    def list_documents(
+        self,
+        course_id: int | None = None,
+    ) -> tuple[DocumentSummary, ...]:
+        return self._ensure_document_delegate().list_documents(course_id)
+
+    def get_document(self, document_id: int) -> DocumentSummary:
+        return self._ensure_document_delegate().get_document(document_id)
 
     def dispose(self) -> None:
         if self._engine is not None:
@@ -81,11 +103,13 @@ def create_app(
 
     course_reader: CourseReader
     academic_reader: AcademicReader
+    document_reader: DocumentReader
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
         course_reader = lazy_course_reader
         academic_reader = lazy_course_reader
+        document_reader = lazy_course_reader
 
         application.router.add_event_handler(
             "shutdown",
@@ -93,14 +117,17 @@ def create_app(
         )
     else:
         from aaos.web.academic import AcademicReadService
+        from aaos.web.documents import DocumentReadService
 
         academic_reader = AcademicReadService(session_factory)
         course_reader = academic_reader
+        document_reader = DocumentReadService(session_factory)
 
     application.include_router(
         create_api_v1_router(
             course_reader,
             academic_reader=academic_reader,
+            document_reader=document_reader,
         )
     )
 

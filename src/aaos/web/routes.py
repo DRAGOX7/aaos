@@ -9,6 +9,8 @@ from aaos.web.contracts import (
     AssignmentSummary,
     CourseListResponse,
     CourseSummary,
+    DocumentListResponse,
+    DocumentSummary,
 )
 
 
@@ -32,10 +34,24 @@ class AcademicReader(CourseReader, Protocol):
         """Return browser-safe active assignments."""
 
 
+class DocumentReader(Protocol):
+    """Read-only document projection required by Task 3 routes."""
+
+    def list_documents(
+        self,
+        course_id: int | None = None,
+    ) -> tuple[DocumentSummary, ...]:
+        """Return browser-safe active documents."""
+
+    def get_document(self, document_id: int) -> DocumentSummary:
+        """Return one active document."""
+
+
 def create_api_v1_router(
     course_reader: CourseReader,
     *,
     academic_reader: AcademicReader | None = None,
+    document_reader: DocumentReader | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -68,5 +84,27 @@ def create_api_v1_router(
             return AssignmentListResponse(
                 assignments=academic_reader.list_assignments(course_id),
             )
+
+    if document_reader is not None:
+
+        @router.get(
+            "/documents",
+            response_model=DocumentListResponse,
+        )
+        def list_documents(
+            course_id: int | None = Query(default=None, gt=0),
+        ) -> DocumentListResponse:
+            return DocumentListResponse(
+                documents=document_reader.list_documents(course_id),
+            )
+
+        @router.get(
+            "/documents/{document_id}",
+            response_model=DocumentSummary,
+        )
+        def get_document(
+            document_id: int = Path(..., gt=0),
+        ) -> DocumentSummary:
+            return document_reader.get_document(document_id)
 
     return router
