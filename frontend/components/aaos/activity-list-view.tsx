@@ -19,10 +19,8 @@ function statusLabel(status: string | null): string {
 }
 
 function eventHref(event: ActivityEvent): string | null {
-  if (!event.resource_id || !event.resource_type) return null;
-  return event.resource_type === "TASK"
-    ? `/tasks/${encodeURIComponent(event.resource_id)}`
-    : `/approvals/${encodeURIComponent(event.resource_id)}`;
+  if (!event.resource_type) return null;
+  return event.resource_type === "TASK" ? "/tasks" : "/approvals";
 }
 
 export function ActivityListView() {

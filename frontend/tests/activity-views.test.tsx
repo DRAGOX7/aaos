@@ -67,6 +67,56 @@ describe("activity list view", () => {
     expect(screen.queryByText(/Private path|SQL/)).not.toBeInTheDocument();
   });
 
+  it("uses existing list routes for resource navigation", () => {
+    useQueryMock.mockReturnValue({
+      data: {
+        events: [
+          {
+            schema_version: "phase7-activity-v1",
+            activity_id: "event-task",
+            occurred_at: "2026-09-18T00:00:00Z",
+            category: "TASK",
+            event_code: "TASK_CREATED",
+            status: "PENDING",
+            resource_type: "TASK",
+            resource_id: "task-internal-1",
+            title: "Task created",
+            detail: null,
+            context: null,
+          },
+          {
+            schema_version: "phase7-activity-v1",
+            activity_id: "event-approval",
+            occurred_at: "2026-09-18T00:01:00Z",
+            category: "APPROVAL",
+            event_code: "APPROVAL_REQUESTED",
+            status: "PENDING",
+            resource_type: "APPROVAL",
+            resource_id: "approval-internal-1",
+            title: "Approval requested",
+            detail: null,
+            context: null,
+          },
+        ],
+        next_cursor: null,
+      },
+      isPending: false,
+      isError: false,
+    });
+
+    render(<ActivityListView />);
+
+    expect(screen.getByRole("link", { name: /Task created/i })).toHaveAttribute(
+      "href",
+      "/tasks",
+    );
+    expect(screen.getByRole("link", { name: /Approval requested/i })).toHaveAttribute(
+      "href",
+      "/approvals",
+    );
+    expect(document.querySelector('a[href*="internal"]')).not.toBeInTheDocument();
+  });
+
   it("renders a safe history error", () => {
     useQueryMock.mockReturnValue({ isPending: false, isError: true });
     render(<ActivityListView />);
