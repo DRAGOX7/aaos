@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
+from aaos.web.activity_read import ActivityReadRepository, ActivityReadService
 from aaos.web.contracts import (
     ApprovalDetail,
     ApprovalSummary,
@@ -23,6 +25,7 @@ from aaos.web.contracts import (
 from aaos.web.errors import install_error_boundary
 from aaos.web.routes import (
     AcademicReader,
+    ActivityReader,
     CourseReader,
     DocumentReader,
     TaskApprovalCommands,
@@ -212,6 +215,39 @@ class _LazyDefaultTaskApprovalService:
             self._engine.dispose()
 
 
+class _LazyDefaultActivityReader:
+    """Create Activity persistence only when history is requested."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: ActivityReadService | None = None
+
+    def _ensure_delegate(self) -> ActivityReadService:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+
+            self._engine = create_database_engine()
+            self._delegate = ActivityReadService(
+                ActivityReadRepository(create_session_factory(self._engine))
+            )
+        return self._delegate
+
+    def list_history(
+        self, *, limit: int, before: ActivityCursor | None = None
+    ) -> ActivityHistoryResponse:
+        return self._ensure_delegate().list_history(limit=limit, before=before)
+
+    def tail(self, *, after: ActivityCursor | None, limit: int) -> tuple[ActivityEvent, ...]:
+        return self._ensure_delegate().tail(after=after, limit=limit)
+
+    def current_high_watermark(self) -> ActivityCursor | None:
+        return self._ensure_delegate().current_high_watermark()
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+
+
 class _LazyDefaultPrincipalProvider:
     """Resolve the configured local principal only when a decision is requested."""
 
@@ -231,6 +267,7 @@ def create_app(
     rag_reader: AcademicRagReader | None = None,
     task_commands: TaskApprovalCommands | None = None,
     principal_provider: LocalApproverContextProvider | None = None,
+    activity_reader: ActivityReader | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -246,6 +283,7 @@ def create_app(
     document_reader: DocumentReader
     task_reader: TaskReader
     resolved_task_commands: TaskApprovalCommands
+    resolved_activity_reader: ActivityReader
     resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
 
@@ -256,6 +294,8 @@ def create_app(
         document_reader = lazy_course_reader
         lazy_task_reader = _LazyDefaultTaskReader()
         task_reader = lazy_task_reader
+        lazy_activity_reader = _LazyDefaultActivityReader()
+        resolved_activity_reader = lazy_activity_reader
         lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
         resolved_task_commands = lazy_task_commands
 
@@ -266,6 +306,7 @@ def create_app(
         application.router.add_event_handler("shutdown", lazy_task_reader.dispose)
         if isinstance(lazy_task_commands, _LazyDefaultTaskApprovalService):
             application.router.add_event_handler("shutdown", lazy_task_commands.dispose)
+        application.router.add_event_handler("shutdown", lazy_activity_reader.dispose)
     else:
         from aaos.approval.repository import ApprovalRepository
         from aaos.web.academic import AcademicReadService
@@ -278,6 +319,10 @@ def create_app(
         from aaos.tasks.service import TaskApprovalService
 
         task_reader = TaskReadService(session_factory)
+        if activity_reader is None:
+            resolved_activity_reader = ActivityReadService(ActivityReadRepository(session_factory))
+        else:
+            resolved_activity_reader = activity_reader
         resolved_task_commands = task_commands or TaskApprovalService(
             ApprovalRepository(session_factory),
             task_reader,
@@ -291,6 +336,7 @@ def create_app(
     application.include_router(
         create_api_v1_router(
             course_reader,
+            activity_reader=resolved_activity_reader,
             academic_reader=academic_reader,
             document_reader=document_reader,
             rag_reader=resolved_rag_reader,

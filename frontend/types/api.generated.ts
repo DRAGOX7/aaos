@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Activity */
+        get: operations["list_activity_api_v1_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/approvals": {
         parameters: {
             query?: never;
@@ -233,6 +250,77 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ActivityCategory
+         * @enum {string}
+         */
+        ActivityCategory: "TASK" | "APPROVAL" | "INTEGRATION" | "SYSTEM";
+        /** ActivityEvent */
+        ActivityEvent: {
+            /** Activity Id */
+            activity_id: string;
+            category: components["schemas"]["ActivityCategory"];
+            /** Context */
+            context: (components["schemas"]["TaskActivityContext"] | components["schemas"]["ApprovalActivityContext"] | components["schemas"]["OperationActivityContext"]) | null;
+            /** Detail */
+            detail?: string | null;
+            event_code: components["schemas"]["ActivityEventCode"];
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Resource Id */
+            resource_id?: string | null;
+            resource_type: components["schemas"]["ActivityResource"] | null;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "phase7-activity-v1";
+            status: components["schemas"]["ActivityStatus"] | null;
+            /** Title */
+            title: string;
+        };
+        /**
+         * ActivityEventCode
+         * @enum {string}
+         */
+        ActivityEventCode: "TASK_CREATED" | "PREPARATION_FAILED" | "ACTION_PREPARED" | "APPROVAL_REQUESTED" | "APPROVED" | "REJECTED" | "CLAIMED" | "EXECUTING" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "UNKNOWN_OUTCOME" | "INVALIDATED" | "EXPIRED" | "REVOKED" | "RECONCILED";
+        /** ActivityHistoryResponse */
+        ActivityHistoryResponse: {
+            /** Events */
+            events: components["schemas"]["ActivityEvent"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "phase7-activity-v1";
+        };
+        /**
+         * ActivityResource
+         * @enum {string}
+         */
+        ActivityResource: "TASK" | "APPROVAL";
+        /**
+         * ActivityStatus
+         * @enum {string}
+         */
+        ActivityStatus: "PENDING" | "APPROVED" | "REJECTED" | "CLAIMED" | "EXECUTING" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "UNKNOWN_OUTCOME" | "NOT_DISPATCHED" | "INVALIDATED" | "EXPIRED" | "REVOKED";
+        /** ApprovalActivityContext */
+        ApprovalActivityContext: {
+            /** Approval Id */
+            approval_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "APPROVAL";
+            /** Task Id */
+            task_id: string;
+        };
+        /**
          * ApprovalCommandRequest
          * @description Closed empty JSON body for approval decisions.
          */
@@ -438,6 +526,15 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** OperationActivityContext */
+        OperationActivityContext: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OPERATION";
+            status: components["schemas"]["ActivityStatus"];
+        };
         /**
          * OperationState
          * @enum {string}
@@ -532,6 +629,16 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /** TaskActivityContext */
+        TaskActivityContext: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "TASK";
+            /** Task Id */
+            task_id: string;
+        };
         /**
          * TaskDetail
          * @description Browser-safe task detail with derived Phase 6 state only.
@@ -621,6 +728,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_activity_api_v1_activity_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_approvals_api_v1_approvals_get: {
         parameters: {
             query?: {

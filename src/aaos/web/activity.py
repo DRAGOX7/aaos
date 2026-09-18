@@ -134,7 +134,7 @@ class ActivitySourceRow:
     occurred_at: datetime
     stable_source_id: str
     source_sequence: int
-    task_id: int | None
+    task_id: str | None
     approval_id: str | None
     action_event_code: ActivityEventCode | None
     task_creation_state: str | None

@@ -1,6 +1,246 @@
 {
   "components": {
     "schemas": {
+      "ActivityCategory": {
+        "enum": [
+          "TASK",
+          "APPROVAL",
+          "INTEGRATION",
+          "SYSTEM"
+        ],
+        "title": "ActivityCategory",
+        "type": "string"
+      },
+      "ActivityEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Activity Id",
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ActivityCategory"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "APPROVAL": "#/components/schemas/ApprovalActivityContext",
+                    "OPERATION": "#/components/schemas/OperationActivityContext",
+                    "TASK": "#/components/schemas/TaskActivityContext"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TaskActivityContext"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ApprovalActivityContext"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OperationActivityContext"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "event_code": {
+            "$ref": "#/components/schemas/ActivityEventCode"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityResource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": "phase7-activity-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivityStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "activity_id",
+          "occurred_at",
+          "category",
+          "event_code",
+          "status",
+          "resource_type",
+          "title",
+          "context"
+        ],
+        "title": "ActivityEvent",
+        "type": "object"
+      },
+      "ActivityEventCode": {
+        "enum": [
+          "TASK_CREATED",
+          "PREPARATION_FAILED",
+          "ACTION_PREPARED",
+          "APPROVAL_REQUESTED",
+          "APPROVED",
+          "REJECTED",
+          "CLAIMED",
+          "EXECUTING",
+          "CONFIRMED_SUCCESS",
+          "CONFIRMED_FAILURE",
+          "UNKNOWN_OUTCOME",
+          "INVALIDATED",
+          "EXPIRED",
+          "REVOKED",
+          "RECONCILED"
+        ],
+        "title": "ActivityEventCode",
+        "type": "string"
+      },
+      "ActivityHistoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "schema_version": {
+            "const": "phase7-activity-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "events"
+        ],
+        "title": "ActivityHistoryResponse",
+        "type": "object"
+      },
+      "ActivityResource": {
+        "enum": [
+          "TASK",
+          "APPROVAL"
+        ],
+        "title": "ActivityResource",
+        "type": "string"
+      },
+      "ActivityStatus": {
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "REJECTED",
+          "CLAIMED",
+          "EXECUTING",
+          "CONFIRMED_SUCCESS",
+          "CONFIRMED_FAILURE",
+          "UNKNOWN_OUTCOME",
+          "NOT_DISPATCHED",
+          "INVALIDATED",
+          "EXPIRED",
+          "REVOKED"
+        ],
+        "title": "ActivityStatus",
+        "type": "string"
+      },
+      "ApprovalActivityContext": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "APPROVAL",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "approval_id",
+          "task_id"
+        ],
+        "title": "ApprovalActivityContext",
+        "type": "object"
+      },
       "ApprovalCommandRequest": {
         "additionalProperties": false,
         "description": "Closed empty JSON body for approval decisions.",
@@ -546,6 +786,25 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "OperationActivityContext": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "OPERATION",
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ActivityStatus"
+          }
+        },
+        "required": [
+          "kind",
+          "status"
+        ],
+        "title": "OperationActivityContext",
+        "type": "object"
+      },
       "OperationState": {
         "enum": [
           "CLAIMED",
@@ -790,6 +1049,28 @@
         "title": "SafeActionSummary",
         "type": "object"
       },
+      "TaskActivityContext": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "TASK",
+            "title": "Kind",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id"
+        ],
+        "title": "TaskActivityContext",
+        "type": "object"
+      },
       "TaskDetail": {
         "additionalProperties": false,
         "description": "Browser-safe task detail with derived Phase 6 state only.",
@@ -1012,6 +1293,64 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/activity": {
+      "get": {
+        "operationId": "list_activity_api_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Activity"
+      }
+    },
     "/api/v1/approvals": {
       "get": {
         "operationId": "list_approvals_api_v1_approvals_get",

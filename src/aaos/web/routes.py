@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, Body, Path, Query, Request
 
+from aaos.web.activity import (
+    ActivityCursor,
+    ActivityEvent,
+    ActivityHistoryResponse,
+    decode_activity_cursor,
+)
 from aaos.web.contracts import (
     ApprovalCommandRequest,
     ApprovalDetail,
@@ -85,6 +91,21 @@ class AcademicReader(CourseReader, Protocol):
         """Return browser-safe active assignments."""
 
 
+class ActivityReader(Protocol):
+    """Read-only Activity history and tail projection."""
+
+    def list_history(
+        self, *, limit: int, before: ActivityCursor | None = None
+    ) -> ActivityHistoryResponse:
+        """Return newest-first browser-safe Activity history."""
+
+    def tail(self, *, after: ActivityCursor | None, limit: int) -> tuple[ActivityEvent, ...]:
+        """Return strictly-after browser-safe Activity rows."""
+
+    def current_high_watermark(self) -> ActivityCursor | None:
+        """Return the current opaque Activity high-water cursor."""
+
+
 class DocumentReader(Protocol):
     """Read-only document projection required by Task 3 routes."""
 
@@ -101,6 +122,7 @@ class DocumentReader(Protocol):
 def create_api_v1_router(
     course_reader: CourseReader,
     *,
+    activity_reader: ActivityReader | None = None,
     academic_reader: AcademicReader | None = None,
     document_reader: DocumentReader | None = None,
     rag_reader: AcademicRagReader | None = None,
@@ -111,6 +133,25 @@ def create_api_v1_router(
     """Create the versioned Phase 7 browser API router."""
 
     router = APIRouter(prefix="/api/v1")
+
+    if activity_reader is not None:
+
+        @router.get("/activity", response_model=ActivityHistoryResponse)
+        def list_activity(
+            limit: int = Query(default=50, ge=1, le=200),
+            before: str | None = Query(default=None),
+        ) -> ActivityHistoryResponse:
+            cursor = None
+            if before is not None:
+                try:
+                    cursor = decode_activity_cursor(before)
+                except ValueError as error:
+                    raise Phase7ApiError(
+                        422,
+                        "INVALID_REQUEST",
+                        "The activity cursor is invalid.",
+                    ) from error
+            return activity_reader.list_history(limit=limit, before=cursor)
 
     @router.get("/courses", response_model=CourseListResponse)
     def list_courses() -> CourseListResponse:
@@ -199,6 +240,7 @@ def create_api_v1_router(
             return task_reader.get_approval(approval_id)
 
     if task_commands is not None and principal_provider is not None:
+
         def _enforce_decision_request(request: Request) -> None:
             try:
                 enforce_mutation_fence(

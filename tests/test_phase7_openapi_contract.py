@@ -208,7 +208,7 @@ def test_frontend_contract_generation_workspace_is_frozen() -> None:
     assert '"/api/v1/courses"' in generated
 
     assert "source_system" not in generated
-    assert "source_id" not in generated
+    assert "source_id" not in generated.replace("resource_id", "")
 
 
 def test_generated_types_are_byte_reproducible() -> None:
