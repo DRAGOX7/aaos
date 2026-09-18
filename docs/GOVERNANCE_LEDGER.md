@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F HUMAN_ACCEPTED at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G HUMAN_ACCEPTED at `ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64` | Settings route and favicon carryovers are closed; Phase 7 remains not PASSED/FROZEN |
+| Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -188,6 +188,20 @@ approval source without fabricating a historical verification report.
   approved Next metadata/icon mechanism. This accepts 7G only; Phase 7 remains
   IN_PROGRESS, no `phase-07-passed` tag was created, and Phase 8 was not
   started.
+- 2026-09-18: Whole Phase 7 was HUMAN_ACCEPTED and recorded as
+  `PHASE_7=PASSED`. Slices 7A–7G are individually HUMAN_ACCEPTED, with the
+  accepted 7G implementation/evidence boundary at
+  `ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64`; the preceding 7G governance
+  checkpoint was `c4058d84e112658acb95044e034d2816b431e112`. Whole-phase
+  verification recorded 3,044 backend tests passed (5 skipped, 1 warning),
+  10 import-inert/doctor checks passed, 173 frontend tests passed, and PASS
+  for Ruff, both canonical mypy gates, uv lock, diff-check, typecheck, lint,
+  production build, API drift, browser/security audits, and responsive
+  production acceptance. No unresolved carryovers remain: the Settings route
+  and favicon gaps were closed in 7G. No real external writes occurred, and
+  independent review found no Critical or Important findings. This
+  docs-only governance commit is the final commit targeted by the annotated
+  `phase-07-passed` freeze tag; Phase 8 was not started.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.
