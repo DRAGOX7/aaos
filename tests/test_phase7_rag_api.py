@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from aaos.main import create_app
-from aaos.rag.contracts import RagErrorCode, RagOperationalError, RagAnswerStatus
+from aaos.rag.contracts import RagErrorCode, RagOperationalError
 from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView
 
 
