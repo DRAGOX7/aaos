@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0` | 7D remains independently authorized and in progress; Phase 7 is not PASSED/FROZEN |
+| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483` | 7E remains NOT_STARTED; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -112,6 +112,21 @@ approval source without fabricating a historical verification report.
   1–8 were implemented and reviewed; the accepted boundary contains no 7D
   behavior, no external writes, and a clean worktree after disposable fixture
   cleanup. This accepts 7C only; Phase 7 remains not PASSED/FROZEN.
+- 2026-09-18: Phase 7D Ask AAOS / validated local RAG experience was
+  HUMAN_ACCEPTED at
+  `ebae43800f6600ef61c07c355c9ad085b1f5f483` after the repository/frontend
+  verification gates, production responsive/browser/security acceptance, and
+  real local BGE-M3 retrieval, local Qwen3.5-4B generation through LM Studio,
+  and pinned mDeBERTa NLI validation passed. Grounded retrieval returned HTTP
+  200 `ANSWER` with a trusted citation; unsupported retrieval returned HTTP
+  200 `INSUFFICIENT_EVIDENCE` with zero citations. No fabricated answers or
+  citations, external writes, external-provider/network requirements, or
+  credential leakage occurred; the disposable database/index were removed
+  and LM Studio residency was cleaned. The Windows runtime required
+  `PYTHONUTF8=1` for one local subprocess because the default CP1252 decoder
+  could not decode its output; this was an environment-only, non-blocking
+  limitation with no product-code change. This accepts 7D only; Phase 7
+  remains IN_PROGRESS and 7E remains NOT_STARTED.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.

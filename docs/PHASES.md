@@ -359,7 +359,7 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`.**
+**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`.**
 
 ### Purpose
 
@@ -388,6 +388,21 @@ was human-accepted at `26e517bb8967527de435ffba11a77ff1c00000a0` on
 runtime, responsive, and browser evidence passed. This accepts 7C only;
 Phase 7 remains not PASSED/FROZEN and 7D is the next independently governed
 slice.
+
+Phase 7D (Ask AAOS / validated local RAG experience) was human-accepted at
+`ebae43800f6600ef61c07c355c9ad085b1f5f483` on 2026-09-18 after the complete
+repository/frontend verification gates, production responsive/browser/security
+acceptance, and real local BGE-M3 retrieval, local Qwen3.5-4B generation
+through LM Studio, and pinned mDeBERTa NLI validation passed. Grounded
+retrieval returned HTTP 200 `ANSWER` with a trusted citation; unsupported
+retrieval returned HTTP 200 `INSUFFICIENT_EVIDENCE` with zero citations. No
+fabricated answers or citations, external writes, external-provider/network
+requirements, or credential leakage occurred; the disposable database/index
+were removed and LM Studio residency was cleaned. One Windows local subprocess
+required `PYTHONUTF8=1` because the default CP1252 decoder could not decode
+its output; this was an environment-only, non-blocking limitation with no
+product-code change. This accepts 7D only; Phase 7 remains IN_PROGRESS and 7E
+remains NOT_STARTED.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is
