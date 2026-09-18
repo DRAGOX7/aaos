@@ -8,7 +8,6 @@ from pathlib import Path
 
 import aaos.main
 
-
 REPOSITORY_ROOT = Path(__file__).parents[1]
 FRONTEND_ROOT = REPOSITORY_ROOT / "frontend"
 

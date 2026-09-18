@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from aaos.main import create_app
 
-
 EXPECTED_API_PATHS = {
     "/api/v1/courses",
     "/api/v1/courses/{course_id}",
