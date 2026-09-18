@@ -28,16 +28,23 @@ function fetchUpstream(request: Request): Promise<Response> {
   });
 }
 
+function isEventStream(response: Response): boolean {
+  return response.headers
+    .get("content-type")
+    ?.toLowerCase()
+    .startsWith("text/event-stream") ?? false;
+}
+
 async function forwardUpstream(
   upstreamPromise: Promise<Response>,
-  writer: WritableStreamDefaultWriter<Uint8Array>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
 ): Promise<void> {
   try {
-    await writer.write(PROXY_PRELUDE);
+    controller.enqueue(PROXY_PRELUDE);
     const upstream = await upstreamPromise;
 
     if (upstream.body === null) {
-      await writer.close();
+      controller.close();
       return;
     }
 
@@ -46,17 +53,17 @@ async function forwardUpstream(
       while (true) {
         const chunk = await reader.read();
         if (chunk.done) break;
-        await writer.write(chunk.value);
+        controller.enqueue(chunk.value);
       }
     } finally {
       reader.releaseLock();
     }
-    await writer.close();
+    controller.close();
   } catch {
     try {
-      await writer.abort();
+      controller.error();
     } catch {
-      // Client disconnects can close the writer before the upstream settles.
+      // Client disconnects can close the stream before the upstream settles.
     }
   }
 }
@@ -81,12 +88,20 @@ async function resolveFastUpstream(
 export async function GET(request: Request): Promise<Response> {
   const upstreamPromise = fetchUpstream(request);
   const fastUpstream = await resolveFastUpstream(upstreamPromise);
-  if (fastUpstream !== null) return fastUpstream;
+  if (fastUpstream !== null && !isEventStream(fastUpstream)) {
+    return fastUpstream;
+  }
 
-  const stream = new TransformStream<Uint8Array, Uint8Array>();
-  void forwardUpstream(upstreamPromise, stream.writable.getWriter());
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      void forwardUpstream(
+        fastUpstream === null ? upstreamPromise : Promise.resolve(fastUpstream),
+        controller,
+      );
+    },
+  });
 
-  return new Response(stream.readable, {
+  return new Response(stream, {
     status: 200,
     headers: {
       "cache-control": "no-cache, no-store",

@@ -103,6 +103,34 @@ describe("same-origin Activity SSE proxy", () => {
     expect(new TextDecoder().decode(event.value)).toBe("event: activity\n\n");
   });
 
+  it("wraps a fast SSE response so the proxy flushes its prelude", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("event: activity\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/activity/stream"),
+    );
+    const reader = response.body!.getReader();
+    const prelude = await reader.read();
+    const preludeText = new TextDecoder().decode(prelude.value);
+    expect(preludeText.startsWith(": proxy-connected")).toBe(true);
+
+    const event = await reader.read();
+    expect(new TextDecoder().decode(event.value)).toBe("event: activity\n\n");
+  });
+
   it("preserves a fast upstream validation response", async () => {
     vi.stubGlobal(
       "fetch",
