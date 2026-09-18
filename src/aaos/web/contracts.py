@@ -6,6 +6,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from aaos.approval.contracts import ApprovalState, OperationState
+from aaos.tasks.contracts import (
+    BrowserTaskState,
+    TaskFailureCode,
+    TaskKind,
+)
+
 
 class ApiErrorDetail(BaseModel):
     """Closed browser-safe error detail."""
@@ -201,3 +208,77 @@ class RagAnswerResponse(BaseModel):
         if self.status is RagAnswerStatusView.INSUFFICIENT_EVIDENCE and self.citations:
             raise ValueError("insufficient evidence cannot contain citations")
         return self
+
+
+class SafeActionSummary(BaseModel):
+    """Closed, human-readable calendar action summary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    action_type: str = Field(min_length=1, max_length=64)
+    integration_label: str = Field(min_length=1, max_length=64)
+    summary: str = Field(min_length=1, max_length=200)
+    start: str = Field(min_length=1, max_length=64)
+    end: str = Field(min_length=1, max_length=64)
+    timezone: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=300)
+
+
+class CalendarCreateTaskRequest(BaseModel):
+    """Closed browser request for the only supported Phase 7E task kind."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    summary: str = Field(min_length=1, max_length=200)
+    start: str = Field(min_length=1, max_length=64)
+    end: str = Field(min_length=1, max_length=64)
+    timezone: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=300)
+
+
+class TaskSummary(BaseModel):
+    """Browser-safe durable task list projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    task_id: str = Field(min_length=1, max_length=128)
+    task_kind: TaskKind
+    status: BrowserTaskState
+    created_at: datetime
+    updated_at: datetime
+    action: SafeActionSummary
+
+
+class ApprovalSummary(BaseModel):
+    """Browser-safe approval projection without trusted approver context."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    approval_id: str = Field(min_length=1, max_length=128)
+    task_id: str = Field(min_length=1, max_length=128)
+    action: SafeActionSummary
+    status: ApprovalState
+    issued_at: datetime
+    approval_expires_at: datetime
+    operation_state: OperationState | None
+    can_approve: bool
+    can_reject: bool
+
+
+class TaskDetail(TaskSummary):
+    """Browser-safe task detail with derived Phase 6 state only."""
+
+    approval: ApprovalSummary | None
+    operation_state: OperationState | None
+    operation_outcome: str | None = Field(default=None, max_length=32)
+    action_expires_at: datetime | None
+    failure_code: TaskFailureCode | None
+
+
+class ApprovalDetail(ApprovalSummary):
+    """Browser-safe approval detail with bounded decision metadata."""
+
+    decided_at: datetime | None
+    decision_reason: str | None = Field(default=None, max_length=64)
