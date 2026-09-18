@@ -183,7 +183,7 @@ def test_phase6a_upgrade_from_phase4_creates_all_ledger_tables(tmp_path: Path) -
     config = make_config(database_path)
     command.upgrade(config, PHASE4_REVISION)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, PHASE6A_REVISION)
 
     assert revision(database_path) == PHASE6A_REVISION
     engine = create_database_engine(database_path)
