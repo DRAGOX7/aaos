@@ -24,14 +24,17 @@ describe("same-origin Activity SSE proxy", () => {
         "x-accel-buffering": "no",
       },
     });
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(input).toBe(
-        "http://127.0.0.1:8765/api/v1/activity/stream?after=cursor-1",
-      );
-      expect(init?.method).toBe("GET");
-      expect(init?.body).toBeUndefined();
-      return upstream;
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(input).toBe(
+          "http://127.0.0.1:8765/api/v1/activity/stream?after=cursor-1",
+        );
+        expect(init?.method).toBe("GET");
+        expect(init?.body).toBeUndefined();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return upstream;
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const request = new Request(
@@ -94,5 +97,39 @@ describe("same-origin Activity SSE proxy", () => {
     );
     const event = await reader.read();
     expect(new TextDecoder().decode(event.value)).toBe("event: activity\n\n");
+  });
+
+  it("preserves a fast upstream validation response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "INVALID_REQUEST",
+              message: "The activity cursor is invalid.",
+              request_id: "request-1",
+            },
+          }),
+          {
+            status: 422,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/activity/stream?after=bad"),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "INVALID_REQUEST",
+        message: "The activity cursor is invalid.",
+        request_id: "request-1",
+      },
+    });
   });
 });
