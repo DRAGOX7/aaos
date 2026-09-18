@@ -1,6 +1,8 @@
 const DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8000";
 const STREAM_PATH = "/api/v1/activity/stream";
-const PROXY_PRELUDE = new TextEncoder().encode(": proxy-connected\n\n");
+const PROXY_PRELUDE = new TextEncoder().encode(
+  `: proxy-connected${" ".repeat(2048)}\n\n`,
+);
 const UPSTREAM_PREFLIGHT_TIMEOUT_MS = 100;
 
 export const runtime = "nodejs";

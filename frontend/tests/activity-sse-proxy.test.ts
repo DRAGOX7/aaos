@@ -51,7 +51,9 @@ describe("same-origin Activity SSE proxy", () => {
 
     const reader = response.body!.getReader();
     const prelude = await reader.read();
-    expect(new TextDecoder().decode(prelude.value)).toBe(": proxy-connected\n\n");
+    const preludeText = new TextDecoder().decode(prelude.value);
+    expect(preludeText.startsWith(": proxy-connected")).toBe(true);
+    expect(preludeText.length).toBeGreaterThanOrEqual(1024);
     const firstChunk = await reader.read();
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(new TextDecoder().decode(firstChunk.value)).toBe(
@@ -79,7 +81,9 @@ describe("same-origin Activity SSE proxy", () => {
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
     const prelude = await reader.read();
-    expect(new TextDecoder().decode(prelude.value)).toBe(": proxy-connected\n\n");
+    const preludeText = new TextDecoder().decode(prelude.value);
+    expect(preludeText.startsWith(": proxy-connected")).toBe(true);
+    expect(preludeText.length).toBeGreaterThanOrEqual(1024);
 
     resolveUpstream(
       new Response(
