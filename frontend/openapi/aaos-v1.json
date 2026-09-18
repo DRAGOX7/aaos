@@ -358,7 +358,7 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/RagAnswerStatus"
+            "$ref": "#/components/schemas/RagAnswerStatusView"
           }
         },
         "required": [
@@ -370,13 +370,14 @@
         "title": "RagAnswerResponse",
         "type": "object"
       },
-      "RagAnswerStatus": {
+      "RagAnswerStatusView": {
+        "description": "Closed browser projection of Phase 4 answer statuses.",
         "enum": [
           "ANSWER",
           "PARTIAL_ANSWER",
           "INSUFFICIENT_EVIDENCE"
         ],
-        "title": "RagAnswerStatus",
+        "title": "RagAnswerStatusView",
         "type": "string"
       },
       "RagCitation": {

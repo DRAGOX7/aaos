@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aaos.rag.contracts import RagAnswerStatus
-from aaos.web.contracts import RagAnswerResponse, RagCitation
+from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView, RagCitation
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +25,7 @@ def fixture_answer(status: RagAnswerStatus) -> RagAnswerResponse:
         ),
     )
     return RagAnswerResponse(
-        status=status,
+        status=RagAnswerStatusView(status.value),
         answer_text=(
             "There is not enough evidence."
             if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
@@ -34,4 +34,3 @@ def fixture_answer(status: RagAnswerStatus) -> RagAnswerResponse:
         language="en",
         citations=citations,
     )
-

@@ -1,10 +1,11 @@
 """Versioned browser-facing HTTP routes for AAOS Phase 7."""
 
+from __future__ import annotations
+
 from typing import Protocol
 
 from fastapi import APIRouter, Path, Query
 
-from aaos.rag.contracts import RagOperationalError
 from aaos.web.contracts import (
     AssignmentListResponse,
     AssignmentSummary,
@@ -16,7 +17,11 @@ from aaos.web.contracts import (
     RagQueryRequest,
 )
 from aaos.web.errors import Phase7ApiError
-from aaos.web.rag import AcademicRagReader
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aaos.web.rag import AcademicRagReader
 
 
 class CourseReader(Protocol):
@@ -120,6 +125,8 @@ def create_api_v1_router(
             response_model=RagAnswerResponse,
         )
         async def ask_rag(request: RagQueryRequest) -> RagAnswerResponse:
+            from aaos.rag.contracts import RagOperationalError
+
             try:
                 return await rag_reader.ask(request)
             except RagOperationalError as error:

@@ -16,7 +16,6 @@ from aaos.web.contracts import (
     RagQueryRequest,
 )
 from aaos.web.errors import install_error_boundary
-from aaos.web.rag import AcademicRagReader, RagReadService
 from aaos.web.routes import (
     AcademicReader,
     CourseReader,
@@ -29,6 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from aaos.rag.factory import ConfiguredPhase4Runtime
+    from aaos.web.rag import AcademicRagReader, RagReadService
 
 
 class HealthResponse(BaseModel):
@@ -107,6 +107,8 @@ class _LazyDefaultRagReader:
 
     def _ensure_delegate(self) -> RagReadService:
         if self._delegate is None:
+            from aaos.web.rag import RagReadService
+
             from aaos.persistence.database import (
                 create_database_engine,
                 create_session_factory,

@@ -3,31 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aaos.persistence.academic_models import CourseORM, RemoteFileORM
 from aaos.persistence.document_models import DocumentORM, DocumentVersionORM
-from aaos.rag.contracts import (
-    Citation,
-    CourseScope,
-    GlobalScope,
-    LocalRagService,
-    RagAnswerStatus,
-    RagErrorCode,
-    RagOperationalError,
-    RagQuery,
-    RagScope,
-)
 from aaos.web.contracts import (
     RagAnswerResponse,
+    RagAnswerStatusView,
     RagCitation,
     RagCourseScopeRequest,
     RagGlobalScopeRequest,
     RagQueryRequest,
 )
+
+if TYPE_CHECKING:
+    from aaos.rag.contracts import Citation, LocalRagService, RagQuery
 
 
 class AcademicRagReader(Protocol):
@@ -44,6 +37,8 @@ class RagReadService(AcademicRagReader):
         self._sessions = sessions
 
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
+        from aaos.rag.contracts import RagAnswerStatus
+
         query = self._build_query(request)
         response = await self._rag_service.ask(query)
         answer = response.answer
@@ -53,7 +48,7 @@ class RagReadService(AcademicRagReader):
             citations = self._project_citations(answer.citations)
         try:
             return RagAnswerResponse(
-                status=answer.status,
+                status=RagAnswerStatusView(answer.status.value),
                 answer_text=answer.answer_text,
                 language=answer.language,
                 citations=citations,
@@ -63,6 +58,8 @@ class RagReadService(AcademicRagReader):
 
     @staticmethod
     def _build_query(request: RagQueryRequest) -> RagQuery:
+        from aaos.rag.contracts import CourseScope, GlobalScope, RagOperationalError, RagQuery
+
         scope = request.scope
         if isinstance(scope, RagGlobalScopeRequest):
             trusted_scope: RagScope = GlobalScope()
@@ -75,7 +72,9 @@ class RagReadService(AcademicRagReader):
         except (TypeError, ValueError) as error:
             raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE) from error
 
-    def _project_citations(self, citations: Iterable[Citation]) -> tuple[RagCitation, ...]:
+    def _project_citations(self, citations: Iterable[object]) -> tuple[RagCitation, ...]:
+        from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
         citation_items = tuple(citations)
         if not citation_items:
             return ()

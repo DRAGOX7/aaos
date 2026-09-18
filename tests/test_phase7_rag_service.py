@@ -21,6 +21,7 @@ from aaos.rag.contracts import (
     RenderedRagResponse,
 )
 from aaos.web.contracts import (
+    RagAnswerStatusView,
     RagCourseScopeRequest,
     RagGlobalScopeRequest,
     RagQueryRequest,
@@ -135,7 +136,7 @@ def test_insufficient_evidence_is_a_successful_empty_citation_projection() -> No
         )
     )
 
-    assert result.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert result.status is RagAnswerStatusView.INSUFFICIENT_EVIDENCE
     assert result.citations == ()
 
 

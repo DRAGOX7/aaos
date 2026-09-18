@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from aaos.main import create_app
-from aaos.rag.contracts import RagAnswerStatus, RagErrorCode, RagOperationalError
-from aaos.web.contracts import RagAnswerResponse
+from aaos.rag.contracts import RagErrorCode, RagOperationalError, RagAnswerStatus
+from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView
 
 
 class FakeRagReader:
@@ -19,7 +19,7 @@ class FakeRagReader:
         return self.response
 
 
-def _answer(status: RagAnswerStatus = RagAnswerStatus.ANSWER) -> RagAnswerResponse:
+def _answer(status: RagAnswerStatusView = RagAnswerStatusView.ANSWER) -> RagAnswerResponse:
     return RagAnswerResponse(
         status=status,
         answer_text="Validated answer",
@@ -82,4 +82,3 @@ def test_openapi_exposes_only_browser_rag_contract() -> None:
     assert operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert "provider" not in str(operation)
     assert "model" not in str(operation)
-

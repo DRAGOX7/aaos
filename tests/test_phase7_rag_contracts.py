@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from aaos.rag.contracts import RagAnswerStatus
 from aaos.web.contracts import (
     RagAnswerResponse,
+    RagAnswerStatusView,
     RagCitation,
     RagCourseScopeRequest,
     RagGlobalScopeRequest,
@@ -66,7 +66,7 @@ def test_rag_models_are_strict_frozen_and_closed() -> None:
 
 def test_rag_answer_response_has_exact_safe_projection() -> None:
     answer = RagAnswerResponse(
-        status=RagAnswerStatus.ANSWER,
+        status=RagAnswerStatusView.ANSWER,
         answer_text="A validated answer.",
         language="en",
         citations=(
@@ -79,7 +79,7 @@ def test_rag_answer_response_has_exact_safe_projection() -> None:
         ),
     )
     insufficient = RagAnswerResponse(
-        status=RagAnswerStatus.INSUFFICIENT_EVIDENCE,
+        status=RagAnswerStatusView.INSUFFICIENT_EVIDENCE,
         answer_text="There is not enough evidence.",
         language="en",
         citations=(),
@@ -93,4 +93,3 @@ def test_rag_answer_response_has_exact_safe_projection() -> None:
         "page_end": 4,
     }
     assert insufficient.citations == ()
-

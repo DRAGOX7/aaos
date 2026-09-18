@@ -1,12 +1,11 @@
 """Browser-safe Phase 7 API contracts."""
 
 from datetime import datetime
-from typing import Annotated, Literal
 from enum import StrEnum
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aaos.rag.contracts import RagAnswerStatus
 
 
 class ApiErrorDetail(BaseModel):
@@ -180,18 +179,26 @@ class RagCitation(BaseModel):
         return self
 
 
+class RagAnswerStatusView(StrEnum):
+    """Closed browser projection of Phase 4 answer statuses."""
+
+    ANSWER = "ANSWER"
+    PARTIAL_ANSWER = "PARTIAL_ANSWER"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
 class RagAnswerResponse(BaseModel):
     """Validated final answer projection safe for browser rendering."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    status: RagAnswerStatus
+    status: "RagAnswerStatusView"
     answer_text: str = Field(min_length=1, max_length=20000)
     language: str = Field(min_length=1, max_length=32)
     citations: tuple[RagCitation, ...]
 
     @model_validator(mode="after")
     def _insufficient_evidence_has_no_citations(self) -> "RagAnswerResponse":
-        if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE and self.citations:
+        if self.status is RagAnswerStatusView.INSUFFICIENT_EVIDENCE and self.citations:
             raise ValueError("insufficient evidence cannot contain citations")
         return self

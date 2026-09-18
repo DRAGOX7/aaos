@@ -266,13 +266,14 @@ export interface components {
             citations: components["schemas"]["RagCitation"][];
             /** Language */
             language: string;
-            status: components["schemas"]["RagAnswerStatus"];
+            status: components["schemas"]["RagAnswerStatusView"];
         };
         /**
-         * RagAnswerStatus
+         * RagAnswerStatusView
+         * @description Closed browser projection of Phase 4 answer statuses.
          * @enum {string}
          */
-        RagAnswerStatus: "ANSWER" | "PARTIAL_ANSWER" | "INSUFFICIENT_EVIDENCE";
+        RagAnswerStatusView: "ANSWER" | "PARTIAL_ANSWER" | "INSUFFICIENT_EVIDENCE";
         /**
          * RagCitation
          * @description Safe public citation target resolved by trusted backend code.

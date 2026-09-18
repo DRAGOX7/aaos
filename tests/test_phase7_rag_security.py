@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from aaos.rag.contracts import RagAnswerStatus
-from aaos.web.contracts import RagAnswerResponse, RagCitation
+from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView, RagCitation
 
 
 def test_browser_rag_projection_excludes_internal_provenance_and_authority_fields() -> None:
     response = RagAnswerResponse(
-        status=RagAnswerStatus.ANSWER,
+        status=RagAnswerStatusView.ANSWER,
         answer_text="Validated answer",
         language="en",
         citations=(
@@ -24,4 +23,3 @@ def test_browser_rag_projection_excludes_internal_provenance_and_authority_field
     assert "document_version_id" not in str(serialized)
     assert "provider" not in str(serialized).lower()
     assert "permission" not in str(serialized).lower()
-
