@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from test_phase7e_task_service import ACTOR, APPROVER, _config, _definition, _request
+from test_phase7e_task_service import ACTOR, APPROVER, NOW, _config, _definition, _request
 
 from aaos.agent.contracts import PermissionClass
 from aaos.agent.policy import PermissionPolicy
@@ -35,9 +34,6 @@ from aaos.tasks.execution import TaskExecutionCoordinator
 from aaos.tasks.read_service import TaskReadService
 from aaos.tasks.repository import TaskRepository
 from aaos.tasks.service import TaskApplicationService
-
-NOW = datetime.now(timezone.utc)
-
 
 @pytest.fixture
 def sessions(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
