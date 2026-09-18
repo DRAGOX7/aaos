@@ -16,6 +16,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "AAOS",
   description: "Academic AI Operating System",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
