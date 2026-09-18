@@ -31,6 +31,8 @@ from aaos.web.contracts import (
     SafeActionSummary,
     TaskDetail,
     TaskSummary,
+    _project_approval_state,
+    _project_operation_state,
 )
 from aaos.web.errors import Phase7ApiError
 
@@ -203,10 +205,10 @@ class TaskReadService:
             approval_id=approval.approval_id.value,
             task_id=task.task_id,
             action=_safe_action(prepared),
-            status=approval.status,
+            status=_project_approval_state(approval.status),
             issued_at=approval.issued_at,
             approval_expires_at=approval.approval_expires_at,
-            operation_state=operation_state,
+            operation_state=_project_operation_state(operation_state),
             can_approve=approval.status is ApprovalState.PENDING
             and action_state is ActionState.AWAITING_APPROVAL,
             can_reject=approval.status is ApprovalState.PENDING
@@ -242,10 +244,10 @@ class TaskReadService:
                 approval_id=approval_record.approval_id.value,
                 task_id=record.task_id,
                 action=safe_action,
-                status=approval_record.status,
+                status=_project_approval_state(approval_record.status),
                 issued_at=approval_record.issued_at,
                 approval_expires_at=approval_record.approval_expires_at,
-                operation_state=operation_state,
+                operation_state=_project_operation_state(operation_state),
                 can_approve=approval_record.status is ApprovalState.PENDING
                 and action_state is ActionState.AWAITING_APPROVAL,
                 can_reject=approval_record.status is ApprovalState.PENDING
@@ -264,7 +266,7 @@ class TaskReadService:
             updated_at=record.updated_at,
             action=safe_action,
             approval=approval_summary,
-            operation_state=operation_state,
+            operation_state=_project_operation_state(operation_state),
             operation_outcome=outcome,
             action_expires_at=prepared_action.action_expires_at,
             failure_code=record.failure_code,

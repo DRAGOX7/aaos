@@ -2,16 +2,56 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aaos.approval.contracts import ApprovalState, OperationState
 from aaos.tasks.contracts import (
     BrowserTaskState,
     TaskFailureCode,
     TaskKind,
 )
+
+
+class ApprovalState(StrEnum):
+    """Closed browser projection of approval lifecycle states."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    CONSUMED = "CONSUMED"
+    REJECTED = "REJECTED"
+    REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
+
+
+class OperationState(StrEnum):
+    """Closed browser projection of operation lifecycle states."""
+
+    CLAIMED = "CLAIMED"
+    EXECUTING = "EXECUTING"
+    NOT_DISPATCHED = "NOT_DISPATCHED"
+    CONFIRMED_SUCCESS = "CONFIRMED_SUCCESS"
+    CONFIRMED_FAILURE = "CONFIRMED_FAILURE"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+    RECONCILIATION_PENDING = "RECONCILIATION_PENDING"
+
+
+def _project_approval_state(value: object) -> ApprovalState:
+    if isinstance(value, ApprovalState):
+        return value
+    if isinstance(value, StrEnum):
+        return ApprovalState(value.value)
+    return ApprovalState(cast(str, value))
+
+
+def _project_operation_state(value: object) -> OperationState | None:
+    if value is None:
+        return None
+    if isinstance(value, OperationState):
+        return value
+    if isinstance(value, StrEnum):
+        return OperationState(value.value)
+    return OperationState(cast(str, value))
 
 
 class ApiErrorDetail(BaseModel):
@@ -273,6 +313,16 @@ class ApprovalSummary(BaseModel):
     can_approve: bool
     can_reject: bool
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _accept_trusted_phase6_status(cls, value: object) -> object:
+        return _project_approval_state(value)
+
+    @field_validator("operation_state", mode="before")
+    @classmethod
+    def _accept_trusted_phase6_operation_state(cls, value: object) -> object:
+        return _project_operation_state(value)
+
 
 class TaskDetail(TaskSummary):
     """Browser-safe task detail with derived Phase 6 state only."""
@@ -282,6 +332,11 @@ class TaskDetail(TaskSummary):
     operation_outcome: str | None = Field(default=None, max_length=32)
     action_expires_at: datetime | None
     failure_code: TaskFailureCode | None
+
+    @field_validator("operation_state", mode="before")
+    @classmethod
+    def _accept_trusted_phase6_operation_state(cls, value: object) -> object:
+        return _project_operation_state(value)
 
 
 class ApprovalDetail(ApprovalSummary):

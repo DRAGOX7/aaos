@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlsplit
 
-from aaos.approval.contracts import TrustedApproverContext
-
 _LOCAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -83,6 +81,8 @@ class AppSettings:
             raise ValueError("local approver identity and context must be safe identifiers")
         if identity is not None and context_id is not None:
             # Validate the exact trusted value once at configuration load.
+            from aaos.approval.contracts import TrustedApproverContext
+
             TrustedApproverContext(identity, context_id)
 
 

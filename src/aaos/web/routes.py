@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, Body, Path, Query, Request
 
-from aaos.approval.contracts import ApprovalId, Phase6ErrorCode, TrustedApproverContext
-from aaos.approval.service import Phase6ServiceError
 from aaos.web.contracts import (
     ApprovalCommandRequest,
     ApprovalDetail,
@@ -28,9 +26,10 @@ from aaos.web.contracts import (
 )
 from aaos.web.errors import Phase7ApiError
 from aaos.web.mutation_security import MutationRequestRejected, enforce_mutation_fence
-from aaos.web.principal import LocalApproverContextProvider, PrincipalUnavailable
 
 if TYPE_CHECKING:
+    from aaos.approval.contracts import ApprovalId, Phase6ErrorCode, TrustedApproverContext
+    from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader
 
 
@@ -200,7 +199,6 @@ def create_api_v1_router(
             return task_reader.get_approval(approval_id)
 
     if task_commands is not None and principal_provider is not None:
-
         def _enforce_decision_request(request: Request) -> None:
             try:
                 enforce_mutation_fence(
@@ -216,6 +214,8 @@ def create_api_v1_router(
                 ) from error
 
         def _approver() -> TrustedApproverContext:
+            from aaos.web.principal import PrincipalUnavailable
+
             try:
                 return principal_provider.current()
             except PrincipalUnavailable as error:
@@ -226,6 +226,8 @@ def create_api_v1_router(
                 ) from error
 
         def _approval_id(value: str) -> ApprovalId:
+            from aaos.approval.contracts import ApprovalId
+
             try:
                 return ApprovalId(value)
             except (TypeError, ValueError) as error:
@@ -236,6 +238,8 @@ def create_api_v1_router(
                 ) from error
 
         def _phase6_error(error: Phase6ErrorCode) -> Phase7ApiError:
+            from aaos.approval.contracts import Phase6ErrorCode
+
             if error is Phase6ErrorCode.APPROVAL_NOT_FOUND:
                 return Phase7ApiError(404, "APPROVAL_NOT_FOUND", "The approval is not available.")
             if error in {
@@ -265,6 +269,8 @@ def create_api_v1_router(
         ) -> ApprovalDetail:
             _enforce_decision_request(request)
             try:
+                from aaos.approval.service import Phase6ServiceError
+
                 return task_commands.approve(
                     _approval_id(approval_id),
                     approver=_approver(),
@@ -284,6 +290,8 @@ def create_api_v1_router(
         ) -> ApprovalDetail:
             _enforce_decision_request(request)
             try:
+                from aaos.approval.service import Phase6ServiceError
+
                 return task_commands.reject(
                     _approval_id(approval_id),
                     approver=_approver(),

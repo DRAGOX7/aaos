@@ -6,14 +6,16 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from aaos.approval.contracts import (
-    ActionId,
-    ActionState,
-    ActorIdentity,
-    ApprovalState,
-    OperationState,
-)
+if TYPE_CHECKING:
+    from aaos.approval.contracts import (
+        ActionId,
+        ActionState,
+        ActorIdentity,
+        ApprovalState,
+        OperationState,
+    )
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _HASH = re.compile(r"^[0-9a-f]{64}$")
@@ -82,6 +84,8 @@ class TaskRecord:
     updated_at: datetime
 
     def __post_init__(self) -> None:
+        from aaos.approval.contracts import ActionId, ActorIdentity
+
         _id(self.task_id, "task_id")
         if not isinstance(self.task_kind, TaskKind):
             raise TypeError("task_kind must be a TaskKind")
@@ -111,6 +115,8 @@ def project_task_state(
     operation_state: OperationState | None,
 ) -> BrowserTaskState:
     """Project authoritative Phase 6 state without duplicating it."""
+
+    from aaos.approval.contracts import ActionState
 
     if not isinstance(creation_state, TaskCreationState):
         raise TypeError("creation_state must be a TaskCreationState")

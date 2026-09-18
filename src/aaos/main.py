@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Literal
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from aaos.approval.contracts import ApprovalId, TrustedApproverContext
-from aaos.approval.repository import ApprovalRepository
 from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.web.contracts import (
     ApprovalDetail,
@@ -23,7 +21,6 @@ from aaos.web.contracts import (
     TaskSummary,
 )
 from aaos.web.errors import install_error_boundary
-from aaos.web.principal import LocalApproverContextProvider, LocalPrincipalProvider
 from aaos.web.routes import (
     AcademicReader,
     CourseReader,
@@ -37,9 +34,11 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session, sessionmaker
 
+    from aaos.approval.contracts import ApprovalId, TrustedApproverContext
     from aaos.rag.factory import ConfiguredPhase4Runtime
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
+    from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
 
 
@@ -186,6 +185,7 @@ class _LazyDefaultTaskApprovalService:
 
     def _ensure_delegate(self) -> TaskApprovalService:
         if self._delegate is None:
+            from aaos.approval.repository import ApprovalRepository
             from aaos.persistence.database import create_database_engine, create_session_factory
             from aaos.tasks.read_service import TaskReadService
             from aaos.tasks.service import TaskApprovalService
@@ -212,6 +212,18 @@ class _LazyDefaultTaskApprovalService:
             self._engine.dispose()
 
 
+class _LazyDefaultPrincipalProvider:
+    """Resolve the configured local principal only when a decision is requested."""
+
+    def __init__(self, settings: AppSettings) -> None:
+        self._settings = settings
+
+    def current(self) -> TrustedApproverContext:
+        from aaos.web.principal import LocalPrincipalProvider
+
+        return LocalPrincipalProvider(self._settings).current()
+
+
 def create_app(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
@@ -234,7 +246,7 @@ def create_app(
     document_reader: DocumentReader
     task_reader: TaskReader
     resolved_task_commands: TaskApprovalCommands
-    resolved_principal_provider = principal_provider or LocalPrincipalProvider(settings)
+    resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
 
     if session_factory is None:
@@ -255,6 +267,7 @@ def create_app(
         if isinstance(lazy_task_commands, _LazyDefaultTaskApprovalService):
             application.router.add_event_handler("shutdown", lazy_task_commands.dispose)
     else:
+        from aaos.approval.repository import ApprovalRepository
         from aaos.web.academic import AcademicReadService
         from aaos.web.documents import DocumentReadService
 

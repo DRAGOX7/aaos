@@ -119,7 +119,7 @@ def test_valid_creation_binds_one_action_and_one_pending_approval(
     assert detail.task_kind.value == "CALENDAR_CREATE_EVENT"
     assert detail.status.value == "AWAITING_APPROVAL"
     assert detail.approval is not None
-    assert detail.approval.status is ApprovalState.PENDING
+    assert detail.approval.status.value == ApprovalState.PENDING.value
     assert detail.action.summary == "Planning"
     with sessions() as session:
         prepared = session.scalar(select(PreparedActionORM))

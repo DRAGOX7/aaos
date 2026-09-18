@@ -61,6 +61,8 @@ from aaos.web.contracts import (
     ApprovalSummary,
     SafeActionSummary,
     TaskDetail,
+    _project_approval_state,
+    _project_operation_state,
 )
 
 
@@ -323,10 +325,10 @@ class TaskApplicationService:
                 approval_id=approval.approval_id.value,
                 task_id=record.task_id,
                 action=_safe_action(prepared),
-                status=approval.status,
+                status=_project_approval_state(approval.status),
                 issued_at=approval.issued_at,
                 approval_expires_at=approval.approval_expires_at,
-                operation_state=operation_state,
+                operation_state=_project_operation_state(operation_state),
                 can_approve=approval.status is ApprovalState.PENDING
                 and action_state is ActionState.AWAITING_APPROVAL,
                 can_reject=approval.status is ApprovalState.PENDING
@@ -345,7 +347,7 @@ class TaskApplicationService:
             updated_at=record.updated_at,
             action=_safe_action(prepared),
             approval=approval_summary,
-            operation_state=operation_state,
+            operation_state=_project_operation_state(operation_state),
             operation_outcome=outcome,
             action_expires_at=prepared.action_expires_at,
             failure_code=record.failure_code,
