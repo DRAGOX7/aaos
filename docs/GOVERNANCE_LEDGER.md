@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc` | 7F remains NOT_STARTED; Phase 7 is not PASSED/FROZEN |
+| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F HUMAN_ACCEPTED at `8f6691ecaeff64612da89187e57bbcf8ba84f16a` | 7G remains NOT_STARTED; known Settings route and favicon asset carryovers remain; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -146,6 +146,28 @@ approval source without fabricating a historical verification report.
   Phase 7F functionality was introduced and the final tracked worktree was
   clean. This accepts 7E only; Phase 7 remains IN_PROGRESS and 7F remains
   NOT_STARTED.
+- 2026-09-18: Phase 7F browser-safe Activity history, deterministic composite
+  projection and cursors, same-origin SSE streaming with reconnect/replay/
+  deduplication, passive System Health, and responsive Activity/System Health
+  surfaces were HUMAN_ACCEPTED at
+  `8f6691ecaeff64612da89187e57bbcf8ba84f16a`. Evidence included the
+  canonical backend suite (2086 passed, 5 skipped, 1 warning), focused Phase
+  7F backend tests (45 passed), frontend tests (161 passed), Ruff, both
+  canonical mypy gates, uv lock, frontend typecheck/lint/build/API-drift,
+  production same-origin browser acceptance, responsive checks, security and
+  artifact audits, and zero external writes. The final fixes changed only
+  System Health and Activity presentation/tests; no migration, duplicate
+  Activity ledger, Phase 7E authority change, model/RAG/provider side effect,
+  or Phase 7G functionality was introduced. The final worktree was clean.
+  Two pre-existing global integration carryovers remain explicitly open for
+  Phase 7G: `CARRYOVER_7G_SETTINGS_ROUTE_GAP` (the pre-existing Settings
+  navigation points to `/settings` without a matching route; 7G must either
+  implement the intended surface or remove/disable the dead item) and
+  `CARRYOVER_7G_FAVICON_ASSET_GAP` (the pre-existing `/favicon.ico` 404; 7G
+  must provide the intended application icon). Whole Phase 7 must not pass
+  while either carryover remains. This accepts 7F only; Phase 7 remains
+  IN_PROGRESS, 7G remains NOT_STARTED, and no `phase-07-passed` tag is
+  created.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.
