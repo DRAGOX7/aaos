@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlsplit
+
+from aaos.approval.contracts import TrustedApproverContext
+
+_LOCAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +23,8 @@ class AppSettings:
     lm_studio_model: str = "qwen/qwen3.5-4b"
     lm_studio_context_length: int = 8192
     lm_studio_request_timeout_seconds: float = 30.0
+    local_approver_identity: str | None = None
+    local_approver_context_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the fixed local inference profile without contacting LM Studio."""
@@ -64,6 +71,19 @@ class AppSettings:
 
         object.__setattr__(self, "lm_studio_base_url", self.lm_studio_base_url.rstrip("/"))
         object.__setattr__(self, "lm_studio_model", model_identifier)
+
+        identity, context_id = self.local_approver_identity, self.local_approver_context_id
+        if (identity is None) != (context_id is None):
+            raise ValueError("local approver identity and context must be configured together")
+        if identity is not None and (
+            not _LOCAL_ID.fullmatch(identity)
+            or context_id is None
+            or not _LOCAL_ID.fullmatch(context_id)
+        ):
+            raise ValueError("local approver identity and context must be safe identifiers")
+        if identity is not None and context_id is not None:
+            # Validate the exact trusted value once at configuration load.
+            TrustedApproverContext(identity, context_id)
 
 
 DEFAULT_SETTINGS = AppSettings()
