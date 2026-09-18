@@ -239,6 +239,12 @@ class CalendarCreateTaskRequest(BaseModel):
     location: str | None = Field(default=None, max_length=300)
 
 
+class ApprovalCommandRequest(BaseModel):
+    """Closed empty JSON body for approval decisions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
 class TaskSummary(BaseModel):
     """Browser-safe durable task list projection."""
 

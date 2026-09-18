@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
-from typing import cast
+from typing import Protocol, cast
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -15,8 +15,10 @@ from aaos.approval.contracts import (
     ActionId,
     ActionState,
     ActorIdentity,
+    ApprovalId,
     ApprovalRecord,
     ApprovalState,
+    HumanDecisionReason,
     OperationState,
     Phase6ActionDefinition,
     PreparedAction,
@@ -55,10 +57,15 @@ from aaos.tasks.contracts import (
 )
 from aaos.tasks.repository import TaskRepository
 from aaos.web.contracts import (
+    ApprovalDetail,
     ApprovalSummary,
     SafeActionSummary,
     TaskDetail,
 )
+
+
+class ApprovalReader(Protocol):
+    def get_approval(self, approval_id: str) -> ApprovalDetail: ...
 
 
 class TaskPreparationError(RuntimeError):
@@ -345,4 +352,44 @@ class TaskApplicationService:
         )
 
 
-__all__ = ["TaskApplicationService", "TaskPreparationError"]
+class TaskApprovalService:
+    """Apply browser approval decisions through the frozen Phase 6 service."""
+
+    def __init__(self, approval_repository: ApprovalRepository, reader: ApprovalReader) -> None:
+        if not isinstance(approval_repository, ApprovalRepository):
+            raise TypeError("approval_repository must be an ApprovalRepository")
+        self._approval_repository = approval_repository
+        self._reader = reader
+
+    def approve(
+        self,
+        approval_id: ApprovalId,
+        *,
+        approver: TrustedApproverContext,
+        now: datetime,
+    ) -> ApprovalDetail:
+        from aaos.approval.service import approve_approval
+
+        approve_approval(self._approval_repository, approval_id, approver, now)
+        return self._reader.get_approval(approval_id.value)
+
+    def reject(
+        self,
+        approval_id: ApprovalId,
+        *,
+        approver: TrustedApproverContext,
+        now: datetime,
+    ) -> ApprovalDetail:
+        from aaos.approval.service import reject_approval
+
+        reject_approval(
+            self._approval_repository,
+            approval_id,
+            approver,
+            now,
+            HumanDecisionReason.USER_REJECTED,
+        )
+        return self._reader.get_approval(approval_id.value)
+
+
+__all__ = ["TaskApplicationService", "TaskApprovalService", "TaskPreparationError"]

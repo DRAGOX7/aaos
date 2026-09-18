@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from aaos.approval.contracts import ApprovalId, TrustedApproverContext
+from aaos.approval.repository import ApprovalRepository
 from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.web.contracts import (
     ApprovalDetail,
@@ -20,10 +23,12 @@ from aaos.web.contracts import (
     TaskSummary,
 )
 from aaos.web.errors import install_error_boundary
+from aaos.web.principal import LocalApproverContextProvider, LocalPrincipalProvider
 from aaos.web.routes import (
     AcademicReader,
     CourseReader,
     DocumentReader,
+    TaskApprovalCommands,
     TaskReader,
     create_api_v1_router,
 )
@@ -34,6 +39,7 @@ if TYPE_CHECKING:
 
     from aaos.rag.factory import ConfiguredPhase4Runtime
     from aaos.tasks.read_service import TaskReadService
+    from aaos.tasks.service import TaskApprovalService
     from aaos.web.rag import AcademicRagReader, RagReadService
 
 
@@ -171,11 +177,48 @@ class _LazyDefaultTaskReader:
             self._engine.dispose()
 
 
+class _LazyDefaultTaskApprovalService:
+    """Create approval decision persistence only when a decision is requested."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: TaskApprovalService | None = None
+
+    def _ensure_delegate(self) -> TaskApprovalService:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.tasks.read_service import TaskReadService
+            from aaos.tasks.service import TaskApprovalService
+
+            self._engine = create_database_engine()
+            sessions = create_session_factory(self._engine)
+            self._delegate = TaskApprovalService(
+                ApprovalRepository(sessions), TaskReadService(sessions)
+            )
+        return self._delegate
+
+    def approve(
+        self, approval_id: ApprovalId, *, approver: TrustedApproverContext, now: datetime
+    ) -> ApprovalDetail:
+        return self._ensure_delegate().approve(approval_id, approver=approver, now=now)
+
+    def reject(
+        self, approval_id: ApprovalId, *, approver: TrustedApproverContext, now: datetime
+    ) -> ApprovalDetail:
+        return self._ensure_delegate().reject(approval_id, approver=approver, now=now)
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+
+
 def create_app(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
     session_factory: sessionmaker[Session] | None = None,
     rag_reader: AcademicRagReader | None = None,
+    task_commands: TaskApprovalCommands | None = None,
+    principal_provider: LocalApproverContextProvider | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -190,6 +233,8 @@ def create_app(
     academic_reader: AcademicReader
     document_reader: DocumentReader
     task_reader: TaskReader
+    resolved_task_commands: TaskApprovalCommands
+    resolved_principal_provider = principal_provider or LocalPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
 
     if session_factory is None:
@@ -199,12 +244,16 @@ def create_app(
         document_reader = lazy_course_reader
         lazy_task_reader = _LazyDefaultTaskReader()
         task_reader = lazy_task_reader
+        lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
+        resolved_task_commands = lazy_task_commands
 
         application.router.add_event_handler(
             "shutdown",
             lazy_course_reader.dispose,
         )
         application.router.add_event_handler("shutdown", lazy_task_reader.dispose)
+        if isinstance(lazy_task_commands, _LazyDefaultTaskApprovalService):
+            application.router.add_event_handler("shutdown", lazy_task_commands.dispose)
     else:
         from aaos.web.academic import AcademicReadService
         from aaos.web.documents import DocumentReadService
@@ -213,8 +262,13 @@ def create_app(
         course_reader = academic_reader
         document_reader = DocumentReadService(session_factory)
         from aaos.tasks.read_service import TaskReadService
+        from aaos.tasks.service import TaskApprovalService
 
         task_reader = TaskReadService(session_factory)
+        resolved_task_commands = task_commands or TaskApprovalService(
+            ApprovalRepository(session_factory),
+            task_reader,
+        )
 
     if resolved_rag_reader is None:
         lazy_rag_reader = _LazyDefaultRagReader(session_factory)
@@ -228,6 +282,8 @@ def create_app(
             document_reader=document_reader,
             rag_reader=resolved_rag_reader,
             task_reader=task_reader,
+            task_commands=resolved_task_commands,
+            principal_provider=resolved_principal_provider,
         )
     )
 
