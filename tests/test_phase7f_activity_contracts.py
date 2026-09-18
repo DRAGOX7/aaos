@@ -31,7 +31,7 @@ def _event() -> ActivityEvent:
         resource_id="task-1",
         title="Task created",
         detail=None,
-        context=TaskActivityContext(kind="TASK", task_id=1),
+        context=TaskActivityContext(kind="TASK", task_id="task-1"),
     )
 
 
@@ -56,9 +56,9 @@ def test_activity_event_has_closed_browser_safe_shape() -> None:
 
 def test_activity_context_is_a_closed_union() -> None:
     adapter = TypeAdapter(ActivityContext)
-    assert isinstance(adapter.validate_python({"kind": "TASK", "task_id": 1}), TaskActivityContext)
+    assert isinstance(adapter.validate_python({"kind": "TASK", "task_id": "task-1"}), TaskActivityContext)
     assert isinstance(
-        adapter.validate_python({"kind": "APPROVAL", "approval_id": "a", "task_id": 1}),
+        adapter.validate_python({"kind": "APPROVAL", "approval_id": "a", "task_id": "task-1"}),
         ApprovalActivityContext,
     )
     assert isinstance(

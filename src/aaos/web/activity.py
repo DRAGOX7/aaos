@@ -69,7 +69,7 @@ class TaskActivityContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     kind: Literal["TASK"]
-    task_id: int = Field(gt=0)
+    task_id: str = Field(min_length=1, max_length=128)
 
 
 class ApprovalActivityContext(BaseModel):
@@ -77,7 +77,7 @@ class ApprovalActivityContext(BaseModel):
 
     kind: Literal["APPROVAL"]
     approval_id: str = Field(min_length=1, max_length=128)
-    task_id: int = Field(gt=0)
+    task_id: str = Field(min_length=1, max_length=128)
 
 
 class OperationActivityContext(BaseModel):

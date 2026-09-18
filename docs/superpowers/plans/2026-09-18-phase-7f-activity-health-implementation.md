@@ -173,12 +173,12 @@ class ActivitySourceRow:
 
 class TaskActivityContext(BaseModel):
     kind: Literal["TASK"]
-    task_id: int
+    task_id: str
 
 class ApprovalActivityContext(BaseModel):
     kind: Literal["APPROVAL"]
     approval_id: str
-    task_id: int
+    task_id: str
 
 class OperationActivityContext(BaseModel):
     kind: Literal["OPERATION"]
