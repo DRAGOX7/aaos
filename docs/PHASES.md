@@ -359,7 +359,7 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`.**
+**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`.**
 
 ### Purpose
 
@@ -403,6 +403,25 @@ required `PYTHONUTF8=1` because the default CP1252 decoder could not decode
 its output; this was an environment-only, non-blocking limitation with no
 product-code change. This accepts 7D only; Phase 7 remains IN_PROGRESS and 7E
 remains NOT_STARTED.
+
+Phase 7E (tasks/approvals operational visibility) was human-accepted at
+implementation boundary
+`459431a11f81d567642b3d531a2db4c2ad4976dc`, with final acceptance
+verification performed at `e3091f52e92cee6d4cbd3ab6d512cd32567b9c9d` on
+2026-09-18. Durable `TaskRecord` persistence is present at Alembic head
+`0006_phase7e_task_records`; Phase 6 remains authoritative for capability,
+approval, claim, execution, reconciliation and `UNKNOWN_OUTCOME`. Trusted
+approver context is derived server-side and cannot be supplied by the
+browser. Production approve/reject workflows passed, refresh preserved
+durable `APPROVED` and `REJECTED` state, duplicate/opposite terminal decisions
+returned bounded `APPROVAL_NOT_ACTIONABLE`, and `UNKNOWN_OUTCOME` rendered
+distinctly and honestly. Deterministic `FakeExternalAdapter` acceptance was
+used; no automatic external-write retry or real external provider write
+occurred. The earlier fixture-clock mismatch was an acceptance-fixture defect
+and was closed using a new preflight-validated frozen fixture without
+production-code changes. No Phase 7F functionality was introduced and the
+final tracked worktree was clean. This accepts 7E only; Phase 7 remains
+IN_PROGRESS and 7F remains NOT_STARTED.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is

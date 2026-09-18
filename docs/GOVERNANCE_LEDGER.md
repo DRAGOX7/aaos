@@ -35,7 +35,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
-| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483` | 7E remains NOT_STARTED; Phase 7 is not PASSED/FROZEN |
+| Phase 7 | AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc` | 7F remains NOT_STARTED; Phase 7 is not PASSED/FROZEN |
 | Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
@@ -127,6 +127,25 @@ approval source without fabricating a historical verification report.
   could not decode its output; this was an environment-only, non-blocking
   limitation with no product-code change. This accepts 7D only; Phase 7
   remains IN_PROGRESS and 7E remains NOT_STARTED.
+- 2026-09-18: Phase 7E tasks/approvals operational-visibility experience was
+  HUMAN_ACCEPTED at implementation boundary
+  `459431a11f81d567642b3d531a2db4c2ad4976dc`, with final acceptance
+  verification performed at `e3091f52e92cee6d4cbd3ab6d512cd32567b9c9d`.
+  Durable `TaskRecord` persistence is present at Alembic head
+  `0006_phase7e_task_records`; Phase 6 remains authoritative for capability,
+  approval, claim, execution, reconciliation and `UNKNOWN_OUTCOME`. The
+  trusted approver context is derived server-side and cannot be supplied by
+  the browser. Production approve/reject workflows passed, refresh preserved
+  durable `APPROVED` and `REJECTED` states, duplicate/opposite terminal
+  decisions returned bounded `APPROVAL_NOT_ACTIONABLE`, and
+  `UNKNOWN_OUTCOME` rendered distinctly and honestly. Deterministic
+  `FakeExternalAdapter` acceptance was used; no automatic external-write
+  retry or real external provider write occurred. The earlier fixture clock
+  mismatch was closed as an acceptance-fixture defect using a new
+  preflight-validated frozen fixture without production-code changes. No
+  Phase 7F functionality was introduced and the final tracked worktree was
+  clean. This accepts 7E only; Phase 7 remains IN_PROGRESS and 7F remains
+  NOT_STARTED.
 - 2026-09-08: HUMAN_APPROVED architecture review decision:
   `ROADMAP_ARCHITECTURE_STATUS=REVISE_BEFORE_PHASE6`;
   `PHASE5_CAN_CONTINUE=YES`; `PHASE4_REOPEN_REQUIRED=NO`.
