@@ -38,7 +38,9 @@ describe("Next.js AAOS transport boundary", () => {
       typeof nextConfig.rewrites === "function"
         ? await nextConfig.rewrites()
         : [];
-    const apiRule = rules.find((rule) => rule.source === "/api/:path*");
+    const apiRule = Array.isArray(rules)
+      ? rules.find((rule) => rule.source === "/api/:path*")
+      : undefined;
 
     expect(apiRule).toEqual({
       source: "/api/:path*",
