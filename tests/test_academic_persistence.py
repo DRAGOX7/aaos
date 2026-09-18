@@ -34,7 +34,8 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
         "action_event_counters",
         "action_events",
     }
-    assert set(CourseORM.metadata.tables) - phase6a_tables == {
+    phase7e_tables = {"task_records"}
+    assert set(CourseORM.metadata.tables) - phase6a_tables - phase7e_tables == {
         "courses",
         "assignments",
         "announcements",
