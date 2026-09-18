@@ -20,7 +20,12 @@ from aaos.web.contracts import (
 )
 
 if TYPE_CHECKING:
-    from aaos.rag.contracts import Citation, LocalRagService, RagQuery
+    from aaos.rag.contracts import (
+        Citation,
+        LocalRagService,
+        RagQuery,
+        RagScope,
+    )
 
 
 class AcademicRagReader(Protocol):
@@ -37,7 +42,7 @@ class RagReadService(AcademicRagReader):
         self._sessions = sessions
 
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
-        from aaos.rag.contracts import RagAnswerStatus
+        from aaos.rag.contracts import RagAnswerStatus, RagErrorCode, RagOperationalError
 
         query = self._build_query(request)
         response = await self._rag_service.ask(query)
@@ -58,7 +63,13 @@ class RagReadService(AcademicRagReader):
 
     @staticmethod
     def _build_query(request: RagQueryRequest) -> RagQuery:
-        from aaos.rag.contracts import CourseScope, GlobalScope, RagOperationalError, RagQuery
+        from aaos.rag.contracts import (
+            CourseScope,
+            GlobalScope,
+            RagErrorCode,
+            RagOperationalError,
+            RagQuery,
+        )
 
         scope = request.scope
         if isinstance(scope, RagGlobalScopeRequest):
@@ -72,7 +83,7 @@ class RagReadService(AcademicRagReader):
         except (TypeError, ValueError) as error:
             raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE) from error
 
-    def _project_citations(self, citations: Iterable[object]) -> tuple[RagCitation, ...]:
+    def _project_citations(self, citations: Iterable[Citation]) -> tuple[RagCitation, ...]:
         from aaos.rag.contracts import RagErrorCode, RagOperationalError
 
         citation_items = tuple(citations)
@@ -80,7 +91,7 @@ class RagReadService(AcademicRagReader):
             return ()
         version_ids: list[int] = []
         for citation in citation_items:
-            version_id = getattr(citation, "document_version_id", None)
+            version_id = citation.document_version_id
             if type(version_id) is not int or version_id <= 0:
                 raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
             version_ids.append(version_id)

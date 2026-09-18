@@ -107,13 +107,12 @@ class _LazyDefaultRagReader:
 
     def _ensure_delegate(self) -> RagReadService:
         if self._delegate is None:
-            from aaos.web.rag import RagReadService
-
             from aaos.persistence.database import (
                 create_database_engine,
                 create_session_factory,
             )
             from aaos.rag.factory import build_configured_phase4_runtime
+            from aaos.web.rag import RagReadService
 
             sessions = self._sessions
             if sessions is None:
@@ -126,9 +125,9 @@ class _LazyDefaultRagReader:
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
         return await self._ensure_delegate().ask(request)
 
-    def dispose(self) -> None:
+    async def dispose(self) -> None:
         if self._runtime is not None:
-            self._runtime.close()
+            await self._runtime.aclose()
         if self._engine is not None:
             self._engine.dispose()
 

@@ -36,16 +36,17 @@ class ConfiguredPhase4Runtime:
         self._closed = True
         failure: Exception | None = None
         try:
-            self.runtime.close()
-        except Exception as error:
-            failure = error
-        try:
-            asyncio.run(self._close_gateway())
+            asyncio.run(self.aclose())
         except Exception as error:
             if failure is None:
                 failure = error
         if failure is not None:
             raise failure
+
+    async def aclose(self) -> None:
+        """Close the runtime and gateway from an already-running event loop."""
+        self.runtime.close()
+        await self._close_gateway()
 
     async def _close_gateway(self) -> None:
         closer = getattr(self.gateway, "aclose", None)
@@ -92,4 +93,3 @@ def build_configured_phase4_runtime(
             raise RagOperationalError(RagErrorCode.DENSE_INDEX_UNAVAILABLE) from cleanup_error
         raise
     return ConfiguredPhase4Runtime(runtime, gateway, runtime.service)
-

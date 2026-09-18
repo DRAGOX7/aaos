@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, Path, Query
 
@@ -17,8 +17,6 @@ from aaos.web.contracts import (
     RagQueryRequest,
 )
 from aaos.web.errors import Phase7ApiError
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aaos.web.rag import AcademicRagReader
