@@ -121,7 +121,11 @@ export function ActivityListView() {
           />
         ) : null}
         {visibleEvents.length > 0 && connectionState === "unavailable" ? (
-          <p role="status" className="mt-4 text-sm text-muted-foreground">
+          <p
+            role="status"
+            aria-label="Live activity status"
+            className="mt-4 text-sm text-muted-foreground"
+          >
             Live activity is unavailable; showing durable history.
           </p>
         ) : null}
