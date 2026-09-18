@@ -359,7 +359,7 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F HUMAN_ACCEPTED at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G HUMAN_ACCEPTED at `ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64`.**
+**Current status: PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; the annotated `phase-07-passed` tag targets the final governance commit.**
 
 ### Purpose
 
