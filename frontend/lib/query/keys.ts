@@ -2,6 +2,14 @@ export const courseKeys = {
   all: ["courses"] as const,
 };
 
+export const activityKeys = {
+  history: (before?: string) => ["activity", "history", before] as const,
+};
+
+export const systemHealthKeys = {
+  all: ["system-health"] as const,
+};
+
 export const academicKeys = {
   course: (courseId: number) => [
     ...courseKeys.all,
