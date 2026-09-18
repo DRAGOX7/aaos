@@ -29,6 +29,7 @@ from aaos.web.activity import (
     ActivityStatus,
     encode_activity_cursor,
 )
+from aaos.web.activity_stream import ActivityReplayUnavailable
 
 
 class ActivitySourceRepository(Protocol):
@@ -41,10 +42,6 @@ class ActivitySourceRepository(Protocol):
     ) -> tuple[ActivitySourceRow, ...]: ...
 
     def current_high_watermark(self) -> ActivityCursor | None: ...
-
-
-class ActivityReplayUnavailable(RuntimeError):
-    """The requested cursor is no longer available for a safe replay."""
 
 
 def _cursor(row: ActivitySourceRow) -> ActivityCursor:

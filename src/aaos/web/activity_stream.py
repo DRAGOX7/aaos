@@ -9,11 +9,14 @@ from typing import AsyncIterator, Awaitable, Callable, Protocol
 from fastapi import Request
 
 from aaos.web.activity import ActivityCursor, ActivityEvent, encode_activity_cursor
-from aaos.web.activity_read import ActivityReplayUnavailable
 
 _BATCH_SIZE = 50
 _POLL_INTERVAL_SECONDS = 0.5
 _HEARTBEAT_INTERVAL_SECONDS = 15.0
+
+
+class ActivityReplayUnavailable(RuntimeError):
+    """The requested cursor is no longer available for a safe replay."""
 
 
 class ActivityStreamService(Protocol):

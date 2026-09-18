@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
-from aaos.web.activity_read import ActivityReadRepository, ActivityReadService
 from aaos.web.contracts import (
     ApprovalDetail,
     ApprovalSummary,
@@ -24,10 +23,6 @@ from aaos.web.contracts import (
 )
 from aaos.web.errors import install_error_boundary
 from aaos.web.health import SystemHealthResponse
-from aaos.web.health_read import (
-    SqlitePassiveRagIndexReader,
-    SystemHealthService,
-)
 from aaos.web.routes import (
     AcademicReader,
     ActivityReader,
@@ -47,6 +42,8 @@ if TYPE_CHECKING:
     from aaos.rag.factory import ConfiguredPhase4Runtime
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
+    from aaos.web.activity_read import ActivityReadService
+    from aaos.web.health_read import SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
 
@@ -231,6 +228,7 @@ class _LazyDefaultActivityReader:
     def _ensure_delegate(self) -> ActivityReadService:
         if self._delegate is None:
             from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.web.activity_read import ActivityReadRepository, ActivityReadService
 
             self._engine = create_database_engine()
             self._delegate = ActivityReadService(
@@ -273,6 +271,7 @@ class _LazyDefaultSystemHealthReader:
         if self._delegate is None:
             from aaos.persistence.database import create_database_engine, create_session_factory
             from aaos.web.academic import AcademicReadService
+            from aaos.web.health_read import SqlitePassiveRagIndexReader, SystemHealthService
 
             self._engine = create_database_engine()
             sessions = create_session_factory(self._engine)
@@ -358,7 +357,9 @@ def create_app(
     else:
         from aaos.approval.repository import ApprovalRepository
         from aaos.web.academic import AcademicReadService
+        from aaos.web.activity_read import ActivityReadRepository, ActivityReadService
         from aaos.web.documents import DocumentReadService
+        from aaos.web.health_read import SqlitePassiveRagIndexReader, SystemHealthService
 
         academic_reader = AcademicReadService(session_factory)
         course_reader = academic_reader
