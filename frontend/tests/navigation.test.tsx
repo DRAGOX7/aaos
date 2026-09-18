@@ -13,7 +13,18 @@ const expectedLabels = [
   "Approvals",
   "Activity",
   "System Health",
-  "Settings",
+];
+
+const expectedHrefs = [
+  "/",
+  "/courses",
+  "/assignments",
+  "/documents",
+  "/ask",
+  "/tasks",
+  "/approvals",
+  "/activity",
+  "/system-health",
 ];
 
 describe("AAOS navigation", () => {
@@ -30,6 +41,10 @@ describe("AAOS navigation", () => {
       links.map((link) => link.textContent?.trim()),
     ).toEqual(expectedLabels);
 
-    expect(links).toHaveLength(10);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(
+      expectedHrefs,
+    );
+
+    expect(links).toHaveLength(9);
   });
 });

@@ -9,7 +9,6 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageCircle,
-  Settings,
   type LucideIcon,
 } from "lucide-react";
 
@@ -66,11 +65,6 @@ export const AAOS_NAVIGATION: readonly NavigationItem[] = [
     label: "System Health",
     href: "/system-health",
     icon: HeartPulse,
-  },
-  {
-    label: "Settings",
-    href: "/settings",
-    icon: Settings,
   },
 ];
 
