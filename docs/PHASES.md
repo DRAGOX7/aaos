@@ -40,7 +40,7 @@ terminology, not evidence of a freeze tag.
 - Phase 6A — **IMPLEMENTED / VERIFIED** as the durable approval/execution prerequisite consumed by Phase 6B; no separate freeze tag is recorded here.
 - Phase 6B — **FROZEN** at `phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`.
 - Phase 6C — **OPTIONAL / NOT PURSUED**.
-- Phase 7 — **AUTHORIZED / IMPLEMENTATION IN PROGRESS**; 7A **HUMAN_ACCEPTED** at `61313d0`; 7B **HUMAN_ACCEPTED** at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C **HUMAN_ACCEPTED** at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D **HUMAN_ACCEPTED** at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E **HUMAN_ACCEPTED** at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F **HUMAN_ACCEPTED** at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G **NOT_STARTED**. Phase 7 remains not PASSED/FROZEN because the Settings route and favicon asset carryovers remain open.
+- Phase 7 — **AUTHORIZED / IMPLEMENTATION IN PROGRESS**; 7A **HUMAN_ACCEPTED** at `61313d0`; 7B **HUMAN_ACCEPTED** at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C **HUMAN_ACCEPTED** at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D **HUMAN_ACCEPTED** at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E **HUMAN_ACCEPTED** at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F **HUMAN_ACCEPTED** at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G **HUMAN_ACCEPTED** at `ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64`. Phase 7 remains not PASSED/FROZEN.
 - Phases 8–9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
@@ -359,7 +359,7 @@ is not proof of failure; unknown outcomes require reconciliation before retry.
 
 ## PHASE 7 — Dashboard and Operational Visibility
 
-**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F HUMAN_ACCEPTED at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G NOT_STARTED.**
+**Current status: AUTHORIZED / IMPLEMENTATION IN PROGRESS; 7A HUMAN_ACCEPTED at `61313d0`; 7B HUMAN_ACCEPTED at `0f887a2f867648f95e69abe534978a1482f69df1`; 7C HUMAN_ACCEPTED at `26e517bb8967527de435ffba11a77ff1c00000a0`; 7D HUMAN_ACCEPTED at `ebae43800f6600ef61c07c355c9ad085b1f5f483`; 7E HUMAN_ACCEPTED at `459431a11f81d567642b3d531a2db4c2ad4976dc`; 7F HUMAN_ACCEPTED at `8f6691ecaeff64612da89187e57bbcf8ba84f16a`; 7G HUMAN_ACCEPTED at `ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64`.**
 
 ### Purpose
 
@@ -432,14 +432,18 @@ behavior, exactly-once live rendering, bounded malformed-cursor handling,
 heartbeat/disconnect cleanup, passive health reporting, and responsive
 Activity/System Health views. No migration, duplicate Activity ledger,
 Phase 7E authority change, model/RAG/provider side effect, or external write
-was introduced, and no Phase 7G functionality was added. Two pre-existing
-global integration carryovers remain for 7G: `CARRYOVER_7G_SETTINGS_ROUTE_GAP`
-(Settings navigation points to `/settings` without a matching route; 7G must
-implement the intended surface or remove/disable the dead item) and
-`CARRYOVER_7G_FAVICON_ASSET_GAP` (the application has no favicon/icon asset and
-`/favicon.ico` returns 404). Whole Phase 7 must not pass while either
-carryover remains. This accepts 7F only; Phase 7 remains IN_PROGRESS and 7G
-remains NOT_STARTED.
+was introduced, and no Phase 7G functionality was added. This accepts 7F
+only; Phase 7 remains IN_PROGRESS.
+
+Phase 7G (final integration) records `PHASE_7G=HUMAN_ACCEPTED` at
+`ac8cd6b75d4bb6809b3a4bf20e21252c45e31a64`. The accepted boundary closes the
+Settings and favicon carryovers without introducing a Settings feature,
+migration, provider integration, authority change, model/RAG call, or
+external write. Route, mutation, same-origin, import-inert, privacy,
+security, accessibility, responsive, canonical-test, and production-browser
+evidence passed; the disposable synthetic acceptance fixture was removed
+after capture and the tracked worktree was clean. Phase 7 remains IN_PROGRESS
+and is not PASSED/FROZEN.
 
 The UI consumes authoritative backend contracts and safe versioned events.
 Event generation begins in Phase 5; durable approval/execution evidence is
