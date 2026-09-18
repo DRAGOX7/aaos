@@ -14,8 +14,6 @@ from aaos.tasks.contracts import (
 
 
 class ApprovalState(StrEnum):
-    """Closed browser projection of approval lifecycle states."""
-
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     CONSUMED = "CONSUMED"
@@ -25,8 +23,6 @@ class ApprovalState(StrEnum):
 
 
 class OperationState(StrEnum):
-    """Closed browser projection of operation lifecycle states."""
-
     CLAIMED = "CLAIMED"
     EXECUTING = "EXECUTING"
     NOT_DISPATCHED = "NOT_DISPATCHED"
