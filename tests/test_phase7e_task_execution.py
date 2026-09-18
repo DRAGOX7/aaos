@@ -35,6 +35,7 @@ from aaos.tasks.read_service import TaskReadService
 from aaos.tasks.repository import TaskRepository
 from aaos.tasks.service import TaskApplicationService
 
+
 @pytest.fixture
 def sessions(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
     engine = create_database_engine(tmp_path / "phase7e-execution.db")
