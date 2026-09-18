@@ -43,6 +43,10 @@ class ActivitySourceRepository(Protocol):
     def current_high_watermark(self) -> ActivityCursor | None: ...
 
 
+class ActivityReplayUnavailable(RuntimeError):
+    """The requested cursor is no longer available for a safe replay."""
+
+
 def _cursor(row: ActivitySourceRow) -> ActivityCursor:
     return ActivityCursor(
         row.occurred_at,
@@ -360,11 +364,24 @@ class ActivityReadService:
         after: ActivityCursor | None,
         limit: int,
     ) -> tuple[ActivityEvent, ...]:
+        return tuple(event for event, _cursor in self.tail_with_cursors(after=after, limit=limit))
+
+    def tail_with_cursors(
+        self,
+        *,
+        after: ActivityCursor | None,
+        limit: int,
+    ) -> tuple[tuple[ActivityEvent, ActivityCursor], ...]:
         rows = self._repository.list_source_rows(before=None, after=after, limit=limit)
-        return tuple(project_source_row(row) for row in rows)
+        return tuple((project_source_row(row), _cursor(row)) for row in rows)
 
     def current_high_watermark(self) -> ActivityCursor | None:
         return self._repository.current_high_watermark()
 
 
-__all__ = ["ActivityReadRepository", "ActivityReadService", "project_source_row"]
+__all__ = [
+    "ActivityReadRepository",
+    "ActivityReadService",
+    "ActivityReplayUnavailable",
+    "project_source_row",
+]

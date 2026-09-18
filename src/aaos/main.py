@@ -240,6 +240,14 @@ class _LazyDefaultActivityReader:
     def tail(self, *, after: ActivityCursor | None, limit: int) -> tuple[ActivityEvent, ...]:
         return self._ensure_delegate().tail(after=after, limit=limit)
 
+    def tail_with_cursors(
+        self,
+        *,
+        after: ActivityCursor | None,
+        limit: int,
+    ) -> tuple[tuple[ActivityEvent, ActivityCursor], ...]:
+        return self._ensure_delegate().tail_with_cursors(after=after, limit=limit)
+
     def current_high_watermark(self) -> ActivityCursor | None:
         return self._ensure_delegate().current_high_watermark()
 

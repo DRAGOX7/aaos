@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, Body, Path, Query, Request
+from fastapi.responses import StreamingResponse
 
 from aaos.web.activity import (
     ActivityCursor,
@@ -13,6 +15,7 @@ from aaos.web.activity import (
     ActivityHistoryResponse,
     decode_activity_cursor,
 )
+from aaos.web.activity_stream import iter_activity_sse
 from aaos.web.contracts import (
     ApprovalCommandRequest,
     ApprovalDetail,
@@ -102,6 +105,15 @@ class ActivityReader(Protocol):
     def tail(self, *, after: ActivityCursor | None, limit: int) -> tuple[ActivityEvent, ...]:
         """Return strictly-after browser-safe Activity rows."""
 
+    def tail_with_cursors(
+        self,
+        *,
+        after: ActivityCursor | None,
+        limit: int,
+    ) -> tuple[tuple[ActivityEvent, ActivityCursor], ...]:
+        """Return strictly-after events with opaque replay cursors."""
+        ...
+
     def current_high_watermark(self) -> ActivityCursor | None:
         """Return the current opaque Activity high-water cursor."""
 
@@ -152,6 +164,37 @@ def create_api_v1_router(
                         "The activity cursor is invalid.",
                     ) from error
             return activity_reader.list_history(limit=limit, before=cursor)
+
+        @router.get("/activity/stream")
+        async def stream_activity(
+            request: Request,
+            after: str | None = Query(default=None),
+        ) -> StreamingResponse:
+            raw_cursor = after if after is not None else request.headers.get("last-event-id")
+            cursor = None
+            if raw_cursor is not None:
+                try:
+                    cursor = decode_activity_cursor(raw_cursor)
+                except ValueError as error:
+                    raise Phase7ApiError(
+                        422,
+                        "INVALID_REQUEST",
+                        "The activity cursor is invalid.",
+                    ) from error
+            return StreamingResponse(
+                iter_activity_sse(
+                    request,
+                    activity_reader,
+                    after=cursor,
+                    sleep=asyncio.sleep,
+                    clock=lambda: datetime.now(timezone.utc),
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-store",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
     @router.get("/courses", response_model=CourseListResponse)
     def list_courses() -> CourseListResponse:
