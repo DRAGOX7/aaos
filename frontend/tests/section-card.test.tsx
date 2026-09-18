@@ -24,4 +24,22 @@ describe("AAOS SectionCard", () => {
     expect(card).not.toHaveClass("rounded-[var(--aaos-card-radius)]");
     expect(card).not.toHaveClass("shadow-[var(--aaos-card-shadow)]");
   });
+
+  it("allows cards to shrink inside narrow responsive grids", () => {
+    render(
+      <SectionCard title="Assignments" action={<a href="/assignments">View assignments</a>}>
+        <p>Course content</p>
+      </SectionCard>,
+    );
+
+    const card = screen
+      .getByRole("heading", { name: "Assignments" })
+      .closest("section");
+
+    if (!card) {
+      throw new Error("SectionCard did not render a section element");
+    }
+
+    expect(card).toHaveClass("min-w-0");
+  });
 });
