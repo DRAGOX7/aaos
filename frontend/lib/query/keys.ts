@@ -21,3 +21,13 @@ export const academicKeys = {
     documentId,
   ] as const,
 };
+
+export const taskKeys = {
+  list: ["tasks", "list"] as const,
+  detail: (taskId: string) => ["tasks", "detail", taskId] as const,
+};
+
+export const approvalKeys = {
+  list: ["approvals", "list"] as const,
+  detail: (approvalId: string) => ["approvals", "detail", approvalId] as const,
+};
