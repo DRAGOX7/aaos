@@ -39,7 +39,7 @@ function detailLabel(component: HealthComponent): string {
 function HealthComponentRow({ component }: { component: HealthComponent }) {
   const status = label(component.status);
   return (
-    <li className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border px-4 py-3">
+    <li className="flex flex-col items-start justify-between gap-3 rounded-lg border border-border px-4 py-3 sm:flex-row">
       <div className="min-w-0">
         <h3 className="font-medium text-foreground">{label(component.name)}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -105,7 +105,7 @@ export function SystemHealthView() {
           </p>
         ) : query.data ? (
           <div className="space-y-8">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-4 py-3">
+            <div className="flex flex-col items-start justify-between gap-3 rounded-lg border border-border px-4 py-3 sm:flex-row sm:items-center">
               <h2 className="font-semibold text-foreground">Overall status</h2>
               <span className="rounded-full border border-border px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {label(query.data.overall as HealthStatus)}

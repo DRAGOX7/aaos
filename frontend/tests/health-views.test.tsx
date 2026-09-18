@@ -86,4 +86,24 @@ describe("system health view", () => {
     expect(screen.getByText("NOT CONFIGURED")).toBeInTheDocument();
     expect(screen.queryByText(/uptime|latency|requests per second|restart/i)).not.toBeInTheDocument();
   });
+
+  it("stacks health status rows on narrow screens", () => {
+    useQueryMock.mockReturnValue({
+      data: {
+        schema_version: "phase7-health-v1",
+        checked_at: "2026-09-18T00:00:00Z",
+        overall: "HEALTHY",
+        components: [component("DATABASE", "HEALTHY", true, "RAG_INDEX_READY")],
+      },
+      isPending: false,
+      isError: false,
+    });
+    render(<SystemHealthView />);
+
+    expect(screen.getByText("DATABASE").closest("li")).toHaveClass("flex-col", "sm:flex-row");
+    expect(screen.getByText("Overall status").parentElement).toHaveClass(
+      "flex-col",
+      "sm:flex-row",
+    );
+  });
 });
