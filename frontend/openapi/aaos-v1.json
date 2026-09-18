@@ -1,6 +1,191 @@
 {
   "components": {
     "schemas": {
+      "ApprovalDetail": {
+        "additionalProperties": false,
+        "description": "Browser-safe approval detail with bounded decision metadata.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SafeActionSummary"
+          },
+          "approval_expires_at": {
+            "format": "date-time",
+            "title": "Approval Expires At",
+            "type": "string"
+          },
+          "approval_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "can_approve": {
+            "title": "Can Approve",
+            "type": "boolean"
+          },
+          "can_reject": {
+            "title": "Can Reject",
+            "type": "boolean"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "operation_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "task_id",
+          "action",
+          "status",
+          "issued_at",
+          "approval_expires_at",
+          "operation_state",
+          "can_approve",
+          "can_reject",
+          "decided_at"
+        ],
+        "title": "ApprovalDetail",
+        "type": "object"
+      },
+      "ApprovalListResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe approval collection response.",
+        "properties": {
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalSummary"
+            },
+            "title": "Approvals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "approvals"
+        ],
+        "title": "ApprovalListResponse",
+        "type": "object"
+      },
+      "ApprovalState": {
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "CONSUMED",
+          "REJECTED",
+          "REVOKED",
+          "EXPIRED"
+        ],
+        "title": "ApprovalState",
+        "type": "string"
+      },
+      "ApprovalSummary": {
+        "additionalProperties": false,
+        "description": "Browser-safe approval projection without trusted approver context.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SafeActionSummary"
+          },
+          "approval_expires_at": {
+            "format": "date-time",
+            "title": "Approval Expires At",
+            "type": "string"
+          },
+          "approval_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "can_approve": {
+            "title": "Can Approve",
+            "type": "boolean"
+          },
+          "can_reject": {
+            "title": "Can Reject",
+            "type": "boolean"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "operation_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "task_id",
+          "action",
+          "status",
+          "issued_at",
+          "approval_expires_at",
+          "operation_state",
+          "can_approve",
+          "can_reject"
+        ],
+        "title": "ApprovalSummary",
+        "type": "object"
+      },
       "AssignmentListResponse": {
         "additionalProperties": false,
         "description": "Browser-safe assignment collection response.",
@@ -81,6 +266,26 @@
         ],
         "title": "AssignmentSummary",
         "type": "object"
+      },
+      "BrowserTaskState": {
+        "enum": [
+          "PREPARING",
+          "PREPARATION_FAILED",
+          "AWAITING_APPROVAL",
+          "APPROVED",
+          "CLAIMED",
+          "EXECUTING",
+          "UNKNOWN_OUTCOME",
+          "CONFIRMED_SUCCESS",
+          "CONFIRMED_FAILURE",
+          "NOT_DISPATCHED",
+          "REJECTED",
+          "INVALIDATED",
+          "EXPIRED",
+          "REVOKED"
+        ],
+        "title": "BrowserTaskState",
+        "type": "string"
       },
       "CourseListResponse": {
         "additionalProperties": false,
@@ -334,6 +539,19 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "OperationState": {
+        "enum": [
+          "CLAIMED",
+          "EXECUTING",
+          "NOT_DISPATCHED",
+          "CONFIRMED_SUCCESS",
+          "CONFIRMED_FAILURE",
+          "UNKNOWN_OUTCOME",
+          "RECONCILIATION_PENDING"
+        ],
+        "title": "OperationState",
+        "type": "string"
+      },
       "RagAnswerResponse": {
         "additionalProperties": false,
         "description": "Validated final answer projection safe for browser rendering.",
@@ -489,6 +707,256 @@
         "title": "RagQueryRequest",
         "type": "object"
       },
+      "SafeActionSummary": {
+        "additionalProperties": false,
+        "description": "Closed, human-readable calendar action summary.",
+        "properties": {
+          "action_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Action Type",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "end": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "End",
+            "type": "string"
+          },
+          "integration_label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Integration Label",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "start": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Start",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_type",
+          "integration_label",
+          "summary",
+          "start",
+          "end",
+          "timezone"
+        ],
+        "title": "SafeActionSummary",
+        "type": "object"
+      },
+      "TaskDetail": {
+        "additionalProperties": false,
+        "description": "Browser-safe task detail with derived Phase 6 state only.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SafeActionSummary"
+          },
+          "action_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Expires At"
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskFailureCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation_outcome": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Outcome"
+          },
+          "operation_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/BrowserTaskState"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_kind",
+          "status",
+          "created_at",
+          "updated_at",
+          "action",
+          "approval",
+          "operation_state",
+          "action_expires_at",
+          "failure_code"
+        ],
+        "title": "TaskDetail",
+        "type": "object"
+      },
+      "TaskFailureCode": {
+        "enum": [
+          "INVALID_REQUEST",
+          "CAPABILITY_DENIED",
+          "PREPARATION_FAILED"
+        ],
+        "title": "TaskFailureCode",
+        "type": "string"
+      },
+      "TaskKind": {
+        "enum": [
+          "CALENDAR_CREATE_EVENT"
+        ],
+        "title": "TaskKind",
+        "type": "string"
+      },
+      "TaskListResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe durable task collection response.",
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskSummary"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "title": "TaskListResponse",
+        "type": "object"
+      },
+      "TaskSummary": {
+        "additionalProperties": false,
+        "description": "Browser-safe durable task list projection.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SafeActionSummary"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BrowserTaskState"
+          },
+          "task_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "task_kind": {
+            "$ref": "#/components/schemas/TaskKind"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "task_kind",
+          "status",
+          "created_at",
+          "updated_at",
+          "action"
+        ],
+        "title": "TaskSummary",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -537,6 +1005,87 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/approvals": {
+      "get": {
+        "operationId": "list_approvals_api_v1_approvals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Approvals"
+      }
+    },
+    "/api/v1/approvals/{approval_id}": {
+      "get": {
+        "operationId": "get_approval_api_v1_approvals__approval_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Approval"
+      }
+    },
     "/api/v1/assignments": {
       "get": {
         "operationId": "list_assignments_api_v1_assignments_get",
@@ -765,6 +1314,87 @@
           }
         },
         "summary": "Ask Rag"
+      }
+    },
+    "/api/v1/tasks": {
+      "get": {
+        "operationId": "list_tasks_api_v1_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tasks"
+      }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "get": {
+        "operationId": "get_task_api_v1_tasks__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Task"
       }
     },
     "/health": {

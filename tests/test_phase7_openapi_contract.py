@@ -53,6 +53,26 @@ def test_openapi_contains_versioned_courses_contract() -> None:
     assert "source_id" not in rendered
 
 
+def test_openapi_contains_phase7e_task_and_approval_read_paths() -> None:
+    schema = _schema()
+    paths = schema["paths"]
+    assert isinstance(paths, dict)
+    assert {
+        "/api/v1/tasks",
+        "/api/v1/tasks/{task_id}",
+        "/api/v1/approvals",
+        "/api/v1/approvals/{approval_id}",
+    }.issubset(paths)
+
+    components = schema["components"]
+    assert isinstance(components, dict)
+    schemas = components["schemas"]
+    assert isinstance(schemas, dict)
+    assert {"TaskListResponse", "TaskDetail", "ApprovalListResponse", "ApprovalDetail"}.issubset(
+        schemas
+    )
+
+
 def test_courses_operation_references_course_list_response() -> None:
     schema = _schema()
 
@@ -79,9 +99,7 @@ def test_courses_operation_references_course_list_response() -> None:
 
     response_schema = application_json["schema"]
 
-    assert response_schema == {
-        "$ref": "#/components/schemas/CourseListResponse"
-    }
+    assert response_schema == {"$ref": "#/components/schemas/CourseListResponse"}
 
 
 def test_openapi_exporter_is_byte_deterministic(

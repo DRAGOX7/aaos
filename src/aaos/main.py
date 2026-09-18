@@ -9,17 +9,22 @@ from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.web.contracts import (
+    ApprovalDetail,
+    ApprovalSummary,
     AssignmentSummary,
     CourseSummary,
     DocumentSummary,
     RagAnswerResponse,
     RagQueryRequest,
+    TaskDetail,
+    TaskSummary,
 )
 from aaos.web.errors import install_error_boundary
 from aaos.web.routes import (
     AcademicReader,
     CourseReader,
     DocumentReader,
+    TaskReader,
     create_api_v1_router,
 )
 
@@ -28,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from aaos.rag.factory import ConfiguredPhase4Runtime
+    from aaos.tasks.read_service import TaskReadService
     from aaos.web.rag import AcademicRagReader, RagReadService
 
 
@@ -132,6 +138,39 @@ class _LazyDefaultRagReader:
             self._engine.dispose()
 
 
+class _LazyDefaultTaskReader:
+    """Create task/approval persistence only when task reads are requested."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: TaskReadService | None = None
+
+    def _ensure_delegate(self) -> TaskReadService:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.tasks.read_service import TaskReadService
+
+            self._engine = create_database_engine()
+            self._delegate = TaskReadService(create_session_factory(self._engine))
+        return self._delegate
+
+    def list_tasks(self, *, limit: int) -> tuple[TaskSummary, ...]:
+        return self._ensure_delegate().list_tasks(limit=limit)
+
+    def get_task(self, task_id: str) -> TaskDetail:
+        return self._ensure_delegate().get_task(task_id)
+
+    def list_approvals(self, *, limit: int) -> tuple[ApprovalSummary, ...]:
+        return self._ensure_delegate().list_approvals(limit=limit)
+
+    def get_approval(self, approval_id: str) -> ApprovalDetail:
+        return self._ensure_delegate().get_approval(approval_id)
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+
+
 def create_app(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
@@ -150,6 +189,7 @@ def create_app(
     course_reader: CourseReader
     academic_reader: AcademicReader
     document_reader: DocumentReader
+    task_reader: TaskReader
     resolved_rag_reader = rag_reader
 
     if session_factory is None:
@@ -157,11 +197,14 @@ def create_app(
         course_reader = lazy_course_reader
         academic_reader = lazy_course_reader
         document_reader = lazy_course_reader
+        lazy_task_reader = _LazyDefaultTaskReader()
+        task_reader = lazy_task_reader
 
         application.router.add_event_handler(
             "shutdown",
             lazy_course_reader.dispose,
         )
+        application.router.add_event_handler("shutdown", lazy_task_reader.dispose)
     else:
         from aaos.web.academic import AcademicReadService
         from aaos.web.documents import DocumentReadService
@@ -169,6 +212,9 @@ def create_app(
         academic_reader = AcademicReadService(session_factory)
         course_reader = academic_reader
         document_reader = DocumentReadService(session_factory)
+        from aaos.tasks.read_service import TaskReadService
+
+        task_reader = TaskReadService(session_factory)
 
     if resolved_rag_reader is None:
         lazy_rag_reader = _LazyDefaultRagReader(session_factory)
@@ -181,6 +227,7 @@ def create_app(
             academic_reader=academic_reader,
             document_reader=document_reader,
             rag_reader=resolved_rag_reader,
+            task_reader=task_reader,
         )
     )
 

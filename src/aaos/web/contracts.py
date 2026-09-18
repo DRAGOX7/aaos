@@ -31,6 +31,7 @@ class ApiErrorResponse(BaseModel):
 
     error: ApiErrorDetail
 
+
 class CourseSummary(BaseModel):
     """Browser-safe projection of an active academic course."""
 
@@ -282,3 +283,19 @@ class ApprovalDetail(ApprovalSummary):
 
     decided_at: datetime | None
     decision_reason: str | None = Field(default=None, max_length=64)
+
+
+class TaskListResponse(BaseModel):
+    """Browser-safe durable task collection response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    tasks: tuple[TaskSummary, ...]
+
+
+class ApprovalListResponse(BaseModel):
+    """Browser-safe approval collection response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    approvals: tuple[ApprovalSummary, ...]

@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/v1/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Approvals */
+        get: operations["list_approvals_api_v1_approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Approval */
+        get: operations["get_approval_api_v1_approvals__approval_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assignments": {
         parameters: {
             query?: never;
@@ -106,6 +140,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tasks */
+        get: operations["list_tasks_api_v1_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Task */
+        get: operations["get_task_api_v1_tasks__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -130,6 +198,77 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ApprovalDetail
+         * @description Browser-safe approval detail with bounded decision metadata.
+         */
+        ApprovalDetail: {
+            action: components["schemas"]["SafeActionSummary"];
+            /**
+             * Approval Expires At
+             * Format: date-time
+             */
+            approval_expires_at: string;
+            /** Approval Id */
+            approval_id: string;
+            /** Can Approve */
+            can_approve: boolean;
+            /** Can Reject */
+            can_reject: boolean;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decision Reason */
+            decision_reason?: string | null;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            operation_state: components["schemas"]["OperationState"] | null;
+            status: components["schemas"]["ApprovalState"];
+            /** Task Id */
+            task_id: string;
+        };
+        /**
+         * ApprovalListResponse
+         * @description Browser-safe approval collection response.
+         */
+        ApprovalListResponse: {
+            /** Approvals */
+            approvals: components["schemas"]["ApprovalSummary"][];
+        };
+        /**
+         * ApprovalState
+         * @enum {string}
+         */
+        ApprovalState: "PENDING" | "APPROVED" | "CONSUMED" | "REJECTED" | "REVOKED" | "EXPIRED";
+        /**
+         * ApprovalSummary
+         * @description Browser-safe approval projection without trusted approver context.
+         */
+        ApprovalSummary: {
+            action: components["schemas"]["SafeActionSummary"];
+            /**
+             * Approval Expires At
+             * Format: date-time
+             */
+            approval_expires_at: string;
+            /** Approval Id */
+            approval_id: string;
+            /** Can Approve */
+            can_approve: boolean;
+            /** Can Reject */
+            can_reject: boolean;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            operation_state: components["schemas"]["OperationState"] | null;
+            status: components["schemas"]["ApprovalState"];
+            /** Task Id */
+            task_id: string;
+        };
         /**
          * AssignmentListResponse
          * @description Browser-safe assignment collection response.
@@ -156,6 +295,11 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
         };
+        /**
+         * BrowserTaskState
+         * @enum {string}
+         */
+        BrowserTaskState: "PREPARING" | "PREPARATION_FAILED" | "AWAITING_APPROVAL" | "APPROVED" | "CLAIMED" | "EXECUTING" | "UNKNOWN_OUTCOME" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "NOT_DISPATCHED" | "REJECTED" | "INVALIDATED" | "EXPIRED" | "REVOKED";
         /**
          * CourseListResponse
          * @description Browser-safe course collection response.
@@ -256,6 +400,11 @@ export interface components {
             version: string;
         };
         /**
+         * OperationState
+         * @enum {string}
+         */
+        OperationState: "CLAIMED" | "EXECUTING" | "NOT_DISPATCHED" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "UNKNOWN_OUTCOME" | "RECONCILIATION_PENDING";
+        /**
          * RagAnswerResponse
          * @description Validated final answer projection safe for browser rendering.
          */
@@ -322,6 +471,95 @@ export interface components {
             /** Scope */
             scope: components["schemas"]["RagGlobalScopeRequest"] | components["schemas"]["RagCourseScopeRequest"];
         };
+        /**
+         * SafeActionSummary
+         * @description Closed, human-readable calendar action summary.
+         */
+        SafeActionSummary: {
+            /** Action Type */
+            action_type: string;
+            /** Description */
+            description?: string | null;
+            /** End */
+            end: string;
+            /** Integration Label */
+            integration_label: string;
+            /** Location */
+            location?: string | null;
+            /** Start */
+            start: string;
+            /** Summary */
+            summary: string;
+            /** Timezone */
+            timezone: string;
+        };
+        /**
+         * TaskDetail
+         * @description Browser-safe task detail with derived Phase 6 state only.
+         */
+        TaskDetail: {
+            action: components["schemas"]["SafeActionSummary"];
+            /** Action Expires At */
+            action_expires_at: string | null;
+            approval: components["schemas"]["ApprovalSummary"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            failure_code: components["schemas"]["TaskFailureCode"] | null;
+            /** Operation Outcome */
+            operation_outcome?: string | null;
+            operation_state: components["schemas"]["OperationState"] | null;
+            status: components["schemas"]["BrowserTaskState"];
+            /** Task Id */
+            task_id: string;
+            task_kind: components["schemas"]["TaskKind"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * TaskFailureCode
+         * @enum {string}
+         */
+        TaskFailureCode: "INVALID_REQUEST" | "CAPABILITY_DENIED" | "PREPARATION_FAILED";
+        /**
+         * TaskKind
+         * @enum {string}
+         */
+        TaskKind: "CALENDAR_CREATE_EVENT";
+        /**
+         * TaskListResponse
+         * @description Browser-safe durable task collection response.
+         */
+        TaskListResponse: {
+            /** Tasks */
+            tasks: components["schemas"]["TaskSummary"][];
+        };
+        /**
+         * TaskSummary
+         * @description Browser-safe durable task list projection.
+         */
+        TaskSummary: {
+            action: components["schemas"]["SafeActionSummary"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            status: components["schemas"]["BrowserTaskState"];
+            /** Task Id */
+            task_id: string;
+            task_kind: components["schemas"]["TaskKind"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -344,6 +582,68 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_approvals_api_v1_approvals_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_approval_api_v1_approvals__approval_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_assignments_api_v1_assignments_get: {
         parameters: {
             query?: {
@@ -508,6 +808,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RagAnswerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tasks_api_v1_tasks_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_task_api_v1_tasks__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDetail"];
                 };
             };
             /** @description Validation Error */

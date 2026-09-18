@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Protocol
 from fastapi import APIRouter, Path, Query
 
 from aaos.web.contracts import (
+    ApprovalDetail,
+    ApprovalListResponse,
+    ApprovalSummary,
     AssignmentListResponse,
     AssignmentSummary,
     CourseListResponse,
@@ -15,11 +18,26 @@ from aaos.web.contracts import (
     DocumentSummary,
     RagAnswerResponse,
     RagQueryRequest,
+    TaskDetail,
+    TaskListResponse,
+    TaskSummary,
 )
 from aaos.web.errors import Phase7ApiError
 
 if TYPE_CHECKING:
     from aaos.web.rag import AcademicRagReader
+
+
+class TaskReader(Protocol):
+    """Read-only durable task and approval projections."""
+
+    def list_tasks(self, *, limit: int) -> tuple[TaskSummary, ...]: ...
+
+    def get_task(self, task_id: str) -> TaskDetail: ...
+
+    def list_approvals(self, *, limit: int) -> tuple[ApprovalSummary, ...]: ...
+
+    def get_approval(self, approval_id: str) -> ApprovalDetail: ...
 
 
 class CourseReader(Protocol):
@@ -61,6 +79,7 @@ def create_api_v1_router(
     academic_reader: AcademicReader | None = None,
     document_reader: DocumentReader | None = None,
     rag_reader: AcademicRagReader | None = None,
+    task_reader: TaskReader | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -133,5 +152,23 @@ def create_api_v1_router(
                     "RAG_UNAVAILABLE",
                     "AAOS could not answer from the local knowledge base.",
                 ) from error
+
+    if task_reader is not None:
+
+        @router.get("/tasks", response_model=TaskListResponse)
+        def list_tasks(limit: int = Query(default=100, ge=1, le=100)) -> TaskListResponse:
+            return TaskListResponse(tasks=task_reader.list_tasks(limit=limit))
+
+        @router.get("/tasks/{task_id}", response_model=TaskDetail)
+        def get_task(task_id: str) -> TaskDetail:
+            return task_reader.get_task(task_id)
+
+        @router.get("/approvals", response_model=ApprovalListResponse)
+        def list_approvals(limit: int = Query(default=100, ge=1, le=100)) -> ApprovalListResponse:
+            return ApprovalListResponse(approvals=task_reader.list_approvals(limit=limit))
+
+        @router.get("/approvals/{approval_id}", response_model=ApprovalDetail)
+        def get_approval(approval_id: str) -> ApprovalDetail:
+            return task_reader.get_approval(approval_id)
 
     return router
