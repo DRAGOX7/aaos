@@ -761,6 +761,59 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "detail_code": {
+            "$ref": "#/components/schemas/HealthDetailCode"
+          },
+          "name": {
+            "$ref": "#/components/schemas/HealthComponentName"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "required",
+          "detail_code"
+        ],
+        "title": "HealthComponent",
+        "type": "object"
+      },
+      "HealthComponentName": {
+        "enum": [
+          "DATABASE",
+          "ACADEMIC_DATA",
+          "ACADEMIC_SYNC",
+          "DOCUMENT_PIPELINE",
+          "RAG_INDEX",
+          "INFERENCE",
+          "GOOGLE_CALENDAR"
+        ],
+        "title": "HealthComponentName",
+        "type": "string"
+      },
+      "HealthDetailCode": {
+        "enum": [
+          "DATABASE_UNAVAILABLE",
+          "SCHEMA_NOT_READY",
+          "ACADEMIC_READ_UNAVAILABLE",
+          "RAG_INDEX_READY",
+          "RAG_INDEX_PARTIAL",
+          "RAG_INDEX_NOT_CONFIGURED",
+          "PASSIVE_STATUS_UNAVAILABLE",
+          "INTERNAL_STATUS_UNAVAILABLE"
+        ],
+        "title": "HealthDetailCode",
+        "type": "string"
+      },
       "HealthResponse": {
         "description": "Stable response contract for process-level health checks.",
         "properties": {
@@ -785,6 +838,17 @@
         ],
         "title": "HealthResponse",
         "type": "object"
+      },
+      "HealthStatus": {
+        "enum": [
+          "HEALTHY",
+          "DEGRADED",
+          "UNAVAILABLE",
+          "UNKNOWN",
+          "NOT_CONFIGURED"
+        ],
+        "title": "HealthStatus",
+        "type": "string"
       },
       "OperationActivityContext": {
         "additionalProperties": false,
@@ -1047,6 +1111,39 @@
           "timezone"
         ],
         "title": "SafeActionSummary",
+        "type": "object"
+      },
+      "SystemHealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/HealthComponent"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "overall": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "schema_version": {
+            "const": "phase7-health-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "checked_at",
+          "overall",
+          "components"
+        ],
+        "title": "SystemHealthResponse",
         "type": "object"
       },
       "TaskActivityContext": {
@@ -1802,6 +1899,24 @@
           }
         },
         "summary": "Ask Rag"
+      }
+    },
+    "/api/v1/system-health": {
+      "get": {
+        "operationId": "system_health_api_v1_system_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Health"
       }
     },
     "/api/v1/tasks": {

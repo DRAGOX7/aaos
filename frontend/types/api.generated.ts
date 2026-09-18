@@ -208,6 +208,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Health */
+        get: operations["system_health_api_v1_system_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks": {
         parameters: {
             query?: never;
@@ -528,6 +545,24 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthComponent */
+        HealthComponent: {
+            detail_code: components["schemas"]["HealthDetailCode"];
+            name: components["schemas"]["HealthComponentName"];
+            /** Required */
+            required: boolean;
+            status: components["schemas"]["HealthStatus"];
+        };
+        /**
+         * HealthComponentName
+         * @enum {string}
+         */
+        HealthComponentName: "DATABASE" | "ACADEMIC_DATA" | "ACADEMIC_SYNC" | "DOCUMENT_PIPELINE" | "RAG_INDEX" | "INFERENCE" | "GOOGLE_CALENDAR";
+        /**
+         * HealthDetailCode
+         * @enum {string}
+         */
+        HealthDetailCode: "DATABASE_UNAVAILABLE" | "SCHEMA_NOT_READY" | "ACADEMIC_READ_UNAVAILABLE" | "RAG_INDEX_READY" | "RAG_INDEX_PARTIAL" | "RAG_INDEX_NOT_CONFIGURED" | "PASSIVE_STATUS_UNAVAILABLE" | "INTERNAL_STATUS_UNAVAILABLE";
         /**
          * HealthResponse
          * @description Stable response contract for process-level health checks.
@@ -543,6 +578,11 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * HealthStatus
+         * @enum {string}
+         */
+        HealthStatus: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
         /** OperationActivityContext */
         OperationActivityContext: {
             /**
@@ -645,6 +685,22 @@ export interface components {
             summary: string;
             /** Timezone */
             timezone: string;
+        };
+        /** SystemHealthResponse */
+        SystemHealthResponse: {
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Components */
+            components: components["schemas"]["HealthComponent"][];
+            overall: components["schemas"]["HealthStatus"];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "phase7-health-v1";
         };
         /** TaskActivityContext */
         TaskActivityContext: {
@@ -1113,6 +1169,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    system_health_api_v1_system_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemHealthResponse"];
                 };
             };
         };

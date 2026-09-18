@@ -34,6 +34,7 @@ from aaos.web.contracts import (
     TaskSummary,
 )
 from aaos.web.errors import Phase7ApiError
+from aaos.web.health import SystemHealthResponse
 from aaos.web.mutation_security import MutationRequestRejected, enforce_mutation_fence
 
 if TYPE_CHECKING:
@@ -118,6 +119,11 @@ class ActivityReader(Protocol):
         """Return the current opaque Activity high-water cursor."""
 
 
+class SystemHealthReader(Protocol):
+    def check(self, *, now: datetime) -> SystemHealthResponse:
+        """Return passive local health evidence at the trusted check time."""
+
+
 class DocumentReader(Protocol):
     """Read-only document projection required by Task 3 routes."""
 
@@ -135,6 +141,7 @@ def create_api_v1_router(
     course_reader: CourseReader,
     *,
     activity_reader: ActivityReader | None = None,
+    system_health_reader: SystemHealthReader | None = None,
     academic_reader: AcademicReader | None = None,
     document_reader: DocumentReader | None = None,
     rag_reader: AcademicRagReader | None = None,
@@ -195,6 +202,12 @@ def create_api_v1_router(
                     "X-Accel-Buffering": "no",
                 },
             )
+
+    if system_health_reader is not None:
+
+        @router.get("/system-health", response_model=SystemHealthResponse)
+        def system_health() -> SystemHealthResponse:
+            return system_health_reader.check(now=datetime.now(timezone.utc))
 
     @router.get("/courses", response_model=CourseListResponse)
     def list_courses() -> CourseListResponse:

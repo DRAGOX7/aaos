@@ -23,11 +23,17 @@ from aaos.web.contracts import (
     TaskSummary,
 )
 from aaos.web.errors import install_error_boundary
+from aaos.web.health import SystemHealthResponse
+from aaos.web.health_read import (
+    SqlitePassiveRagIndexReader,
+    SystemHealthService,
+)
 from aaos.web.routes import (
     AcademicReader,
     ActivityReader,
     CourseReader,
     DocumentReader,
+    SystemHealthReader,
     TaskApprovalCommands,
     TaskReader,
     create_api_v1_router,
@@ -256,6 +262,35 @@ class _LazyDefaultActivityReader:
             self._engine.dispose()
 
 
+class _LazyDefaultSystemHealthReader:
+    """Create passive health persistence only when detailed health is requested."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: SystemHealthService | None = None
+
+    def _ensure_delegate(self) -> SystemHealthService:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.web.academic import AcademicReadService
+
+            self._engine = create_database_engine()
+            sessions = create_session_factory(self._engine)
+            self._delegate = SystemHealthService(
+                sessions,
+                AcademicReadService(sessions),
+                SqlitePassiveRagIndexReader(sessions),
+            )
+        return self._delegate
+
+    def check(self, *, now: datetime) -> SystemHealthResponse:
+        return self._ensure_delegate().check(now=now)
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+
+
 class _LazyDefaultPrincipalProvider:
     """Resolve the configured local principal only when a decision is requested."""
 
@@ -276,6 +311,7 @@ def create_app(
     task_commands: TaskApprovalCommands | None = None,
     principal_provider: LocalApproverContextProvider | None = None,
     activity_reader: ActivityReader | None = None,
+    system_health_reader: SystemHealthReader | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -292,6 +328,7 @@ def create_app(
     task_reader: TaskReader
     resolved_task_commands: TaskApprovalCommands
     resolved_activity_reader: ActivityReader
+    resolved_system_health_reader: SystemHealthReader
     resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
 
@@ -304,6 +341,8 @@ def create_app(
         task_reader = lazy_task_reader
         lazy_activity_reader = _LazyDefaultActivityReader()
         resolved_activity_reader = lazy_activity_reader
+        lazy_system_health_reader = _LazyDefaultSystemHealthReader()
+        resolved_system_health_reader = lazy_system_health_reader
         lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
         resolved_task_commands = lazy_task_commands
 
@@ -315,6 +354,7 @@ def create_app(
         if isinstance(lazy_task_commands, _LazyDefaultTaskApprovalService):
             application.router.add_event_handler("shutdown", lazy_task_commands.dispose)
         application.router.add_event_handler("shutdown", lazy_activity_reader.dispose)
+        application.router.add_event_handler("shutdown", lazy_system_health_reader.dispose)
     else:
         from aaos.approval.repository import ApprovalRepository
         from aaos.web.academic import AcademicReadService
@@ -331,6 +371,14 @@ def create_app(
             resolved_activity_reader = ActivityReadService(ActivityReadRepository(session_factory))
         else:
             resolved_activity_reader = activity_reader
+        if system_health_reader is None:
+            resolved_system_health_reader = SystemHealthService(
+                session_factory,
+                academic_reader,
+                SqlitePassiveRagIndexReader(session_factory),
+            )
+        else:
+            resolved_system_health_reader = system_health_reader
         resolved_task_commands = task_commands or TaskApprovalService(
             ApprovalRepository(session_factory),
             task_reader,
@@ -345,6 +393,7 @@ def create_app(
         create_api_v1_router(
             course_reader,
             activity_reader=resolved_activity_reader,
+            system_health_reader=resolved_system_health_reader,
             academic_reader=academic_reader,
             document_reader=document_reader,
             rag_reader=resolved_rag_reader,
