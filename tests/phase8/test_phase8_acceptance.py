@@ -64,4 +64,3 @@ def test_phase8_acceptance_has_no_real_heldout_or_provider_path() -> None:
     assert report.model_call_count == 0
     assert report.rag_execution_count == 0
     assert report.external_write_count == 0
-

@@ -155,6 +155,8 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "action_event_counters",
             "action_events",
             "task_records",
+            "visual_analysis_runs",
+            "visual_elements",
         }
     finally:
         engine.dispose()
