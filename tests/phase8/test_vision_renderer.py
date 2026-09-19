@@ -13,7 +13,7 @@ def _candidate() -> VisualPageCandidate:
 
     return bind_visual_page_candidate(
         VisualPageCandidate(0, 2, "SPARSE_TEXT", 128, "v1"),
-        document_version=TrustedDocumentVersionBinding(7),
+        document_version=TrustedDocumentVersionBinding._from_persistence(7),
     )
 
 
@@ -44,6 +44,16 @@ def test_render_page_validates_identity_and_passes_bound() -> None:
     assert rendered.document_version_id == 7
     assert rendered.page_number == 2
     assert renderer.calls == [(7, 2, 128)]
+
+
+def test_render_page_rejects_unbound_selector_candidate() -> None:
+    from aaos.phase8.vision_renderer import PageRenderError, render_page
+
+    with pytest.raises(PageRenderError, match="unbound"):
+        render_page(
+            VisualPageCandidate(0, 2, "SPARSE_TEXT", 128, "v1"),
+            renderer=FakeRenderer(),
+        )
 
 
 def test_rendered_page_source_hash_and_byte_bound_are_strict() -> None:

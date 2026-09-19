@@ -14,6 +14,8 @@ class PageRenderError(ValueError):
 def render_page(candidate: VisualPageCandidate, *, renderer: PageRenderer) -> RenderedPage:
     if not isinstance(candidate, VisualPageCandidate):
         raise TypeError("candidate must be a VisualPageCandidate")
+    if candidate.document_version_id <= 0:
+        raise PageRenderError("UNBOUND_DOCUMENT_VERSION")
     try:
         rendered = renderer.render(
             candidate.document_version_id,

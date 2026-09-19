@@ -22,19 +22,25 @@ class VisualReasonCode(StrEnum):
     SPARSE_TEXT = "SPARSE_TEXT"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class TrustedDocumentVersionBinding:
     """Positive document-version identity resolved by trusted persistence code."""
 
     document_version_id: int
 
-    def __post_init__(self) -> None:
+    @classmethod
+    def _from_persistence(cls, document_version_id: int) -> TrustedDocumentVersionBinding:
+        """Construct a binding only from a trusted persistence resolver."""
+
         if (
-            isinstance(self.document_version_id, bool)
-            or not isinstance(self.document_version_id, int)
-            or self.document_version_id <= 0
+            isinstance(document_version_id, bool)
+            or not isinstance(document_version_id, int)
+            or document_version_id <= 0
         ):
             raise ValueError("document_version_id must be positive")
+        binding = object.__new__(cls)
+        object.__setattr__(binding, "document_version_id", document_version_id)
+        return binding
 
 
 @dataclass(frozen=True, slots=True)

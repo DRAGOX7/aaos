@@ -97,7 +97,7 @@ def test_vlm_output_cannot_control_trusted_document_version_identity() -> None:
     response = FakeVisionGateway().generate(_image(), request=_request())
     payload = json.loads(response.payload or "")
     assert "document_version_id" not in payload
-    assert TrustedDocumentVersionBinding(7).document_version_id == 7
+    assert TrustedDocumentVersionBinding._from_persistence(7).document_version_id == 7
 
 
 def test_partial_visual_response_requires_bounded_fact() -> None:
