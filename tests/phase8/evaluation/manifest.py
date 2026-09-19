@@ -1,28 +1,13 @@
 from __future__ import annotations
 
-from aaos.phase8.evaluation import Phase8EvaluationManifest
-
-CALIBRATION_IDS = (
-    "cal-compute-success",
-    "cal-compute-policy-denied",
-    "cal-compute-timeout",
-    "cal-compute-unknown",
-    "cal-vision-text",
-    "cal-vision-diagram",
-    "cal-vision-chart",
-    "cal-vision-table",
-    "cal-vision-equation",
-    "cal-vision-partial",
-    "cal-vision-unavailable",
-    "cal-vision-malformed",
-    "cal-composition-injection",
+from aaos.phase8.evaluation import (
+    PHASE8_CALIBRATION_IDS,
+    PHASE8_HELDOUT_IDS,
+    Phase8EvaluationManifest,
 )
 
-HELDOUT_IDS = (
-    "synthetic-holdout-selection",
-    "synthetic-holdout-provenance",
-    "synthetic-holdout-fallback",
-)
+CALIBRATION_IDS = PHASE8_CALIBRATION_IDS
+HELDOUT_IDS = PHASE8_HELDOUT_IDS
 
 FROZEN_PHASE8_MANIFEST = Phase8EvaluationManifest.from_ids(CALIBRATION_IDS, HELDOUT_IDS)
 

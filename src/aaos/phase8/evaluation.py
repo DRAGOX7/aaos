@@ -23,6 +23,26 @@ from .vision_contracts import RenderedPage
 from .vision_gateway import VisionRequest, VisionResponse
 
 PHASE8_EVALUATION_SCHEMA_VERSION = "phase8-evaluation-v1"
+PHASE8_CALIBRATION_IDS = (
+    "cal-compute-success",
+    "cal-compute-policy-denied",
+    "cal-compute-timeout",
+    "cal-compute-unknown",
+    "cal-vision-text",
+    "cal-vision-diagram",
+    "cal-vision-chart",
+    "cal-vision-table",
+    "cal-vision-equation",
+    "cal-vision-partial",
+    "cal-vision-unavailable",
+    "cal-vision-malformed",
+    "cal-composition-injection",
+)
+PHASE8_HELDOUT_IDS = (
+    "synthetic-holdout-selection",
+    "synthetic-holdout-provenance",
+    "synthetic-holdout-fallback",
+)
 _SAFE_CASE_ID = re.compile(
     r"^(?:cal|hold|synthetic-holdout)-[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
 )
@@ -302,7 +322,9 @@ def run_phase8_calibration(
 
 __all__ = [
     "FakeSandboxExecutor",
+    "PHASE8_CALIBRATION_IDS",
     "PHASE8_EVALUATION_SCHEMA_VERSION",
+    "PHASE8_HELDOUT_IDS",
     "Phase8EvaluationManifest",
     "Phase8Report",
     "run_phase8_calibration",
