@@ -43,9 +43,7 @@ PHASE8_HELDOUT_IDS = (
     "synthetic-holdout-provenance",
     "synthetic-holdout-fallback",
 )
-_SAFE_CASE_ID = re.compile(
-    r"^(?:cal|hold|synthetic-holdout)-[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
-)
+_SAFE_CASE_ID = re.compile(r"^(?:cal|hold|synthetic-holdout)-[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -247,9 +245,7 @@ def run_phase8_calibration(
         case_id for case_id in manifest.calibration_ids if case_id.startswith("cal-vision-")
     )
     composition_ids = tuple(
-        case_id
-        for case_id in manifest.calibration_ids
-        if case_id.startswith("cal-composition-")
+        case_id for case_id in manifest.calibration_ids if case_id.startswith("cal-composition-")
     )
     computation_passes = 0
     security_negative_count = 0

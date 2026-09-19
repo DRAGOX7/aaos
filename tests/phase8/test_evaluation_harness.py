@@ -43,9 +43,7 @@ def test_calibration_report_is_trusted_core_only() -> None:
 
 
 def test_calibration_does_not_accept_real_heldout_ids() -> None:
-    manifest = Phase8EvaluationManifest.from_ids(
-        ("hold-001",), ("synthetic-holdout-001",)
-    )
+    manifest = Phase8EvaluationManifest.from_ids(("hold-001",), ("synthetic-holdout-001",))
 
     with pytest.raises(ValueError):
         run_phase8_calibration(manifest)

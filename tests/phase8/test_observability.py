@@ -45,9 +45,7 @@ def test_phase8_activity_event_has_closed_safe_projection() -> None:
         ("resource_id", "traceback ValueError at /private/path"),
     ],
 )
-def test_phase8_activity_rejects_paths_secrets_and_traceback_text(
-    field: str, value: str
-) -> None:
+def test_phase8_activity_rejects_paths_secrets_and_traceback_text(field: str, value: str) -> None:
     with pytest.raises(ValueError):
         _event(**{field: value})
 
