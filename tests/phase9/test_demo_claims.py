@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.phase9.public_release import DemoStep, PortfolioClaim, build_demo_steps
+from scripts.phase9.public_release import PortfolioClaim, build_demo_steps
 
 
 def test_demo_steps_label_real_fake_and_synthetic_behavior() -> None:

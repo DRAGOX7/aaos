@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tests.phase9.evaluation.harness import EvaluationAdapters, run_deterministic_evaluation
-from tests.phase9.evaluation.manifest import Phase9EvaluationManifest, build_manifest
+from tests.phase9.evaluation.manifest import build_manifest
 
 
 def test_default_evaluation_is_domain_separated_and_side_effect_free() -> None:
