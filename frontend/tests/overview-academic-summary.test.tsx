@@ -229,4 +229,23 @@ describe("AAOS academic overview", () => {
     render(<OverviewDocumentPanel />);
     expect(screen.getByLabelText("Loading documents")).toBeInTheDocument();
   });
+
+  it("keeps the overview health indicator aligned with the trusted status", () => {
+    setQueries(
+      success(courses),
+      success(assignments),
+      success(tasks),
+      success(approvals),
+      success(courses),
+      success(assignments),
+      success(documents),
+      success({ ...health, overall: "DEGRADED" as const }),
+    );
+
+    render(<OverviewAcademicSummary />);
+
+    expect(screen.getByLabelText("Overall system health DEGRADED")).toHaveClass(
+      "bg-warning",
+    );
+  });
 });

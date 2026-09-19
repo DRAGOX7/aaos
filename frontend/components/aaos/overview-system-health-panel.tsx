@@ -11,6 +11,19 @@ function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
 }
 
+function statusTone(status: string): string {
+  switch (status) {
+    case "HEALTHY":
+      return "bg-success";
+    case "DEGRADED":
+      return "bg-warning";
+    case "NOT_CONFIGURED":
+      return "bg-muted-foreground";
+    default:
+      return "bg-destructive";
+  }
+}
+
 export function OverviewSystemHealthPanel() {
   const query = useQuery(systemHealthQueryOptions());
 
@@ -45,7 +58,10 @@ export function OverviewSystemHealthPanel() {
               Passive status from trusted AAOS checks.
             </p>
           </div>
-          <span className="size-3 rounded-full bg-success" aria-hidden="true" />
+          <span
+            aria-label={`Overall system health ${query.data.overall}`}
+            className={`size-3 rounded-full ${statusTone(query.data.overall)}`}
+          />
         </div>
       )}
     </SectionCard>
