@@ -31,7 +31,8 @@ def test_task_records_migration_is_additive_and_round_trips(tmp_path: Path) -> N
     path = tmp_path / "task.db"
     config = config_for(path)
     command.upgrade(config, "0005_phase6a_approval_core")
-    command.upgrade(config, "head")
+    # This test owns the historical Phase 7E migration, not the moving repository head.
+    command.upgrade(config, "0006_phase7e_task_records")
 
     assert revision(path) == "0006_phase7e_task_records"
     engine = create_database_engine(path)
