@@ -67,6 +67,15 @@ const documents: DocumentListResponse = {
   ],
 };
 
+const tasks = { tasks: [] };
+const approvals = { approvals: [] };
+const health = {
+  checked_at: "2026-09-17T12:00:00Z",
+  components: [],
+  overall: "HEALTHY" as const,
+  schema_version: "phase7-health-v1" as const,
+};
+
 type QueryState = Readonly<{
   data?: unknown;
   error?: unknown;
@@ -93,7 +102,16 @@ describe("AAOS academic overview", () => {
   });
 
   it("renders independent courses, assignments, and documents panels", () => {
-    setQueries(success(courses), success(assignments), success(documents));
+    setQueries(
+      success(courses),
+      success(assignments),
+      success(tasks),
+      success(approvals),
+      success(courses),
+      success(assignments),
+      success(documents),
+      success(health),
+    );
 
     render(<OverviewAcademicSummary />);
 
@@ -112,14 +130,46 @@ describe("AAOS academic overview", () => {
       "href",
       "/documents",
     );
-    expect(screen.queryByText(/GPA|progress|streak|study hours|schedule|analytics/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/GPA|progress|streak|study hours|analytics/i)).not.toBeInTheDocument();
+  });
+
+  it("presents a truthful premium dashboard surface around existing data", () => {
+    setQueries(
+      success(courses),
+      success(assignments),
+      success(tasks),
+      success(approvals),
+      success(courses),
+      success(assignments),
+      success(documents),
+      success(health),
+    );
+
+    render(<OverviewAcademicSummary />);
+
+    expect(screen.getByText("Academic snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Active courses")).toBeInTheDocument();
+    expect(screen.getByText("Open assignments")).toBeInTheDocument();
+    expect(screen.getByText("Pending approvals")).toBeInTheDocument();
+    expect(screen.getByText("Active tasks")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Ask AAOS" })).toHaveAttribute(
+      "href",
+      "/ask",
+    );
+    expect(screen.getByText("No schedule data available.")).toBeInTheDocument();
+    expect(screen.getByText(/Activity insights are not available yet/)).toBeInTheDocument();
   });
 
   it("keeps successful panels visible when assignments fail", () => {
     setQueries(
       success(courses),
       { error: new Error("private assignment failure"), isError: true },
+      success(tasks),
+      success(approvals),
+      success(courses),
+      { error: new Error("private assignment failure"), isError: true },
       success(documents),
+      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -134,7 +184,12 @@ describe("AAOS academic overview", () => {
     setQueries(
       { error: new Error("private course failure"), isError: true },
       success(assignments),
+      success(tasks),
+      success(approvals),
+      { error: new Error("private course failure"), isError: true },
+      success(assignments),
       { error: new Error("private document failure"), isError: true },
+      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -149,7 +204,12 @@ describe("AAOS academic overview", () => {
     setQueries(
       { isPending: true },
       { data: { assignments: [] } },
+      { data: tasks },
+      { data: approvals },
+      { isPending: true },
+      { data: { assignments: [] } },
       { data: { documents: [] } },
+      { data: health },
     );
 
     render(<OverviewAcademicSummary />);

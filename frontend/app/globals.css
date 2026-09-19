@@ -100,6 +100,13 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-soft: var(--aaos-primary-soft);
   --color-primary-deep: var(--aaos-primary-deep);
+  --color-teal: var(--aaos-teal);
+  --color-teal-soft: var(--aaos-teal-soft);
+  --color-success: var(--aaos-success);
+  --color-warning: var(--aaos-warning);
+  --color-warning-soft: var(--aaos-warning-soft);
+  --color-purple: var(--aaos-purple);
+  --color-purple-soft: var(--aaos-purple-soft);
 
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
