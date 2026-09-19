@@ -10,6 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from aaos.main import create_app
 
 
+def _canonical_generated_bytes(path: Path) -> bytes:
+    """Compare generated artifacts independent of Git checkout newlines."""
+
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def _schema() -> dict[str, object]:
     sessions: sessionmaker[Session] = sessionmaker()
 
@@ -156,7 +162,7 @@ def test_committed_openapi_artifact_matches_exporter(
     committed = Path("frontend/openapi/aaos-v1.json")
 
     assert committed.exists()
-    assert committed.read_bytes() == generated.read_bytes()
+    assert _canonical_generated_bytes(committed) == _canonical_generated_bytes(generated)
 
 
 def test_frontend_contract_generation_workspace_is_frozen() -> None:
@@ -233,4 +239,4 @@ def test_generated_types_are_byte_reproducible() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert generated.read_bytes() == before
+    assert _canonical_generated_bytes(generated) == before.replace(b"\r\n", b"\n")
