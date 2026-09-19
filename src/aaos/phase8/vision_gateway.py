@@ -9,13 +9,13 @@ from typing import Literal, Protocol
 
 from .vision_contracts import RenderedPage
 
-VisionStatus = Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "UNAVAILABLE"]
+VisionStatus = Literal["SUCCEEDED", "PARTIAL", "FAILED", "TIMED_OUT", "UNAVAILABLE"]
 MAX_VISION_OUTPUT_BYTES = 1 * 1024 * 1024
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
-def _validate_success_payload(payload: str) -> None:
+def _validate_success_payload(payload: str, *, require_fact: bool = False) -> None:
     try:
         value = json.loads(payload)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -26,6 +26,8 @@ def _validate_success_payload(payload: str) -> None:
         entries = value[field]
         if not isinstance(entries, list) or not all(isinstance(item, str) for item in entries):
             raise ValueError(f"vision {field} are invalid")
+    if require_fact and not any(isinstance(item, str) and item.strip() for item in value["facts"]):
+        raise ValueError("vision partial response requires a fact")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,18 +66,18 @@ class VisionResponse:
     payload: str | None
 
     def __post_init__(self) -> None:
-        if self.status not in {"SUCCEEDED", "FAILED", "TIMED_OUT", "UNAVAILABLE"}:
+        if self.status not in {"SUCCEEDED", "PARTIAL", "FAILED", "TIMED_OUT", "UNAVAILABLE"}:
             raise ValueError("status is unsupported")
         if self.payload is not None and (
             not isinstance(self.payload, str)
             or len(self.payload.encode("utf-8")) > MAX_VISION_OUTPUT_BYTES
         ):
             raise ValueError("payload exceeds the vision bound")
-        if self.status == "SUCCEEDED" and not self.payload:
+        if self.status in {"SUCCEEDED", "PARTIAL"} and not self.payload:
             raise ValueError("successful response requires payload")
-        if self.status == "SUCCEEDED":
-            _validate_success_payload(self.payload or "")
-        if self.status != "SUCCEEDED" and self.payload is not None:
+        if self.status in {"SUCCEEDED", "PARTIAL"}:
+            _validate_success_payload(self.payload or "", require_fact=self.status == "PARTIAL")
+        if self.status not in {"SUCCEEDED", "PARTIAL"} and self.payload is not None:
             raise ValueError("failed response cannot carry payload")
 
 
@@ -86,9 +88,9 @@ class VisionModelGateway(Protocol):
 def validate_vision_response(response: VisionResponse, *, request: VisionRequest) -> VisionResponse:
     if not isinstance(response, VisionResponse) or not isinstance(request, VisionRequest):
         raise TypeError("response and request must be typed vision contracts")
-    if response.status != "SUCCEEDED":
+    if response.status not in {"SUCCEEDED", "PARTIAL"}:
         return response
-    _validate_success_payload(response.payload or "")
+    _validate_success_payload(response.payload or "", require_fact=response.status == "PARTIAL")
     return response
 
 

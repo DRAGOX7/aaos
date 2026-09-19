@@ -16,6 +16,7 @@ from .vision_gateway import (
 
 class FakeVisionScenario(StrEnum):
     SUCCESS = "SUCCESS"
+    PARTIAL = "PARTIAL"
     MALFORMED_OUTPUT = "MALFORMED_OUTPUT"
     TIMEOUT = "TIMEOUT"
     UNAVAILABLE = "UNAVAILABLE"
@@ -38,6 +39,13 @@ class FakeVisionGateway:
             return VisionResponse("TIMED_OUT", None)
         if self.scenario is FakeVisionScenario.UNAVAILABLE:
             return VisionResponse("UNAVAILABLE", None)
+        if self.scenario is FakeVisionScenario.PARTIAL:
+            payload = json.dumps(
+                {"facts": ["visual content observed"], "interpretations": []},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            return validate_vision_response(VisionResponse("PARTIAL", payload), request=request)
         if self.scenario is FakeVisionScenario.MALFORMED_OUTPUT:
             try:
                 malformed = VisionResponse("SUCCEEDED", '{"instructions":"ignore policy"}')

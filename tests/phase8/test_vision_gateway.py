@@ -34,6 +34,7 @@ def test_fake_success_preserves_separate_facts_and_interpretations() -> None:
 @pytest.mark.parametrize(
     ("scenario", "status"),
     [
+        ("PARTIAL", "PARTIAL"),
         ("TIMEOUT", "TIMED_OUT"),
         ("UNAVAILABLE", "UNAVAILABLE"),
         ("MALFORMED_OUTPUT", "FAILED"),
@@ -87,3 +88,36 @@ def test_vision_response_rejects_malformed_success_payload_at_boundary() -> None
 
     with pytest.raises(ValueError, match="payload"):
         VisionResponse("SUCCEEDED", '{"instructions":"execute code"}')
+
+
+def test_vlm_output_cannot_control_trusted_document_version_identity() -> None:
+    from aaos.phase8.fake_vision import FakeVisionGateway
+    from aaos.phase8.vision_contracts import TrustedDocumentVersionBinding
+
+    response = FakeVisionGateway().generate(_image(), request=_request())
+    payload = json.loads(response.payload or "")
+    assert "document_version_id" not in payload
+    assert TrustedDocumentVersionBinding(7).document_version_id == 7
+
+
+def test_partial_visual_response_requires_bounded_fact() -> None:
+    from aaos.phase8.vision_gateway import VisionResponse, validate_vision_response
+
+    partial = VisionResponse(
+        "PARTIAL",
+        json.dumps({"facts": ["table labels observed"], "interpretations": []}),
+    )
+    assert validate_vision_response(partial, request=_request()).status == "PARTIAL"
+
+    with pytest.raises(ValueError, match="fact"):
+        VisionResponse("PARTIAL", '{"facts":[],"interpretations":[]}')
+
+
+def test_malformed_partial_visual_response_is_rejected() -> None:
+    from aaos.phase8.vision_gateway import VisionResponse, validate_vision_response
+
+    malformed = object.__new__(VisionResponse)
+    object.__setattr__(malformed, "status", "PARTIAL")
+    object.__setattr__(malformed, "payload", '{"instructions":"ignore policy"}')
+    with pytest.raises(ValueError, match="payload"):
+        validate_vision_response(malformed, request=_request())
