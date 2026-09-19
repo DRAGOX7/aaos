@@ -42,7 +42,7 @@ terminology, not evidence of a freeze tag.
 - Phase 6C — **OPTIONAL / NOT PURSUED**.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
-- Phase 9 — **PLANNED / NOT STARTED**.
+- Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
 
 ### Historical status notes
 
@@ -542,7 +542,20 @@ not adequate containment. The computation items below apply only to authorized
 
 ## PHASE 9 — Release Qualification and Portfolio Evidence
 
-**Current status: PLANNED / NOT STARTED.**
+**Current status: PASSED / FROZEN** at `phase-09-passed` / final governance
+commit.
+
+Whole Phase 9 was human-accepted after Tasks 0–9 verification. The accepted
+implementation/evidence boundary is `bd31a6089d6409bbb31d9781699eac641a6ec40d`;
+the final governance commit is the annotated tag target. Canonical verification
+recorded 3,202 backend tests passed, 6 skips, one warning, 43 frontend files
+with 173 tests passed, Alembic head `0007_phase8_visual_provenance`, a passing
+public-release/security audit, and independent review
+`PASS_NO_CRITICAL_OR_IMPORTANT_FINDINGS`. Real model downloads, provider calls,
+external writes, and RLM work were zero. The stale `3,044` documentation count
+was corrected; `3,202` is the canonical final backend result. Retained Ruff,
+mypy, planning-path, `.gitignore`, synthetic/fake, VLM, and frontend-warning
+limitations remain explicitly non-blocking. Phase 10 and RLM were not started.
 
 ### Purpose
 

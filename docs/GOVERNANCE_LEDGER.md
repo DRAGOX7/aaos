@@ -37,7 +37,7 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
-| Phase 9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
+| Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
 new acceptance adjudications. Tags are historical evidence; a misleading tag
@@ -281,6 +281,26 @@ created before calibration but remains unconsumed and invisible until separate
 authorization. This documentation and contract change performs no model or
 RAG execution, does not modify the production orchestrator, and does not mark
 Phase 5 passed or freeze a candidate. See the [C10/V4 contract](superpowers/specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md).
+
+## Phase 9 whole-phase acceptance
+
+`PHASE_9=PASSED` was human-accepted for the final implementation/evidence
+boundary `bd31a6089d6409bbb31d9781699eac641a6ec40d`. Tasks 0–9 are
+`HUMAN_ACCEPTED`; the annotated `phase-09-passed` tag targets the final
+governance commit carrying this entry. Canonical verification recorded 3,202
+backend tests passed, 6 expected skips and one warning, 43 frontend files with
+173 tests passed, Alembic head `0007_phase8_visual_provenance`, a passing
+public-release/security audit, and independent review
+`PASS_NO_CRITICAL_OR_IMPORTANT_FINDINGS`. Real model downloads, provider calls,
+external writes and RLM work were all zero. The earlier `3,044` backend figure
+was stale Phase 7 documentation; the canonical final result is `3,202`
+passed, with the reconciliation retained in the Phase 9 release checklist.
+Historical Ruff-format findings, the combined Phase 9 mypy namespace
+diagnostic, author-specific internal planning paths, absent explicit model
+weight suffix rules in `.gitignore`, synthetic/fake measurement limitations,
+the absence of a real VLM benchmark, and two pre-existing frontend lint
+warnings remain documented non-blocking limitations. Phase 10 and RLM remain
+not started.
 
 ## Phase 8 whole-phase acceptance
 
