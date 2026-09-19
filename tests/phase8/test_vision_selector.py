@@ -174,6 +174,10 @@ def test_trusted_binding_requires_persistent_document_version(tmp_path: Path) ->
         binding = trusted_document_version_binding(version)
         assert binding.document_version_id == 7
 
+        version.source_filename = "mutated.pdf"
+        with pytest.raises(ValueError, match="stable"):
+            trusted_document_version_binding(version)
+
         with pytest.raises(ValueError, match="persistent"):
             trusted_document_version_binding(DocumentVersionORM(id=8))
     engine.dispose()

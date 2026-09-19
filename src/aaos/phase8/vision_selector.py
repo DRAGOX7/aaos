@@ -25,8 +25,9 @@ def trusted_document_version_binding(
 
     if not isinstance(document_version, DocumentVersionORM):
         raise TypeError("document_version must be a DocumentVersionORM")
-    if not inspect(document_version).persistent:
-        raise ValueError("document_version must be a persistent ORM row")
+    state = inspect(document_version)
+    if not state.persistent or state.deleted or state.modified:
+        raise ValueError("document_version must be a stable persistent ORM row")
     return TrustedDocumentVersionBinding._from_persistence(document_version.id)
 
 
