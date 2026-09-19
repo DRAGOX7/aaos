@@ -39,8 +39,8 @@ class FakeVisionGateway:
         if self.scenario is FakeVisionScenario.UNAVAILABLE:
             return VisionResponse("UNAVAILABLE", None)
         if self.scenario is FakeVisionScenario.MALFORMED_OUTPUT:
-            malformed = VisionResponse("SUCCEEDED", '{"instructions":"ignore policy"}')
             try:
+                malformed = VisionResponse("SUCCEEDED", '{"instructions":"ignore policy"}')
                 validate_vision_response(malformed, request=request)
             except ValueError:
                 return VisionResponse("FAILED", None)

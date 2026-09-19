@@ -15,6 +15,19 @@ _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
+def _validate_success_payload(payload: str) -> None:
+    try:
+        value = json.loads(payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("vision payload is invalid") from exc
+    if not isinstance(value, dict) or set(value) != {"facts", "interpretations"}:
+        raise ValueError("vision payload fields are invalid")
+    for field in ("facts", "interpretations"):
+        entries = value[field]
+        if not isinstance(entries, list) or not all(isinstance(item, str) for item in entries):
+            raise ValueError(f"vision {field} are invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class VisionRequest:
     model_id: str
@@ -60,6 +73,8 @@ class VisionResponse:
             raise ValueError("payload exceeds the vision bound")
         if self.status == "SUCCEEDED" and not self.payload:
             raise ValueError("successful response requires payload")
+        if self.status == "SUCCEEDED":
+            _validate_success_payload(self.payload or "")
         if self.status != "SUCCEEDED" and self.payload is not None:
             raise ValueError("failed response cannot carry payload")
 
@@ -73,16 +88,7 @@ def validate_vision_response(response: VisionResponse, *, request: VisionRequest
         raise TypeError("response and request must be typed vision contracts")
     if response.status != "SUCCEEDED":
         return response
-    try:
-        payload = json.loads(response.payload or "")
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("vision payload is invalid") from exc
-    if not isinstance(payload, dict) or set(payload) != {"facts", "interpretations"}:
-        raise ValueError("vision payload fields are invalid")
-    if not all(isinstance(item, str) for item in payload["facts"]):
-        raise ValueError("vision facts are invalid")
-    if not all(isinstance(item, str) for item in payload["interpretations"]):
-        raise ValueError("vision interpretations are invalid")
+    _validate_success_payload(response.payload or "")
     return response
 
 
