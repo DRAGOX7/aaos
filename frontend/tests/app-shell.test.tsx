@@ -71,4 +71,16 @@ describe("AAOS application shell", () => {
       within(main).getByText("Workspace content"),
     ).toBeInTheDocument();
   });
+
+  it("exposes a quiet workspace search and identity affordance", () => {
+    render(<AppShell><p>Workspace content</p></AppShell>);
+
+    expect(
+      screen.getByRole("searchbox", { name: "Global workspace search" }),
+    ).toHaveAttribute(
+      "placeholder",
+      "Search courses, documents, or assignments",
+    );
+    expect(screen.getAllByText("AAOS workspace")).toHaveLength(2);
+  });
 });

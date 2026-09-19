@@ -11,10 +11,14 @@
   --aaos-background: #f6f9fd;
   --aaos-surface: #ffffff;
   --aaos-surface-soft: #f3f7fc;
+  --aaos-surface-glass: rgb(255 255 255 / 0.86);
 
   --aaos-text: #10214b;
+  --aaos-primary-deep: #0c2b63;
   --aaos-text-muted: #66779a;
+  --aaos-text-subtle: #8a9abb;
   --aaos-border: #dfe8f4;
+  --aaos-border-strong: #cbd9ed;
 
   --aaos-primary: #1677f2;
   --aaos-primary-soft: #eaf3ff;
@@ -23,14 +27,21 @@
   --aaos-teal-soft: #e7f8f7;
 
   --aaos-success: #0aa56f;
+  --aaos-success-soft: #e7f8f0;
   --aaos-warning: #ee9412;
+  --aaos-warning-soft: #fff5df;
   --aaos-danger: #e5484d;
+  --aaos-purple: #7657d9;
+  --aaos-purple-soft: #f0ecff;
 
   --aaos-radius-control: 0.75rem;
-  --aaos-radius-card: 1rem;
+  --aaos-radius-card: 1.25rem;
+  --aaos-radius-panel: 1.25rem;
 
   --aaos-shadow-card:
-    0 10px 30px rgb(28 52 91 / 0.06);
+    0 14px 34px rgb(28 52 91 / 0.07);
+  --aaos-shadow-float:
+    0 20px 54px rgb(28 52 91 / 0.1);
 
   /* shadcn semantic contract -> AAOS identity */
   --background: var(--aaos-background);
@@ -87,6 +98,8 @@
 
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--aaos-primary-soft);
+  --color-primary-deep: var(--aaos-primary-deep);
 
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -100,8 +113,10 @@
   --color-destructive: var(--destructive);
 
   --color-border: var(--border);
+  --color-border-strong: var(--aaos-border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-text-subtle: var(--aaos-text-subtle);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -132,8 +147,19 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background-color: var(--aaos-background);
+    background-image:
+      radial-gradient(circle at 88% 0%, rgb(22 119 242 / 0.09), transparent 30rem),
+      radial-gradient(circle at 5% 22%, rgb(11 158 168 / 0.06), transparent 28rem),
+      linear-gradient(180deg, #f8fbff 0%, var(--aaos-background) 58%, #f4f8fd 100%);
+    background-attachment: fixed;
     margin: 0;
     min-height: 100%;
+  }
+
+  ::selection {
+    background: var(--aaos-primary-soft);
+    color: var(--aaos-primary-deep);
   }
 }

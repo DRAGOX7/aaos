@@ -39,4 +39,11 @@ describe("AAOS design tokens", () => {
       "--font-sans: var(--font-inter);",
     );
   });
+
+  it("defines the layered dashboard surface tokens", () => {
+    expect(css).toContain("--aaos-surface-glass:");
+    expect(css).toContain("--aaos-primary-deep:");
+    expect(css).toContain("--aaos-radius-panel:");
+    expect(css).toContain("--aaos-shadow-float:");
+  });
 });
