@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import Path
+
 import pytest
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from aaos.documents.contracts import ExtractedPage, ExtractionStatus, ParsedPdf, TextSource
+from aaos.persistence.academic_models import Base, CourseORM, RemoteFileORM
+from aaos.persistence.database import create_database_engine, create_session_factory
+from aaos.persistence.document_models import ContentBlobORM, DocumentORM, DocumentVersionORM
 from aaos.phase8.vision_contracts import VisualSelectorPolicy
 
 
@@ -68,13 +76,19 @@ def test_selector_identity_requires_trusted_positive_document_version_binding() 
         TrustedDocumentVersionBinding,
         VisualPageCandidate,
     )
-    from aaos.phase8.vision_selector import bind_visual_page_candidate, select_visual_pages
+    from aaos.phase8.vision_selector import (
+        bind_visual_page_candidate,
+        select_visual_pages,
+        trusted_document_version_binding,
+    )
 
     candidate = select_visual_pages(_parsed(""), selector_policy=_policy())[0]
     assert candidate.document_version_id == 0
 
     with pytest.raises(TypeError):
         TrustedDocumentVersionBinding(7)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        trusted_document_version_binding(7)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="positive"):
         TrustedDocumentVersionBinding._from_persistence(0)
     with pytest.raises(ValueError, match="positive"):
@@ -94,3 +108,72 @@ def test_selector_identity_requires_trusted_positive_document_version_binding() 
             bound,
             document_version=TrustedDocumentVersionBinding._from_persistence(8),
         )
+
+
+def test_trusted_binding_requires_persistent_document_version(tmp_path: Path) -> None:
+    from aaos.phase8.vision_selector import trusted_document_version_binding
+
+    engine: Engine = create_database_engine(tmp_path / "vision-binding.db")
+    Base.metadata.create_all(engine)
+    sessions: sessionmaker[Session] = create_session_factory(engine)
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    with sessions() as session, session.begin():
+        session.add(
+            CourseORM(
+                id=1,
+                source_system="test",
+                source_id="course-1",
+                title="Course 1",
+                is_active=True,
+            )
+        )
+        session.add(
+            RemoteFileORM(
+                id=1,
+                course_id=1,
+                source_system="test",
+                source_id="file-1",
+                title="Document 1",
+                is_active=True,
+            )
+        )
+        session.add(
+            ContentBlobORM(
+                id=1,
+                sha256="a" * 64,
+                size_bytes=1,
+                media_type="application/pdf",
+                storage_key="sha256/aa/" + "a" * 64 + ".pdf",
+                created_at=now,
+            )
+        )
+        session.add(
+            DocumentORM(
+                id=1,
+                remote_file_id=1,
+                ingestion_status="READY",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            DocumentVersionORM(
+                id=7,
+                document_id=1,
+                version_number=1,
+                content_blob_id=1,
+                source_filename="document.pdf",
+                ingested_at=now,
+                extraction_status="SUCCESS",
+                page_count=1,
+            )
+        )
+        session.flush()
+        version = session.get(DocumentVersionORM, 7)
+        assert version is not None
+        binding = trusted_document_version_binding(version)
+        assert binding.document_version_id == 7
+
+        with pytest.raises(ValueError, match="persistent"):
+            trusted_document_version_binding(DocumentVersionORM(id=8))
+    engine.dispose()

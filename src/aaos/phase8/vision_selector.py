@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from sqlalchemy import inspect
+
 from aaos.documents.contracts import ParsedPdf
+from aaos.persistence.document_models import DocumentVersionORM
 
 from .vision_contracts import (
     MAX_RENDER_BYTES,
@@ -13,6 +16,18 @@ from .vision_contracts import (
     VisualReasonCode,
     VisualSelectorPolicy,
 )
+
+
+def trusted_document_version_binding(
+    document_version: DocumentVersionORM,
+) -> TrustedDocumentVersionBinding:
+    """Issue a binding only for a persistent authoritative document-version row."""
+
+    if not isinstance(document_version, DocumentVersionORM):
+        raise TypeError("document_version must be a DocumentVersionORM")
+    if not inspect(document_version).persistent:
+        raise ValueError("document_version must be a persistent ORM row")
+    return TrustedDocumentVersionBinding._from_persistence(document_version.id)
 
 
 def bind_visual_page_candidate(
@@ -84,4 +99,8 @@ def select_visual_pages(
     return tuple(item[2] for item in candidates[: selector_policy.max_pages])
 
 
-__all__ = ["bind_visual_page_candidate", "select_visual_pages"]
+__all__ = [
+    "bind_visual_page_candidate",
+    "select_visual_pages",
+    "trusted_document_version_binding",
+]

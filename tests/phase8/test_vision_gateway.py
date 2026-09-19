@@ -92,12 +92,10 @@ def test_vision_response_rejects_malformed_success_payload_at_boundary() -> None
 
 def test_vlm_output_cannot_control_trusted_document_version_identity() -> None:
     from aaos.phase8.fake_vision import FakeVisionGateway
-    from aaos.phase8.vision_contracts import TrustedDocumentVersionBinding
 
     response = FakeVisionGateway().generate(_image(), request=_request())
     payload = json.loads(response.payload or "")
     assert "document_version_id" not in payload
-    assert TrustedDocumentVersionBinding._from_persistence(7).document_version_id == 7
 
 
 def test_partial_visual_response_requires_bounded_fact() -> None:
