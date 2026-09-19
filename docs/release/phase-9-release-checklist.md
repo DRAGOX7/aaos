@@ -2,8 +2,8 @@
 
 Status: `READY_FOR_HUMAN_ACCEPTANCE`
 
-This checklist is the Task 8 release gate. It does not mark Phase 9 passed,
-create `phase-09-passed`, or authorize Task 9. Every PASS below refers to
+This checklist is the release gate consumed by Task 9. It does not mark
+Phase 9 passed or create `phase-09-passed`. Every PASS below refers to
 bounded evidence from the already-qualified local system or to a deterministic
 fixture. Missing or non-reproducible evidence is BLOCKED, never silently
 treated as a pass.
@@ -90,6 +90,6 @@ These are recorded rather than hidden:
 
 ## Human gate
 
-The next action is human review of this checklist and the sanitized evidence
-package. Only that review may authorize a future Phase 9 freeze; this Task 8
-commit does not create a release tag or start Task 9.
+The next action is human review of this checklist, the sanitized evidence
+package, and the Task 9 acceptance report. Only that review may authorize a
+future Phase 9 freeze; this verification does not create a release tag.

@@ -72,4 +72,5 @@ the normal AAOS database.
 
 Independent review result: `PASS_NO_CRITICAL_OR_IMPORTANT_FINDINGS`.
 Known minor limitations are listed in the release checklist. Human review is
-still required before any Phase 9 freeze decision; Task 9 is not started.
+still required before any Phase 9 freeze decision; Task 9 verification is
+complete but Phase 9 is not accepted or frozen.
