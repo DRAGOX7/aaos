@@ -21,6 +21,7 @@ from .contracts import (
     ToolResult,
     canonical_json,
 )
+from .events import Phase8ActivityEvent, Phase8ActivityKind, Phase8ActivityStatus
 from .phase4_adapter import _validated_rag_result_to_observation
 
 MAX_OBSERVATION_SIZE: Final[int] = MAX_AGENT_TEXT_CHARACTERS
@@ -512,6 +513,40 @@ def sanitize_tool_result_with_audit(
     return ObservationSanitizer(max_size=max_size).sanitize_with_audit(result, tool_name=tool_name)
 
 
+@dataclass(frozen=True, slots=True)
+class Phase8ActivityObservation:
+    """Safe typed projection for Phase 8 operational activity."""
+
+    event_kind: Phase8ActivityKind
+    resource_id: str
+    status: Phase8ActivityStatus
+    sequence_number: int
+    timestamp_utc: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "event_kind": self.event_kind.value,
+            "resource_id": self.resource_id,
+            "status": self.status.value,
+            "sequence_number": self.sequence_number,
+            "timestamp_utc": self.timestamp_utc,
+        }
+
+
+def project_phase8_activity(event: Phase8ActivityEvent) -> Phase8ActivityObservation:
+    """Project a trusted Phase 8 event without copying arbitrary payloads."""
+
+    if not isinstance(event, Phase8ActivityEvent):
+        raise TypeError("event must be a Phase8ActivityEvent")
+    return Phase8ActivityObservation(
+        event_kind=event.event_kind,
+        resource_id=event.resource_id,
+        status=event.status,
+        sequence_number=event.sequence_number,
+        timestamp_utc=event.timestamp_utc.isoformat(),
+    )
+
+
 def _normalize_tool_name(value: ToolName | str) -> str:
     if isinstance(value, ToolName):
         return value.value
@@ -722,7 +757,9 @@ __all__ = [
     "ObservationAudit",
     "ObservationSanitizationError",
     "ObservationSanitizer",
+    "Phase8ActivityObservation",
     "SanitizedObservation",
+    "project_phase8_activity",
     "sanitize_tool_result",
     "sanitize_tool_result_with_audit",
 ]

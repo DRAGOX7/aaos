@@ -47,6 +47,32 @@ class AgentEventKind(StrEnum):
     TASK_FINISHED = "TASK_FINISHED"
 
 
+class Phase8ActivityKind(StrEnum):
+    """Closed operational activity vocabulary for Phase 8 projections."""
+
+    COMPUTATION_STARTED = "COMPUTATION_STARTED"
+    COMPUTATION_COMPLETED = "COMPUTATION_COMPLETED"
+    COMPUTATION_FAILED = "COMPUTATION_FAILED"
+    COMPUTATION_TIMED_OUT = "COMPUTATION_TIMED_OUT"
+    COMPUTATION_UNKNOWN_OUTCOME = "COMPUTATION_UNKNOWN_OUTCOME"
+    VISION_COMPLETED = "VISION_COMPLETED"
+    VISION_PARTIAL = "VISION_PARTIAL"
+    VISION_UNAVAILABLE = "VISION_UNAVAILABLE"
+    VISION_FAILED = "VISION_FAILED"
+
+
+class Phase8ActivityStatus(StrEnum):
+    """Closed status vocabulary exposed by Phase 8 operational activity."""
+
+    STARTED = "STARTED"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    TIMED_OUT = "TIMED_OUT"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME"
+
+
 @dataclass(frozen=True, slots=True)
 class AgentRunId:
     """Trusted opaque identifier for one orchestrator run."""
@@ -94,6 +120,68 @@ def _sha256(value: object, name: str) -> str:
     ):
         raise ValueError(f"{name} must be a lowercase SHA-256 digest")
     return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class Phase8ActivityEvent:
+    """Typed, content-free Phase 8 activity event.
+
+    This deliberately has no details mapping: computation code, provider
+    payloads, paths, prompts, and tracebacks cannot cross the activity
+    boundary by construction.
+    """
+
+    event_kind: Phase8ActivityKind
+    resource_id: str
+    status: Phase8ActivityStatus
+    sequence_number: int
+    timestamp_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event_kind, Phase8ActivityKind):
+            raise TypeError("event_kind must be a Phase8ActivityKind")
+        object.__setattr__(
+            self,
+            "resource_id",
+            _safe_identifier(self.resource_id, "resource_id"),
+        )
+        if not isinstance(self.status, Phase8ActivityStatus):
+            raise TypeError("status must be a Phase8ActivityStatus")
+        if isinstance(self.sequence_number, bool) or not isinstance(self.sequence_number, int):
+            raise TypeError("sequence_number must be an integer")
+        if not 0 < self.sequence_number <= MAX_EVENT_SEQUENCE:
+            raise ValueError("sequence_number is outside the approved bound")
+        if not isinstance(self.timestamp_utc, datetime) or self.timestamp_utc.tzinfo is None:
+            raise ValueError("timestamp_utc must be timezone-aware")
+        object.__setattr__(self, "timestamp_utc", self.timestamp_utc.astimezone(timezone.utc))
+        _validate_phase8_activity_contract(self.event_kind, self.status)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "event_kind": self.event_kind.value,
+            "resource_id": self.resource_id,
+            "status": self.status.value,
+            "sequence_number": self.sequence_number,
+            "timestamp_utc": self.timestamp_utc.isoformat(),
+        }
+
+
+def _validate_phase8_activity_contract(
+    event_kind: Phase8ActivityKind, status: Phase8ActivityStatus
+) -> None:
+    expected: dict[Phase8ActivityKind, Phase8ActivityStatus] = {
+        Phase8ActivityKind.COMPUTATION_STARTED: Phase8ActivityStatus.STARTED,
+        Phase8ActivityKind.COMPUTATION_COMPLETED: Phase8ActivityStatus.SUCCEEDED,
+        Phase8ActivityKind.COMPUTATION_FAILED: Phase8ActivityStatus.FAILED,
+        Phase8ActivityKind.COMPUTATION_TIMED_OUT: Phase8ActivityStatus.TIMED_OUT,
+        Phase8ActivityKind.COMPUTATION_UNKNOWN_OUTCOME: Phase8ActivityStatus.UNKNOWN_OUTCOME,
+        Phase8ActivityKind.VISION_COMPLETED: Phase8ActivityStatus.SUCCEEDED,
+        Phase8ActivityKind.VISION_PARTIAL: Phase8ActivityStatus.PARTIAL,
+        Phase8ActivityKind.VISION_UNAVAILABLE: Phase8ActivityStatus.UNAVAILABLE,
+        Phase8ActivityKind.VISION_FAILED: Phase8ActivityStatus.FAILED,
+    }
+    if expected[event_kind] is not status:
+        raise ValueError("event kind and status are inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,4 +420,7 @@ __all__ = [
     "EVENT_SCHEMA_VERSION",
     "InMemoryAgentEventSink",
     "NullAgentEventSink",
+    "Phase8ActivityEvent",
+    "Phase8ActivityKind",
+    "Phase8ActivityStatus",
 ]
