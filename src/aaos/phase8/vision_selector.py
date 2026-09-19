@@ -2,14 +2,37 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from aaos.documents.contracts import ParsedPdf
 
 from .vision_contracts import (
     MAX_RENDER_BYTES,
+    TrustedDocumentVersionBinding,
     VisualPageCandidate,
     VisualReasonCode,
     VisualSelectorPolicy,
 )
+
+
+def bind_visual_page_candidate(
+    candidate: VisualPageCandidate,
+    *,
+    document_version: TrustedDocumentVersionBinding,
+) -> VisualPageCandidate:
+    """Bind an unpersisted selector result to a trusted positive version ID."""
+
+    if not isinstance(candidate, VisualPageCandidate):
+        raise TypeError("candidate must be a VisualPageCandidate")
+    if not isinstance(document_version, TrustedDocumentVersionBinding):
+        raise TypeError("document_version must be a TrustedDocumentVersionBinding")
+    if candidate.document_version_id != 0:
+        raise ValueError("candidate must be unbound before trusted binding")
+    return replace(
+        candidate,
+        document_version_id=document_version.document_version_id,
+        _trusted_document_version=document_version,
+    )
 
 
 def select_visual_pages(
@@ -26,9 +49,7 @@ def select_visual_pages(
         page_number <= 0 or page_number > parsed_pdf.page_count for page_number in page_numbers
     ):
         raise ValueError("page metadata is inconsistent")
-    document_version_id = getattr(parsed_pdf, "document_version_id", 0)
-    if isinstance(document_version_id, bool) or not isinstance(document_version_id, int):
-        raise ValueError("document version metadata is invalid")
+    document_version_id = 0
     candidates: list[tuple[int, int, VisualPageCandidate]] = []
     for page in parsed_pdf.pages:
         text_length = len(page.text.strip())
@@ -63,4 +84,4 @@ def select_visual_pages(
     return tuple(item[2] for item in candidates[: selector_policy.max_pages])
 
 
-__all__ = ["select_visual_pages"]
+__all__ = ["bind_visual_page_candidate", "select_visual_pages"]

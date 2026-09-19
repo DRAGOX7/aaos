@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -23,12 +23,30 @@ class VisualReasonCode(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class TrustedDocumentVersionBinding:
+    """Positive document-version identity resolved by trusted persistence code."""
+
+    document_version_id: int
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.document_version_id, bool)
+            or not isinstance(self.document_version_id, int)
+            or self.document_version_id <= 0
+        ):
+            raise ValueError("document_version_id must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class VisualPageCandidate:
     document_version_id: int
     page_number: int
     reason_code: str
     estimated_bytes: int
     selector_version: str
+    _trusted_document_version: TrustedDocumentVersionBinding | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if isinstance(self.document_version_id, bool) or not isinstance(
@@ -37,6 +55,12 @@ class VisualPageCandidate:
             raise TypeError("document_version_id must be an integer")
         if self.document_version_id < 0:
             raise ValueError("document_version_id must be non-negative")
+        if self._trusted_document_version is None and self.document_version_id != 0:
+            raise ValueError("positive document_version_id requires trusted binding")
+        if self._trusted_document_version is not None and (
+            self.document_version_id != self._trusted_document_version.document_version_id
+        ):
+            raise ValueError("document_version_id does not match trusted binding")
         if isinstance(self.page_number, bool) or not isinstance(self.page_number, int):
             raise TypeError("page_number must be an integer")
         if self.page_number <= 0:
@@ -91,8 +115,8 @@ class RenderedPage:
             self.document_version_id, int
         ):
             raise TypeError("document_version_id must be an integer")
-        if self.document_version_id < 0:
-            raise ValueError("document_version_id must be non-negative")
+        if self.document_version_id <= 0:
+            raise ValueError("document_version_id must be positive")
         if isinstance(self.page_number, bool) or not isinstance(self.page_number, int):
             raise TypeError("page_number must be an integer")
         if self.page_number <= 0:
@@ -136,6 +160,7 @@ __all__ = [
     "MAX_VISUAL_PAGES",
     "PageRenderer",
     "RenderedPage",
+    "TrustedDocumentVersionBinding",
     "VisualPageCandidate",
     "VisualReasonCode",
     "VisualSelectorPolicy",

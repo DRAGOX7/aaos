@@ -8,7 +8,13 @@ from aaos.phase8.vision_contracts import RenderedPage, VisualPageCandidate
 
 
 def _candidate() -> VisualPageCandidate:
-    return VisualPageCandidate(7, 2, "SPARSE_TEXT", 128, "v1")
+    from aaos.phase8.vision_contracts import TrustedDocumentVersionBinding
+    from aaos.phase8.vision_selector import bind_visual_page_candidate
+
+    return bind_visual_page_candidate(
+        VisualPageCandidate(0, 2, "SPARSE_TEXT", 128, "v1"),
+        document_version=TrustedDocumentVersionBinding(7),
+    )
 
 
 class FakeRenderer:
@@ -43,6 +49,10 @@ def test_render_page_validates_identity_and_passes_bound() -> None:
 def test_rendered_page_source_hash_and_byte_bound_are_strict() -> None:
     from aaos.phase8.vision_contracts import RenderedPage
 
+    with pytest.raises(ValueError, match="positive"):
+        RenderedPage(0, 2, "image/png", 1200, 900, sha256(b"png-bytes").hexdigest(), b"png-bytes")
+    with pytest.raises(ValueError, match="positive"):
+        RenderedPage(-1, 2, "image/png", 1200, 900, sha256(b"png-bytes").hexdigest(), b"png-bytes")
     with pytest.raises(ValueError, match="hash"):
         RenderedPage(7, 2, "image/png", 1200, 900, "0" * 64, b"png-bytes")
 

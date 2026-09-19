@@ -61,3 +61,31 @@ def test_selector_rejects_invalid_policy() -> None:
 
     with pytest.raises(ValueError):
         VisualSelectorPolicy(max_pages=0, max_render_bytes=100, selector_version="v1")
+
+
+def test_selector_identity_requires_trusted_positive_document_version_binding() -> None:
+    from aaos.phase8.vision_contracts import (
+        TrustedDocumentVersionBinding,
+        VisualPageCandidate,
+    )
+    from aaos.phase8.vision_selector import bind_visual_page_candidate, select_visual_pages
+
+    candidate = select_visual_pages(_parsed(""), selector_policy=_policy())[0]
+    assert candidate.document_version_id == 0
+
+    with pytest.raises(ValueError, match="positive"):
+        TrustedDocumentVersionBinding(0)
+    with pytest.raises(ValueError, match="positive"):
+        TrustedDocumentVersionBinding(-1)
+    with pytest.raises(ValueError, match="trusted"):
+        VisualPageCandidate(7, 1, "EMPTY_PAGE", 1024, "v1")
+
+    bound = bind_visual_page_candidate(
+        candidate,
+        document_version=TrustedDocumentVersionBinding(7),
+    )
+    assert bound.document_version_id == 7
+    assert bound.page_number == candidate.page_number
+
+    with pytest.raises(ValueError, match="unbound"):
+        bind_visual_page_candidate(bound, document_version=TrustedDocumentVersionBinding(8))
