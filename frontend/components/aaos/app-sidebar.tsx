@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import {
   Activity,
   BookOpen,
@@ -90,11 +90,14 @@ export function AppSidebar({
   className,
   activeHref,
 }: AppSidebarProps) {
-  const [pathname, setPathname] = useState("/");
-
-  useEffect(() => {
-    setPathname(window.location.pathname);
-  }, []);
+  const pathname = useSyncExternalStore(
+    (onStoreChange) => {
+      window.addEventListener("popstate", onStoreChange);
+      return () => window.removeEventListener("popstate", onStoreChange);
+    },
+    () => window.location.pathname,
+    () => "/",
+  );
 
   const resolvedActiveHref = activeHref ?? resolveActiveNavigationHref(pathname);
 
