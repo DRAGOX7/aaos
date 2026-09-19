@@ -9,6 +9,7 @@ from .computation_contracts import ComputationLimits, ComputationRequest
 DOCKER_CONTEXT = "desktop-linux"
 WORKER_IMAGE = "python:3.11-slim"
 WORKER_UID = "65532:65532"
+MIN_TMPFS_BYTES = 64 * 1024
 
 
 def docker_run_args(
@@ -22,6 +23,8 @@ def docker_run_args(
         "--context",
         DOCKER_CONTEXT,
         "run",
+        "--pull=never",
+        "--interactive",
         "--rm",
         "--name",
         worker_name,
@@ -41,7 +44,7 @@ def docker_run_args(
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,size=16m",
         "--tmpfs",
-        f"/task-output:rw,noexec,nosuid,size={limits.output_bytes}b",
+        f"/task-output:rw,noexec,nosuid,size={max(limits.output_bytes, MIN_TMPFS_BYTES) // 1024}k",
         "--user",
         WORKER_UID,
         "--mount",

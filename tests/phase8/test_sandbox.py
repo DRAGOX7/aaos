@@ -76,17 +76,36 @@ class FakeClock:
 
 
 class FakeRunner:
-    def __init__(self, *, timed_out: bool = False, stdout: bytes | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        timed_out: bool = False,
+        stdout: bytes | None = None,
+        image_available: bool = True,
+    ) -> None:
         self.calls: list[tuple[tuple[str, ...], bytes]] = []
         self.timed_out = timed_out
         self.stdout = _payload() if stdout is None else stdout
+        self.image_available = image_available
 
     def run(
-        self, args: Sequence[str], *, input_bytes: bytes, timeout_seconds: float
+        self,
+        args: Sequence[str],
+        *,
+        input_bytes: bytes,
+        timeout_seconds: float,
+        stdout_limit_bytes: int = 65_536,
+        stderr_limit_bytes: int = 65_536,
     ) -> CommandResult:
         self.calls.append((tuple(args), input_bytes))
+        if "image" in args and "inspect" in args:
+            if self.image_available:
+                return CommandResult(returncode=0, stdout=b"[]", stderr=b"", started=True)
+            return CommandResult(returncode=1, stdout=b"", stderr=b"", started=True)
         if "rm" in args:
             return CommandResult(returncode=0, stdout=b"", stderr=b"", started=True)
+        if "inspect" in args:
+            return CommandResult(returncode=1, stdout=b"", stderr=b"", started=False)
         if self.timed_out:
             return CommandResult(
                 returncode=-1,
@@ -106,9 +125,10 @@ def test_executor_uses_qualified_profile_and_cleans_workspace(tmp_path: Path) ->
     result = executor.execute(_request())
 
     assert result.status is ComputationStatus.SUCCEEDED
-    execution_args = runner.calls[0][0]
+    execution_args = next(call[0] for call in runner.calls if "run" in call[0])
     assert execution_args[:4] == ("docker", "--context", "desktop-linux", "run")
     assert "--network" in execution_args and "none" in execution_args
+    assert "--pull=never" in execution_args
     assert "--read-only" in execution_args
     assert execution_args.count("--cap-drop") == 1
     assert "ALL" in execution_args
@@ -149,6 +169,19 @@ def test_timeout_returns_unknown_outcome_without_retry(tmp_path: Path) -> None:
     assert not list(tmp_path.iterdir())
 
 
+def test_missing_worker_image_fails_closed_before_worker_execution(tmp_path: Path) -> None:
+    runner = FakeRunner(image_available=False)
+    executor = ContainerSandboxExecutor(
+        _runtime(), clock=FakeClock(), temp_root=tmp_path, runner=runner
+    )
+
+    with pytest.raises(SandboxExecutionError, match="image"):
+        executor.execute(_request())
+
+    assert not [call for call in runner.calls if "run" in call[0]]
+    assert not list(tmp_path.iterdir())
+
+
 def test_oversized_worker_output_is_unknown_and_not_retried(tmp_path: Path) -> None:
     runner = FakeRunner(stdout=b"x" * 5000)
     executor = ContainerSandboxExecutor(
@@ -175,4 +208,16 @@ def test_each_request_gets_a_fresh_task_and_worker_identity(tmp_path: Path) -> N
         executions[0][0][executions[0][0].index("--name") + 1]
         != executions[1][0][executions[1][0].index("--name") + 1]
     )
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.phase8_runtime
+def test_real_docker_supervisor_path_uses_qualified_runtime(tmp_path: Path) -> None:
+    from scripts.phase8.qualify_isolation_runtime import qualify_isolation_runtime
+
+    runtime = qualify_isolation_runtime(docker_context="desktop-linux")
+    assert runtime.available is True
+    executor = ContainerSandboxExecutor(runtime, clock=FakeClock(), temp_root=tmp_path)
+    result = executor.execute(_request())
+    assert result.status is ComputationStatus.SUCCEEDED
     assert not list(tmp_path.iterdir())
