@@ -60,17 +60,26 @@ def collect_windows_qualification(
         newline_file.write_bytes(b"line-one\r\nline-two\n")
         newline_bytes = newline_file.read_bytes()
         crlf_lf_ok = newline_bytes == b"line-one\r\nline-two\n"
-        path_containment_ok = _within(root, newline_file) and not _within(root, root.parent / "outside")
+        path_containment_ok = _within(root, newline_file) and not _within(
+            root, root.parent / "outside"
+        )
         symlink_handling_ok = not probe.is_symlink() and not newline_file.is_symlink()
         commands = (
-            ("powershell", "-NoProfile", "-Command", "[Console]::OutputEncoding=[Text.UTF8Encoding]::new()"),
+            (
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "[Console]::OutputEncoding=[Text.UTF8Encoding]::new()",
+            ),
             ("node", "--version"),
             ("npm", "--version"),
             ("docker", "version", "--format", "{{.Server.Os}}"),
             ("node", "--version"),
         )
         results = tuple(runner.run(command) for command in commands)
-        subprocess_utf8_ok = results[0].returncode == 0 and "credential" not in results[0].stdout.lower()
+        subprocess_utf8_ok = (
+            results[0].returncode == 0 and "credential" not in results[0].stdout.lower()
+        )
         node_npm_ok = _all_success(results[1:3])
         browser_startup_ok = results[4].returncode == 0
     finally:

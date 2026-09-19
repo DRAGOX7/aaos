@@ -105,7 +105,12 @@ def run_deterministic_evaluation(
         DomainReport(
             "agent_tool",
             len(_domain_case_ids(manifest, "agent-tool")),
-            (routing_domain_report(_domain_case_ids(manifest, "agent-tool"), correct=len(_domain_case_ids(manifest, "agent-tool"))),),
+            (
+                routing_domain_report(
+                    _domain_case_ids(manifest, "agent-tool"),
+                    correct=len(_domain_case_ids(manifest, "agent-tool")),
+                ),
+            ),
         ),
         DomainReport(
             "multimodal",
@@ -122,7 +127,12 @@ def run_deterministic_evaluation(
         DomainReport(
             "computation",
             len(_domain_case_ids(manifest, "computation")),
-            (routing_domain_report(_domain_case_ids(manifest, "computation"), correct=len(_domain_case_ids(manifest, "computation"))),),
+            (
+                routing_domain_report(
+                    _domain_case_ids(manifest, "computation"),
+                    correct=len(_domain_case_ids(manifest, "computation")),
+                ),
+            ),
         ),
     )
     return Phase9EvaluationReport(

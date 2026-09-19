@@ -31,7 +31,12 @@ class PortfolioClaim:
             raise ValueError("claim requires evidence references")
         if not all(isinstance(item, str) and 0 < len(item) <= 128 for item in self.evidence_refs):
             raise ValueError("claim evidence references are not bounded")
-        if self.scope not in {"REAL_LOCAL", "DETERMINISTIC_FAKE", "HISTORICAL_EXTERNAL", "NOT_SUPPORTED"}:
+        if self.scope not in {
+            "REAL_LOCAL",
+            "DETERMINISTIC_FAKE",
+            "HISTORICAL_EXTERNAL",
+            "NOT_SUPPORTED",
+        }:
             raise ValueError("claim scope is not closed")
 
 
@@ -46,7 +51,11 @@ class DemoStep:
     def __post_init__(self) -> None:
         if not self.step_id or len(self.step_id) > 96:
             raise ValueError("step_id is not bounded")
-        if self.label not in {"REAL_LOCAL_BEHAVIOR", "DETERMINISTIC_FAKE_BEHAVIOR", "SYNTHETIC_DATA"}:
+        if self.label not in {
+            "REAL_LOCAL_BEHAVIOR",
+            "DETERMINISTIC_FAKE_BEHAVIOR",
+            "SYNTHETIC_DATA",
+        }:
             raise ValueError("demo label is not closed")
         if not self.action or len(self.action) > 512 or not self.expected_observation:
             raise ValueError("demo text is not bounded")
@@ -56,14 +65,62 @@ class DemoStep:
 
 def build_demo_steps() -> tuple[DemoStep, ...]:
     return (
-        DemoStep("dashboard", "REAL_LOCAL_BEHAVIOR", "Open the local dashboard", "Same-origin dashboard renders", 0),
-        DemoStep("rag", "REAL_LOCAL_BEHAVIOR", "Run a grounded RAG query", "Citation-bearing local answer or insufficient evidence", 0),
-        DemoStep("visual", "REAL_LOCAL_BEHAVIOR", "Inspect derived visual evidence", "Visual provenance remains distinct from embedded PDF text", 0),
-        DemoStep("computation", "DETERMINISTIC_FAKE_BEHAVIOR", "Run restricted computation fixture", "Fake sandbox result is labeled and bounded", 0),
-        DemoStep("approval", "DETERMINISTIC_FAKE_BEHAVIOR", "Review fake approval lifecycle", "Approval and UNKNOWN_OUTCOME remain trusted-core states", 0),
-        DemoStep("activity", "REAL_LOCAL_BEHAVIOR", "Open Activity history", "Deterministic local events render", 0),
-        DemoStep("health", "REAL_LOCAL_BEHAVIOR", "Open passive System Health", "Health status is observational", 0),
-        DemoStep("synthetic", "SYNTHETIC_DATA", "Use sanitized demo fixtures", "No private university data is shown", 0),
+        DemoStep(
+            "dashboard",
+            "REAL_LOCAL_BEHAVIOR",
+            "Open the local dashboard",
+            "Same-origin dashboard renders",
+            0,
+        ),
+        DemoStep(
+            "rag",
+            "REAL_LOCAL_BEHAVIOR",
+            "Run a grounded RAG query",
+            "Citation-bearing local answer or insufficient evidence",
+            0,
+        ),
+        DemoStep(
+            "visual",
+            "REAL_LOCAL_BEHAVIOR",
+            "Inspect derived visual evidence",
+            "Visual provenance remains distinct from embedded PDF text",
+            0,
+        ),
+        DemoStep(
+            "computation",
+            "DETERMINISTIC_FAKE_BEHAVIOR",
+            "Run restricted computation fixture",
+            "Fake sandbox result is labeled and bounded",
+            0,
+        ),
+        DemoStep(
+            "approval",
+            "DETERMINISTIC_FAKE_BEHAVIOR",
+            "Review fake approval lifecycle",
+            "Approval and UNKNOWN_OUTCOME remain trusted-core states",
+            0,
+        ),
+        DemoStep(
+            "activity",
+            "REAL_LOCAL_BEHAVIOR",
+            "Open Activity history",
+            "Deterministic local events render",
+            0,
+        ),
+        DemoStep(
+            "health",
+            "REAL_LOCAL_BEHAVIOR",
+            "Open passive System Health",
+            "Health status is observational",
+            0,
+        ),
+        DemoStep(
+            "synthetic",
+            "SYNTHETIC_DATA",
+            "Use sanitized demo fixtures",
+            "No private university data is shown",
+            0,
+        ),
     )
 
 

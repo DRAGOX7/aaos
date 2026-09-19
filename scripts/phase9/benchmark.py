@@ -52,9 +52,7 @@ class BenchmarkSummary:
         ordered = sorted(sample.elapsed_ms for sample in samples)
         middle = len(ordered) // 2
         median = (
-            ordered[middle]
-            if len(ordered) % 2
-            else (ordered[middle - 1] + ordered[middle]) / 2
+            ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
         )
         p95: float | None = None
         if len(ordered) >= P95_MIN_SAMPLES:

@@ -127,12 +127,18 @@ class Phase9EvaluationManifest:
     @property
     def language_counts(self) -> dict[str, int]:
         values = self.calibration_ids
-        return {"en": sum(_language(value) == "en" for value in values), "ar": sum(_language(value) == "ar" for value in values)}
+        return {
+            "en": sum(_language(value) == "en" for value in values),
+            "ar": sum(_language(value) == "ar" for value in values),
+        }
 
     @property
     def heldout_language_counts(self) -> dict[str, int]:
         values = self.heldout_ids
-        return {"en": sum(_language(value) == "en" for value in values), "ar": sum(_language(value) == "ar" for value in values)}
+        return {
+            "en": sum(_language(value) == "en" for value in values),
+            "ar": sum(_language(value) == "ar" for value in values),
+        }
 
     @classmethod
     def from_ids(

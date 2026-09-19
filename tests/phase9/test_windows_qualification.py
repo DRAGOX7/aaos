@@ -38,4 +38,6 @@ def test_windows_qualification_is_bounded_and_cleans_temp_paths(tmp_path: Path) 
 def test_windows_qualification_never_uses_a_shell_string(tmp_path: Path) -> None:
     runner = FakeRunner()
     collect_windows_qualification(runner=runner, root=tmp_path)
-    assert all(all("&&" not in part and ";" not in part for part in command) for command in runner.commands)
+    assert all(
+        all("&&" not in part and ";" not in part for part in command) for command in runner.commands
+    )
