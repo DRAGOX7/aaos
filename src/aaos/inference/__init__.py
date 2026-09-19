@@ -20,6 +20,7 @@ from .models import (
     StructuredOutputMode,
     StructuredOutputSchema,
     TokenUsage,
+    VisionModelReference,
 )
 from .nli import (
     NLI_MODEL_REPOSITORY,
@@ -51,6 +52,7 @@ __all__ = [
     "ModelGateway",
     "ModelUnavailableError",
     "TokenUsage",
+    "VisionModelReference",
     "UnsupportedInferenceFeatureError",
     "NLI_MODEL_REPOSITORY",
     "NLI_MODEL_REVISION",

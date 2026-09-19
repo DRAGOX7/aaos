@@ -1,10 +1,12 @@
 """Model-independent immutable values for local inference."""
 
+import re
 from dataclasses import dataclass
 from math import isfinite
 from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
+_VISION_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 StructuredOutputMode = Literal["plain", "json_schema"]
 StructuredOutputSchema = Literal[
     "agent_proposal",
@@ -20,6 +22,19 @@ StructuredOutputSchema = Literal[
     "evidence_segments_single_requirement",
     "requirement_entailment",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class VisionModelReference:
+    """Trusted identity for an explicitly selected local vision model."""
+
+    model_id: str
+    revision: str
+
+    def __post_init__(self) -> None:
+        for name, value in (("model_id", self.model_id), ("revision", self.revision)):
+            if not isinstance(value, str) or not _VISION_SAFE_IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{name} must be a safe identifier")
 
 
 @dataclass(frozen=True, slots=True)
