@@ -19,13 +19,25 @@ treated as a pass.
 | release manifest SHA-256 | `cd01ae21f06ca60ebfff83cbd417aad7c569b6cadad1e97e4c936f9e3eae999f` |
 | Phase 9 state | `IN_PROGRESS` pending human acceptance |
 
+## Backend count reconciliation
+
+The Phase 8 acceptance record reported 3,144 passed tests. Task 8 added 49
+Phase 9 tests, producing 3,199 collected / 3,193 passed tests at that
+checkpoint. Task 9 adds 9 pure acceptance-validator tests; the final
+canonical collection is therefore 3,208 tests and the fresh full run reports
+3,202 passed, 6 environment-gated skips, and 1 warning. There are no test
+deletions or renames after the Phase 8 tag. The `3,044` figure previously
+written in the Task 8 checklist was the earlier Phase 7 total carried forward
+by mistake; it was not produced by the current command and does not represent
+lost coverage.
+
 ## Required dimensions
 
 | Dimension | Status | Evidence / boundary |
 | --- | --- | --- |
 | clean Git tree and frozen identity | PASS | release manifest and final `git status --short` |
 | accepted Phase 0–8 history | PASS | task commits and Phase 8 freeze tag above |
-| backend tests | PASS | canonical full pytest: 3,044 passed, 5 skipped, 1 warning |
+| backend tests | PASS | canonical full pytest: 3,202 passed, 6 skipped, 1 warning; 3,208 collected |
 | frontend tests | PASS | 43 files, 173 tests passed |
 | static/type/lock/diff gates | PASS | Ruff check, canonical mypy gates, uv lock, diff check |
 | API/schema drift | PASS | generated OpenAPI/API drift check |
