@@ -36,7 +36,8 @@ Unresolved evidence remains explicitly unresolved.
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
-| Phases 8–9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
+| Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
+| Phase 9 | PLANNED, NOT AUTHORIZED / NOT STARTED | No implementation authority |
 
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
 new acceptance adjudications. Tags are historical evidence; a misleading tag
@@ -280,3 +281,24 @@ created before calibration but remains unconsumed and invisible until separate
 authorization. This documentation and contract change performs no model or
 RAG execution, does not modify the production orchestrator, and does not mark
 Phase 5 passed or freeze a candidate. See the [C10/V4 contract](superpowers/specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md).
+
+## Phase 8 whole-phase acceptance
+
+`PHASE_8=PASSED` was human-accepted at the final implementation/evidence
+boundary `b07fa31dd95978e986269e4572fecb07d8b3e94a`. Tasks 0–10 are
+HUMAN_ACCEPTED and the annotated `phase-08-passed` tag targets the final
+governance commit. The accepted boundary includes qualified OS-enforced Docker
+computation isolation, trusted-only bounded computation, deterministic visual
+selection/rendering, typed multimodal vision, immutable visual provenance at
+Alembic head `0007_phase8_visual_provenance`, and the distinction between
+`DERIVED_VISUAL_EVIDENCE` and `EMBEDDED_PDF`. Existing grounding/NLI safeguards
+remain authoritative; no Phase 5 authority widening, Phase 6 bypass, provider
+authority, or parallel RAG system was introduced. Observability is closed and
+passive, evaluation is deterministic and synthetic, and the final evidence
+recorded 3,144 passed tests, 6 skips, one warning, 4 real-Docker qualification
+tests, 28 computation/security tests, and the accepted Phase 4–7 regression
+totals. Real external writes, real VLM downloads, model/provider calls, and
+RLM work were all zero/not started. The historical 28-file formatting baseline
+and retained deterministic rather than raw-output evidence are non-blocking
+minor findings; no Critical or Important findings remain. Phase 9 remains
+PLANNED / NOT STARTED.

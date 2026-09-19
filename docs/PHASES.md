@@ -41,7 +41,8 @@ terminology, not evidence of a freeze tag.
 - Phase 6B — **FROZEN** at `phase-06b-passed` / `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed`.
 - Phase 6C — **OPTIONAL / NOT PURSUED**.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
-- Phases 8–9 — **PLANNED / NOT STARTED**.
+- Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
+- Phase 9 — **PLANNED / NOT STARTED**.
 
 ### Historical status notes
 
@@ -487,7 +488,18 @@ required before Phase 6 writes. Policy must not exist only in React state.
 
 ## PHASE 8 — Optional Vision and Independently Isolated Computation
 
-**Current status: PLANNED / NOT STARTED.**
+**Current status: FROZEN** at `phase-08-passed` / final governance commit.
+
+Whole Phase 8 was human-accepted after Tasks 0–10 verification. The frozen
+boundary contains qualified OS-enforced Docker computation isolation,
+trusted-only bounded computation, deterministic visual selection/rendering,
+typed multimodal vision, immutable visual provenance at Alembic head
+`0007_phase8_visual_provenance`, closed passive observability, and deterministic
+synthetic evaluation. `DERIVED_VISUAL_EVIDENCE` remains distinct from
+`EMBEDDED_PDF`; existing grounding/NLI safeguards remain authoritative. No
+Phase 5 authority widening, Phase 6 bypass, provider authority, real external
+write, real VLM download, model/provider call, RLM work, or Phase 9 work is part
+of this freeze.
 
 ### Purpose
 
