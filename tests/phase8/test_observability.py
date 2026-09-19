@@ -74,4 +74,3 @@ def test_phase8_activity_vision_states_are_closed() -> None:
         (Phase8ActivityKind.VISION_FAILED, Phase8ActivityStatus.FAILED),
     ):
         assert _event(event_kind=kind, status=status).event_kind is kind
-

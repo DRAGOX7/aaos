@@ -49,4 +49,3 @@ def test_calibration_does_not_accept_real_heldout_ids() -> None:
 
     with pytest.raises(ValueError):
         run_phase8_calibration(manifest)
-
