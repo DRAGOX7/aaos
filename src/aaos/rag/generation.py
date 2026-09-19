@@ -23,6 +23,8 @@ from .contracts import (
     Citation,
     GroundedAnswerRequest,
     GroundedModelOutput,
+    MultimodalEvidence,
+    ProvenanceKind,
     RagAnswer,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
@@ -217,6 +219,91 @@ class CitationValidator:
                 citations.append(_citation_for_claim(claim.claim_id, resolved_item, output))
 
         return _build_answer(output, tuple(citations))
+
+    def validate_multimodal(
+        self,
+        *,
+        claims: tuple[RagClaim, ...],
+        evidence: tuple[MultimodalEvidence, ...],
+        language: str,
+        status: RagAnswerStatus,
+        generation_id: int,
+        content_revision: int,
+    ) -> RagAnswer:
+        """Validate a trusted derived-visual projection without text spans."""
+
+        if not isinstance(evidence, tuple) or not all(
+            isinstance(item, MultimodalEvidence) for item in evidence
+        ):
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+        if any(
+            item.provenance_kind is not ProvenanceKind.DERIVED_VISUAL_EVIDENCE for item in evidence
+        ):
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+        if any(
+            item.generation_id != generation_id or item.content_revision != content_revision
+            for item in evidence
+        ):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        evidence_ids = tuple(item.evidence_id for item in evidence)
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
+            if claims or evidence:
+                raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+            answer_text = _INSUFFICIENT_NOTICES.get(language)
+            if answer_text is None:
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+            answer = RagAnswer(
+                status=status,
+                answer_text=answer_text,
+                language=language,
+                claims=(),
+                citations=(),
+                generation_id=generation_id,
+                content_revision=content_revision,
+            )
+            object.__setattr__(answer, "_validation_marker", _RAG_ANSWER_VALIDATION_MARKER)
+            return answer
+        if status not in {RagAnswerStatus.ANSWER, RagAnswerStatus.PARTIAL_ANSWER}:
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        if not isinstance(claims, tuple) or not all(
+            isinstance(claim, RagClaim) for claim in claims
+        ):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        if not claims or not evidence:
+            raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+        by_id = {item.evidence_id: item for item in evidence}
+        citations: list[Citation] = []
+        for claim in claims:
+            if not claim.evidence_ids or len(set(claim.evidence_ids)) != len(claim.evidence_ids):
+                raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+            for evidence_id in claim.evidence_ids:
+                item = by_id.get(evidence_id)
+                if item is None:
+                    raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+                citations.append(
+                    Citation(
+                        claim_id=claim.claim_id,
+                        document_version_id=item.document_version_id,
+                        document_title=item.document_title,
+                        page_start=item.page_number,
+                        page_end=item.page_number,
+                        provenance_kind=ProvenanceKind.DERIVED_VISUAL_EVIDENCE,
+                    )
+                )
+        answer_text = "\n".join(_validate_claim_text_safe(claim) for claim in claims)
+        answer = RagAnswer(
+            status=status,
+            answer_text=answer_text,
+            language=language,
+            claims=claims,
+            citations=tuple(citations),
+            generation_id=generation_id,
+            content_revision=content_revision,
+        )
+        object.__setattr__(answer, "_validation_marker", _RAG_ANSWER_VALIDATION_MARKER)
+        return answer
 
 
 def _resolve_request_evidence(

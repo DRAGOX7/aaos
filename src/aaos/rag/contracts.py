@@ -36,6 +36,13 @@ class RagAnswerStatus(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
+class ProvenanceKind(StrEnum):
+    """Closed source categories used by trusted citation projection."""
+
+    EMBEDDED_PDF = "EMBEDDED_PDF"
+    DERIVED_VISUAL_EVIDENCE = "DERIVED_VISUAL_EVIDENCE"
+
+
 class SemanticCoverageStatus(StrEnum):
     """Internal model-assisted coverage status, never a public answer status."""
 
@@ -321,6 +328,67 @@ class RetrievedEvidence:
                 _positive_int(rank, name)
         if self.dense_rank is None and self.lexical_rank is None:
             raise ValueError("at least one retrieval rank is required")
+
+
+@dataclass(frozen=True, slots=True)
+class MultimodalEvidence:
+    """Bounded derived visual evidence, never an embedded text span."""
+
+    evidence_id: str
+    derived_text: str
+    document_version_id: int
+    document_title: str
+    page_number: int
+    course_id: int
+    analysis_run_id: int
+    visual_element_id: int
+    source_content_sha256: str
+    render_sha256: str
+    model_id: str
+    model_revision: str
+    prompt_revision: str
+    analysis_schema_revision: str
+    generation_id: int
+    content_revision: int
+    provenance_kind: ProvenanceKind = ProvenanceKind.DERIVED_VISUAL_EVIDENCE
+
+    def __post_init__(self) -> None:
+        for name in (
+            "evidence_id",
+            "derived_text",
+            "document_title",
+            "model_id",
+            "model_revision",
+            "prompt_revision",
+            "analysis_schema_revision",
+        ):
+            object.__setattr__(self, name, _nonblank_text(getattr(self, name), name))
+        for name in (
+            "document_version_id",
+            "page_number",
+            "course_id",
+            "analysis_run_id",
+            "visual_element_id",
+        ):
+            _positive_int(getattr(self, name), name)
+        _positive_int(self.generation_id, "generation_id")
+        _nonnegative_int(self.content_revision, "content_revision")
+        for name in ("source_content_sha256", "render_sha256"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        kind = (
+            self.provenance_kind
+            if isinstance(self.provenance_kind, ProvenanceKind)
+            else ProvenanceKind(self.provenance_kind)
+        )
+        if kind is not ProvenanceKind.DERIVED_VISUAL_EVIDENCE:
+            raise ValueError("multimodal evidence must be derived visual evidence")
+        object.__setattr__(self, "provenance_kind", kind)
 
 
 @dataclass(frozen=True, slots=True)
@@ -802,6 +870,7 @@ class Citation:
     document_title: str
     page_start: int
     page_end: int
+    provenance_kind: ProvenanceKind = ProvenanceKind.EMBEDDED_PDF
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "claim_id", _nonblank_text(self.claim_id, "claim_id"))
@@ -813,6 +882,12 @@ class Citation:
         _positive_int(self.page_end, "page_end")
         if self.page_end < self.page_start:
             raise ValueError("page_end must not precede page_start")
+        kind = (
+            self.provenance_kind
+            if isinstance(self.provenance_kind, ProvenanceKind)
+            else ProvenanceKind(self.provenance_kind)
+        )
+        object.__setattr__(self, "provenance_kind", kind)
 
 
 @dataclass(frozen=True, slots=True)

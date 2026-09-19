@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from aaos.rag.chunking import DeterministicChunker
 from aaos.rag.contracts import (
@@ -12,6 +13,7 @@ from aaos.rag.contracts import (
     DocumentIndexStatus,
     EmbeddingService,
     IndexRunResult,
+    MultimodalEvidence,
     RagErrorCode,
     RagGenerationIdentity,
     RagIndexStatus,
@@ -27,6 +29,9 @@ from aaos.rag.repository import (
     StagedDocumentIndexResult,
 )
 
+if TYPE_CHECKING:
+    from aaos.phase8.visual_provenance import VisualAnalysis
+
 
 @dataclass(frozen=True, slots=True)
 class DocumentIndexResult:
@@ -39,6 +44,35 @@ class DocumentIndexResult:
     chunk_count: int
     error_code: RagErrorCode | None
     verification: DocumentVerificationRecord | None
+
+
+def project_visual_analysis_evidence(
+    analysis: VisualAnalysis,
+    *,
+    analysis_run_id: int,
+    visual_element_ids: tuple[int, ...],
+    document_title: str,
+    course_id: int,
+    generation_id: int,
+    content_revision: int,
+) -> tuple[MultimodalEvidence, ...]:
+    """Expose the explicit derived-visual projection beside text indexing.
+
+    This helper intentionally delegates to the Phase 8 projection boundary;
+    it never inserts visual content into ``rag_chunks`` or text source spans.
+    """
+
+    from aaos.phase8.multimodal_rag import project_visual_elements
+
+    return project_visual_elements(
+        analysis,
+        analysis_run_id=analysis_run_id,
+        visual_element_ids=visual_element_ids,
+        document_title=document_title,
+        course_id=course_id,
+        generation_id=generation_id,
+        content_revision=content_revision,
+    )
 
 
 class RagDocumentIndexer:
@@ -560,4 +594,9 @@ class RagIndexingCoordinator:
         )
 
 
-__all__ = ["DocumentIndexResult", "RagDocumentIndexer", "RagIndexingCoordinator"]
+__all__ = [
+    "DocumentIndexResult",
+    "RagDocumentIndexer",
+    "RagIndexingCoordinator",
+    "project_visual_analysis_evidence",
+]
