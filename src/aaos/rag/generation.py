@@ -273,6 +273,9 @@ class CitationValidator:
             raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
         if not claims or not evidence:
             raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
+        claim_ids = tuple(claim.claim_id for claim in claims)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
         by_id = {item.evidence_id: item for item in evidence}
         citations: list[Citation] = []
         for claim in claims:

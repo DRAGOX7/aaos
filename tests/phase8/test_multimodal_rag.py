@@ -171,6 +171,24 @@ def test_multimodal_projection_rejects_generation_or_provenance_mismatch() -> No
         )
 
 
+def test_multimodal_projection_rejects_duplicate_claim_ids() -> None:
+    from aaos.rag.generation import CitationValidator
+
+    evidence = _evidence()
+    with pytest.raises(RagOperationalError):
+        CitationValidator().validate_multimodal(
+            claims=(
+                RagClaim("duplicate", "one", (evidence.evidence_id,)),
+                RagClaim("duplicate", "two", (evidence.evidence_id,)),
+            ),
+            evidence=(evidence,),
+            language="en",
+            status=RagAnswerStatus.ANSWER,
+            generation_id=4,
+            content_revision=8,
+        )
+
+
 def test_visual_elements_project_with_exact_analysis_lineage() -> None:
     from aaos.phase8.multimodal_rag import project_visual_elements
 
