@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   Activity,
   BookOpen,
@@ -68,6 +71,16 @@ export const AAOS_NAVIGATION: readonly NavigationItem[] = [
   },
 ];
 
+export function resolveActiveNavigationHref(pathname: string): string {
+  const match = AAOS_NAVIGATION
+    .filter((item) => item.href === "/"
+      ? pathname === "/"
+      : pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .sort((left, right) => right.href.length - left.href.length)[0];
+
+  return match?.href ?? "/";
+}
+
 type AppSidebarProps = Readonly<{
   className?: string;
   activeHref?: string;
@@ -75,8 +88,16 @@ type AppSidebarProps = Readonly<{
 
 export function AppSidebar({
   className,
-  activeHref = "/",
+  activeHref,
 }: AppSidebarProps) {
+  const [pathname, setPathname] = useState("/");
+
+  useEffect(() => {
+    setPathname(window.location.pathname);
+  }, []);
+
+  const resolvedActiveHref = activeHref ?? resolveActiveNavigationHref(pathname);
+
   return (
     <aside
       className={cn(
@@ -108,7 +129,7 @@ export function AppSidebar({
       >
         {AAOS_NAVIGATION.map((item) => {
           const Icon = item.icon;
-          const active = item.href === activeHref;
+          const active = item.href === resolvedActiveHref;
 
           return (
             <Link

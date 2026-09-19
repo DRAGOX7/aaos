@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { AppSidebar } from "@/components/aaos/app-sidebar";
+import { AppSidebar, resolveActiveNavigationHref } from "@/components/aaos/app-sidebar";
 
 const expectedLabels = [
   "Overview",
@@ -46,5 +46,14 @@ describe("AAOS navigation", () => {
     );
 
     expect(links).toHaveLength(9);
+  });
+
+  it.each([
+    ["/", "/"],
+    ["/courses", "/courses"],
+    ["/courses/42", "/courses"],
+    ["/system-health", "/system-health"],
+  ])("selects the correct navigation item for %s", (pathname, expected) => {
+    expect(resolveActiveNavigationHref(pathname)).toBe(expected);
   });
 });

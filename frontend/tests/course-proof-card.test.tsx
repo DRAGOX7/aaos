@@ -162,11 +162,24 @@ describe("AAOS course proof card", () => {
   });
 
   it("composes the real course surface on Overview", () => {
-    setQueryState({
-      data: {
-        courses: [],
-      },
-    });
+    useQueryMock
+      .mockReturnValueOnce({ data: { courses: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { assignments: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { tasks: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { approvals: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { courses: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { assignments: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({ data: { documents: [] }, isError: false, isPending: false })
+      .mockReturnValueOnce({
+        data: {
+          checked_at: "2026-09-17T12:00:00Z",
+          components: [],
+          overall: "HEALTHY",
+          schema_version: "phase7-health-v1",
+        },
+        isError: false,
+        isPending: false,
+      });
 
     render(<HomePage />);
 

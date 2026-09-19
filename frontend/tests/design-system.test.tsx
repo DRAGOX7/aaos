@@ -19,9 +19,10 @@ describe("AAOS design system foundation", () => {
   it("provides the shared button primitive", () => {
     render(<Button>Continue</Button>);
 
-    expect(
-      screen.getByRole("button", { name: "Continue" }),
-    ).toBeEnabled();
+    const button = screen.getByRole("button", { name: "Continue" });
+
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("rounded-xl");
   });
 
   it("provides the shared loading primitive", () => {
