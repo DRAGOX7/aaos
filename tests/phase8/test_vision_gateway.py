@@ -58,6 +58,13 @@ def test_request_validation_rejects_unbounded_or_blank_identity() -> None:
         VisionRequest("vision", "rev-1", "prompt-1", 0)
 
 
+def test_approved_local_model_identifier_is_not_treated_as_a_path() -> None:
+    from aaos.phase8.vision_gateway import VisionRequest
+
+    request = VisionRequest("qwen/qwen3.5-4b", "rev-1", "prompt-1", 100)
+    assert request.model_id == "qwen/qwen3.5-4b"
+
+
 def test_gateway_rejects_wrong_image_type() -> None:
     from aaos.phase8.fake_vision import FakeVisionGateway
 

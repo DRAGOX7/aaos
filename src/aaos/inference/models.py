@@ -7,6 +7,7 @@ from typing import Literal
 
 ChatRole = Literal["system", "user", "assistant"]
 _VISION_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_VISION_SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 StructuredOutputMode = Literal["plain", "json_schema"]
 StructuredOutputSchema = Literal[
     "agent_proposal",
@@ -32,9 +33,17 @@ class VisionModelReference:
     revision: str
 
     def __post_init__(self) -> None:
-        for name, value in (("model_id", self.model_id), ("revision", self.revision)):
-            if not isinstance(value, str) or not _VISION_SAFE_IDENTIFIER.fullmatch(value):
-                raise ValueError(f"{name} must be a safe identifier")
+        if (
+            not isinstance(self.model_id, str)
+            or not _VISION_SAFE_MODEL_ID.fullmatch(self.model_id)
+            or ".." in self.model_id
+            or "//" in self.model_id
+        ):
+            raise ValueError("model_id must be a safe model identifier")
+        if not isinstance(self.revision, str) or not _VISION_SAFE_IDENTIFIER.fullmatch(
+            self.revision
+        ):
+            raise ValueError("revision must be a safe identifier")
 
 
 @dataclass(frozen=True, slots=True)

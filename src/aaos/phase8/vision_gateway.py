@@ -12,6 +12,7 @@ from .vision_contracts import RenderedPage
 VisionStatus = Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "UNAVAILABLE"]
 MAX_VISION_OUTPUT_BYTES = 1 * 1024 * 1024
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +23,14 @@ class VisionRequest:
     max_output_bytes: int
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.model_id, str)
+            or not _SAFE_MODEL_ID.fullmatch(self.model_id)
+            or ".." in self.model_id
+            or "//" in self.model_id
+        ):
+            raise ValueError("model_id must be a safe model identifier")
         for name, value in (
-            ("model_id", self.model_id),
             ("model_revision", self.model_revision),
             ("prompt_revision", self.prompt_revision),
         ):
