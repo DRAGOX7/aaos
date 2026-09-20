@@ -8,7 +8,12 @@ from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from playwright.sync_api import Error as PlaywrightError
 
-from aaos.academic.source import RawAnnouncement, RawCourse, SourceCollectionFailure
+from aaos.academic.source import (
+    RawAnnouncement,
+    RawCourse,
+    SourceCollection,
+    SourceCollectionFailure,
+)
 from aaos.moodle.browser_models import (
     BrowserPolicyError,
     BrowserProfileBusyError,
@@ -39,6 +44,7 @@ from aaos.moodle.collection import (
     CourseDiscoveryResult,
     EntityBundle,
     EntityBundleResult,
+    collect_complete,
 )
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
@@ -424,6 +430,88 @@ def _run_same_context_browser_course_smoke(
             if isinstance(result, SourceCollectionFailure):
                 raise BrowserSmokeFailure(_collection_failure_stage(result))
             return result
+        except BrowserSmokeFailure:
+            operation_failed = True
+            raise
+        finally:
+            try:
+                _close_context_after_operation(context)
+            except BrowserSmokeFailure:
+                if not operation_failed:
+                    raise
+
+
+def _run_same_context_complete_collection(
+    *,
+    settings: MoodleSettings,
+    paths: AuthPaths,
+    launch_persistent_context: Callable[..., object],
+    canonical_wwwroot: str | None = None,
+) -> SourceCollection:
+    """Collect one complete Moodle snapshot inside the authenticated context."""
+    if settings.mode != "browser":
+        raise BrowserSmokeFailure("PROFILE")
+    try:
+        profile = resolve_browser_profile_paths(paths, settings.base_origin)
+        lease = acquire_browser_profile_lock(profile)
+    except (BrowserPolicyError, BrowserProfileBusyError, OSError, TypeError, ValueError):
+        raise BrowserSmokeFailure("PROFILE") from None
+    with lease:
+        try:
+            ensure_browser_profile_binding(
+                profile, expected_origin=settings.base_origin, expected_alias=settings.auth_alias
+            )
+        except (BrowserPolicyError, OSError, TypeError, ValueError):
+            raise BrowserSmokeFailure("PROFILE") from None
+        try:
+            context = launch_persistent_context(
+                channel="msedge",
+                headless=False,
+                user_data_dir=profile.profile_dir,
+                accept_downloads=False,
+                service_workers="block",
+            )
+        except (OSError, TimeoutError, TypeError, ValueError):
+            raise BrowserSmokeFailure("CONTEXT_LAUNCH") from None
+
+        operation_failed = False
+        try:
+            try:
+                auth_page = getattr(context, "new_page")()
+                auth_page.goto(
+                    settings.base_origin + "/current/login/index.php",
+                    wait_until="domcontentloaded",
+                    timeout=600_000,
+                )
+            except TimeoutError:
+                raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("AUTH_REQUIRED") from None
+            try:
+                authenticated = wait_for_authenticated_course_index(
+                    auth_page,
+                    course_index_url=settings.base_origin + "/current/my/courses.php",
+                    timeout_seconds=600,
+                )
+            except TimeoutError:
+                raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("AUTH_PROOF") from None
+            if not authenticated:
+                raise BrowserSmokeFailure("AUTH_PROOF")
+            auth_pages, sentinel = _create_transition_sentinel(context)
+            _close_auth_pages(context, auth_pages, sentinel)
+            try:
+                navigator = PlaywrightRestrictedNavigator(
+                    cast(Any, context),
+                    settings.base_origin,
+                    canonical_wwwroot=canonical_wwwroot,
+                    transition_sentinel=cast(Any, sentinel),
+                )
+            except (BrowserPolicyError, OSError, TypeError, ValueError):
+                raise BrowserSmokeFailure("INTERCEPTION_INSTALL") from None
+            source = MoodleBrowserSource(navigator, settings.source_system, settings.base_origin)
+            return collect_complete(source, source_system=settings.source_system)
         except BrowserSmokeFailure:
             operation_failed = True
             raise
