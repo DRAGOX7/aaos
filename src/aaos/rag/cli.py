@@ -26,6 +26,10 @@ from .contracts import (
     RagScope,
     RenderedRagResponse,
 )
+from .database import (
+    create_existing_rag_database_engine,
+    validate_rag_database,
+)
 
 _USAGE = (
     "usage: aaos rag index-new [--document-version-id ID] | rag rebuild | rag status | "
@@ -337,9 +341,16 @@ def _build_configured_runtime() -> _ConfiguredRuntime:
         embedding_dimensions=BGE_M3_DIMENSIONS,
     )
     paths = resolve_rag_runtime_paths(Path("data").resolve())
+    validate_rag_database(paths.database_path)
+
     gateway = LMStudioGateway(DEFAULT_SETTINGS, httpx2.AsyncHTTPTransport())
     try:
-        runtime = build_phase4_runtime(paths=paths, config=config, gateway=gateway)
+        runtime = build_phase4_runtime(
+            paths=paths,
+            config=config,
+            gateway=gateway,
+            database_engine_factory=create_existing_rag_database_engine,
+        )
     except Exception:
         try:
             asyncio.run(gateway.aclose())

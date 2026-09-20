@@ -13,6 +13,10 @@ from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.inference.lm_studio import LMStudioGateway
 from aaos.rag.config import RagIndexConfig, resolve_rag_runtime_paths
 from aaos.rag.contracts import LocalRagService, RagErrorCode, RagOperationalError
+from aaos.rag.database import (
+    create_existing_rag_database_engine,
+    validate_rag_database,
+)
 from aaos.rag.embeddings import (
     BGE_M3_DIMENSIONS,
     BGE_M3_MODEL_IDENTIFIER,
@@ -83,9 +87,16 @@ def build_configured_phase4_runtime(
         embedding_dimensions=BGE_M3_DIMENSIONS,
     )
     paths = resolve_rag_runtime_paths((data_root or Path("data")).resolve())
+    validate_rag_database(paths.database_path)
+
     gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
     try:
-        runtime = build_phase4_runtime(paths=paths, config=config, gateway=gateway)
+        runtime = build_phase4_runtime(
+            paths=paths,
+            config=config,
+            gateway=gateway,
+            database_engine_factory=create_existing_rag_database_engine,
+        )
     except Exception:
         try:
             asyncio.run(gateway.aclose())
