@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
+from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from aaos.academic.source import (
@@ -23,7 +27,7 @@ from aaos.moodle.receiver import (
     RuntimeMoodleEnvironment,
     load_runtime_moodle_environment,
 )
-from aaos.persistence.database import create_database_engine, create_session_factory
+from aaos.persistence.database import create_session_factory
 
 
 def _database_is_present(database_path: Path) -> None:
@@ -34,12 +38,36 @@ def _database_is_present(database_path: Path) -> None:
         raise ValueError("database unavailable") from None
 
 
+def _create_existing_database_engine(database_path: Path) -> Engine:
+    """Open an existing SQLite file without allowing SQLite to create one."""
+    resolved_path = database_path.resolve(strict=True)
+    if not resolved_path.is_file():
+        raise ValueError("database unavailable")
+
+    database_uri = f"{resolved_path.as_uri()}?mode=rw"
+
+    def connect_existing() -> sqlite3.Connection:
+        return sqlite3.connect(database_uri, uri=True)
+
+    engine = sqlalchemy_create_engine("sqlite+pysqlite://", creator=connect_existing)
+
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    return engine
+
+
 def collect_configured_snapshot(environment: RuntimeMoodleEnvironment) -> SourceCollection:
     """Use the configured authenticated browser and restricted source only."""
     from aaos.moodle.browser_runtime import launch_msedge_persistent_context
 
     return _run_same_context_complete_collection(
-        settings=environment.settings,
+        settings=replace(environment.settings, mode="browser"),
         paths=environment.auth_paths,
         launch_persistent_context=launch_msedge_persistent_context,
         canonical_wwwroot=environment.bootstrap_config.canonical_wwwroot,
@@ -49,7 +77,7 @@ def collect_configured_snapshot(environment: RuntimeMoodleEnvironment) -> Source
 def _persist_snapshot(collection: CompleteSourceSnapshot, database_path: Path) -> None:
     engine: Engine | None = None
     try:
-        engine = create_database_engine(database_path)
+        engine = _create_existing_database_engine(database_path)
         session_factory = create_session_factory(engine)
         sync_moodle_snapshot(collection, session_factory=session_factory)
     finally:
