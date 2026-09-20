@@ -433,6 +433,11 @@ class DeterministicChunker:
         """Expose the immutable fingerprint required to bind a generation safely."""
         return self._config_fingerprint
 
+    @property
+    def config(self) -> RagIndexConfig:
+        """Return the immutable configuration bound to this chunker."""
+        return self._config
+
     def chunk(
         self,
         document_version_id: int,

@@ -519,3 +519,23 @@ def test_rebuild_result_is_safe_for_empty_current_corpus(tmp_path: Path) -> None
             RagErrorCode.NO_ACTIVE_GENERATION,
             RagErrorCode.NO_ELIGIBLE_DOCUMENTS,
         }
+
+
+def test_rebuild_bootstraps_first_active_generation(tmp_path: Path) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("first generation searchable text",))
+        dense = InMemoryDenseIndexFactory()
+        indexer = _indexer(tmp_path, repository, dense)
+        coordinator = _coordinator(tmp_path, repository, dense, indexer)
+
+        result = coordinator.rebuild()
+
+        assert result.safe_status == "PASS"
+        active = repository.get_active_generation()
+        assert active.generation_id == result.generation_id
+        assert active.status is GenerationStatus.ACTIVE
+        assert (
+            repository.get_document_index(active.identity, version_id).status
+            is DocumentIndexStatus.READY
+        )
+        assert repository.list_chunks(active.identity, version_id)

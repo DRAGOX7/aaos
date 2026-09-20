@@ -338,6 +338,13 @@ def _as_coverage_status(value: str) -> CoverageStatus:
         raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED) from error
 
 
+class _ExpectedActiveGenerationUnset:
+    __slots__ = ()
+
+
+_EXPECTED_ACTIVE_GENERATION_UNSET = _ExpectedActiveGenerationUnset()
+
+
 class RagRepository:
     """Typed, transaction-scoped access to authoritative Phase 4 SQLite state."""
 
@@ -942,7 +949,9 @@ class RagRepository:
         identity: RagGenerationIdentity,
         *,
         expected_revision: int,
-        expected_active_generation_id: int | None = None,
+        expected_active_generation_id: (
+            int | None | _ExpectedActiveGenerationUnset
+        ) = _EXPECTED_ACTIVE_GENERATION_UNSET,
     ) -> GenerationBuild:
         """Atomically retire the expected ACTIVE row and activate a BUILDING row."""
         session = self._session_factory()
@@ -960,15 +969,19 @@ class RagRepository:
                 )
                 if len(active_rows) > 1:
                     raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
-                if expected_active_generation_id is not None:
-                    if (
-                        isinstance(expected_active_generation_id, bool)
-                        or not isinstance(expected_active_generation_id, int)
-                        or expected_active_generation_id <= 0
-                        or len(active_rows) != 1
-                        or int(active_rows[0].id) != expected_active_generation_id
-                    ):
+                if isinstance(expected_active_generation_id, _ExpectedActiveGenerationUnset):
+                    pass
+                elif expected_active_generation_id is None:
+                    if active_rows:
                         raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+                elif (
+                    isinstance(expected_active_generation_id, bool)
+                    or not isinstance(expected_active_generation_id, int)
+                    or expected_active_generation_id <= 0
+                    or len(active_rows) != 1
+                    or int(active_rows[0].id) != expected_active_generation_id
+                ):
+                    raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
                 if active_rows:
                     active_rows[0].status = GenerationStatus.RETIRED.value
                 row.status = GenerationStatus.ACTIVE.value

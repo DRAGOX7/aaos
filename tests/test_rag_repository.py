@@ -768,3 +768,26 @@ def test_generation_document_verification_rejects_non_ready_or_incomplete_rows(
         with pytest.raises(RagOperationalError) as caught:
             repository.verify_generation_document(generation.identity, ids["one_v2"])
         assert caught.value.code is RagErrorCode.INDEX_INTEGRITY_FAILED
+
+
+def test_explicit_none_active_expectation_rejects_competing_active_generation(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, _, _):
+        current = _create_generation(repository)
+        repository.activate_generation(current.identity, expected_revision=0)
+
+        candidate = _create_generation(repository)
+
+        with pytest.raises(RagOperationalError) as caught:
+            repository.activate_generation(
+                candidate.identity,
+                expected_revision=0,
+                expected_active_generation_id=None,
+            )
+
+        assert caught.value.code is RagErrorCode.GENERATION_ACTIVATION_FAILED
+        assert repository.get_active_generation().generation_id == current.generation_id
+        assert (
+            repository.get_generation(candidate.generation_id).status is GenerationStatus.BUILDING
+        )

@@ -444,7 +444,13 @@ class RagIndexingCoordinator:
     def rebuild(self) -> IndexRunResult:
         """Build an isolated generation and activate it only after integrity checks."""
         with self._index_lock.acquire() as lease:
-            active = self._repository.get_active_generation()
+            try:
+                active = self._repository.get_active_generation()
+            except RagOperationalError as error:
+                if error.code is not RagErrorCode.NO_ACTIVE_GENERATION:
+                    raise
+                active = None
+
             candidates = self._repository.resolve_rebuild_candidates()
             if not candidates:
                 raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
@@ -484,7 +490,9 @@ class RagIndexingCoordinator:
             activated = self._repository.activate_generation(
                 building.identity,
                 expected_revision=building.identity.content_revision,
-                expected_active_generation_id=active.generation_id,
+                expected_active_generation_id=(
+                    active.generation_id if active is not None else None
+                ),
             )
             return IndexRunResult(
                 "PASS",
@@ -494,32 +502,62 @@ class RagIndexingCoordinator:
                 report.not_searchable_document_count,
             )
 
-    def _resolve_or_create_building(self, active: GenerationBuild) -> GenerationBuild:
+    def _resolve_or_create_building(self, active: GenerationBuild | None) -> GenerationBuild:
         """Reuse one matching interrupted build or create an isolated BUILDING row."""
         buildings = self._repository.list_building_generations()
         if len(buildings) > 1:
             raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+
+        config = self._document_indexer._chunker.config
+        embedding = self._document_indexer._embedding_service.model_metadata()
+
         if buildings:
             candidate = buildings[0]
-            if (
-                candidate.identity.config_fingerprint != active.identity.config_fingerprint
-                or candidate.identity.embedding_dimensions != active.identity.embedding_dimensions
-                or candidate.embedding_model != active.embedding_model
-                or candidate.embedding_revision != active.embedding_revision
-                or candidate.chunker_version != active.chunker_version
-                or candidate.lexical_normalizer_version != active.lexical_normalizer_version
+            if active is not None:
+                if (
+                    candidate.identity.config_fingerprint != active.identity.config_fingerprint
+                    or candidate.identity.embedding_dimensions
+                    != active.identity.embedding_dimensions
+                    or candidate.embedding_model != active.embedding_model
+                    or candidate.embedding_revision != active.embedding_revision
+                    or candidate.chunker_version != active.chunker_version
+                    or candidate.lexical_normalizer_version != active.lexical_normalizer_version
+                ):
+                    raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
+            elif (
+                candidate.identity.config_fingerprint
+                != self._document_indexer._chunker.config_fingerprint
+                or candidate.identity.embedding_dimensions != embedding.dimensions
+                or candidate.embedding_model != embedding.model_identifier
+                or candidate.embedding_revision != embedding.model_revision
+                or candidate.chunker_version != config.chunker_version
+                or candidate.lexical_normalizer_version != config.lexical_normalizer_version
             ):
                 raise RagOperationalError(RagErrorCode.GENERATION_ACTIVATION_FAILED)
             return candidate
+
+        if active is not None:
+            return self._repository.create_generation(
+                config_fingerprint=active.identity.config_fingerprint,
+                chunker_version=active.chunker_version,
+                chunking_config=active.chunking_config,
+                lexical_normalizer_version=active.lexical_normalizer_version,
+                embedding_model=active.embedding_model,
+                embedding_revision=active.embedding_revision,
+                embedding_dimensions=active.identity.embedding_dimensions,
+                retrieval_config=active.retrieval_config,
+                content_revision=0,
+            )
+
         return self._repository.create_generation(
-            config_fingerprint=active.identity.config_fingerprint,
-            chunker_version=active.chunker_version,
-            chunking_config=active.chunking_config,
-            lexical_normalizer_version=active.lexical_normalizer_version,
-            embedding_model=active.embedding_model,
-            embedding_revision=active.embedding_revision,
-            embedding_dimensions=active.identity.embedding_dimensions,
-            retrieval_config=active.retrieval_config,
+            config_fingerprint=self._document_indexer._chunker.config_fingerprint,
+            chunker_version=config.chunker_version,
+            chunking_config="{}",
+            lexical_normalizer_version=config.lexical_normalizer_version,
+            embedding_model=embedding.model_identifier,
+            embedding_revision=embedding.model_revision,
+            embedding_dimensions=embedding.dimensions,
+            retrieval_config="{}",
             content_revision=0,
         )
 
