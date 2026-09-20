@@ -10,7 +10,8 @@ import type {
 } from "@/lib/api/academic";
 import type { CourseListResponse } from "@/lib/api/courses";
 
-const { useQueryMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
+  useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock("@tanstack/react-query", async () => {
 
   return {
     ...actual,
+    useMutation: useMutationMock,
     useQuery: useQueryMock,
   };
 });
@@ -98,6 +100,8 @@ const success = (data: unknown): QueryState => ({ data });
 
 describe("AAOS academic overview", () => {
   beforeEach(() => {
+    useMutationMock.mockReset();
+    useMutationMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
     useQueryMock.mockReset();
   });
 
@@ -107,10 +111,10 @@ describe("AAOS academic overview", () => {
       success(assignments),
       success(tasks),
       success(approvals),
+      success(health),
       success(courses),
       success(assignments),
       success(documents),
-      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -139,10 +143,10 @@ describe("AAOS academic overview", () => {
       success(assignments),
       success(tasks),
       success(approvals),
+      success(health),
       success(courses),
       success(assignments),
       success(documents),
-      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -166,10 +170,10 @@ describe("AAOS academic overview", () => {
       { error: new Error("private assignment failure"), isError: true },
       success(tasks),
       success(approvals),
+      success(health),
       success(courses),
       { error: new Error("private assignment failure"), isError: true },
       success(documents),
-      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -186,10 +190,10 @@ describe("AAOS academic overview", () => {
       success(assignments),
       success(tasks),
       success(approvals),
+      success(health),
       { error: new Error("private course failure"), isError: true },
       success(assignments),
       { error: new Error("private document failure"), isError: true },
-      success(health),
     );
 
     render(<OverviewAcademicSummary />);
@@ -206,10 +210,10 @@ describe("AAOS academic overview", () => {
       { data: { assignments: [] } },
       { data: tasks },
       { data: approvals },
+      { data: health },
       { isPending: true },
       { data: { assignments: [] } },
       { data: { documents: [] } },
-      { data: health },
     );
 
     render(<OverviewAcademicSummary />);
@@ -236,10 +240,10 @@ describe("AAOS academic overview", () => {
       success(assignments),
       success(tasks),
       success(approvals),
+      success({ ...health, overall: "DEGRADED" as const }),
       success(courses),
       success(assignments),
       success(documents),
-      success({ ...health, overall: "DEGRADED" as const }),
     );
 
     render(<OverviewAcademicSummary />);

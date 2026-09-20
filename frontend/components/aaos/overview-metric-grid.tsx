@@ -33,10 +33,10 @@ type MetricCardProps = Readonly<{
 }>;
 
 const toneClasses: Record<MetricTone, string> = {
-  blue: "bg-primary-soft text-primary",
-  teal: "bg-teal-soft text-teal",
-  purple: "bg-purple-soft text-purple",
-  orange: "bg-warning-soft text-warning",
+  blue: "bg-primary text-primary-foreground shadow-[0_8px_18px_rgb(22_119_242_/_0.22)]",
+  teal: "bg-teal text-white shadow-[0_8px_18px_rgb(11_158_168_/_0.2)]",
+  purple: "bg-purple text-white shadow-[0_8px_18px_rgb(118_87_217_/_0.2)]",
+  orange: "bg-warning text-white shadow-[0_8px_18px_rgb(238_148_18_/_0.2)]",
 };
 
 function MetricCard({
@@ -67,11 +67,11 @@ function MetricCard({
           {loading ? (
             <Skeleton className="h-10 w-16 rounded-lg" />
           ) : (
-            <p className="text-4xl font-semibold tracking-tight text-primary-deep">
+            <p className="text-3xl font-semibold tracking-tight text-primary-deep">
               {value}
             </p>
           )}
-          <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+          <p className="mt-1 text-xs font-medium text-muted-foreground">{detail}</p>
         </div>
         <span className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${toneClasses[tone]}`}>
           <Icon aria-hidden="true" className="size-5" strokeWidth={1.8} />
@@ -96,8 +96,8 @@ function metricState<T extends object>(query: {
 
   if (query.isError || !query.data) {
     return {
-      value: "Unavailable",
-      detail: "Current count is unavailable",
+      value: "—",
+      detail: "Not connected",
       loading: false,
     };
   }
@@ -149,8 +149,8 @@ export function OverviewMetricGrid() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Active courses"
-          value={courseState.loading || courseState.value === "Unavailable" ? courseState.value : String(courseCount)}
-          detail={courseState.loading ? courseState.detail : courseState.value === "Unavailable" ? courseState.detail : "Courses in your workspace"}
+          value={courseState.loading || courseState.value === "—" ? courseState.value : String(courseCount)}
+          detail={courseState.loading ? courseState.detail : courseState.value === "—" ? courseState.detail : "Courses in your workspace"}
           href="/courses"
           icon={BookOpen}
           tone="blue"
@@ -158,8 +158,8 @@ export function OverviewMetricGrid() {
         />
         <MetricCard
           label="Open assignments"
-          value={assignmentState.loading || assignmentState.value === "Unavailable" ? assignmentState.value : String(assignmentCount)}
-          detail={assignmentState.loading ? assignmentState.detail : assignmentState.value === "Unavailable" ? assignmentState.detail : "Assignments to keep in view"}
+          value={assignmentState.loading || assignmentState.value === "—" ? assignmentState.value : String(assignmentCount)}
+          detail={assignmentState.loading ? assignmentState.detail : assignmentState.value === "—" ? assignmentState.detail : "Assignments to keep in view"}
           href="/assignments"
           icon={ClipboardList}
           tone="teal"
@@ -167,8 +167,8 @@ export function OverviewMetricGrid() {
         />
         <MetricCard
           label="Pending approvals"
-          value={approvalState.loading || approvalState.value === "Unavailable" ? approvalState.value : String(pendingApprovalCount)}
-          detail={approvalState.loading ? approvalState.detail : approvalState.value === "Unavailable" ? approvalState.detail : "Human decisions waiting"}
+          value={approvalState.loading || approvalState.value === "—" ? approvalState.value : String(pendingApprovalCount)}
+          detail={approvalState.loading ? approvalState.detail : approvalState.value === "—" ? approvalState.detail : "Human decisions waiting"}
           href="/approvals"
           icon={CheckCircle2}
           tone="purple"
@@ -176,8 +176,8 @@ export function OverviewMetricGrid() {
         />
         <MetricCard
           label="Active tasks"
-          value={taskState.loading || taskState.value === "Unavailable" ? taskState.value : String(activeTaskCount)}
-          detail={taskState.loading ? taskState.detail : taskState.value === "Unavailable" ? taskState.detail : "Trusted work in motion"}
+          value={taskState.loading || taskState.value === "—" ? taskState.value : String(activeTaskCount)}
+          detail={taskState.loading ? taskState.detail : taskState.value === "—" ? taskState.detail : "Trusted work in motion"}
           href="/tasks"
           icon={ListTodo}
           tone="orange"

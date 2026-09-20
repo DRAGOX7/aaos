@@ -6,7 +6,8 @@ import { AppShell } from "@/components/aaos/app-shell";
 import { CourseProofCard } from "@/components/aaos/course-proof-card";
 import type { CourseListResponse } from "@/lib/api/courses";
 
-const { useQueryMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
+  useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock("@tanstack/react-query", async () => {
 
   return {
     ...actual,
+    useMutation: useMutationMock,
     useQuery: useQueryMock,
   };
 });
@@ -40,6 +42,8 @@ function setQueryState({
 
 describe("AAOS course proof card", () => {
   beforeEach(() => {
+    useMutationMock.mockReset();
+    useMutationMock.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
     useQueryMock.mockReset();
   });
 
@@ -162,24 +166,31 @@ describe("AAOS course proof card", () => {
   });
 
   it("composes the real course surface on Overview", () => {
-    useQueryMock
-      .mockReturnValueOnce({ data: { courses: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { assignments: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { tasks: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { approvals: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { courses: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { assignments: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({ data: { documents: [] }, isError: false, isPending: false })
-      .mockReturnValueOnce({
-        data: {
-          checked_at: "2026-09-17T12:00:00Z",
-          components: [],
-          overall: "HEALTHY",
-          schema_version: "phase7-health-v1",
-        },
-        isError: false,
-        isPending: false,
-      });
+    useQueryMock.mockImplementation((options: { queryKey?: readonly unknown[] }) => {
+      switch (options.queryKey?.[0]) {
+        case "courses":
+          return { data: { courses: [] }, isError: false, isPending: false };
+        case "assignments":
+          return { data: { assignments: [] }, isError: false, isPending: false };
+        case "tasks":
+          return { data: { tasks: [] }, isError: false, isPending: false };
+        case "approvals":
+          return { data: { approvals: [] }, isError: false, isPending: false };
+        case "system-health":
+          return {
+            data: {
+              checked_at: "2026-09-17T12:00:00Z",
+              components: [],
+              overall: "HEALTHY",
+              schema_version: "phase7-health-v1",
+            },
+            isError: false,
+            isPending: false,
+          };
+        default:
+          return { data: undefined, isError: true, isPending: false };
+      }
+    });
 
     render(<HomePage />);
 
