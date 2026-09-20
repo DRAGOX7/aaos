@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -165,7 +166,7 @@ def _spy_composition_engines(
         dispose_counts.append(0)
         return engine
 
-    monkeypatch.setattr(module, "create_database_engine", create_spied_engine)
+    monkeypatch.setattr(module, "_create_existing_database_engine", create_spied_engine)
     return engines, dispose_counts
 
 
@@ -351,7 +352,7 @@ def test_build_binds_canonical_wwwroot_and_source_system_explicitly(
             captured.update(kwargs)
 
     monkeypatch.setattr(module, "_database_is_migrated", lambda _path: None)
-    monkeypatch.setattr(module, "create_database_engine", lambda _path: object())
+    monkeypatch.setattr(module, "_create_existing_database_engine", lambda _path: object())
     monkeypatch.setattr(module, "create_session_factory", lambda _engine: object())
     monkeypatch.setattr(module, "DocumentRepository", lambda _factory: object())
     monkeypatch.setattr(module, "ContentBlobStore", lambda _root: object())
@@ -460,6 +461,7 @@ def test_run_documents_command_closes_runtime_when_service_fails(
     monkeypatch.setattr(module, "Phase3IngestionService", FailingService)
     monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
     monkeypatch.setattr(module, "resolve_document_runtime_paths", lambda _root: paths)
+    monkeypatch.setattr(module, "_normal_database_path", lambda: paths.database_path)
 
     assert module.run_documents_command(["refresh"]) == 1
     assert len(engines) == 2
@@ -496,3 +498,162 @@ def test_main_routes_documents_without_eagerly_running_doctor(
     monkeypatch.setattr(sys, "argv", ["aaos", "documents", "refresh"])
     assert cli.main() == 7
     assert calls == [("refresh",)]
+
+
+def test_command_uses_canonical_database_and_runtime_data_root_for_other_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Moodle/runtime root must not select the academic application DB."""
+    import aaos.documents.cli as module
+
+    runtime_root = tmp_path / "moodle-runtime"
+    canonical_db = tmp_path / "application" / "data" / "database" / "aaos.db"
+    env = environment(runtime_root)
+    captured: dict[str, object] = {}
+    runtime = FakeRuntime(FakeService([], batch()))
+
+    def capture_build(**kwargs: object) -> FakeRuntime:
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
+    monkeypatch.setattr(module, "_normal_database_path", lambda: canonical_db, raising=False)
+    monkeypatch.setattr(module, "build_phase3_service", capture_build)
+
+    assert module.run_documents_command(["refresh"]) == 0
+    paths = captured["paths"]
+    assert isinstance(paths, DocumentRuntimePaths)
+    assert paths.database_path == canonical_db
+    assert paths.content_store_root == runtime_root / "documents"
+    assert paths.ingestion_lock_path == runtime_root / "temporary" / "phase3-ingestion.lock"
+
+
+def test_missing_canonical_database_is_not_replaced_by_runtime_root_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An alternate DB beneath AAOS_DATA_ROOT must never satisfy the command."""
+    import aaos.documents.cli as module
+
+    runtime_root = tmp_path / "moodle-runtime"
+    runtime_root.mkdir(parents=True)
+    alternate_db = runtime_root / "database" / "aaos.db"
+    alternate_db.parent.mkdir()
+    alternate_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    alternate_config.set_main_option("aaos.database_path", str(alternate_db))
+    command.upgrade(alternate_config, "0003_phase3_document_ingestion")
+    canonical_db = tmp_path / "application" / "data" / "database" / "aaos.db"
+    env = environment(runtime_root)
+
+    class FakePhase3Service:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **_kwargs: object) -> BatchIngestionResult:
+            return batch()
+
+    monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
+    monkeypatch.setattr(module, "_normal_database_path", lambda: canonical_db, raising=False)
+    monkeypatch.setattr(module, "Phase3IngestionService", FakePhase3Service)
+
+    assert module.run_documents_command(["refresh"]) == 1
+    assert not canonical_db.exists()
+
+
+@pytest.mark.parametrize(
+    ("revision", "accepted"),
+    [
+        ("0002_phase1_academic_domain", False),
+        ("0003_phase3_document_ingestion", True),
+        ("0007_phase8_visual_provenance", True),
+        ("unknown_revision", False),
+    ],
+)
+def test_database_migration_guard_uses_repository_ancestry(
+    tmp_path: Path, revision: str, accepted: bool
+) -> None:
+    import aaos.documents.cli as module
+
+    database_path = tmp_path / f"{revision}.db"
+    if revision == "unknown_revision":
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(64))")
+            connection.execute("INSERT INTO alembic_version VALUES (?)", (revision,))
+    else:
+        config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        config.set_main_option("aaos.database_path", str(database_path))
+        command.upgrade(config, revision)
+
+    if accepted:
+        module._database_is_migrated(database_path)
+    else:
+        with pytest.raises(Exception):
+            module._database_is_migrated(database_path)
+
+
+def test_database_disappearing_after_validation_is_not_recreated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The existing-only open must fail closed after a successful precheck."""
+    import aaos.documents.cli as module
+
+    env, paths = _migrated_phase3_setup(tmp_path)
+    paths.database_path.unlink()
+    paths.database_path.touch()
+    constructed = False
+
+    class FakePhase3Service:
+        def __init__(self, **_kwargs: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    def validation_then_delete(path: Path) -> None:
+        path.unlink()
+
+    monkeypatch.setattr(module, "_database_is_migrated", validation_then_delete)
+    monkeypatch.setattr(module, "Phase3IngestionService", FakePhase3Service)
+
+    with pytest.raises(Exception):
+        build_phase3_service(
+            bootstrap_config=env.bootstrap_config,
+            settings=env.settings,
+            auth_paths=env.auth_paths,
+            paths=paths,
+        )
+    assert not paths.database_path.exists()
+    assert not constructed
+
+
+def test_existing_only_database_engine_enables_foreign_keys(tmp_path: Path) -> None:
+    import aaos.documents.cli as module
+
+    database_path = tmp_path / "existing.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        connection.execute(
+            "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id))"
+        )
+
+    engine = module._create_existing_database_engine(database_path)
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def test_document_command_never_invokes_alembic_upgrade(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import aaos.documents.cli as module
+
+    env = environment(tmp_path)
+    runtime = FakeRuntime(FakeService([], batch()))
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("document command must not run Alembic migrations")
+
+    monkeypatch.setattr(module, "load_runtime_moodle_environment", lambda: env)
+    monkeypatch.setattr(module, "build_phase3_service", lambda **_: runtime)
+    monkeypatch.setattr(command, "upgrade", fail_if_called)
+
+    assert module.run_documents_command(["refresh"]) == 0

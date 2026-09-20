@@ -9,8 +9,13 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Engine
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
+from sqlalchemy import URL, Engine, event
+from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from aaos.documents.config import DocumentRuntimePaths, resolve_document_runtime_paths
@@ -36,10 +41,14 @@ from aaos.moodle.receiver import (
     RuntimeMoodleEnvironment,
     load_runtime_moodle_environment,
 )
-from aaos.persistence.database import create_database_engine, create_session_factory
+from aaos.persistence.database import (
+    DEFAULT_DATABASE_PATH,
+    create_session_factory,
+    resolve_database_path,
+)
 
 _USAGE = "usage: aaos documents <ingest-new|refresh> [--remote-file-id <positive-int>]"
-_HEAD_REVISION = "0003_phase3_document_ingestion"
+_REQUIRED_REVISION = "0003_phase3_document_ingestion"
 _POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 
 __all__ = [
@@ -58,6 +67,11 @@ class DocumentCommandError(RuntimeError):
 
 def _configuration_failure() -> DocumentCommandError:
     return DocumentCommandError("document ingestion configuration failed")
+
+
+def _normal_database_path() -> Path:
+    """Resolve the canonical application database independently of Moodle data."""
+    return resolve_database_path(DEFAULT_DATABASE_PATH)
 
 
 @dataclass(slots=True)
@@ -83,10 +97,11 @@ class Phase3ServiceRuntime(AbstractContextManager["Phase3ServiceRuntime"]):
 
 
 def _database_is_migrated(database_path: Path) -> None:
+    engine: Engine | None = None
     try:
         if not database_path.is_file() or database_path.resolve(strict=True) != database_path:
             raise _configuration_failure()
-        engine = create_database_engine(database_path)
+        engine = _create_existing_database_engine(database_path)
         try:
             with engine.connect() as connection:
                 revision = connection.exec_driver_sql(
@@ -94,12 +109,62 @@ def _database_is_migrated(database_path: Path) -> None:
                 ).scalar_one()
         finally:
             engine.dispose()
+    except (DocumentCommandError, OSError, RuntimeError, SQLAlchemyError, TypeError, ValueError):
+        raise _configuration_failure() from None
+    if not _is_compatible_migration_revision(revision):
+        raise _configuration_failure()
+
+
+def _is_compatible_migration_revision(revision: str) -> bool:
+    """Return whether ``revision`` is a repository descendant of Phase 3."""
+    try:
+        config = Config(str(Path(__file__).resolve().parents[3] / "alembic.ini"))
+        script = ScriptDirectory.from_config(config)
+        tuple(
+            script.revision_map.iterate_revisions(
+                revision,
+                _REQUIRED_REVISION,
+                inclusive=True,
+            )
+        )
+    except (RevisionError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _create_existing_database_engine(database_path: Path) -> Engine:
+    """Open an existing SQLite database without permitting SQLite creation."""
+    engine: Engine | None = None
+    try:
+        resolved_path = database_path.resolve(strict=True)
+        if not resolved_path.is_file() or resolved_path != database_path:
+            raise _configuration_failure()
+        url = URL.create(
+            drivername="sqlite+pysqlite",
+            database=f"file:{resolved_path.as_posix()}",
+            query={"mode": "rw", "uri": "true"},
+        )
+        engine = sqlalchemy_create_engine(url)
+
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
+
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SELECT 1")
+        return engine
     except DocumentCommandError:
+        if engine is not None:
+            engine.dispose()
         raise
     except (OSError, RuntimeError, SQLAlchemyError, TypeError, ValueError):
+        if engine is not None:
+            engine.dispose()
         raise _configuration_failure() from None
-    if revision != _HEAD_REVISION:
-        raise _configuration_failure()
 
 
 def _validate_content_store_parent(path: Path) -> None:
@@ -125,7 +190,7 @@ def build_phase3_service(
     _validate_content_store_parent(paths.content_store_root)
     engine: Engine | None = None
     try:
-        engine = create_database_engine(paths.database_path)
+        engine = _create_existing_database_engine(paths.database_path)
         repository = DocumentRepository(create_session_factory(engine))
         blob_store = ContentBlobStore(paths.content_store_root)
         ingestion_lock = IngestionLock(paths.ingestion_lock_path)
@@ -186,7 +251,12 @@ def run_documents_command(argv: Sequence[str]) -> int:
     mode, remote_file_id = parsed
     try:
         environment = load_runtime_moodle_environment()
-        paths = resolve_document_runtime_paths(environment.data_root)
+        runtime_paths = resolve_document_runtime_paths(environment.data_root)
+        paths = DocumentRuntimePaths(
+            database_path=_normal_database_path(),
+            content_store_root=runtime_paths.content_store_root,
+            ingestion_lock_path=runtime_paths.ingestion_lock_path,
+        )
         with build_phase3_service(
             bootstrap_config=environment.bootstrap_config,
             settings=environment.settings,
