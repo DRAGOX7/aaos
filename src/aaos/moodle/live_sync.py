@@ -16,7 +16,6 @@ from aaos.academic.source import (
     SourceCollection,
     SourceCollectionFailure,
 )
-from aaos.documents.config import resolve_document_runtime_paths
 from aaos.moodle.browser import (
     BrowserSmokeFailure,
     _run_same_context_complete_collection,
@@ -27,7 +26,11 @@ from aaos.moodle.receiver import (
     RuntimeMoodleEnvironment,
     load_runtime_moodle_environment,
 )
-from aaos.persistence.database import create_session_factory
+from aaos.persistence.database import (
+    DEFAULT_DATABASE_PATH,
+    create_session_factory,
+    resolve_database_path,
+)
 
 
 def _database_is_present(database_path: Path) -> None:
@@ -36,6 +39,11 @@ def _database_is_present(database_path: Path) -> None:
             raise ValueError("database unavailable")
     except (OSError, RuntimeError, TypeError, ValueError):
         raise ValueError("database unavailable") from None
+
+
+def _normal_database_path() -> Path:
+    """Resolve the canonical academic application database path only."""
+    return resolve_database_path(DEFAULT_DATABASE_PATH)
 
 
 def _create_existing_database_engine(database_path: Path) -> Engine:
@@ -95,11 +103,11 @@ def run_configured_moodle_sync() -> int:
     """Run one complete browser collection, then one normal-DB synchronization."""
     try:
         environment = load_runtime_moodle_environment()
-        paths = resolve_document_runtime_paths(environment.data_root)
+        database_path = _normal_database_path()
     except (ReceiverError, OSError, TypeError, ValueError):
         return _render_failure("CONFIGURATION")
     try:
-        _database_is_present(paths.database_path)
+        _database_is_present(database_path)
     except ValueError:
         return _render_failure("DATABASE")
 
@@ -116,7 +124,7 @@ def run_configured_moodle_sync() -> int:
         return _render_failure("COLLECTION")
 
     try:
-        _persist_snapshot(collection, paths.database_path)
+        _persist_snapshot(collection, database_path)
     except (
         MoodleSyncPreconditionError,
         OSError,

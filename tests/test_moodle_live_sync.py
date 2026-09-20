@@ -68,6 +68,16 @@ def _record_collection_call(
     return CompleteSourceSnapshot(source_system=source_system)
 
 
+def _patch_database_path(monkeypatch: pytest.MonkeyPatch, database_path: Path) -> None:
+    from aaos.moodle import live_sync
+
+    monkeypatch.setattr(
+        live_sync,
+        "_normal_database_path",
+        lambda: database_path,
+    )
+
+
 def test_configured_snapshot_derives_browser_mode_without_changing_source_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -80,8 +90,9 @@ def test_configured_snapshot_derives_browser_mode_without_changing_source_bindin
     )
     observed: dict[str, object] = {}
 
-    def collect(*, settings: MoodleSettings, **_kwargs: object) -> CompleteSourceSnapshot:
+    def collect(*, settings: MoodleSettings, **kwargs: object) -> CompleteSourceSnapshot:
         observed["settings"] = settings
+        observed["paths"] = kwargs["paths"]
         return CompleteSourceSnapshot(source_system=settings.source_system)
 
     monkeypatch.setattr(live_sync, "_run_same_context_complete_collection", collect)
@@ -95,6 +106,7 @@ def test_configured_snapshot_derives_browser_mode_without_changing_source_bindin
     assert settings.source_system == configured.settings.source_system
     assert settings.base_origin == configured.settings.base_origin
     assert settings.auth_alias == configured.settings.auth_alias
+    assert observed["paths"] == configured.auth_paths
 
 
 def test_database_disappearing_after_collection_fails_closed_without_replacement(
@@ -102,10 +114,13 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
 ) -> None:
     from aaos.moodle import live_sync
 
-    database_path = tmp_path / "database" / "aaos.db"
-    database_path.parent.mkdir()
+    database_path = tmp_path / "application" / "data" / "database" / "aaos.db"
+    database_path.parent.mkdir(parents=True)
     database_path.write_bytes(b"already-migrated")
-    environment = _environment(tmp_path)
+    environment = _environment(tmp_path / "moodle-runtime")
+    alternate_database_path = environment.data_root / "database" / "aaos.db"
+    alternate_database_path.parent.mkdir(parents=True)
+    alternate_database_path.write_bytes(b"moodle-runtime-database")
     persistence_calls: list[object] = []
 
     def collect(_environment: RuntimeMoodleEnvironment) -> CompleteSourceSnapshot:
@@ -114,6 +129,7 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(
         live_sync,
         "sync_moodle_snapshot",
@@ -123,6 +139,7 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
     assert live_sync.run_configured_moodle_sync() == 1
     assert database_path.exists() is False
     assert persistence_calls == []
+    assert alternate_database_path.exists() is True
     assert capsys.readouterr().out == "MOODLE_SYNC_FAILED\nFAILURE_STAGE=PERSISTENCE\n"
 
 
@@ -170,10 +187,13 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
 ) -> None:
     from aaos.moodle import live_sync
 
-    database_path = tmp_path / "database" / "aaos.db"
-    database_path.parent.mkdir()
+    database_path = tmp_path / "application" / "data" / "database" / "aaos.db"
+    database_path.parent.mkdir(parents=True)
     database_path.write_bytes(b"already-migrated")
-    environment = _environment(tmp_path)
+    environment = _environment(tmp_path / "moodle-runtime")
+    alternate_database_path = environment.data_root / "database" / "aaos.db"
+    alternate_database_path.parent.mkdir(parents=True)
+    alternate_database_path.write_bytes(b"moodle-runtime-database")
     events: list[str] = []
     engine = type("EngineProbe", (), {"dispose": lambda self: events.append("dispose")})()
 
@@ -191,6 +211,7 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", make_engine)
     monkeypatch.setattr(live_sync, "create_session_factory", make_session_factory)
 
@@ -203,6 +224,7 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
 
     assert live_sync.run_configured_moodle_sync() == 0
     assert events == ["collect", f"engine:{database_path.resolve()}", "session-factory", "persist", "dispose"]
+    assert alternate_database_path.read_bytes() == b"moodle-runtime-database"
     assert capsys.readouterr().out == (
         "MOODLE_SYNC_PASS\n"
         "COURSE_COUNT=1\n"
@@ -210,6 +232,38 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
         "ANNOUNCEMENT_COUNT=1\n"
         "REMOTE_FILE_COUNT=1\n"
     )
+
+
+def test_missing_normal_database_does_not_select_moodle_runtime_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    from aaos.moodle import live_sync
+
+    environment = _environment(tmp_path / "moodle-runtime")
+    alternate_database_path = environment.data_root / "database" / "aaos.db"
+    alternate_database_path.parent.mkdir(parents=True)
+    alternate_database_path.write_bytes(b"moodle-runtime-database")
+    normal_database_path = tmp_path / "application" / "data" / "database" / "aaos.db"
+    persistence_calls: list[object] = []
+
+    monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
+    _patch_database_path(monkeypatch, normal_database_path)
+    monkeypatch.setattr(
+        live_sync,
+        "collect_configured_snapshot",
+        lambda _environment: _complete_snapshot(),
+    )
+    monkeypatch.setattr(
+        live_sync,
+        "sync_moodle_snapshot",
+        lambda *args, **_kwargs: persistence_calls.append(args[0]),
+    )
+
+    assert live_sync.run_configured_moodle_sync() == 1
+    assert capsys.readouterr().out == "MOODLE_SYNC_FAILED\nFAILURE_STAGE=DATABASE\n"
+    assert persistence_calls == []
+    assert alternate_database_path.read_bytes() == b"moodle-runtime-database"
+    assert normal_database_path.exists() is False
 
 
 def test_incomplete_collection_blocks_engine_and_persistence(
@@ -229,6 +283,7 @@ def test_incomplete_collection_blocks_engine_and_persistence(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_database_path(monkeypatch, database_path)
 
     def forbidden_engine(_path: Path) -> object:
         events.append("engine")
@@ -253,6 +308,7 @@ def test_missing_database_fails_before_collection_or_engine(
 
     events: list[str] = []
     environment = _environment(tmp_path)
+    database_path = tmp_path / "database" / "aaos.db"
 
     def forbidden_collect(_environment: RuntimeMoodleEnvironment) -> SourceCollection:
         events.append("collect")
@@ -264,6 +320,7 @@ def test_missing_database_fails_before_collection_or_engine(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", forbidden_collect)
+    _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", forbidden_engine)
 
     assert live_sync.run_configured_moodle_sync() == 1
@@ -289,6 +346,7 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_database_path(monkeypatch, database_path)
 
     assert live_sync.run_configured_moodle_sync() == 1
     assert calls == 1
@@ -399,6 +457,7 @@ def test_no_alembic_upgrade_is_called_by_sync_command(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", lambda _environment: _complete_snapshot())
+    _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
     monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
     monkeypatch.setattr(live_sync, "sync_moodle_snapshot", lambda *_args, **_kwargs: None)
