@@ -273,9 +273,13 @@ def test_malformed_result_fails_without_rendering_untrusted_fields(
     assert sentinel not in captured.out + captured.err
 
 
-def test_import_and_help_do_not_construct_runtime_or_create_paths() -> None:
+def test_import_and_help_do_not_construct_runtime_or_create_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
     module = importlib.import_module("aaos.documents.cli")
     assert module is not None
+    assert module.run_documents_command([]) == 2
     assert not Path("data/database/aaos.db").exists()
     assert not Path("data/documents").exists()
 
