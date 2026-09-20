@@ -342,6 +342,7 @@ class LmStudioModelLifecycle:
                 check=False,
                 shell=False,
                 text=True,
+                encoding="utf-8",
                 timeout=self._timeout_seconds,
             ),
         )

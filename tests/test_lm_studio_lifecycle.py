@@ -144,3 +144,30 @@ def test_close_is_idempotent_and_unloads_after_use() -> None:
         ("lms", "unload", APPROVED_QWEN_MODEL),
         ("lms", "ps", "--json"),
     ]
+
+
+def test_default_subprocess_runner_uses_explicit_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(
+        argv: list[str],
+        **kwargs: object,
+    ) -> _Result:
+        calls.append((argv, kwargs))
+        return _Result(0, "[]")
+
+    monkeypatch.setattr(
+        "aaos.inference.lm_studio_lifecycle.subprocess.run",
+        fake_run,
+    )
+
+    lifecycle = LmStudioModelLifecycle(executable="lms")
+    lifecycle.ensure_answer_model_unloaded()
+
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    assert argv == ["lms", "ps", "--json"]
+    assert kwargs["text"] is True
+    assert kwargs["encoding"] == "utf-8"
