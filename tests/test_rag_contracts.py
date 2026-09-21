@@ -185,3 +185,37 @@ def test_safe_operational_error_contains_only_fixed_code_and_message() -> None:
 
     assert error.code is RagErrorCode.DENSE_INDEX_UNAVAILABLE
     assert str(error) == "rag operation failed"
+
+
+def test_retrieved_evidence_preserves_exact_text_verbatim_for_provenance() -> None:
+    from aaos.rag.contracts import RagChunkSourceSpanValue, RetrievedEvidence
+
+    text = "\nAuthoritative text must remain exact. \n"
+
+    evidence = RetrievedEvidence(
+        evidence_id="evidence-1",
+        chunk_key="chunk-1",
+        exact_text=text,
+        heading=None,
+        document_version_id=1,
+        document_title="Lecture",
+        course_id=1,
+        source_spans=(
+            RagChunkSourceSpanValue(
+                document_page_id=1,
+                page_number=1,
+                source_char_start=100,
+                source_char_end=100 + len(text),
+                chunk_char_start=0,
+                chunk_char_end=len(text),
+            ),
+        ),
+        dense_rank=1,
+        lexical_rank=None,
+        fused_rank=1,
+        generation_id=1,
+        content_revision=0,
+        token_count=6,
+    )
+
+    assert evidence.exact_text == text

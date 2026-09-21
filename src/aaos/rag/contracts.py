@@ -114,6 +114,14 @@ def _nonblank_text(value: object, name: str) -> str:
     return normalized
 
 
+def _nonblank_exact_text(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-blank string")
+    if len(value) > MAX_RAG_TEXT_CHARACTERS:
+        raise ValueError(f"{name} must not exceed {MAX_RAG_TEXT_CHARACTERS} characters")
+    return value
+
+
 def _answer_language(value: object, name: str) -> str:
     normalized = _nonblank_text(value, name).casefold()
     if normalized not in {"en", "ar"}:
@@ -310,8 +318,13 @@ class RetrievedEvidence:
     token_count: int = 1
 
     def __post_init__(self) -> None:
-        for name in ("evidence_id", "chunk_key", "exact_text", "document_title"):
+        for name in ("evidence_id", "chunk_key", "document_title"):
             object.__setattr__(self, name, _nonblank_text(getattr(self, name), name))
+        object.__setattr__(
+            self,
+            "exact_text",
+            _nonblank_exact_text(self.exact_text, "exact_text"),
+        )
         if self.heading is not None:
             object.__setattr__(self, "heading", _nonblank_text(self.heading, "heading"))
         for name in ("document_version_id", "course_id", "fused_rank", "generation_id"):
