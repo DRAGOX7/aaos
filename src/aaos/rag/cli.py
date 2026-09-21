@@ -66,7 +66,13 @@ class _ConfiguredRuntime:
         self.indexing = runtime.indexing
         self._runtime = runtime
         self._gateway = gateway
+        self._event_loop = asyncio.new_event_loop()
         self._closed = False
+
+    def ask(self, query: RagQuery) -> RenderedRagResponse:
+        if self._closed:
+            raise RuntimeError("runtime is closed")
+        return self._event_loop.run_until_complete(self.service.ask(query))
 
     def close(self) -> None:
         if self._closed:
@@ -78,7 +84,12 @@ class _ConfiguredRuntime:
         except Exception as error:
             failure = error
         try:
-            asyncio.run(self._close_gateway())
+            self._event_loop.run_until_complete(self._close_gateway())
+        except Exception as error:
+            if failure is None:
+                failure = error
+        try:
+            self._event_loop.close()
         except Exception as error:
             if failure is None:
                 failure = error
@@ -138,7 +149,11 @@ def run_rag_command(
         else:
             assert question is not None
             assert parsed.scope is not None
-            response = asyncio.run(_service(runtime).ask(RagQuery(question, parsed.scope)))
+            query = RagQuery(question, parsed.scope)
+            if isinstance(runtime, _ConfiguredRuntime):
+                response = runtime.ask(query)
+            else:
+                response = asyncio.run(_service(runtime).ask(query))
             rendered_lines = _render_answer(response, parsed.scope)
     except RagOperationalError as error:
         operation_failed = True

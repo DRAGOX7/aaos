@@ -362,3 +362,56 @@ def test_cli_module_does_not_construct_runtime_on_import() -> None:
 
     module = importlib.import_module("aaos.rag.cli")
     assert module is not None
+
+
+def test_ask_closes_configured_gateway_on_same_event_loop() -> None:
+    import asyncio
+    import io
+
+    import aaos.rag.cli as module
+
+    class LoopBoundGateway:
+        def __init__(self) -> None:
+            self.used_loop: asyncio.AbstractEventLoop | None = None
+            self.close_calls = 0
+
+        async def mark_used(self) -> None:
+            self.used_loop = asyncio.get_running_loop()
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            if asyncio.get_running_loop() is not self.used_loop:
+                raise RuntimeError("gateway closed from different event loop")
+
+    class LoopBoundService:
+        def __init__(self, gateway: LoopBoundGateway) -> None:
+            self._gateway = gateway
+            self._delegate = FakeService([])
+
+        async def ask(self, query: RagQuery) -> object:
+            await self._gateway.mark_used()
+            return await self._delegate.ask(query)
+
+    gateway = LoopBoundGateway()
+    underlying = FakeRuntime(
+        service=LoopBoundService(gateway),  # type: ignore[arg-type]
+        indexing=FakeIndexing([]),
+    )
+    runtime = module._ConfiguredRuntime(underlying, gateway)
+
+    output = io.StringIO()
+    error = io.StringIO()
+
+    code = module.run_rag_command(
+        ["ask", "--global"],
+        build_runtime=lambda: runtime,
+        stdin=io.StringIO("What is covered?\n"),
+        stdout=output,
+        stderr=error,
+    )
+
+    assert code == 0
+    assert error.getvalue() == ""
+    assert output.getvalue().startswith("RAG_ANSWER\n")
+    assert underlying.closed == 1
+    assert gateway.close_calls == 1
