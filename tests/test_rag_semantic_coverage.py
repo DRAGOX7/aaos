@@ -593,3 +593,262 @@ def test_segment_repair_prompt_does_not_restore_quote_generation() -> None:
     assert "segment-id schema" in repair_prompt
     assert "do not return text" in repair_prompt
     assert "quote" not in repair_prompt
+
+
+def test_claim_entailment_verifier_uses_claim_text_and_only_bound_evidence() -> None:
+    """Generated factual claims, not user questions, are the NLI hypothesis."""
+    import asyncio
+    from dataclasses import replace
+
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    relevant = _evidence()
+    unrelated = replace(
+        relevant,
+        evidence_id="ev-2",
+        chunk_key="chunk-2",
+        exact_text="The deadline is Monday.",
+    )
+
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=("ev-1",),
+    )
+
+    classifier = FakeNliClassifier()
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    result = asyncio.run(
+        verifier.verify(
+            claim,
+            evidence=(relevant, unrelated),
+        )
+    )
+
+    assert result.value == "ENTAILED"
+    assert classifier.calls == [
+        (
+            "The deadline is Friday.",
+            "The deadline is Friday.",
+        )
+    ]
+
+
+def test_claim_entailment_verifier_rejects_unknown_evidence_reference() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=("missing-evidence",),
+    )
+    classifier = FakeNliClassifier()
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(verifier.verify(claim, evidence=(_evidence(),)))
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+    assert classifier.calls == []
+
+
+def test_claim_entailment_verifier_rejects_duplicate_retrieved_evidence_identity() -> None:
+    import asyncio
+    from dataclasses import replace
+
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence = _evidence()
+    duplicate_identity = replace(
+        evidence,
+        chunk_key="chunk-duplicate",
+    )
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=(evidence.evidence_id,),
+    )
+    classifier = FakeNliClassifier()
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(
+            verifier.verify(
+                claim,
+                evidence=(evidence, duplicate_identity),
+            )
+        )
+
+    assert error.value.code is RagErrorCode.RETRIEVAL_INCONSISTENCY
+    assert classifier.calls == []
+
+
+def test_claim_entailment_verifier_maps_nli_operational_failures() -> None:
+    import asyncio
+
+    from aaos.inference.nli import (
+        NliInferenceError,
+        NliInputOverflowError,
+        NliModelUnavailableError,
+    )
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=("ev-1",),
+    )
+
+    cases = (
+        (NliInputOverflowError("overflow"), RagErrorCode.ENTAILMENT_INPUT_OVERFLOW),
+        (NliModelUnavailableError("unavailable"), RagErrorCode.NLI_MODEL_UNAVAILABLE),
+        (NliInferenceError("inference failed"), RagErrorCode.NLI_INFERENCE_FAILED),
+    )
+
+    for raised_error, expected_code in cases:
+
+        class RaisingClassifier:
+            def classify(self, premise: str, hypothesis: str) -> object:
+                del premise, hypothesis
+                raise raised_error
+
+            def close(self) -> None:
+                pass
+
+        verifier = IndependentClaimEntailmentVerifier(RaisingClassifier())
+
+        with pytest.raises(RagOperationalError) as error:
+            asyncio.run(verifier.verify(claim, evidence=(_evidence(),)))
+
+        assert error.value.code is expected_code
+
+
+def test_claim_entailment_verifier_rejects_invalid_classifier_result() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    class InvalidClassifier:
+        def classify(self, premise: str, hypothesis: str) -> object:
+            del premise, hypothesis
+            return object()
+
+        def close(self) -> None:
+            pass
+
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=("ev-1",),
+    )
+    verifier = IndependentClaimEntailmentVerifier(InvalidClassifier())
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(verifier.verify(claim, evidence=(_evidence(),)))
+
+    assert error.value.code is RagErrorCode.NLI_INFERENCE_FAILED
+
+
+def test_claim_entailment_verifier_uses_validated_spans_instead_of_full_bound_chunks() -> None:
+    import asyncio
+    from dataclasses import replace
+
+    from aaos.rag.contracts import (
+        EntailmentResult,
+        EvidenceSpan,
+        RagClaim,
+        RequirementEvidenceSpans,
+    )
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence = replace(
+        _evidence(),
+        exact_text=("Unrelated syllabus material. " * 200) + "The deadline is Friday.",
+    )
+    validated_spans = (
+        RequirementEvidenceSpans(
+            "r1",
+            (
+                EvidenceSpan(
+                    evidence.evidence_id,
+                    "The deadline is Friday.",
+                ),
+            ),
+        ),
+    )
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=(evidence.evidence_id,),
+    )
+
+    classifier = FakeNliClassifier()
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    result = asyncio.run(
+        verifier.verify(
+            claim,
+            evidence=(evidence,),
+            validated_requirement_spans=validated_spans,
+        )
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert classifier.calls == [
+        (
+            "The deadline is Friday.",
+            "The deadline is Friday.",
+        )
+    ]
+
+
+def test_claim_entailment_verifier_rejects_cited_evidence_without_validated_span() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import (
+        EvidenceSpan,
+        RagClaim,
+        RequirementEvidenceSpans,
+    )
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence = _evidence()
+    claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=(evidence.evidence_id,),
+    )
+    validated_spans = (
+        RequirementEvidenceSpans(
+            "r1",
+            (
+                EvidenceSpan(
+                    "ev-other",
+                    "Some unrelated exact text.",
+                ),
+            ),
+        ),
+    )
+
+    classifier = FakeNliClassifier()
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(
+            verifier.verify(
+                claim,
+                evidence=(evidence,),
+                validated_requirement_spans=validated_spans,
+            )
+        )
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+    assert classifier.calls == []

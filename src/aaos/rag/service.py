@@ -12,6 +12,8 @@ from .contracts import (
     GroundedAnswerRequest,
     GroundedModelOutput,
     RagAnswer,
+    RagAnswerStatus,
+    RagClaim,
     RagErrorCode,
     RagOperationalError,
     RagQuery,
@@ -115,6 +117,16 @@ class _EntailmentVerifier(Protocol):
     ) -> EntailmentResult: ...
 
 
+class _ClaimEntailmentVerifier(Protocol):
+    async def verify(
+        self,
+        claim: RagClaim,
+        *,
+        evidence: tuple[RetrievedEvidence, ...],
+        validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
+    ) -> EntailmentResult: ...
+
+
 class _Validator(Protocol):
     def validate(
         self, output: GroundedModelOutput, request: GroundedAnswerRequest
@@ -193,6 +205,7 @@ class LocalRagService:
         atomic_requirement_decomposer: _AtomicRequirementDecomposer | None = None,
         evidence_span_extractor: _EvidenceSpanExtractor | None = None,
         entailment_verifier: _EntailmentVerifier | None = None,
+        claim_entailment_verifier: _ClaimEntailmentVerifier | None = None,
         rrf_k: int = _DEFAULT_RRF_K,
         generation_policy_version: str = _DEFAULT_GENERATION_POLICY_VERSION,
     ) -> None:
@@ -223,6 +236,7 @@ class LocalRagService:
         self._atomic_requirement_decomposer = atomic_requirement_decomposer
         self._evidence_span_extractor = evidence_span_extractor
         self._entailment_verifier = entailment_verifier
+        self._claim_entailment_verifier = claim_entailment_verifier
         self._rrf_k = rrf_k
         self._generation_policy_version = generation_policy_version.strip()
         _require_callable(self._retriever, "retrieve_candidates", "retriever")
@@ -230,15 +244,17 @@ class LocalRagService:
         _require_callable(self._sufficiency_gate, "evaluate", "sufficiency_gate")
         _require_callable(self._answer_generator, "generate", "answer_generator")
         _require_callable(self._citation_validator, "validate", "citation_validator")
+        if self._claim_entailment_verifier is not None:
+            _require_callable(
+                self._claim_entailment_verifier,
+                "verify",
+                "claim_entailment_verifier",
+            )
         if self._semantic_classifier is not None:
             _require_callable(self._semantic_classifier, "classify", "semantic_classifier")
-        if (self._requirement_decomposer is None) != (
-            self._requirement_coverage_classifier is None
-        ):
-            raise ValueError(
-                "requirement_decomposer and requirement_coverage_classifier must be provided together"
-            )
         if self._requirement_decomposer is not None:
+            if self._requirement_coverage_classifier is None:
+                raise ValueError("requirement_decomposer requires requirement_coverage_classifier")
             if self._semantic_classifier is not None:
                 raise ValueError(
                     "semantic_classifier cannot be combined with requirement classifiers"
@@ -249,25 +265,65 @@ class LocalRagService:
                 "classify",
                 "requirement_coverage_classifier",
             )
-        atomic_components = (
+        elif (
+            self._requirement_coverage_classifier is not None
+            and self._atomic_requirement_decomposer is None
+        ):
+            raise ValueError(
+                "requirement_coverage_classifier requires a requirement decomposer "
+                "or atomic requirement decomposer"
+            )
+
+        atomic_structure = (
             self._atomic_requirement_decomposer,
             self._evidence_span_extractor,
-            self._entailment_verifier,
         )
-        if any(component is not None for component in atomic_components):
+        if any(component is not None for component in atomic_structure):
             if (
-                any(component is None for component in atomic_components)
+                any(component is None for component in atomic_structure)
                 or self._semantic_classifier is not None
                 or self._requirement_decomposer is not None
             ):
                 raise ValueError(
                     "atomic semantic components must be provided together and cannot be combined"
                 )
+            if self._requirement_coverage_classifier is None and self._entailment_verifier is None:
+                raise ValueError(
+                    "atomic semantic path requires requirement coverage or an entailment verifier"
+                )
+            if (
+                self._requirement_coverage_classifier is not None
+                and self._entailment_verifier is not None
+            ):
+                raise ValueError(
+                    "atomic semantic path cannot combine requirement coverage "
+                    "with requirement-text entailment"
+                )
+
             _require_callable(
-                self._atomic_requirement_decomposer, "decompose", "atomic_requirement_decomposer"
+                self._atomic_requirement_decomposer,
+                "decompose",
+                "atomic_requirement_decomposer",
             )
-            _require_callable(self._evidence_span_extractor, "extract", "evidence_span_extractor")
-            _require_callable(self._entailment_verifier, "verify", "entailment_verifier")
+            _require_callable(
+                self._evidence_span_extractor,
+                "extract",
+                "evidence_span_extractor",
+            )
+            if self._requirement_coverage_classifier is not None:
+                _require_callable(
+                    self._requirement_coverage_classifier,
+                    "classify",
+                    "requirement_coverage_classifier",
+                )
+            if self._entailment_verifier is not None:
+                _require_callable(
+                    self._entailment_verifier,
+                    "verify",
+                    "entailment_verifier",
+                )
+        elif self._entailment_verifier is not None:
+            raise ValueError("entailment_verifier requires atomic semantic components")
 
     async def ask(self, query: RagQuery) -> RenderedRagResponse:
         """Run the mandatory snapshot → evidence → answer path exactly once."""
@@ -320,6 +376,7 @@ class LocalRagService:
             output = build_insufficient_model_output(request)
         else:
             output = await self._generate(request, sufficiency)
+        output = await self._verify_generated_claims(output, evidence, request)
         answer = self._validate(output, request)
         return _render(answer)
 
@@ -403,10 +460,12 @@ class LocalRagService:
             or self._atomic_requirement_decomposer is None
         ):
             return None
+
         assert self._evidence_span_extractor is not None
-        assert self._entailment_verifier is not None
+
         try:
             _validate_atomic_evidence(candidate_set.snapshot, evidence)
+
             decomposition = await self._atomic_requirement_decomposer.decompose(query)
             if decomposition.status.value == "TOO_MANY_REQUIREMENTS":
                 return (
@@ -419,14 +478,41 @@ class LocalRagService:
                     ),
                     (),
                 )
+
             requirements = RequirementSet(decomposition.requirements)
-            spans = await self._evidence_span_extractor.extract(requirements, evidence=evidence)
+
+            spans = await self._evidence_span_extractor.extract(
+                requirements,
+                evidence=evidence,
+            )
             spans = _validate_atomic_spans(requirements, spans, evidence)
+
+            if self._requirement_coverage_classifier is not None:
+                decision = await self._requirement_coverage_classifier.classify(
+                    requirements,
+                    question=request.question,
+                    answer_language=request.answer_language,
+                    generation_id=candidate_set.snapshot.generation.generation_id,
+                    content_revision=candidate_set.snapshot.generation.content_revision,
+                    policy_version=request.policy_version,
+                    evidence=evidence,
+                )
+                if not isinstance(decision, RequirementCoverageDecision):
+                    raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+                return decision, spans
+
+            assert self._entailment_verifier is not None
+
             judgments: list[RequirementCoverageJudgment] = []
             for requirement, requirement_spans in zip(
-                requirements.requirements, spans, strict=True
+                requirements.requirements,
+                spans,
+                strict=True,
             ):
-                result = await self._entailment_verifier.verify(requirement, requirement_spans)
+                result = await self._entailment_verifier.verify(
+                    requirement,
+                    requirement_spans,
+                )
                 evidence_ids = tuple(
                     dict.fromkeys(span.evidence_id for span in requirement_spans.spans)
                 )
@@ -439,16 +525,20 @@ class LocalRagService:
                     RequirementCoverageJudgment(
                         requirement.requirement_id,
                         support,
-                        evidence_ids if support is RequirementSupport.SUPPORTED else (),
+                        (evidence_ids if support is RequirementSupport.SUPPORTED else ()),
                     )
                 )
+
             status = (
                 SemanticCoverageStatus.UNSUPPORTED
-                if not any(j.support is RequirementSupport.SUPPORTED for j in judgments)
+                if not any(
+                    judgment.support is RequirementSupport.SUPPORTED for judgment in judgments
+                )
                 else SemanticCoverageStatus.SUPPORTED
-                if all(j.support is RequirementSupport.SUPPORTED for j in judgments)
+                if all(judgment.support is RequirementSupport.SUPPORTED for judgment in judgments)
                 else SemanticCoverageStatus.PARTIAL
             )
+
             return (
                 RequirementCoverageDecision(
                     requirements,
@@ -571,6 +661,58 @@ class LocalRagService:
         if not isinstance(output, GroundedModelOutput):
             raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
         return output
+
+    async def _verify_generated_claims(
+        self,
+        output: GroundedModelOutput,
+        evidence: tuple[RetrievedEvidence, ...],
+        request: GroundedAnswerRequest,
+    ) -> GroundedModelOutput:
+        verifier = self._claim_entailment_verifier
+        if verifier is None:
+            return output
+
+        surviving_claims: list[RagClaim] = []
+
+        for claim in output.claims:
+            if not isinstance(claim, RagClaim):
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+            try:
+                if request.validated_requirement_spans:
+                    result = await verifier.verify(
+                        claim,
+                        evidence=evidence,
+                        validated_requirement_spans=(request.validated_requirement_spans),
+                    )
+                else:
+                    result = await verifier.verify(
+                        claim,
+                        evidence=evidence,
+                    )
+            except RagOperationalError:
+                raise
+            except Exception:
+                raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
+            if not isinstance(result, EntailmentResult):
+                raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+            if result is EntailmentResult.ENTAILED:
+                surviving_claims.append(claim)
+
+        if len(surviving_claims) == len(output.claims):
+            return output
+
+        if not surviving_claims:
+            return build_insufficient_model_output(request)
+
+        return GroundedModelOutput(
+            status=RagAnswerStatus.PARTIAL_ANSWER,
+            answer_text=output.answer_text,
+            language=output.language,
+            claims=tuple(surviving_claims),
+            generation_id=output.generation_id,
+            content_revision=output.content_revision,
+            policy_version=output.policy_version,
+        )
 
     def _validate(
         self,

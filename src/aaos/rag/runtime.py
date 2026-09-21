@@ -51,6 +51,7 @@ from .retrieval import EvidenceSelector, EvidenceSufficiencyGate, HybridRetrieve
 from .semantic_coverage import (
     AtomicRequirementDecomposer,
     EvidenceSpanExtractor,
+    IndependentClaimEntailmentVerifier,
     IndependentEntailmentVerifier,
     RequirementCoverageClassifier,
     RequirementDecomposer,
@@ -324,6 +325,24 @@ def build_phase4_runtime(
     selected_atomic_factory = atomic_requirement_decomposer_factory or AtomicRequirementDecomposer
     selected_span_factory = evidence_span_extractor_factory or EvidenceSpanExtractor
     selected_entailment_factory = entailment_verifier_factory
+
+    if (
+        selected_classifier_factory is None
+        and selected_decomposer_factory is None
+        and selected_coverage_factory is None
+        and selected_entailment_factory is None
+    ):
+        selected_coverage_factory = RequirementCoverageClassifier
+
+    if (
+        selected_classifier_factory is None
+        and selected_decomposer_factory is None
+        and selected_coverage_factory is not None
+        and selected_entailment_factory is not None
+    ):
+        raise ValueError(
+            "atomic requirement coverage cannot be combined with requirement-text entailment"
+        )
     selected_generator_factory = answer_generator_factory or GroundedAnswerGenerator
     selected_validator_factory = citation_validator_factory or CitationValidator
     selected_service_factory = service_factory or GuardedLocalRagService
@@ -347,7 +366,7 @@ def build_phase4_runtime(
     ]
     if selected_classifier_factory is not None:
         factories.append((selected_classifier_factory, "semantic_classifier_factory"))
-    elif selected_decomposer_factory is not None or selected_coverage_factory is not None:
+    elif selected_decomposer_factory is not None:
         factories.extend(
             [
                 (selected_decomposer_factory, "requirement_decomposer_factory"),
@@ -361,6 +380,8 @@ def build_phase4_runtime(
                 (selected_span_factory, "evidence_span_extractor_factory"),
             ]
         )
+        if selected_coverage_factory is not None:
+            factories.append((selected_coverage_factory, "requirement_coverage_factory"))
         if selected_entailment_factory is not None:
             factories.append((selected_entailment_factory, "entailment_verifier_factory"))
     for factory, name in factories:
@@ -437,6 +458,7 @@ def build_phase4_runtime(
         semantic_classifier: SemanticCoverageClassifier | None = None
         requirement_decomposer: RequirementDecomposer | None = None
         requirement_coverage_classifier: RequirementCoverageClassifier | None = None
+        claim_entailment_verifier: IndependentClaimEntailmentVerifier | None = None
         atomic_decomposer: AtomicRequirementDecomposer | None = None
         span_extractor: EvidenceSpanExtractor | None = None
         entailment_verifier: EntailmentVerifierComponent | None = None
@@ -449,24 +471,64 @@ def build_phase4_runtime(
             _register_optional_closer(owned_closers, requirement_decomposer, "close")
             _require_callable(requirement_decomposer, "decompose", "requirement_decomposer")
             requirement_coverage_classifier = selected_coverage_factory(managed_gateway)
-            _register_optional_closer(owned_closers, requirement_coverage_classifier, "close")
+            _register_optional_closer(
+                owned_closers,
+                requirement_coverage_classifier,
+                "close",
+            )
             _require_callable(
                 requirement_coverage_classifier,
                 "classify",
                 "requirement_coverage_classifier",
             )
+            claim_entailment_verifier = IndependentClaimEntailmentVerifier(
+                PinnedCpuNliClassifier(snapshot_path=nli_snapshot_path)
+            )
+            _register_optional_closer(
+                owned_closers,
+                claim_entailment_verifier,
+                "close",
+            )
         else:
             atomic_decomposer = selected_atomic_factory(managed_gateway)
             _register_optional_closer(owned_closers, atomic_decomposer, "close")
+
             span_extractor = selected_span_factory(managed_gateway)
             _register_optional_closer(owned_closers, span_extractor, "close")
-            if selected_entailment_factory is None:
-                entailment_verifier = IndependentEntailmentVerifier(
+
+            if selected_coverage_factory is not None:
+                requirement_coverage_classifier = selected_coverage_factory(managed_gateway)
+                _register_optional_closer(
+                    owned_closers,
+                    requirement_coverage_classifier,
+                    "close",
+                )
+                _require_callable(
+                    requirement_coverage_classifier,
+                    "classify",
+                    "requirement_coverage_classifier",
+                )
+
+                claim_entailment_verifier = IndependentClaimEntailmentVerifier(
                     PinnedCpuNliClassifier(snapshot_path=nli_snapshot_path)
                 )
+                _register_optional_closer(
+                    owned_closers,
+                    claim_entailment_verifier,
+                    "close",
+                )
             else:
-                entailment_verifier = selected_entailment_factory(managed_gateway)
-            _register_optional_closer(owned_closers, entailment_verifier, "close")
+                if selected_entailment_factory is None:
+                    entailment_verifier = IndependentEntailmentVerifier(
+                        PinnedCpuNliClassifier(snapshot_path=nli_snapshot_path)
+                    )
+                else:
+                    entailment_verifier = selected_entailment_factory(managed_gateway)
+                _register_optional_closer(
+                    owned_closers,
+                    entailment_verifier,
+                    "close",
+                )
         answer_generator = selected_generator_factory(managed_gateway)
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
@@ -490,13 +552,16 @@ def build_phase4_runtime(
                 **service_kwargs,
                 requirement_decomposer=requirement_decomposer,
                 requirement_coverage_classifier=requirement_coverage_classifier,
+                claim_entailment_verifier=claim_entailment_verifier,
             )
         else:
             service = service_factory_callable(
                 **service_kwargs,
                 atomic_requirement_decomposer=atomic_decomposer,
                 evidence_span_extractor=span_extractor,
+                requirement_coverage_classifier=requirement_coverage_classifier,
                 entailment_verifier=entailment_verifier,
+                claim_entailment_verifier=claim_entailment_verifier,
             )
         _register_optional_closer(owned_closers, service, "close")
         _require_callable(service, "ask", "service")

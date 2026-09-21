@@ -28,6 +28,7 @@ from .contracts import (
     EntailmentResult,
     EvidenceSpan,
     GroundedAnswerRequest,
+    RagClaim,
     RagErrorCode,
     RagOperationalError,
     RagQuery,
@@ -357,6 +358,102 @@ class IndependentEntailmentVerifier:
             return EntailmentResult.ENTAILED
         if result.decision is NliDecision.NOT_ENTAILED:
             return EntailmentResult.NOT_ENTAILED
+        raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
+
+    def close(self) -> None:
+        self._classifier.close()
+
+
+class IndependentClaimEntailmentVerifier:
+    """Verify one generated factual claim against only its bound evidence."""
+
+    def __init__(self, classifier: EntailmentClassifier | None = None) -> None:
+        self._classifier = classifier or PinnedCpuNliClassifier()
+        if not callable(getattr(self._classifier, "classify", None)):
+            raise ValueError("classifier must implement classify")
+        if not callable(getattr(self._classifier, "close", None)):
+            raise ValueError("classifier must implement close")
+
+    async def verify(
+        self,
+        claim: RagClaim,
+        *,
+        evidence: tuple[RetrievedEvidence, ...],
+        validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
+    ) -> EntailmentResult:
+        if (
+            not isinstance(claim, RagClaim)
+            or not isinstance(evidence, tuple)
+            or not all(isinstance(item, RetrievedEvidence) for item in evidence)
+            or not isinstance(validated_requirement_spans, tuple)
+            or not all(
+                isinstance(item, RequirementEvidenceSpans) for item in validated_requirement_spans
+            )
+        ):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+
+        if len(set(claim.evidence_ids)) != len(claim.evidence_ids):
+            raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+
+        evidence_ids = tuple(item.evidence_id for item in evidence)
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+        requested_ids = frozenset(claim.evidence_ids)
+        available_ids = frozenset(evidence_ids)
+
+        if not requested_ids.issubset(available_ids):
+            raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+
+        bound_evidence = tuple(item for item in evidence if item.evidence_id in requested_ids)
+
+        if validated_requirement_spans:
+            evidence_by_id = {item.evidence_id: item for item in bound_evidence}
+            premise_parts: list[str] = []
+            resolved_ids: set[str] = set()
+
+            for requirement_spans in validated_requirement_spans:
+                for span in requirement_spans.spans:
+                    if span.evidence_id not in requested_ids:
+                        continue
+
+                    source = evidence_by_id.get(span.evidence_id)
+                    if source is None:
+                        raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+
+                    if span.quote not in source.exact_text:
+                        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+
+                    premise_parts.append(span.quote)
+                    resolved_ids.add(span.evidence_id)
+
+            if resolved_ids != requested_ids:
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+
+            premise = "\n\n".join(premise_parts)
+        else:
+            premise = "\n\n".join(item.exact_text for item in bound_evidence)
+
+        try:
+            result = self._classifier.classify(
+                premise,
+                claim.text,
+            )
+        except NliInputOverflowError:
+            raise RagOperationalError(RagErrorCode.ENTAILMENT_INPUT_OVERFLOW) from None
+        except NliModelUnavailableError:
+            raise RagOperationalError(RagErrorCode.NLI_MODEL_UNAVAILABLE) from None
+        except NliInferenceError:
+            raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
+
+        if not isinstance(result, NliClassification):
+            raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
+
+        if result.decision is NliDecision.ENTAILED:
+            return EntailmentResult.ENTAILED
+        if result.decision is NliDecision.NOT_ENTAILED:
+            return EntailmentResult.NOT_ENTAILED
+
         raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
 
     def close(self) -> None:
@@ -1086,6 +1183,7 @@ __all__ = [
     "COVERAGE_MAX_COMPLETION_TOKENS",
     "DECOMPOSITION_MAX_COMPLETION_TOKENS",
     "EvidenceSpanExtractor",
+    "IndependentClaimEntailmentVerifier",
     "IndependentEntailmentVerifier",
     "RequirementCoverageClassifier",
     "RequirementDecomposer",

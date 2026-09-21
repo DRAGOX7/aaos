@@ -496,9 +496,21 @@ def test_builder_composes_the_approved_services_without_reimplementing_them(
 
     assert isinstance(runtime.service, GuardedLocalRagService)
     assert runtime.service._generation_policy_version == "grounded-v1"
+
+    assert runtime.service._semantic_classifier is None
+    assert runtime.service._requirement_decomposer is None
+    assert runtime.service._requirement_coverage_classifier is not None
+
     assert runtime.service._atomic_requirement_decomposer is not None
     assert runtime.service._evidence_span_extractor is not None
-    assert runtime.service._entailment_verifier is not None
+    assert runtime.service._entailment_verifier is None
+
+    assert runtime.service._claim_entailment_verifier is not None
+    assert (
+        runtime.service._claim_entailment_verifier.__class__.__name__
+        == "IndependentClaimEntailmentVerifier"
+    )
+
     assert runtime.indexing.__class__.__name__ == "RagIndexingCoordinator"
     runtime.close()
 

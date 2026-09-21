@@ -26,8 +26,11 @@ from aaos.rag.contracts import (
     RagQuery,
     RenderedRagResponse,
     Requirement,
+    RequirementCoverageDecision,
+    RequirementCoverageJudgment,
     RequirementEvidenceSpans,
     RequirementSet,
+    RequirementSupport,
     RetrievedEvidence,
     SemanticCoverageDecision,
     SemanticCoverageStatus,
@@ -667,3 +670,423 @@ def test_facade_has_no_history_tools_or_browser_surface() -> None:
     assert not hasattr(service, "history")
     assert not hasattr(service, "tools")
     assert not hasattr(service, "browser")
+
+
+def test_claim_verification_occurs_after_generation_and_before_citation_validation() -> None:
+    events: list[str] = []
+    retriever = FakeRetriever()
+
+    class RecordingRequirementDecomposer:
+        async def decompose(self, _query: RagQuery) -> RequirementSet:
+            return RequirementSet((Requirement("r1", "Give the deadline"),))
+
+    class RecordingRequirementCoverageClassifier:
+        async def classify(
+            self,
+            requirements: RequirementSet,
+            *,
+            question: str,
+            answer_language: str,
+            generation_id: int,
+            content_revision: int,
+            policy_version: str,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> RequirementCoverageDecision:
+            del question, answer_language, evidence
+            events.append("coverage")
+            return RequirementCoverageDecision(
+                requirements,
+                (
+                    RequirementCoverageJudgment(
+                        "r1",
+                        RequirementSupport.SUPPORTED,
+                        ("ev-1",),
+                    ),
+                ),
+                SemanticCoverageStatus.SUPPORTED,
+                generation_id,
+                content_revision,
+                policy_version,
+            )
+
+    class RecordingGenerator(FakeGenerator):
+        async def generate(
+            self,
+            request: GroundedAnswerRequest,
+            sufficiency: SufficiencyDecision,
+        ) -> GroundedModelOutput:
+            assert events == ["coverage"]
+            events.append("generation")
+            return await super().generate(request, sufficiency)
+
+    class RecordingClaimVerifier:
+        async def verify(
+            self,
+            claim: RagClaim,
+            *,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> EntailmentResult:
+            assert events == ["coverage", "generation"]
+            assert claim.text == "The deadline is Friday."
+            assert claim.evidence_ids == ("ev-1",)
+            assert evidence == EVIDENCE
+            events.append("claim_nli")
+            return EntailmentResult.ENTAILED
+
+    class RecordingCitationValidator:
+        def __init__(self) -> None:
+            self._inner = CitationValidator()
+
+        def validate(
+            self,
+            output: GroundedModelOutput,
+            request: GroundedAnswerRequest,
+        ):
+            assert events == ["coverage", "generation", "claim_nli"]
+            events.append("citation_validation")
+            return self._inner.validate(output, request)
+
+    generator = RecordingGenerator(retriever, _output())
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=generator,
+        citation_validator=RecordingCitationValidator(),
+        requirement_decomposer=RecordingRequirementDecomposer(),
+        requirement_coverage_classifier=RecordingRequirementCoverageClassifier(),
+        claim_entailment_verifier=RecordingClaimVerifier(),
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert events == [
+        "coverage",
+        "generation",
+        "claim_nli",
+        "citation_validation",
+    ]
+
+
+def test_citation_validation_receives_only_entailed_generated_claims() -> None:
+    retriever = FakeRetriever()
+    received_claims: list[tuple[RagClaim, ...]] = []
+
+    class RecordingRequirementDecomposer:
+        async def decompose(self, _query: RagQuery) -> RequirementSet:
+            return RequirementSet((Requirement("r1", "Give the deadline"),))
+
+    class RecordingRequirementCoverageClassifier:
+        async def classify(
+            self,
+            requirements: RequirementSet,
+            *,
+            question: str,
+            answer_language: str,
+            generation_id: int,
+            content_revision: int,
+            policy_version: str,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> RequirementCoverageDecision:
+            del question, answer_language, evidence
+            return RequirementCoverageDecision(
+                requirements,
+                (
+                    RequirementCoverageJudgment(
+                        "r1",
+                        RequirementSupport.SUPPORTED,
+                        ("ev-1",),
+                    ),
+                ),
+                SemanticCoverageStatus.SUPPORTED,
+                generation_id,
+                content_revision,
+                policy_version,
+            )
+
+    entailed_claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Friday.",
+        evidence_ids=("ev-1",),
+    )
+    unsupported_claim = RagClaim(
+        claim_id="claim-2",
+        text="The deadline is Monday.",
+        evidence_ids=("ev-1",),
+    )
+
+    generated = GroundedModelOutput(
+        status=RagAnswerStatus.ANSWER,
+        answer_text="Friday. Monday.",
+        language="en",
+        claims=(entailed_claim, unsupported_claim),
+        generation_id=3,
+        content_revision=7,
+        policy_version="grounded-v1",
+    )
+
+    class RecordingClaimVerifier:
+        async def verify(
+            self,
+            claim: RagClaim,
+            *,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> EntailmentResult:
+            assert evidence == EVIDENCE
+            if claim.claim_id == "claim-1":
+                return EntailmentResult.ENTAILED
+            if claim.claim_id == "claim-2":
+                return EntailmentResult.NOT_ENTAILED
+            raise AssertionError(f"unexpected claim: {claim.claim_id}")
+
+    class SurvivorOnlyCitationValidator:
+        def __init__(self) -> None:
+            self._inner = CitationValidator()
+
+        def validate(
+            self,
+            output: GroundedModelOutput,
+            request: GroundedAnswerRequest,
+        ):
+            received_claims.append(output.claims)
+            return self._inner.validate(output, request)
+
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=FakeGenerator(retriever, generated),
+        citation_validator=SurvivorOnlyCitationValidator(),
+        requirement_decomposer=RecordingRequirementDecomposer(),
+        requirement_coverage_classifier=RecordingRequirementCoverageClassifier(),
+        claim_entailment_verifier=RecordingClaimVerifier(),
+    )
+
+    result = _ask(service)
+
+    assert received_claims == [(entailed_claim,)]
+    assert result.answer.status is RagAnswerStatus.PARTIAL_ANSWER
+    assert result.answer.answer_text == "The deadline is Friday."
+    assert "Monday" not in result.answer.answer_text
+
+
+def test_zero_entailed_generated_claims_project_to_insufficient_evidence() -> None:
+    retriever = FakeRetriever()
+    received_outputs: list[GroundedModelOutput] = []
+
+    class RecordingRequirementDecomposer:
+        async def decompose(self, _query: RagQuery) -> RequirementSet:
+            return RequirementSet((Requirement("r1", "Give the deadline"),))
+
+    class RecordingRequirementCoverageClassifier:
+        async def classify(
+            self,
+            requirements: RequirementSet,
+            *,
+            question: str,
+            answer_language: str,
+            generation_id: int,
+            content_revision: int,
+            policy_version: str,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> RequirementCoverageDecision:
+            del question, answer_language, evidence
+            return RequirementCoverageDecision(
+                requirements,
+                (
+                    RequirementCoverageJudgment(
+                        "r1",
+                        RequirementSupport.SUPPORTED,
+                        ("ev-1",),
+                    ),
+                ),
+                SemanticCoverageStatus.SUPPORTED,
+                generation_id,
+                content_revision,
+                policy_version,
+            )
+
+    unsupported_claim = RagClaim(
+        claim_id="claim-1",
+        text="The deadline is Monday.",
+        evidence_ids=("ev-1",),
+    )
+
+    generated = GroundedModelOutput(
+        status=RagAnswerStatus.ANSWER,
+        answer_text="The deadline is Monday.",
+        language="en",
+        claims=(unsupported_claim,),
+        generation_id=3,
+        content_revision=7,
+        policy_version="grounded-v1",
+    )
+
+    class RejectingClaimVerifier:
+        async def verify(
+            self,
+            claim: RagClaim,
+            *,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> EntailmentResult:
+            assert claim == unsupported_claim
+            assert evidence == EVIDENCE
+            return EntailmentResult.NOT_ENTAILED
+
+    class RecordingCitationValidator:
+        def __init__(self) -> None:
+            self._inner = CitationValidator()
+
+        def validate(
+            self,
+            output: GroundedModelOutput,
+            request: GroundedAnswerRequest,
+        ):
+            received_outputs.append(output)
+
+            return self._inner.validate(output, request)
+
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=FakeGenerator(retriever, generated),
+        citation_validator=RecordingCitationValidator(),
+        requirement_decomposer=RecordingRequirementDecomposer(),
+        requirement_coverage_classifier=RecordingRequirementCoverageClassifier(),
+        claim_entailment_verifier=RejectingClaimVerifier(),
+    )
+
+    result = _ask(service)
+
+    assert len(received_outputs) == 1
+    projected = received_outputs[0]
+
+    assert projected.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert projected.claims == ()
+    assert projected.answer_text == "Insufficient evidence."
+
+    assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert result.answer.claims == ()
+    assert result.answer.citations == ()
+
+
+def test_atomic_path_uses_question_aware_coverage_after_validated_spans() -> None:
+    events: list[str] = []
+    retriever = FakeRetriever()
+
+    class InterrogativeAtomicDecomposer:
+        async def decompose(self, _query: RagQuery) -> AtomicRequirementDecomposition:
+            events.append("decompose")
+            return AtomicRequirementDecomposition(
+                AtomicDecompositionStatus.OK,
+                (Requirement("r1", "When is the deadline?"),),
+            )
+
+    class RecordingSpanExtractor(FakeSpanExtractor):
+        async def extract(
+            self,
+            requirements: RequirementSet,
+            *,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> tuple[RequirementEvidenceSpans, ...]:
+            assert events == ["decompose"]
+            assert requirements.requirements[0].requirement_text == "When is the deadline?"
+            events.append("spans")
+            return await super().extract(requirements, evidence=evidence)
+
+    class RecordingCoverageClassifier:
+        async def classify(
+            self,
+            requirements: RequirementSet,
+            *,
+            question: str,
+            answer_language: str,
+            generation_id: int,
+            content_revision: int,
+            policy_version: str,
+            evidence: tuple[RetrievedEvidence, ...],
+        ) -> RequirementCoverageDecision:
+            assert events == ["decompose", "spans"]
+            assert requirements.requirements[0].requirement_text == "When is the deadline?"
+            assert question
+            assert answer_language
+            assert evidence == EVIDENCE
+            events.append("coverage")
+
+            return RequirementCoverageDecision(
+                requirements,
+                (
+                    RequirementCoverageJudgment(
+                        "r1",
+                        RequirementSupport.SUPPORTED,
+                        ("ev-1",),
+                    ),
+                ),
+                SemanticCoverageStatus.SUPPORTED,
+                generation_id,
+                content_revision,
+                policy_version,
+            )
+
+    class RecordingGenerator(FakeGenerator):
+        async def generate(
+            self,
+            request: GroundedAnswerRequest,
+            sufficiency: SufficiencyDecision,
+        ) -> GroundedModelOutput:
+            assert events == ["decompose", "spans", "coverage"]
+            assert request.validated_requirement_spans
+            events.append("generation")
+            return await super().generate(request, sufficiency)
+
+    class RecordingClaimVerifier:
+        async def verify(
+            self,
+            claim: RagClaim,
+            *,
+            evidence: tuple[RetrievedEvidence, ...],
+            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...],
+        ) -> EntailmentResult:
+            assert events == ["decompose", "spans", "coverage", "generation"]
+            assert claim.text == "The deadline is Friday."
+            assert evidence == EVIDENCE
+            assert validated_requirement_spans == (
+                RequirementEvidenceSpans(
+                    "r1",
+                    (
+                        EvidenceSpan(
+                            "ev-1",
+                            "The deadline",
+                        ),
+                    ),
+                ),
+            )
+            events.append("claim_nli")
+            return EntailmentResult.ENTAILED
+
+    generator = RecordingGenerator(retriever, _output())
+
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=generator,
+        citation_validator=CitationValidator(),
+        atomic_requirement_decomposer=InterrogativeAtomicDecomposer(),
+        evidence_span_extractor=RecordingSpanExtractor(),
+        requirement_coverage_classifier=RecordingCoverageClassifier(),
+        claim_entailment_verifier=RecordingClaimVerifier(),
+    )
+
+    result = _ask(service)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert events == [
+        "decompose",
+        "spans",
+        "coverage",
+        "generation",
+        "claim_nli",
+    ]
