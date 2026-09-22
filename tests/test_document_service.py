@@ -196,6 +196,10 @@ class FakeFetcher:
     events: list[str]
     outcomes: dict[int, list[FetchedPdf | DocumentIngestionFailure]]
     calls: list[int] = field(default_factory=list)
+    unsupported: set[int] = field(default_factory=set)
+
+    def supports(self, selection: RemoteFileSelection) -> bool:
+        return selection.remote_file_id not in self.unsupported
 
     def fetch(self, selection: RemoteFileSelection) -> FetchedPdf:
         self.events.append(f"fetch:{selection.remote_file_id}")
@@ -592,3 +596,26 @@ def test_naive_clock_fails_before_fetch_without_persisting_unsafe_time() -> None
     assert test.fetcher.calls == []
     assert test.repository.recorded_failures == []
     assert result.documents[0].error_code is IngestionErrorCode.PERSISTENCE_FAILED
+
+
+def test_unsupported_fetcher_capability_is_skipped_without_fetching() -> None:
+    item = selected(1)
+    test = harness(
+        one_fetch_plan(item),
+        {1: [fetched(b"must-not-be-fetched")]},
+    )
+    test.fetcher.unsupported.add(1)
+
+    result = test.service.run(
+        mode=IngestionMode.INGEST_NEW,
+        source_system=SOURCE,
+    )
+
+    assert test.fetcher.calls == []
+    assert test.repository.recorded_failures == []
+    assert result.remote_files_selected == 1
+    assert result.ingested == 0
+    assert result.unchanged == 0
+    assert result.failed == 0
+    assert result.skipped == 1
+    assert result.documents[0].code is DocumentResultCode.SKIPPED

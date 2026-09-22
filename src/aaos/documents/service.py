@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
+from typing import Protocol
 
 from aaos.documents.contracts import (
     MAX_TRANSIENT_RETRIES,
@@ -23,7 +24,13 @@ from aaos.documents.pdf import PdfProcessor
 from aaos.documents.repository import DocumentRepository, SelectionPlan
 from aaos.documents.storage import ContentBlobStore, StagedBlob
 from aaos.documents.storage import sanitize_source_filename as sanitize_source_filename
-from aaos.moodle.file_download import BrowserAuthenticatedFetcher
+
+
+class PdfFetcher(Protocol):
+    """Structural Phase-3 PDF fetch boundary."""
+
+    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf: ...
+
 
 _RETRYABLE_FETCH_ERRORS = frozenset(
     {
@@ -43,7 +50,7 @@ class Phase3IngestionService:
         blob_store: ContentBlobStore,
         pdf_processor: PdfProcessor,
         ingestion_lock: IngestionLock,
-        fetcher_factory: Callable[[], AbstractContextManager[BrowserAuthenticatedFetcher]],
+        fetcher_factory: Callable[[], AbstractContextManager[PdfFetcher]],
         clock: Callable[[], datetime],
     ) -> None:
         self._repository = repository
@@ -77,6 +84,12 @@ class Phase3IngestionService:
             if plan.fetch:
                 with self._fetcher_factory() as fetcher:
                     for selection in plan.fetch:
+                        if not _supports_selection(fetcher, selection):
+                            results[selection.remote_file_id] = DocumentIngestionResult(
+                                remote_file_id=selection.remote_file_id,
+                                code=DocumentResultCode.SKIPPED,
+                            )
+                            continue
                         results[selection.remote_file_id] = self._ingest_one(
                             selection=selection,
                             fetcher=fetcher,
@@ -88,7 +101,7 @@ class Phase3IngestionService:
         self,
         *,
         selection: RemoteFileSelection,
-        fetcher: BrowserAuthenticatedFetcher,
+        fetcher: PdfFetcher,
     ) -> DocumentIngestionResult:
         attempted_at = self._attempted_at()
         if attempted_at is None:
@@ -167,7 +180,7 @@ class Phase3IngestionService:
     def _fetch_with_retries(
         self,
         *,
-        fetcher: BrowserAuthenticatedFetcher,
+        fetcher: PdfFetcher,
         selection: RemoteFileSelection,
     ) -> FetchedPdf:
         for attempt in range(MAX_TRANSIENT_RETRIES + 1):
@@ -219,6 +232,19 @@ class Phase3IngestionService:
             return value.astimezone(timezone.utc)
         except (OverflowError, TypeError, ValueError):
             return None
+
+
+def _supports_selection(
+    fetcher: PdfFetcher,
+    selection: RemoteFileSelection,
+) -> bool:
+    """Honor optional provider capability while preserving legacy fetchers."""
+    supports = getattr(fetcher, "supports", None)
+    if supports is None:
+        return True
+    if not callable(supports):
+        return False
+    return supports(selection) is True
 
 
 def _failed_result(
