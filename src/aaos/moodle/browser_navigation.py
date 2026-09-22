@@ -12,6 +12,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from aaos.moodle.browser_models import BrowserPolicyError, BrowserRoute
 from aaos.moodle.browser_policy import build_browser_url, classify_browser_request
+from aaos.moodle.embedded_drive import DriveFolderReference
 
 _NAVIGATION_TIMEOUT_MS = 30_000
 _FRONTEND_SETTLE_TIMEOUT_SECONDS = 15
@@ -255,6 +256,8 @@ class _Page(Protocol):
     def close(self) -> None: ...
 
     def on(self, event: str, handler: object) -> None: ...
+
+    def route(self, pattern: str, handler: object) -> None: ...
 
 
 class _Context(Protocol):
@@ -566,6 +569,112 @@ class PlaywrightRestrictedNavigator:
     def open_course_detail(self, identifier: int) -> BrowserDocument:
         """Read one fixed Moodle course-detail document."""
         return self._open_entity_document("COURSE_DETAIL", identifier)
+
+    def read_embedded_drive_folder(
+        self,
+        folder: DriveFolderReference,
+    ) -> str:
+        """Read one explicitly validated Google Drive folder embed."""
+
+        if self._closed:
+            raise BrowserPolicyError()
+
+        if not isinstance(folder, DriveFolderReference):
+            raise BrowserPolicyError()
+
+        folder_id = folder.folder_id
+
+        if (
+            not isinstance(folder_id, str)
+            or not 1 <= len(folder_id) <= 128
+            or not folder_id.isascii()
+            or not all(character.isalnum() or character in {"_", "-"} for character in folder_id)
+        ):
+            raise BrowserPolicyError()
+
+        target = f"https://drive.google.com/embeddedfolderview?id={folder_id}"
+        expected = urlsplit(target)
+
+        try:
+            page = self._context.new_page()
+        except (OSError, PlaywrightError, TypeError, ValueError):
+            self._failure_stage = "COLLECTION_PAGE_CREATE"
+            raise BrowserPolicyError() from None
+
+        def handle_drive_request(
+            route: _Route,
+            request: _Request,
+        ) -> None:
+            has_body = getattr(request, "post_data", None) is not None
+
+            if (
+                request.method == "GET"
+                and request.resource_type == "document"
+                and not has_body
+                and request.url == target
+            ):
+                route.continue_()
+                return
+
+            route.abort()
+
+        try:
+            for event in (
+                "popup",
+                "download",
+                "websocket",
+                "filechooser",
+            ):
+                page.on(event, self._blocked_event)
+
+            self._require_inert_sentinel_with(page)
+
+            # Page routing is deliberately narrower than the existing
+            # context-wide Moodle policy. It grants capability only to
+            # this exact provider document.
+            page.route("**/*", handle_drive_request)
+
+            page.goto(
+                target,
+                wait_until="domcontentloaded",
+                timeout=_NAVIGATION_TIMEOUT_MS,
+            )
+
+            parsed = urlsplit(page.url)
+
+            if (
+                parsed.scheme != expected.scheme
+                or parsed.netloc != expected.netloc
+                or parsed.path != expected.path
+                or parsed.query != expected.query
+                or parsed.fragment
+                or parsed.username
+                or parsed.password
+            ):
+                self._failure_stage = "UNEXPECTED_REDIRECT"
+                raise BrowserPolicyError()
+
+            html = page.content()
+
+            if not isinstance(html, str):
+                raise BrowserPolicyError()
+
+            return html
+
+        except BrowserPolicyError:
+            raise
+        except (
+            OSError,
+            PlaywrightError,
+            TimeoutError,
+            TypeError,
+            ValueError,
+        ):
+            if self._failure_stage == "NONE":
+                self._failure_stage = "NAVIGATION"
+            raise BrowserPolicyError() from None
+        finally:
+            self._close_owned_page(page)
 
     def open_announcement_list(self, identifier: int) -> BrowserDocument:
         """Read one fixed Moodle announcement-forum document."""

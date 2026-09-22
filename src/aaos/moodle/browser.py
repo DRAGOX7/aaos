@@ -46,6 +46,11 @@ from aaos.moodle.collection import (
     EntityBundleResult,
     collect_complete,
 )
+from aaos.moodle.embedded_drive import (
+    DriveFolderReference,
+    parse_embedded_drive_files,
+    parse_embedded_drive_folders,
+)
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
 
@@ -118,6 +123,8 @@ class _EntityBrowserNavigator(Protocol):
 
     def open_course_detail(self, identifier: int) -> BrowserDocument: ...
 
+    def read_embedded_drive_folder(self, folder: DriveFolderReference) -> str: ...
+
     def open_announcement_list(self, identifier: int) -> BrowserDocument: ...
 
 
@@ -160,6 +167,27 @@ class MoodleBrowserSource:
                 course_source_id=course.source_id,
                 expected_origin=self._base_origin,
             )
+
+            merged_remote_files = list(course_entities.remote_files)
+            remote_files_by_source_id = {record.source_id: record for record in merged_remote_files}
+
+            for folder in parse_embedded_drive_folders(course_document.html):
+                drive_html = navigator.read_embedded_drive_folder(folder)
+
+                for record in parse_embedded_drive_files(
+                    drive_html,
+                    course_source_id=course.source_id,
+                ):
+                    previous = remote_files_by_source_id.get(record.source_id)
+
+                    if previous is not None:
+                        if previous != record:
+                            raise BrowserPolicyError()
+                        continue
+
+                    remote_files_by_source_id[record.source_id] = record
+                    merged_remote_files.append(record)
+
             assignments = parse_frontend_assignment_list(
                 course_document.html,
                 course_source_id=course.source_id,
@@ -179,7 +207,7 @@ class MoodleBrowserSource:
                 course_source_id=course.source_id,
                 assignments=assignments,
                 announcements=tuple(announcements),
-                remote_files=course_entities.remote_files,
+                remote_files=tuple(merged_remote_files),
                 is_complete=True,
             )
         except (AttributeError, BrowserPolicyError, OSError, TypeError, ValueError):
