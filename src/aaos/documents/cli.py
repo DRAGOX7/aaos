@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import urllib3
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from alembic.script.revision import RevisionError
@@ -20,6 +21,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from aaos.documents.config import DocumentRuntimePaths, resolve_document_runtime_paths
 from aaos.documents.contracts import (
+    FETCH_TIMEOUT_MS,
+    MAX_PDF_BYTES,
     BatchIngestionResult,
     DocumentIngestionFailure,
     DocumentIngestionResult,
@@ -28,6 +31,8 @@ from aaos.documents.contracts import (
     IngestionErrorCode,
     IngestionMode,
 )
+from aaos.documents.drive_pdf_fetch import DrivePdfFetcher
+from aaos.documents.fetch_routing import ProviderRoutingPdfFetcher
 from aaos.documents.lock import IngestionLock, IngestionLockUnavailable
 from aaos.documents.pdf import PdfProcessor
 from aaos.documents.repository import DocumentRepository
@@ -178,6 +183,33 @@ def _validate_content_store_parent(path: Path) -> None:
         raise _configuration_failure() from None
 
 
+@contextmanager
+def _open_provider_fetcher_session(
+    moodle_session: AbstractContextManager[BrowserAuthenticatedFetcher],
+) -> Iterator[ProviderRoutingPdfFetcher]:
+    """Compose authenticated Moodle and anonymous Drive provider fetchers."""
+
+    with moodle_session as moodle_fetcher:
+        http = urllib3.PoolManager(
+            headers={},
+            retries=False,
+        )
+
+        try:
+            drive_fetcher = DrivePdfFetcher(
+                http=cast(Any, http),
+                max_pdf_bytes=MAX_PDF_BYTES,
+                timeout_seconds=FETCH_TIMEOUT_MS / 1000,
+            )
+
+            yield ProviderRoutingPdfFetcher(
+                moodle_fetcher=moodle_fetcher,
+                drive_fetcher=drive_fetcher,
+            )
+        finally:
+            http.clear()
+
+
 def build_phase3_service(
     *,
     bootstrap_config: MoodleBootstrapConfig,
@@ -195,13 +227,15 @@ def build_phase3_service(
         blob_store = ContentBlobStore(paths.content_store_root)
         ingestion_lock = IngestionLock(paths.ingestion_lock_path)
 
-        def fetcher_factory() -> AbstractContextManager[BrowserAuthenticatedFetcher]:
-            return open_phase3_fetcher_session(
+        def fetcher_factory() -> AbstractContextManager[ProviderRoutingPdfFetcher]:
+            moodle_session = open_phase3_fetcher_session(
                 canonical_wwwroot=bootstrap_config.canonical_wwwroot,
                 expected_source_system=settings.source_system,
                 settings=settings,
                 auth_paths=auth_paths,
             )
+
+            return _open_provider_fetcher_session(moodle_session)
 
         service = Phase3IngestionService(
             repository=repository,

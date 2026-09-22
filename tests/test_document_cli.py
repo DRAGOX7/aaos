@@ -661,3 +661,180 @@ def test_document_command_never_invokes_alembic_upgrade(
     monkeypatch.setattr(command, "upgrade", fail_if_called)
 
     assert module.run_documents_command(["refresh"]) == 0
+
+
+def test_provider_fetcher_session_isolates_anonymous_drive_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import aaos.documents.cli as module
+
+    moodle_fetcher = object()
+    entered: list[str] = []
+    exited: list[str] = []
+    pool_options: list[dict[str, object]] = []
+    cleared: list[bool] = []
+    drive_options: list[dict[str, object]] = []
+    router_options: list[dict[str, object]] = []
+
+    class FakeMoodleSession:
+        def __enter__(self) -> object:
+            entered.append("moodle")
+            return moodle_fetcher
+
+        def __exit__(
+            self,
+            _type: object,
+            _value: object,
+            _traceback: object,
+        ) -> None:
+            exited.append("moodle")
+
+    class FakePool:
+        def clear(self) -> None:
+            cleared.append(True)
+
+    pool = FakePool()
+
+    class FakeUrllib3:
+        @staticmethod
+        def PoolManager(**kwargs: object) -> FakePool:
+            pool_options.append(dict(kwargs))
+            return pool
+
+    drive_fetcher = object()
+
+    class FakeDrivePdfFetcher:
+        def __new__(
+            cls,
+            **kwargs: object,
+        ) -> object:
+            del cls
+            drive_options.append(dict(kwargs))
+            return drive_fetcher
+
+    router = object()
+
+    class FakeProviderRoutingPdfFetcher:
+        def __new__(
+            cls,
+            **kwargs: object,
+        ) -> object:
+            del cls
+            router_options.append(dict(kwargs))
+            return router
+
+    monkeypatch.setattr(
+        module,
+        "urllib3",
+        FakeUrllib3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "DrivePdfFetcher",
+        FakeDrivePdfFetcher,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "ProviderRoutingPdfFetcher",
+        FakeProviderRoutingPdfFetcher,
+        raising=False,
+    )
+
+    opener = getattr(
+        module,
+        "_open_provider_fetcher_session",
+        None,
+    )
+
+    assert callable(opener)
+
+    with opener(FakeMoodleSession()) as fetcher:
+        assert fetcher is router
+        assert entered == ["moodle"]
+        assert exited == []
+        assert cleared == []
+
+    assert exited == ["moodle"]
+    assert cleared == [True]
+
+    assert pool_options == [
+        {
+            "headers": {},
+            "retries": False,
+        }
+    ]
+
+    assert len(drive_options) == 1
+    assert drive_options[0]["http"] is pool
+    assert drive_options[0]["max_pdf_bytes"] == module.MAX_PDF_BYTES
+    assert drive_options[0]["timeout_seconds"] == (module.FETCH_TIMEOUT_MS / 1000)
+
+    assert router_options == [
+        {
+            "moodle_fetcher": moodle_fetcher,
+            "drive_fetcher": drive_fetcher,
+        }
+    ]
+
+
+def test_build_routes_moodle_session_through_provider_composition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import aaos.documents.cli as module
+
+    env, paths = _migrated_phase3_setup(tmp_path)
+
+    captured: dict[str, object] = {}
+    moodle_session = object()
+    provider_session = object()
+
+    def fake_open_moodle_session(
+        **_kwargs: object,
+    ) -> object:
+        return moodle_session
+
+    def fake_open_provider_session(
+        session: object,
+    ) -> object:
+        captured["moodle_session"] = session
+        return provider_session
+
+    class FakeService:
+        def __init__(
+            self,
+            **kwargs: object,
+        ) -> None:
+            captured["fetcher_factory"] = kwargs["fetcher_factory"]
+
+    monkeypatch.setattr(
+        module,
+        "open_phase3_fetcher_session",
+        fake_open_moodle_session,
+    )
+    monkeypatch.setattr(
+        module,
+        "_open_provider_fetcher_session",
+        fake_open_provider_session,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "Phase3IngestionService",
+        FakeService,
+    )
+
+    with build_phase3_service(
+        bootstrap_config=env.bootstrap_config,
+        settings=env.settings,
+        auth_paths=env.auth_paths,
+        paths=paths,
+    ):
+        factory = captured["fetcher_factory"]
+
+        assert callable(factory)
+        assert factory() is provider_session
+
+    assert captured["moodle_session"] is moodle_session
