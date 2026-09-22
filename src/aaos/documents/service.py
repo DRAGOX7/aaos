@@ -84,12 +84,6 @@ class Phase3IngestionService:
             if plan.fetch:
                 with self._fetcher_factory() as fetcher:
                     for selection in plan.fetch:
-                        if not _supports_selection(fetcher, selection):
-                            results[selection.remote_file_id] = DocumentIngestionResult(
-                                remote_file_id=selection.remote_file_id,
-                                code=DocumentResultCode.SKIPPED,
-                            )
-                            continue
                         results[selection.remote_file_id] = self._ingest_one(
                             selection=selection,
                             fetcher=fetcher,
@@ -112,7 +106,16 @@ class Phase3IngestionService:
         result: DocumentIngestionResult | None = None
         failure_code: IngestionErrorCode | None = None
         try:
-            fetched = self._fetch_with_retries(fetcher=fetcher, selection=selection)
+            if not _supports_selection(fetcher, selection):
+                return DocumentIngestionResult(
+                    remote_file_id=selection.remote_file_id,
+                    code=DocumentResultCode.SKIPPED,
+                )
+
+            fetched = self._fetch_with_retries(
+                fetcher=fetcher,
+                selection=selection,
+            )
             source_filename = sanitize_source_filename(
                 fetched.source_filename,
                 fallback=f"remote-file-{selection.remote_file_id}.pdf",

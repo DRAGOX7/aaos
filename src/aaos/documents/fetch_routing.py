@@ -53,7 +53,12 @@ class ProviderRoutingPdfFetcher:
                 selection,
             )
 
-        return False
+        if _DRIVE_FILE_ID.fullmatch(selection.source_id) and selection.title.casefold().endswith(
+            (".docx", ".pptx", ".ipynb")
+        ):
+            return False
+
+        raise DocumentIngestionFailure(IngestionErrorCode.UNAUTHORIZED_ROUTE)
 
     def fetch(self, selection: RemoteFileSelection) -> FetchedPdf:
         provider = _provider_for(selection)

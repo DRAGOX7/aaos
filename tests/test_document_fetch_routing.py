@@ -132,7 +132,15 @@ def test_router_rejects_unknown_source_identity() -> None:
         "file.pdf",
     )
 
-    assert router.supports(item) is False
+    with pytest.raises(DocumentIngestionFailure) as supports_error:
+        router.supports(item)
+
+    assert supports_error.value.code is IngestionErrorCode.UNAUTHORIZED_ROUTE
+
+    with pytest.raises(DocumentIngestionFailure) as fetch_error:
+        router.fetch(item)
+
+    assert fetch_error.value.code is IngestionErrorCode.UNAUTHORIZED_ROUTE
 
 
 def test_router_fetch_rejects_unsupported_identity_without_delegation() -> None:

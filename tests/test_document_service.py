@@ -619,3 +619,38 @@ def test_unsupported_fetcher_capability_is_skipped_without_fetching() -> None:
     assert result.failed == 0
     assert result.skipped == 1
     assert result.documents[0].code is DocumentResultCode.SKIPPED
+
+
+def test_supports_unauthorized_route_is_isolated_as_failed_without_fetch() -> None:
+    item = selected(1)
+
+    test = harness(
+        one_fetch_plan(item),
+        {1: [fetched(b"must-not-be-fetched")]},
+    )
+
+    def reject_selection(
+        selection: RemoteFileSelection,
+    ) -> bool:
+        del selection
+        raise DocumentIngestionFailure(IngestionErrorCode.UNAUTHORIZED_ROUTE)
+
+    test.fetcher.supports = reject_selection  # type: ignore[method-assign]
+
+    result = test.service.run(
+        mode=IngestionMode.INGEST_NEW,
+        source_system=SOURCE,
+    )
+
+    assert test.fetcher.calls == []
+    assert result.remote_files_selected == 1
+    assert result.ingested == 0
+    assert result.unchanged == 0
+    assert result.failed == 1
+    assert result.skipped == 0
+
+    assert result.documents[0].code is DocumentResultCode.FAILED
+    assert result.documents[0].error_code is IngestionErrorCode.UNAUTHORIZED_ROUTE
+
+    assert len(test.repository.recorded_failures) == 1
+    assert test.repository.recorded_failures[0][1] is IngestionErrorCode.UNAUTHORIZED_ROUTE
