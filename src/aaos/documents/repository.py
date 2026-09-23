@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 from aaos.documents.contracts import (
     BlobInstall,
     DocumentIngestionFailure,
+    ExtractionStatus,
     IngestionErrorCode,
     IngestionMode,
     IngestionStatus,
+    ParsedDocx,
     ParsedPdf,
     RemoteFileSelection,
 )
@@ -24,8 +26,16 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
+
+_PDF_MEDIA_TYPE = "application/pdf"
+_DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+_PAGE_PROVENANCE_MODE = "PAGE"
+_STRUCTURE_PROVENANCE_MODE = "STRUCTURE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +160,8 @@ class DocumentRepository:
                     session,
                     document_id=document.id,
                     sha256=blob.sha256,
+                    media_type=_PDF_MEDIA_TYPE,
+                    provenance_mode=_PAGE_PROVENANCE_MODE,
                 )
                 if existing is not None:
                     self._mark_ready(document, attempted_at)
@@ -163,6 +175,7 @@ class DocumentRepository:
                     content_blob, content_blob_created = self._get_or_create_blob(
                         session,
                         blob=blob,
+                        media_type=_PDF_MEDIA_TYPE,
                         attempted_at=attempted_at,
                     )
                     version_number = self._next_version_number(session, document.id)
@@ -173,6 +186,7 @@ class DocumentRepository:
                         source_filename=source_filename,
                         ingested_at=attempted_at,
                         extraction_status=parsed_pdf.extraction_status.value,
+                        provenance_mode=_PAGE_PROVENANCE_MODE,
                         page_count=parsed_pdf.page_count,
                     )
                     session.add(version)
@@ -201,6 +215,90 @@ class DocumentRepository:
         except SQLAlchemyError:
             session.rollback()
             raise DocumentIngestionFailure(IngestionErrorCode.PERSISTENCE_FAILED) from None
+        finally:
+            session.close()
+
+
+    def persist_structural_success(
+        self,
+        *,
+        selection: RemoteFileSelection,
+        blob: BlobInstall,
+        source_filename: str,
+        parsed_docx: ParsedDocx,
+        attempted_at: datetime,
+    ) -> PersistedVersion:
+        session = self._session_factory()
+        try:
+            with session.begin():
+                document = self._get_or_create_document(
+                    session,
+                    remote_file_id=selection.remote_file_id,
+                    attempted_at=attempted_at,
+                )
+                existing = self._existing_version(
+                    session,
+                    document_id=document.id,
+                    sha256=blob.sha256,
+                    media_type=_DOCX_MEDIA_TYPE,
+                    provenance_mode=_STRUCTURE_PROVENANCE_MODE,
+                )
+                if existing is not None:
+                    self._mark_ready(document, attempted_at)
+                    result = PersistedVersion(
+                        document_id=document.id,
+                        version_number=existing.version_number,
+                        content_blob_id=existing.content_blob_id,
+                        content_blob_created=False,
+                    )
+                else:
+                    content_blob, content_blob_created = self._get_or_create_blob(
+                        session,
+                        blob=blob,
+                        media_type=_DOCX_MEDIA_TYPE,
+                        attempted_at=attempted_at,
+                    )
+                    version_number = self._next_version_number(session, document.id)
+                    version = DocumentVersionORM(
+                        document_id=document.id,
+                        version_number=version_number,
+                        content_blob_id=content_blob.id,
+                        source_filename=source_filename,
+                        ingested_at=attempted_at,
+                        extraction_status=ExtractionStatus.SUCCESS.value,
+                        provenance_mode=_STRUCTURE_PROVENANCE_MODE,
+                        page_count=None,
+                    )
+                    session.add(version)
+                    session.flush()
+                    session.add_all(
+                        DocumentStructureUnitORM(
+                            document_version_id=version.id,
+                            ordinal=unit.ordinal,
+                            kind=unit.kind.value,
+                            text=unit.text,
+                            heading_level=unit.heading_level,
+                            table_index=unit.table_index,
+                            row_index=unit.row_index,
+                            column_index=unit.column_index,
+                            created_at=attempted_at,
+                        )
+                        for unit in parsed_docx.units
+                    )
+                    self._mark_ready(document, attempted_at)
+                    session.flush()
+                    result = PersistedVersion(
+                        document_id=document.id,
+                        version_number=version.version_number,
+                        content_blob_id=content_blob.id,
+                        content_blob_created=content_blob_created,
+                    )
+            return result
+        except SQLAlchemyError:
+            session.rollback()
+            raise DocumentIngestionFailure(
+                IngestionErrorCode.PERSISTENCE_FAILED
+            ) from None
         finally:
             session.close()
 
@@ -296,6 +394,8 @@ class DocumentRepository:
         *,
         document_id: int,
         sha256: str,
+        media_type: str,
+        provenance_mode: str,
     ) -> DocumentVersionORM | None:
         return session.scalar(
             select(DocumentVersionORM)
@@ -303,6 +403,8 @@ class DocumentRepository:
             .where(
                 DocumentVersionORM.document_id == document_id,
                 ContentBlobORM.sha256 == sha256,
+                ContentBlobORM.media_type == media_type,
+                DocumentVersionORM.provenance_mode == provenance_mode,
             )
         )
 
@@ -311,17 +413,26 @@ class DocumentRepository:
         session: Session,
         *,
         blob: BlobInstall,
+        media_type: str,
         attempted_at: datetime,
     ) -> tuple[ContentBlobORM, bool]:
         content_blob = session.scalar(
             select(ContentBlobORM).where(ContentBlobORM.sha256 == blob.sha256)
         )
         if content_blob is not None:
+            if (
+                content_blob.size_bytes != blob.size_bytes
+                or content_blob.media_type != media_type
+                or content_blob.storage_key != blob.storage_key
+            ):
+                raise DocumentIngestionFailure(
+                    IngestionErrorCode.PERSISTENCE_FAILED
+                )
             return content_blob, False
         content_blob = ContentBlobORM(
             sha256=blob.sha256,
             size_bytes=blob.size_bytes,
-            media_type="application/pdf",
+            media_type=media_type,
             storage_key=blob.storage_key,
             created_at=attempted_at,
         )

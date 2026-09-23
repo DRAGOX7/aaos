@@ -18,12 +18,15 @@ from aaos.documents.contracts import (
     BlobInstall,
     DocumentIngestionFailure,
     ExtractedPage,
+    ExtractedStructureUnit,
     ExtractionStatus,
     IngestionErrorCode,
     IngestionMode,
     IngestionStatus,
+    ParsedDocx,
     ParsedPdf,
     RemoteFileSelection,
+    StructureUnitKind,
     TextSource,
 )
 from aaos.documents.repository import DocumentRepository
@@ -33,6 +36,7 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
 
@@ -691,6 +695,7 @@ def test_persist_success_creates_ready_document_version_and_page_provenance(
             assert version_row.source_filename == "lecture.pdf"
             assert version_row.ingested_at == NOW
             assert version_row.page_count == 2
+            assert version_row.provenance_mode == "PAGE"
             assert version_row.extraction_status == ExtractionStatus.SUCCESS.value
             page_rows = session.scalars(
                 select(DocumentPageORM)
@@ -981,3 +986,330 @@ def test_blob_is_referenced_reports_exact_global_reference_state(tmp_path: Path)
 
         assert repository.blob_is_referenced(sha256="a" * 64) is True
         assert repository.blob_is_referenced(sha256="b" * 64) is False
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def installed_docx_blob(
+    sha_character: str = "d",
+    *,
+    created: bool = True,
+) -> BlobInstall:
+    sha256 = sha_character * 64
+    return BlobInstall(
+        sha256=sha256,
+        size_bytes=100,
+        storage_key=f"sha256/{sha256[:2]}/{sha256}.docx",
+        created=created,
+    )
+
+
+def parsed_docx(*, invalid_ordinal: bool = False) -> ParsedDocx:
+    return ParsedDocx(
+        units=(
+            ExtractedStructureUnit(
+                ordinal=0 if invalid_ordinal else 1,
+                kind=StructureUnitKind.HEADING,
+                text="Course Overview",
+                heading_level=1,
+                table_index=None,
+                row_index=None,
+                column_index=None,
+            ),
+            ExtractedStructureUnit(
+                ordinal=2,
+                kind=StructureUnitKind.PARAGRAPH,
+                text="Structured body",
+                heading_level=None,
+                table_index=None,
+                row_index=None,
+                column_index=None,
+            ),
+            ExtractedStructureUnit(
+                ordinal=3,
+                kind=StructureUnitKind.TABLE_CELL,
+                text="A1",
+                heading_level=None,
+                table_index=0,
+                row_index=0,
+                column_index=0,
+            ),
+        )
+    )
+
+
+def test_persist_structural_success_creates_structure_provenance(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        (remote_file_id,) = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "resource", True),
+        )
+        selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=remote_file_id,
+        )
+
+        result = repository.persist_structural_success(
+            selection=selection,
+            blob=installed_docx_blob(),
+            source_filename="lecture.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=NOW,
+        )
+
+        assert result.version_number == 1
+        assert result.content_blob_created is True
+
+        with sessions() as session:
+            document_row = session.scalar(
+                select(DocumentORM).where(DocumentORM.remote_file_id == remote_file_id)
+            )
+            assert document_row is not None
+            assert document_row.ingestion_status == IngestionStatus.READY.value
+
+            version_row = session.scalar(
+                select(DocumentVersionORM).where(
+                    DocumentVersionORM.document_id == document_row.id
+                )
+            )
+            assert version_row is not None
+            assert version_row.source_filename == "lecture.docx"
+            assert version_row.extraction_status == ExtractionStatus.SUCCESS.value
+            assert version_row.provenance_mode == "STRUCTURE"
+            assert version_row.page_count is None
+
+            blob_row = session.get(ContentBlobORM, result.content_blob_id)
+            assert blob_row is not None
+            assert blob_row.media_type == _DOCX_MIME
+            assert blob_row.storage_key == installed_docx_blob().storage_key
+
+            structure_rows = session.scalars(
+                select(DocumentStructureUnitORM)
+                .where(
+                    DocumentStructureUnitORM.document_version_id == version_row.id
+                )
+                .order_by(DocumentStructureUnitORM.ordinal)
+            ).all()
+
+            assert [
+                (
+                    row.ordinal,
+                    row.kind,
+                    row.text,
+                    row.heading_level,
+                    row.table_index,
+                    row.row_index,
+                    row.column_index,
+                )
+                for row in structure_rows
+            ] == [
+                (1, "HEADING", "Course Overview", 1, None, None, None),
+                (2, "PARAGRAPH", "Structured body", None, None, None, None),
+                (3, "TABLE_CELL", "A1", None, 0, 0, 0),
+            ]
+
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(DocumentPageORM)
+                    .where(DocumentPageORM.document_version_id == version_row.id)
+                )
+                == 0
+            )
+
+
+def test_structural_same_document_sha_is_unchanged_without_duplicate_units(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        (remote_file_id,) = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "resource", True),
+        )
+        selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=remote_file_id,
+        )
+
+        first = repository.persist_structural_success(
+            selection=selection,
+            blob=installed_docx_blob(),
+            source_filename="first.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=NOW,
+        )
+        second = repository.persist_structural_success(
+            selection=selection,
+            blob=installed_docx_blob(created=False),
+            source_filename="renamed.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=LATER,
+        )
+
+        assert second.document_id == first.document_id
+        assert second.version_number == first.version_number
+        assert second.content_blob_id == first.content_blob_id
+        assert second.content_blob_created is False
+
+        with sessions() as session:
+            assert (
+                session.scalar(select(func.count()).select_from(DocumentVersionORM))
+                == 1
+            )
+            assert (
+                session.scalar(
+                    select(func.count()).select_from(DocumentStructureUnitORM)
+                )
+                == 3
+            )
+
+
+def test_structural_blob_deduplicates_globally_without_merging_documents(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        first_id, second_id = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "first", True),
+            ("moodle:fixture", "second", True),
+        )
+        first_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=first_id,
+        )
+        second_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=second_id,
+        )
+
+        first = repository.persist_structural_success(
+            selection=first_selection,
+            blob=installed_docx_blob("e"),
+            source_filename="first.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=NOW,
+        )
+        second = repository.persist_structural_success(
+            selection=second_selection,
+            blob=installed_docx_blob("e", created=False),
+            source_filename="second.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=NOW,
+        )
+
+        assert first.document_id != second.document_id
+        assert first.content_blob_id == second.content_blob_id
+        assert first.content_blob_created is True
+        assert second.content_blob_created is False
+
+        with sessions() as session:
+            assert (
+                session.scalar(select(func.count()).select_from(ContentBlobORM))
+                == 1
+            )
+            assert (
+                session.scalar(select(func.count()).select_from(DocumentVersionORM))
+                == 2
+            )
+            assert (
+                session.scalar(
+                    select(func.count()).select_from(DocumentStructureUnitORM)
+                )
+                == 6
+            )
+
+
+def test_structural_persistence_rolls_back_invalid_units_and_document_state(
+    tmp_path: Path,
+) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        (remote_file_id,) = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "resource", True),
+        )
+        selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=remote_file_id,
+        )
+
+        with pytest.raises(DocumentIngestionFailure) as caught:
+            repository.persist_structural_success(
+                selection=selection,
+                blob=installed_docx_blob("f"),
+                source_filename="invalid.docx",
+                parsed_docx=parsed_docx(invalid_ordinal=True),
+                attempted_at=NOW,
+            )
+
+        assert caught.value.code is IngestionErrorCode.PERSISTENCE_FAILED
+        assert str(caught.value) == "document ingestion failed"
+
+        with sessions() as session:
+            assert session.scalar(select(func.count()).select_from(DocumentORM)) == 0
+            assert session.scalar(select(func.count()).select_from(ContentBlobORM)) == 0
+            assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 0
+            assert session.scalar(select(func.count()).select_from(DocumentPageORM)) == 0
+            assert (
+                session.scalar(
+                    select(func.count()).select_from(DocumentStructureUnitORM)
+                )
+                == 0
+            )
+def test_cross_media_sha_reuse_fails_closed(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        first_id, second_id = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "pdf", True),
+            ("moodle:fixture", "docx", True),
+        )
+        pdf_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=first_id,
+        )
+        docx_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=second_id,
+        )
+
+        repository.persist_success(
+            selection=pdf_selection,
+            blob=installed_blob("a"),
+            source_filename="source.pdf",
+            parsed_pdf=parsed_pdf(),
+            attempted_at=NOW,
+        )
+
+        with pytest.raises(DocumentIngestionFailure) as caught:
+            repository.persist_structural_success(
+                selection=docx_selection,
+                blob=installed_docx_blob("a", created=False),
+                source_filename="source.docx",
+                parsed_docx=parsed_docx(),
+                attempted_at=LATER,
+            )
+
+        assert caught.value.code is IngestionErrorCode.PERSISTENCE_FAILED
+
+        with sessions() as session:
+            assert (
+                session.scalar(select(func.count()).select_from(ContentBlobORM))
+                == 1
+            )
+            assert (
+                session.scalar(select(func.count()).select_from(DocumentVersionORM))
+                == 1
+            )
+            assert (
+                session.scalar(
+                    select(func.count()).select_from(DocumentStructureUnitORM)
+                )
+                == 0
+            )
