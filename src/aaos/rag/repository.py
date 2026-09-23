@@ -25,11 +25,13 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
 from aaos.persistence.rag_models import (
     RagChunkORM,
     RagChunkSourceSpanORM,
+    RagChunkStructureSourceSpanORM,
     RagDocumentIndexORM,
     RagIndexGenerationORM,
 )
@@ -77,6 +79,25 @@ class DocumentPageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentStructureUnitRecord:
+    """Immutable structural provenance unit returned for a STRUCTURE version."""
+
+    document_structure_unit_id: int
+    document_version_id: int
+    ordinal: int
+    kind: str
+    text: str
+    heading_level: int | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+
+    @property
+    def id(self) -> int:
+        return self.document_structure_unit_id
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentVersionRecord:
     """Immutable Phase 3 provenance identity used by RAG indexing."""
 
@@ -88,7 +109,8 @@ class DocumentVersionRecord:
     content_blob_id: int
     content_sha256: str
     source_filename: str
-    page_count: int
+    provenance_mode: str
+    page_count: int | None
 
     @property
     def id(self) -> int:
@@ -179,8 +201,9 @@ class ChunkRecord:
     exact_text: str
     token_count: int
     text_sha256: str
-    page_start: int
-    page_end: int
+    provenance_mode: str
+    page_start: int | None
+    page_end: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,11 +322,21 @@ class StagedDocumentIndexResult:
                 and self.verification is None
             )
         else:
+            # searchable_page_count is provenance-specific:
+            # PAGE READY documents require positive page coverage,
+            # while STRUCTURE READY documents intentionally use zero.
+            # The repository validates that mode-specific invariant
+            # against the actual DocumentVersion.
             coherent = (
-                self.coverage_status in {CoverageStatus.FULL, CoverageStatus.PARTIAL}
-                and self.searchable_page_count > 0
+                self.coverage_status in {
+                    CoverageStatus.FULL,
+                    CoverageStatus.PARTIAL,
+                }
                 and self.chunk_count > 0
-                and isinstance(self.verification, DocumentVerificationRecord)
+                and isinstance(
+                    self.verification,
+                    DocumentVerificationRecord,
+                )
             )
         if not coherent:
             raise ValueError("staged document metadata is incoherent")
@@ -371,6 +404,7 @@ class RagRepository:
                 DocumentVersionORM.content_blob_id,
                 ContentBlobORM.sha256.label("content_sha256"),
                 DocumentVersionORM.source_filename,
+                DocumentVersionORM.provenance_mode,
                 DocumentVersionORM.page_count,
             )
             .join(DocumentORM, DocumentVersionORM.document_id == DocumentORM.id)
@@ -399,7 +433,12 @@ class RagRepository:
             content_blob_id=int(row.content_blob_id),
             content_sha256=str(row.content_sha256),
             source_filename=str(row.source_filename),
-            page_count=int(row.page_count),
+            provenance_mode=str(row.provenance_mode),
+            page_count=(
+                None
+                if row.page_count is None
+                else int(row.page_count)
+            ),
         )
 
     def _resolve_versions_in_session(
@@ -1224,6 +1263,96 @@ class RagRepository:
             embedding_dimensions=identity.embedding_dimensions,
         )
 
+    def read_structure_units(
+        self,
+        document_version_id: int,
+    ) -> tuple[DocumentStructureUnitRecord, ...]:
+        """Read ordered structural provenance for one eligible STRUCTURE version."""
+
+        if (
+            isinstance(document_version_id, bool)
+            or not isinstance(document_version_id, int)
+            or document_version_id <= 0
+        ):
+            raise RagOperationalError(
+                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+            )
+
+        session = self._session_factory()
+        try:
+            with session.begin():
+                version_row = session.execute(
+                    self._version_query().where(
+                        DocumentVersionORM.id
+                        == document_version_id
+                    )
+                ).first()
+
+                if version_row is None:
+                    raise RagOperationalError(
+                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                    )
+
+                version = self._record_version(version_row)
+                if version.provenance_mode != "STRUCTURE":
+                    raise RagOperationalError(
+                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                    )
+
+                rows = session.scalars(
+                    select(DocumentStructureUnitORM)
+                    .where(
+                        DocumentStructureUnitORM.document_version_id
+                        == document_version_id
+                    )
+                    .order_by(
+                        DocumentStructureUnitORM.ordinal,
+                        DocumentStructureUnitORM.id,
+                    )
+                ).all()
+
+                return tuple(
+                    DocumentStructureUnitRecord(
+                        document_structure_unit_id=int(row.id),
+                        document_version_id=int(
+                            row.document_version_id
+                        ),
+                        ordinal=int(row.ordinal),
+                        kind=str(row.kind),
+                        text=row.text,
+                        heading_level=(
+                            None
+                            if row.heading_level is None
+                            else int(row.heading_level)
+                        ),
+                        table_index=(
+                            None
+                            if row.table_index is None
+                            else int(row.table_index)
+                        ),
+                        row_index=(
+                            None
+                            if row.row_index is None
+                            else int(row.row_index)
+                        ),
+                        column_index=(
+                            None
+                            if row.column_index is None
+                            else int(row.column_index)
+                        ),
+                    )
+                    for row in rows
+                )
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(
+                RagErrorCode.PROVENANCE_RESOLUTION_FAILED,
+                error,
+            ) from error
+        finally:
+            session.close()
+
     def _require_eligible_version(
         self, session: Session, document_version_id: int
     ) -> DocumentVersionRecord:
@@ -1356,7 +1485,18 @@ class RagRepository:
                     RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids)
                 )
             )
-            session.execute(delete(RagChunkORM).where(RagChunkORM.id.in_(chunk_ids)))
+            session.execute(
+                delete(RagChunkStructureSourceSpanORM).where(
+                    RagChunkStructureSourceSpanORM.rag_chunk_id.in_(
+                        chunk_ids
+                    )
+                )
+            )
+            session.execute(
+                delete(RagChunkORM).where(
+                    RagChunkORM.id.in_(chunk_ids)
+                )
+            )
 
     def begin_document_preparation(
         self,
@@ -1604,6 +1744,42 @@ class RagRepository:
         finally:
             session.close()
 
+    @staticmethod
+    def _ready_coverage_invalid(
+        version: DocumentVersionRecord,
+        coverage_status: CoverageStatus,
+        searchable_page_count: int,
+    ) -> bool:
+        """Validate READY coverage without inventing STRUCTURE pages."""
+
+        if coverage_status is CoverageStatus.NONE:
+            return True
+
+        if version.provenance_mode == "PAGE":
+            page_count = version.page_count
+            if page_count is None:
+                return True
+            return (
+                searchable_page_count <= 0
+                or searchable_page_count > page_count
+                or (
+                    coverage_status is CoverageStatus.FULL
+                    and searchable_page_count != page_count
+                )
+                or (
+                    coverage_status is CoverageStatus.PARTIAL
+                    and searchable_page_count >= page_count
+                )
+            )
+
+        if version.provenance_mode == "STRUCTURE":
+            return (
+                version.page_count is not None
+                or searchable_page_count != 0
+            )
+
+        return True
+
     def _validate_staged_metadata(
         self,
         session: Session,
@@ -1626,16 +1802,10 @@ class RagRepository:
                 raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
             return
         if (
-            coverage_status is CoverageStatus.NONE
-            or searchable_page_count <= 0
-            or searchable_page_count > version.page_count
-            or (
-                coverage_status is CoverageStatus.FULL
-                and searchable_page_count != version.page_count
-            )
-            or (
-                coverage_status is CoverageStatus.PARTIAL
-                and searchable_page_count >= version.page_count
+            self._ready_coverage_invalid(
+                version,
+                coverage_status,
+                searchable_page_count,
             )
             or chunk_count <= 0
             or verification is None
@@ -1717,17 +1887,11 @@ class RagRepository:
                 ):
                     raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
                 if status is DocumentIndexStatus.READY and (
-                    coverage_status is CoverageStatus.NONE
-                    or searchable_page_count <= 0
-                    or searchable_page_count > version.page_count
-                    or (
-                        coverage_status is CoverageStatus.FULL
-                        and searchable_page_count != version.page_count
-                    )
-                    or (
-                        coverage_status is CoverageStatus.PARTIAL
-                        and searchable_page_count >= version.page_count
-                    )
+                    self._ready_coverage_invalid(
+                    version,
+                    coverage_status,
+                    searchable_page_count,
+                )
                     or chunk_count <= 0
                     or error_code is not None
                     or verification is None
@@ -1809,51 +1973,191 @@ class RagRepository:
                 },
             )
         )
-        spans = (
+        page_spans = (
             tuple(
                 session.execute(
-                    select(RagChunkSourceSpanORM, DocumentPageORM, RagChunkORM)
+                    select(
+                        RagChunkSourceSpanORM,
+                        DocumentPageORM,
+                        RagChunkORM,
+                    )
                     .join(
                         DocumentPageORM,
-                        RagChunkSourceSpanORM.document_page_id == DocumentPageORM.id,
+                        RagChunkSourceSpanORM.document_page_id
+                        == DocumentPageORM.id,
                     )
-                    .join(RagChunkORM, RagChunkSourceSpanORM.rag_chunk_id == RagChunkORM.id)
-                    .where(RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids))
-                    .order_by(RagChunkSourceSpanORM.rag_chunk_id, RagChunkSourceSpanORM.ordinal)
+                    .join(
+                        RagChunkORM,
+                        RagChunkSourceSpanORM.rag_chunk_id
+                        == RagChunkORM.id,
+                    )
+                    .where(
+                        RagChunkSourceSpanORM.rag_chunk_id.in_(
+                            chunk_ids
+                        )
+                    )
+                    .order_by(
+                        RagChunkSourceSpanORM.rag_chunk_id,
+                        RagChunkSourceSpanORM.ordinal,
+                    )
                 )
             )
             if chunk_ids
             else ()
         )
-        valid_span_ids: set[int] = set()
-        for span, page, chunk in spans:
+
+        structure_spans = (
+            tuple(
+                session.execute(
+                    select(
+                        RagChunkStructureSourceSpanORM,
+                        DocumentStructureUnitORM,
+                        RagChunkORM,
+                    )
+                    .join(
+                        DocumentStructureUnitORM,
+                        RagChunkStructureSourceSpanORM.document_structure_unit_id
+                        == DocumentStructureUnitORM.id,
+                    )
+                    .join(
+                        RagChunkORM,
+                        RagChunkStructureSourceSpanORM.rag_chunk_id
+                        == RagChunkORM.id,
+                    )
+                    .where(
+                        RagChunkStructureSourceSpanORM.rag_chunk_id.in_(
+                            chunk_ids
+                        )
+                    )
+                    .order_by(
+                        RagChunkStructureSourceSpanORM.rag_chunk_id,
+                        RagChunkStructureSourceSpanORM.ordinal,
+                    )
+                )
+            )
+            if chunk_ids
+            else ()
+        )
+
+        page_span_chunk_ids: set[int] = set()
+        for span, page, chunk in page_spans:
             if not (
-                span.document_page_id == page.id
-                and page.document_version_id == chunk.document_version_id
+                chunk.provenance_mode == "PAGE"
+                and span.document_page_id == page.id
+                and page.document_version_id
+                == chunk.document_version_id
                 and page.page_number == span.page_number
-                and 0 <= span.page_char_start < span.page_char_end <= len(page.text)
-                and 0 <= span.chunk_char_start < span.chunk_char_end <= len(chunk.exact_text)
-                and page.text[span.page_char_start : span.page_char_end]
-                == chunk.exact_text[span.chunk_char_start : span.chunk_char_end]
+                and 0
+                <= span.page_char_start
+                < span.page_char_end
+                <= len(page.text)
+                and 0
+                <= span.chunk_char_start
+                < span.chunk_char_end
+                <= len(chunk.exact_text)
+                and page.text[
+                    span.page_char_start : span.page_char_end
+                ]
+                == chunk.exact_text[
+                    span.chunk_char_start : span.chunk_char_end
+                ]
             ):
-                raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
-            valid_span_ids.add(int(chunk.id))
+                raise RagOperationalError(
+                    RagErrorCode.INDEX_INTEGRITY_FAILED
+                )
+
+            page_span_chunk_ids.add(int(chunk.id))
+
+        structure_span_chunk_ids: set[int] = set()
+        for span, unit, chunk in structure_spans:
+            if not (
+                chunk.provenance_mode == "STRUCTURE"
+                and span.document_structure_unit_id == unit.id
+                and unit.document_version_id
+                == chunk.document_version_id
+                and 0
+                <= span.source_char_start
+                < span.source_char_end
+                <= len(unit.text)
+                and 0
+                <= span.chunk_char_start
+                < span.chunk_char_end
+                <= len(chunk.exact_text)
+                and unit.text[
+                    span.source_char_start : span.source_char_end
+                ]
+                == chunk.exact_text[
+                    span.chunk_char_start : span.chunk_char_end
+                ]
+            ):
+                raise RagOperationalError(
+                    RagErrorCode.INDEX_INTEGRITY_FAILED
+                )
+
+            structure_span_chunk_ids.add(int(chunk.id))
+
+        valid_span_ids: set[int] = set()
+
+        for chunk in chunks:
+            chunk_id = int(chunk.id)
+
+            if chunk.provenance_mode == "PAGE":
+                if (
+                    chunk_id not in page_span_chunk_ids
+                    or chunk_id in structure_span_chunk_ids
+                    or chunk.page_start is None
+                    or chunk.page_end is None
+                ):
+                    raise RagOperationalError(
+                        RagErrorCode.INDEX_INTEGRITY_FAILED
+                    )
+
+            elif chunk.provenance_mode == "STRUCTURE":
+                if (
+                    chunk_id not in structure_span_chunk_ids
+                    or chunk_id in page_span_chunk_ids
+                    or chunk.page_start is not None
+                    or chunk.page_end is not None
+                ):
+                    raise RagOperationalError(
+                        RagErrorCode.INDEX_INTEGRITY_FAILED
+                    )
+
+            else:
+                raise RagOperationalError(
+                    RagErrorCode.INDEX_INTEGRITY_FAILED
+                )
+
+            valid_span_ids.add(chunk_id)
+
         if (
             index is None
             or index.status
-            not in {DocumentIndexStatus.PREPARING.value, DocumentIndexStatus.READY.value}
+            not in {
+                DocumentIndexStatus.PREPARING.value,
+                DocumentIndexStatus.READY.value,
+            }
             or not chunks
             or tuple(sorted(chunk_ids)) != fts_ids
             or valid_span_ids != set(chunk_ids)
-            or len({chunk.chunk_key for chunk in chunks}) != len(chunks)
+            or len({chunk.chunk_key for chunk in chunks})
+            != len(chunks)
         ):
-            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+            raise RagOperationalError(
+                RagErrorCode.INDEX_INTEGRITY_FAILED
+            )
+
         return DocumentVerificationRecord(
             generation_id=identity.generation_id,
             document_version_id=document_version_id,
-            chunk_keys=tuple(chunk.chunk_key for chunk in chunks),
+            chunk_keys=tuple(
+                chunk.chunk_key for chunk in chunks
+            ),
             chunk_count=len(chunks),
-            source_span_count=len(spans),
+            source_span_count=(
+                len(page_spans)
+                + len(structure_spans)
+            ),
             fts_row_count=len(fts_ids),
         )
 
@@ -1914,8 +2218,17 @@ class RagRepository:
             exact_text=row.exact_text,
             token_count=int(row.token_count),
             text_sha256=row.text_sha256,
-            page_start=int(row.page_start),
-            page_end=int(row.page_end),
+            provenance_mode=str(row.provenance_mode),
+            page_start=(
+                None
+                if row.page_start is None
+                else int(row.page_start)
+            ),
+            page_end=(
+                None
+                if row.page_end is None
+                else int(row.page_end)
+            ),
         )
 
     def insert_chunk(
@@ -1930,8 +2243,9 @@ class RagRepository:
         exact_text: str,
         token_count: int,
         text_sha256: str,
-        page_start: int,
-        page_end: int,
+        provenance_mode: str = "PAGE",
+        page_start: int | None,
+        page_end: int | None,
     ) -> ChunkRecord:
         """Persist one authoritative chunk under a guarded generation revision."""
         if any(
@@ -1944,16 +2258,37 @@ class RagRepository:
             with session.begin():
                 self._require_generation(session, identity, expected_revision)
                 version = self._require_eligible_version(session, document_version_id)
+
                 if (
-                    isinstance(page_start, bool)
-                    or not isinstance(page_start, int)
-                    or isinstance(page_end, bool)
-                    or not isinstance(page_end, int)
-                    or page_start <= 0
-                    or page_end < page_start
-                    or page_end > version.page_count
+                    provenance_mode not in {"PAGE", "STRUCTURE"}
+                    or provenance_mode != version.provenance_mode
                 ):
-                    raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
+                    raise RagOperationalError(
+                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                    )
+
+                if provenance_mode == "PAGE":
+                    if (
+                        version.page_count is None
+                        or isinstance(page_start, bool)
+                        or not isinstance(page_start, int)
+                        or isinstance(page_end, bool)
+                        or not isinstance(page_end, int)
+                        or page_start <= 0
+                        or page_end < page_start
+                        or page_end > version.page_count
+                    ):
+                        raise RagOperationalError(
+                            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                        )
+                elif (
+                    version.page_count is not None
+                    or page_start is not None
+                    or page_end is not None
+                ):
+                    raise RagOperationalError(
+                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                    )
                 stored_chunk_key = self._generation_chunk_key(session, identity, chunk_key)
                 row = RagChunkORM(
                     chunk_key=stored_chunk_key,
@@ -1964,6 +2299,7 @@ class RagRepository:
                     exact_text=exact_text,
                     token_count=token_count,
                     text_sha256=text_sha256,
+                    provenance_mode=provenance_mode,
                     page_start=page_start,
                     page_end=page_end,
                     created_at=_now_utc(),
@@ -2283,6 +2619,7 @@ class RagRepository:
                         DocumentVersionORM.content_blob_id,
                         ContentBlobORM.sha256.label("content_sha256"),
                         DocumentVersionORM.source_filename,
+                        DocumentVersionORM.provenance_mode,
                         DocumentVersionORM.page_count,
                     )
                     .join(DocumentORM, DocumentVersionORM.document_id == DocumentORM.id)
@@ -2308,6 +2645,117 @@ class RagRepository:
             raise
         except Exception:
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY) from None
+        finally:
+            session.close()
+
+    def insert_structure_source_span(
+        self,
+        identity: RagGenerationIdentity,
+        *,
+        expected_revision: int,
+        rag_chunk_id: int,
+        document_structure_unit_id: int,
+        ordinal: int,
+        source_char_start: int,
+        source_char_end: int,
+        chunk_char_start: int,
+        chunk_char_end: int,
+    ) -> None:
+        """Persist one exact STRUCTURE provenance span."""
+
+        values = (
+            rag_chunk_id,
+            document_structure_unit_id,
+            ordinal,
+            source_char_start,
+            source_char_end,
+            chunk_char_start,
+            chunk_char_end,
+        )
+
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            for value in values
+        ):
+            raise RagOperationalError(
+                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+            )
+
+        if (
+            rag_chunk_id <= 0
+            or document_structure_unit_id <= 0
+            or ordinal <= 0
+            or source_char_start < 0
+            or source_char_end <= source_char_start
+            or chunk_char_start < 0
+            or chunk_char_end <= chunk_char_start
+        ):
+            raise RagOperationalError(
+                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+            )
+
+        session = self._session_factory()
+        try:
+            with session.begin():
+                self._require_generation(
+                    session,
+                    identity,
+                    expected_revision,
+                )
+
+                chunk = session.scalar(
+                    select(RagChunkORM).where(
+                        RagChunkORM.id == rag_chunk_id,
+                        RagChunkORM.generation_id
+                        == identity.generation_id,
+                    )
+                )
+                unit = session.get(
+                    DocumentStructureUnitORM,
+                    document_structure_unit_id,
+                )
+
+                if (
+                    chunk is None
+                    or chunk.provenance_mode != "STRUCTURE"
+                    or unit is None
+                    or unit.document_version_id
+                    != chunk.document_version_id
+                    or source_char_end > len(unit.text)
+                    or chunk_char_end > len(chunk.exact_text)
+                    or unit.text[
+                        source_char_start:source_char_end
+                    ]
+                    != chunk.exact_text[
+                        chunk_char_start:chunk_char_end
+                    ]
+                ):
+                    raise RagOperationalError(
+                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                    )
+
+                row = RagChunkStructureSourceSpanORM(
+                    rag_chunk_id=rag_chunk_id,
+                    document_structure_unit_id=(
+                        document_structure_unit_id
+                    ),
+                    ordinal=ordinal,
+                    source_char_start=source_char_start,
+                    source_char_end=source_char_end,
+                    chunk_char_start=chunk_char_start,
+                    chunk_char_end=chunk_char_end,
+                )
+                session.add(row)
+                session.flush()
+
+        except RagOperationalError:
+            raise
+        except SQLAlchemyError as error:
+            raise _safe_database_error(
+                RagErrorCode.DOCUMENT_INDEX_FAILED,
+                error,
+            ) from error
         finally:
             session.close()
 
@@ -2353,6 +2801,7 @@ class RagRepository:
                 page = session.get(DocumentPageORM, document_page_id)
                 if (
                     chunk is None
+                    or chunk.provenance_mode != "PAGE"
                     or page is None
                     or page.document_version_id != chunk.document_version_id
                 ):

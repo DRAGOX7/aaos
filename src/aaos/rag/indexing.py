@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from aaos.rag.chunking import DeterministicChunker
+from aaos.rag.chunking import ChunkDraft, DeterministicChunker
 from aaos.rag.contracts import (
     CoverageStatus,
     DenseIndexFactory,
@@ -22,11 +22,17 @@ from aaos.rag.contracts import (
 from aaos.rag.lock import RagIndexLease, RagIndexLock
 from aaos.rag.repository import (
     ChunkRecord,
+    DocumentPageRecord,
+    DocumentStructureUnitRecord,
     DocumentVerificationRecord,
     GenerationBuild,
     GenerationIntegrityReport,
     RagRepository,
     StagedDocumentIndexResult,
+)
+from aaos.rag.structural_chunking import (
+    DeterministicStructureChunker,
+    StructureChunkDraft,
 )
 
 if TYPE_CHECKING:
@@ -163,8 +169,33 @@ class RagDocumentIndexer:
                 or metadata.dimensions != generation.embedding_dimensions
             ):
                 raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
-            version = self._repository.get_eligible_document_version(document_version_id)
-            pages = self._repository.read_pages(document_version_id)
+            version = self._repository.get_eligible_document_version(
+                document_version_id
+            )
+
+            pages: tuple[DocumentPageRecord, ...]
+            structure_units: tuple[
+                DocumentStructureUnitRecord,
+                ...,
+            ]
+
+            if version.provenance_mode == "PAGE":
+                pages = self._repository.read_pages(
+                    document_version_id
+                )
+                structure_units = ()
+            elif version.provenance_mode == "STRUCTURE":
+                pages = ()
+                structure_units = (
+                    self._repository.read_structure_units(
+                        document_version_id
+                    )
+                )
+            else:
+                raise RagOperationalError(
+                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
+                )
+
             self._assert_lease(lease)
             begin = (
                 self._repository.begin_document_preparation
@@ -177,21 +208,68 @@ class RagDocumentIndexer:
                 document_version_id=document_version_id,
             )
             preparing_started = True
-            chunks = tuple(
-                self._chunker.chunk(
-                    document_version_id,
-                    pages,
-                    version.content_sha256,
+
+            chunks: tuple[
+                ChunkDraft | StructureChunkDraft,
+                ...,
+            ]
+
+            if version.provenance_mode == "PAGE":
+                chunks = tuple(
+                    self._chunker.chunk(
+                        document_version_id,
+                        pages,
+                        version.content_sha256,
+                    )
                 )
-            )
-            searchable_pages = sum(1 for page in pages if page.text.strip())
-            coverage = (
-                CoverageStatus.NONE
-                if searchable_pages == 0
-                else CoverageStatus.FULL
-                if searchable_pages == len(pages)
-                else CoverageStatus.PARTIAL
-            )
+
+                searchable_pages = sum(
+                    1
+                    for page in pages
+                    if page.text.strip()
+                )
+
+                coverage = (
+                    CoverageStatus.NONE
+                    if searchable_pages == 0
+                    else CoverageStatus.FULL
+                    if searchable_pages == len(pages)
+                    else CoverageStatus.PARTIAL
+                )
+
+            else:
+                structure_chunker = (
+                    DeterministicStructureChunker(
+                        self._chunker.config
+                    )
+                )
+
+                chunks = tuple(
+                    structure_chunker.chunk(
+                        document_version_id,
+                        structure_units,
+                        version.content_sha256,
+                    )
+                )
+
+                # STRUCTURE provenance has no page concept.
+                searchable_pages = 0
+
+                searchable_units = sum(
+                    1
+                    for unit in structure_units
+                    if unit.text.strip()
+                )
+
+                coverage = (
+                    CoverageStatus.NONE
+                    if searchable_units == 0
+                    else CoverageStatus.FULL
+                    if searchable_units
+                    == len(structure_units)
+                    else CoverageStatus.PARTIAL
+                )
+
             if coverage is CoverageStatus.NONE:
                 self._assert_lease(lease)
                 if building:
@@ -234,8 +312,10 @@ class RagDocumentIndexer:
                     None,
                 )
             stored_chunks: list[ChunkRecord] = []
+
             for draft in chunks:
                 self._assert_lease(lease)
+
                 chunk = self._repository.insert_chunk(
                     generation,
                     expected_revision=generation.content_revision,
@@ -246,24 +326,76 @@ class RagDocumentIndexer:
                     exact_text=draft.exact_text,
                     token_count=draft.token_count,
                     text_sha256=draft.text_sha256,
+                    provenance_mode=version.provenance_mode,
                     page_start=draft.page_start,
                     page_end=draft.page_end,
                 )
                 stored_chunks.append(chunk)
-                for span_ordinal, span in enumerate(draft.source_spans, start=1):
-                    self._assert_lease(lease)
-                    self._repository.insert_source_span(
-                        generation,
-                        expected_revision=generation.content_revision,
-                        rag_chunk_id=chunk.chunk_id,
-                        document_page_id=span.document_page_id,
-                        ordinal=span_ordinal,
-                        page_number=span.page_number,
-                        page_char_start=span.source_char_start,
-                        page_char_end=span.source_char_end,
-                        chunk_char_start=span.chunk_char_start,
-                        chunk_char_end=span.chunk_char_end,
-                    )
+
+                if isinstance(
+                    draft,
+                    StructureChunkDraft,
+                ):
+                    for span_ordinal, structure_span in enumerate(
+                        draft.source_spans,
+                        start=1,
+                    ):
+                        self._assert_lease(lease)
+                        self._repository.insert_structure_source_span(
+                            generation,
+                            expected_revision=(
+                                generation.content_revision
+                            ),
+                            rag_chunk_id=chunk.chunk_id,
+                            document_structure_unit_id=(
+                                structure_span.document_structure_unit_id
+                            ),
+                            ordinal=span_ordinal,
+                            source_char_start=(
+                                structure_span.source_char_start
+                            ),
+                            source_char_end=(
+                                structure_span.source_char_end
+                            ),
+                            chunk_char_start=(
+                                structure_span.chunk_char_start
+                            ),
+                            chunk_char_end=(
+                                structure_span.chunk_char_end
+                            ),
+                        )
+
+                else:
+                    for span_ordinal, page_span in enumerate(
+                        draft.source_spans,
+                        start=1,
+                    ):
+                        self._assert_lease(lease)
+                        self._repository.insert_source_span(
+                            generation,
+                            expected_revision=(
+                                generation.content_revision
+                            ),
+                            rag_chunk_id=chunk.chunk_id,
+                            document_page_id=(
+                                page_span.document_page_id
+                            ),
+                            ordinal=span_ordinal,
+                            page_number=page_span.page_number,
+                            page_char_start=(
+                                page_span.source_char_start
+                            ),
+                            page_char_end=(
+                                page_span.source_char_end
+                            ),
+                            chunk_char_start=(
+                                page_span.chunk_char_start
+                            ),
+                            chunk_char_end=(
+                                page_span.chunk_char_end
+                            ),
+                        )
+
             try:
                 self._assert_lease(lease)
                 vectors = self._embedding_service.embed_documents(

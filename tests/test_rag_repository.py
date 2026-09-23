@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
 from aaos.persistence.rag_models import (
@@ -791,3 +793,344 @@ def test_explicit_none_active_expectation_rejects_competing_active_generation(
         assert (
             repository.get_generation(candidate.generation_id).status is GenerationStatus.BUILDING
         )
+
+def _convert_version_to_structure_for_rag_test(
+    sessions: SessionFactory,
+    document_version_id: int,
+) -> tuple[int, int, int]:
+    # Convert one existing PAGE fixture into a valid STRUCTURE fixture.
+    with sessions() as session, session.begin():
+        version = session.get(
+            DocumentVersionORM,
+            document_version_id,
+        )
+        assert version is not None
+
+        session.query(DocumentPageORM).filter(
+            DocumentPageORM.document_version_id
+            == document_version_id
+        ).delete(synchronize_session=False)
+
+        digest = sha256(
+            f"structural-{document_version_id}".encode("utf-8")
+        ).hexdigest()
+
+        blob = ContentBlobORM(
+            sha256=digest,
+            size_bytes=128,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            storage_key=f"sha256/{digest[:2]}/{digest}.docx",
+            created_at=NOW,
+        )
+        session.add(blob)
+        session.flush()
+
+        version.content_blob_id = blob.id
+        version.source_filename = "structural-notes.docx"
+        version.provenance_mode = "STRUCTURE"
+        version.page_count = None
+
+        heading = DocumentStructureUnitORM(
+            document_version_id=document_version_id,
+            ordinal=1,
+            kind="HEADING",
+            text="Neural Networks",
+            heading_level=1,
+            table_index=None,
+            row_index=None,
+            column_index=None,
+            created_at=NOW,
+        )
+        paragraph = DocumentStructureUnitORM(
+            document_version_id=document_version_id,
+            ordinal=2,
+            kind="PARAGRAPH",
+            text="A neural network learns patterns.",
+            heading_level=None,
+            table_index=None,
+            row_index=None,
+            column_index=None,
+            created_at=NOW,
+        )
+        table_cell = DocumentStructureUnitORM(
+            document_version_id=document_version_id,
+            ordinal=3,
+            kind="TABLE_CELL",
+            text="Adam",
+            heading_level=None,
+            table_index=0,
+            row_index=0,
+            column_index=0,
+            created_at=NOW,
+        )
+
+        session.add_all(
+            (
+                heading,
+                paragraph,
+                table_cell,
+            )
+        )
+        session.flush()
+
+        return (
+            int(heading.id),
+            int(paragraph.id),
+            int(table_cell.id),
+        )
+
+
+def test_structural_version_is_an_index_new_candidate(
+    tmp_path: Path,
+) -> None:
+    with repository_database(
+        tmp_path
+    ) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        version_id = ids["one_v2"]
+
+        _convert_version_to_structure_for_rag_test(
+            sessions,
+            version_id,
+        )
+
+        generation = _create_generation(repository)
+        active = repository.activate_generation(
+            generation.identity,
+            expected_revision=0,
+        )
+
+        candidates = repository.resolve_index_new_candidates(
+            active.identity,
+            version_id,
+        )
+
+        assert len(candidates) == 1
+
+        candidate = candidates[0]
+        assert candidate.document_version_id == version_id
+        assert candidate.provenance_mode == "STRUCTURE"
+        assert candidate.page_count is None
+        assert candidate.source_filename.endswith(".docx")
+
+
+def test_repository_reads_ordered_structural_units(
+    tmp_path: Path,
+) -> None:
+    with repository_database(
+        tmp_path
+    ) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        version_id = ids["one_v2"]
+
+        expected_ids = (
+            _convert_version_to_structure_for_rag_test(
+                sessions,
+                version_id,
+            )
+        )
+
+        units = repository.read_structure_units(
+            version_id,
+        )
+
+        assert tuple(
+            unit.document_structure_unit_id
+            for unit in units
+        ) == expected_ids
+
+        assert tuple(
+            unit.ordinal for unit in units
+        ) == (1, 2, 3)
+
+        assert tuple(
+            unit.kind for unit in units
+        ) == (
+            "HEADING",
+            "PARAGRAPH",
+            "TABLE_CELL",
+        )
+
+        assert tuple(
+            unit.text for unit in units
+        ) == (
+            "Neural Networks",
+            "A neural network learns patterns.",
+            "Adam",
+        )
+
+        assert units[0].heading_level == 1
+
+        assert (
+            units[2].table_index,
+            units[2].row_index,
+            units[2].column_index,
+        ) == (0, 0, 0)
+
+
+def test_repository_persists_and_verifies_structural_chunk(
+    tmp_path: Path,
+) -> None:
+    with repository_database(
+        tmp_path
+    ) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        version_id = ids["one_v2"]
+
+        heading_id, paragraph_id, _ = (
+            _convert_version_to_structure_for_rag_test(
+                sessions,
+                version_id,
+            )
+        )
+
+        generation = _create_generation(repository)
+
+        repository.begin_document_preparation(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+        )
+
+        exact_text = (
+            "Neural Networks\n\n"
+            "A neural network learns patterns."
+        )
+
+        chunk = repository.insert_chunk(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+            chunk_key="8" * 64,
+            ordinal=1,
+            heading="Neural Networks",
+            exact_text=exact_text,
+            token_count=7,
+            text_sha256="7" * 64,
+            provenance_mode="STRUCTURE",
+            page_start=None,
+            page_end=None,
+        )
+
+        heading_text = "Neural Networks"
+
+        repository.insert_structure_source_span(
+            generation.identity,
+            expected_revision=0,
+            rag_chunk_id=chunk.chunk_id,
+            document_structure_unit_id=heading_id,
+            ordinal=1,
+            source_char_start=0,
+            source_char_end=len(heading_text),
+            chunk_char_start=0,
+            chunk_char_end=len(heading_text),
+        )
+
+        paragraph_text = (
+            "A neural network learns patterns."
+        )
+        paragraph_start = len(
+            "Neural Networks\n\n"
+        )
+
+        repository.insert_structure_source_span(
+            generation.identity,
+            expected_revision=0,
+            rag_chunk_id=chunk.chunk_id,
+            document_structure_unit_id=paragraph_id,
+            ordinal=2,
+            source_char_start=0,
+            source_char_end=len(paragraph_text),
+            chunk_char_start=paragraph_start,
+            chunk_char_end=len(exact_text),
+        )
+
+        assert repository.list_chunks(
+            generation.identity,
+            version_id,
+        ) == (chunk,)
+
+        assert chunk.provenance_mode == "STRUCTURE"
+        assert chunk.page_start is None
+        assert chunk.page_end is None
+
+        verification = (
+            repository.verify_generation_document(
+                generation.identity,
+                version_id,
+            )
+        )
+
+        assert verification.chunk_count == 1
+        assert verification.source_span_count == 2
+        assert verification.chunk_keys == (
+            chunk.chunk_key,
+        )
+
+
+def test_structural_retry_cleanup_removes_derived_provenance(
+    tmp_path: Path,
+) -> None:
+    with repository_database(
+        tmp_path
+    ) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        version_id = ids["one_v2"]
+
+        heading_id, _, _ = (
+            _convert_version_to_structure_for_rag_test(
+                sessions,
+                version_id,
+            )
+        )
+
+        generation = _create_generation(repository)
+
+        repository.begin_document_preparation(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+        )
+
+        chunk = repository.insert_chunk(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+            chunk_key="6" * 64,
+            ordinal=1,
+            heading="Neural Networks",
+            exact_text="Neural Networks",
+            token_count=2,
+            text_sha256="5" * 64,
+            provenance_mode="STRUCTURE",
+            page_start=None,
+            page_end=None,
+        )
+
+        repository.insert_structure_source_span(
+            generation.identity,
+            expected_revision=0,
+            rag_chunk_id=chunk.chunk_id,
+            document_structure_unit_id=heading_id,
+            ordinal=1,
+            source_char_start=0,
+            source_char_end=len("Neural Networks"),
+            chunk_char_start=0,
+            chunk_char_end=len("Neural Networks"),
+        )
+
+        # Retrying must remove structural spans before
+        # deleting their parent chunk.
+        repository.begin_document_preparation(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+        )
+
+        assert repository.list_chunks(
+            generation.identity,
+            version_id,
+        ) == ()

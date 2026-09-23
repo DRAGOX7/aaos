@@ -24,6 +24,7 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
 from aaos.rag.chunking import DeterministicChunker
@@ -1461,3 +1462,274 @@ def test_terminal_state_rejects_incoherent_metadata(
             )
 
         assert caught.value.code is RagErrorCode.DOCUMENT_INDEX_FAILED
+
+def _convert_to_structural_index_fixture(
+    sessions: SessionFactory,
+    document_version_id: int,
+) -> tuple[int, int]:
+    # Convert one seeded PAGE fixture into a valid STRUCTURE document.
+    with sessions() as session, session.begin():
+        version = session.get(
+            DocumentVersionORM,
+            document_version_id,
+        )
+        assert version is not None
+
+        session.query(DocumentPageORM).filter(
+            DocumentPageORM.document_version_id
+            == document_version_id
+        ).delete(synchronize_session=False)
+
+        version.source_filename = "structural-notes.docx"
+        version.provenance_mode = "STRUCTURE"
+        version.page_count = None
+
+        heading = DocumentStructureUnitORM(
+            document_version_id=document_version_id,
+            ordinal=1,
+            kind="HEADING",
+            text="Neural Networks",
+            heading_level=1,
+            table_index=None,
+            row_index=None,
+            column_index=None,
+            created_at=NOW,
+        )
+
+        paragraph = DocumentStructureUnitORM(
+            document_version_id=document_version_id,
+            ordinal=2,
+            kind="PARAGRAPH",
+            text="A neural network learns patterns.",
+            heading_level=None,
+            table_index=None,
+            row_index=None,
+            column_index=None,
+            created_at=NOW,
+        )
+
+        session.add_all(
+            (
+                heading,
+                paragraph,
+            )
+        )
+        session.flush()
+
+        return (
+            int(heading.id),
+            int(paragraph.id),
+        )
+
+
+def test_prepare_document_indexes_structure_provenance_without_fake_pages(
+    tmp_path: Path,
+) -> None:
+    with _database(
+        tmp_path
+    ) as (repository, sessions, _):
+        version_id = _seed(
+            sessions,
+            ("temporary PAGE fixture",),
+        )
+
+        expected_unit_ids = (
+            _convert_to_structural_index_fixture(
+                sessions,
+                version_id,
+            )
+        )
+
+        generation = _generation(repository)
+
+        version = repository.get_eligible_document_version(
+            version_id
+        )
+        assert version.provenance_mode == "STRUCTURE"
+        assert version.page_count is None
+
+        structure_units = repository.read_structure_units(
+            version_id
+        )
+        assert len(structure_units) == 2
+        assert tuple(
+            unit.text for unit in structure_units
+        ) == (
+            "Neural Networks",
+            "A neural network learns patterns.",
+        )
+
+        result = _indexer(
+            tmp_path,
+            repository,
+        ).prepare_document(
+            generation.identity,
+            version_id,
+        )
+
+        assert result.status is DocumentIndexStatus.READY
+        assert result.coverage_status is CoverageStatus.FULL
+
+        # STRUCTURE documents must never invent searchable pages.
+        assert result.searchable_page_count == 0
+        assert result.chunk_count > 0
+        assert result.verification is not None
+
+        chunks = repository.list_chunks(
+            generation.identity,
+            version_id,
+        )
+
+        assert chunks
+        assert all(
+            chunk.provenance_mode == "STRUCTURE"
+            for chunk in chunks
+        )
+        assert all(
+            chunk.page_start is None
+            and chunk.page_end is None
+            for chunk in chunks
+        )
+
+        verification = (
+            repository.verify_generation_document(
+                generation.identity,
+                version_id,
+            )
+        )
+
+        assert verification == result.verification
+        assert verification.source_span_count == len(
+            expected_unit_ids
+        )
+
+        with sessions() as session:
+            assert (
+                session.query(DocumentPageORM)
+                .filter(
+                    DocumentPageORM.document_version_id
+                    == version_id
+                )
+                .count()
+                == 0
+            )
+
+        indexed = repository.get_document_index(
+            generation.identity,
+            version_id,
+        )
+
+        assert indexed.status is DocumentIndexStatus.READY
+        assert indexed.searchable_page_count == 0
+
+def test_index_new_structural_document_publishes_once_then_no_ops(
+    tmp_path: Path,
+) -> None:
+    with _database(
+        tmp_path
+    ) as (repository, sessions, _):
+        version_id = _seed(
+            sessions,
+            ("temporary PAGE fixture",),
+        )
+
+        _convert_to_structural_index_fixture(
+            sessions,
+            version_id,
+        )
+
+        generation = _generation(repository)
+        active = repository.activate_generation(
+            generation.identity,
+            expected_revision=0,
+        )
+
+        lock = RagIndexLock(
+            tmp_path / "phase4-structural-index-new.lock"
+        )
+        embeddings = _CountingEmbeddings()
+
+        indexer = RagDocumentIndexer(
+            repository,
+            _chunker(),
+            embeddings,
+            InMemoryDenseIndexFactory(),
+            lock,
+        )
+        coordinator = RagIndexingCoordinator(
+            repository,
+            indexer,
+            lock,
+        )
+
+        before = repository.get_generation(
+            active.generation_id
+        ).identity
+
+        assert before.content_revision == 0
+
+        first = coordinator.index_new(
+            version_id
+        )
+
+        after_first = repository.get_generation(
+            active.generation_id
+        ).identity
+
+        chunks = repository.list_chunks(
+            after_first,
+            version_id,
+        )
+
+        assert first.content_revision == 1
+        assert after_first.content_revision == 1
+
+        assert chunks
+        assert all(
+            chunk.provenance_mode == "STRUCTURE"
+            for chunk in chunks
+        )
+        assert all(
+            chunk.page_start is None
+            and chunk.page_end is None
+            for chunk in chunks
+        )
+
+        indexed = repository.get_document_index(
+            after_first,
+            version_id,
+        )
+
+        assert indexed.status is DocumentIndexStatus.READY
+        assert indexed.coverage_status is CoverageStatus.FULL
+        assert indexed.searchable_page_count == 0
+        assert indexed.chunk_count == len(chunks)
+
+        second = coordinator.index_new(
+            version_id
+        )
+
+        after_second = repository.get_generation(
+            active.generation_id
+        ).identity
+
+        assert second.safe_status == "NO_OP"
+        assert second.content_revision == 1
+        assert after_second.content_revision == 1
+
+        # The unchanged second run must not reload/release
+        # the embedding model.
+        assert embeddings.release_calls == 1
+
+        second_chunks = repository.list_chunks(
+            after_second,
+            version_id,
+        )
+
+        assert tuple(
+            chunk.chunk_key
+            for chunk in second_chunks
+        ) == tuple(
+            chunk.chunk_key
+            for chunk in chunks
+        )
