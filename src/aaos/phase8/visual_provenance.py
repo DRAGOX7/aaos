@@ -266,7 +266,9 @@ class VisualProvenanceRepository:
                 )
                 if version is None:
                     raise VisualPersistenceError("document version is unavailable")
-                if analysis.page_number > int(version.page_count):
+                if version.provenance_mode != "PAGE" or version.page_count is None:
+                    raise VisualPersistenceError("document version is not page-provenanced")
+                if analysis.page_number > version.page_count:
                     raise VisualPersistenceError("page is outside the document version")
                 blob = session.scalar(
                     select(ContentBlobORM).where(ContentBlobORM.id == version.content_blob_id)

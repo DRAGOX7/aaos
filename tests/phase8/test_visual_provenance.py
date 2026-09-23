@@ -18,6 +18,7 @@ from aaos.phase8.visual_provenance import (
     VisualAnalysis,
     VisualElement,
     VisualKind,
+    VisualPersistenceError,
     VisualProvenanceRepository,
     VisualStatus,
 )
@@ -34,7 +35,7 @@ def _config(path: Path) -> Config:
 
 
 def _migrated(path: Path) -> tuple[Engine, sessionmaker[Session]]:
-    command.upgrade(_config(path), "0007_phase8_visual_provenance")
+    command.upgrade(_config(path), "head")
     engine = create_database_engine(path)
     return engine, create_session_factory(engine)
 
@@ -193,3 +194,30 @@ def test_failed_attempt_has_no_elements_and_does_not_retry_automatically(tmp_pat
 def test_render_hash_is_bound_to_rendered_bytes() -> None:
     raw = b"rendered"
     assert hashlib.sha256(raw).hexdigest() != HASH_B
+
+
+def test_repository_rejects_structural_version_for_visual_page_provenance(
+    tmp_path: Path,
+) -> None:
+    engine, sessions = _migrated(tmp_path / "structural-visual.db")
+    try:
+        _seed_version(engine)
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE document_versions "
+                    "SET provenance_mode = 'STRUCTURE', page_count = NULL "
+                    "WHERE id = 7"
+                )
+            )
+
+        repository = VisualProvenanceRepository(sessions)
+
+        with pytest.raises(
+            VisualPersistenceError,
+            match="document version is not page-provenanced",
+        ):
+            repository.save_analysis(_analysis())
+    finally:
+        engine.dispose()

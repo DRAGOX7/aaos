@@ -68,14 +68,24 @@ class ContentBlobORM(Base):
             name="ck_content_blobs_size_bytes",
         ),
         CheckConstraint(
-            "media_type = 'application/pdf'",
+            "media_type IN ("
+            "'application/pdf', "
+            "'application/vnd.openxmlformats-officedocument.wordprocessingml.document'"
+            ")",
             name="ck_content_blobs_media_type",
         ),
         CheckConstraint(
-            "length(storage_key) = 78 "
+            "(("
+            "media_type = 'application/pdf' "
+            "AND length(storage_key) = 78 "
+            "AND substr(storage_key, 75, 4) = '.pdf'"
+            ") OR ("
+            "media_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' "
+            "AND length(storage_key) = 79 "
+            "AND substr(storage_key, 75, 5) = '.docx'"
+            ")) "
             "AND substr(storage_key, 1, 7) = 'sha256/' "
             "AND substr(storage_key, 10, 1) = '/' "
-            "AND substr(storage_key, 75, 4) = '.pdf' "
             "AND substr(storage_key, 8, 2) NOT GLOB '*[^0-9a-f]*' "
             "AND substr(storage_key, 11, 64) NOT GLOB '*[^0-9a-f]*' "
             "AND substr(storage_key, 8, 2) = substr(storage_key, 11, 2)",
@@ -117,6 +127,21 @@ class DocumentVersionORM(Base):
             name="ck_document_versions_extraction_status",
         ),
         CheckConstraint("page_count > 0", name="ck_document_versions_page_count"),
+        CheckConstraint(
+            "provenance_mode IN ('PAGE', 'STRUCTURE')",
+            name="ck_document_versions_provenance_mode",
+        ),
+        CheckConstraint(
+            "("
+            "provenance_mode = 'PAGE' "
+            "AND page_count IS NOT NULL "
+            "AND page_count > 0"
+            ") OR ("
+            "provenance_mode = 'STRUCTURE' "
+            "AND page_count IS NULL"
+            ")",
+            name="ck_document_versions_provenance_shape",
+        ),
         Index("ix_document_versions_document_version", "document_id", "version_number"),
     )
 
@@ -127,7 +152,13 @@ class DocumentVersionORM(Base):
     source_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     extraction_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    provenance_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="PAGE",
+        server_default="PAGE",
+    )
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class DocumentPageORM(Base):
@@ -170,4 +201,78 @@ class DocumentPageORM(Base):
     text_source: Mapped[str] = mapped_column(String(32), nullable=False)
     width_points: Mapped[float] = mapped_column(Float, nullable=False)
     height_points: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+
+
+class DocumentStructureUnitORM(Base):
+    __tablename__ = "document_structure_units"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id",
+            "ordinal",
+            name="uq_document_structure_units_version_ordinal",
+        ),
+        CheckConstraint(
+            "id > 0",
+            name="ck_document_structure_units_id",
+        ),
+        CheckConstraint(
+            "document_version_id > 0",
+            name="ck_document_structure_units_document_version_id",
+        ),
+        CheckConstraint(
+            "ordinal > 0",
+            name="ck_document_structure_units_ordinal",
+        ),
+        CheckConstraint(
+            "kind IN ('HEADING', 'PARAGRAPH', 'TABLE_CELL')",
+            name="ck_document_structure_units_kind",
+        ),
+        CheckConstraint(
+            "("
+            "kind = 'HEADING' "
+            "AND heading_level BETWEEN 1 AND 9 "
+            "AND table_index IS NULL "
+            "AND row_index IS NULL "
+            "AND column_index IS NULL"
+            ") OR ("
+            "kind = 'PARAGRAPH' "
+            "AND heading_level IS NULL "
+            "AND table_index IS NULL "
+            "AND row_index IS NULL "
+            "AND column_index IS NULL"
+            ") OR ("
+            "kind = 'TABLE_CELL' "
+            "AND heading_level IS NULL "
+            "AND table_index IS NOT NULL "
+            "AND table_index >= 0 "
+            "AND row_index IS NOT NULL "
+            "AND row_index >= 0 "
+            "AND column_index IS NOT NULL "
+            "AND column_index >= 0"
+            ")",
+            name="ck_document_structure_units_shape",
+        ),
+        Index(
+            "ix_document_structure_units_version_ordinal",
+            "document_version_id",
+            "ordinal",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "document_versions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    heading_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    table_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    row_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    column_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
