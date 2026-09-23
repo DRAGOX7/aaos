@@ -13,6 +13,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from pdf_fixtures import html_as_pdf, valid_multipage_pdf, valid_one_page_pdf
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
@@ -126,13 +127,13 @@ def integration_harness(tmp_path: Path) -> Iterator[IntegrationHarness]:
     database_path = (tmp_path / "database" / "phase3.db").resolve()
     content_root = (tmp_path / "content-store").resolve()
     lock_path = (tmp_path / "locks" / "phase3.lock").resolve()
-    command.upgrade(_alembic_config(database_path), "0003_phase3_document_ingestion")
+    config = _alembic_config(database_path)
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
+    assert expected_head is not None
+    command.upgrade(config, "head")
     engine = create_database_engine(database_path)
     with engine.connect() as connection:
-        assert (
-            MigrationContext.configure(connection).get_current_revision()
-            == "0003_phase3_document_ingestion"
-        )
+        assert MigrationContext.configure(connection).get_current_revision() == expected_head
     sessions = create_session_factory(engine)
     repository = DocumentRepository(sessions)
     store = ContentBlobStore(content_root)
