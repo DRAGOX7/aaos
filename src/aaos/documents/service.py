@@ -14,11 +14,14 @@ from aaos.documents.contracts import (
     DocumentIngestionFailure,
     DocumentIngestionResult,
     DocumentResultCode,
+    ExtractionStatus,
+    FetchedDocx,
     FetchedPdf,
     IngestionErrorCode,
     IngestionMode,
     RemoteFileSelection,
 )
+from aaos.documents.docx import DocxProcessor
 from aaos.documents.lock import IngestionLock
 from aaos.documents.pdf import PdfProcessor
 from aaos.documents.repository import DocumentRepository, SelectionPlan
@@ -27,9 +30,12 @@ from aaos.documents.storage import sanitize_source_filename as sanitize_source_f
 
 
 class PdfFetcher(Protocol):
-    """Structural Phase-3 PDF fetch boundary."""
+    """Legacy-named fetch boundary for supported Phase-3 document payloads."""
 
-    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf: ...
+    def fetch(
+        self,
+        selection: RemoteFileSelection,
+    ) -> FetchedPdf | FetchedDocx: ...
 
 
 _RETRYABLE_FETCH_ERRORS = frozenset(
@@ -52,10 +58,12 @@ class Phase3IngestionService:
         ingestion_lock: IngestionLock,
         fetcher_factory: Callable[[], AbstractContextManager[PdfFetcher]],
         clock: Callable[[], datetime],
+        docx_processor: DocxProcessor | None = None,
     ) -> None:
         self._repository = repository
         self._blob_store = blob_store
         self._pdf_processor = pdf_processor
+        self._docx_processor = docx_processor or DocxProcessor()
         self._ingestion_lock = ingestion_lock
         self._fetcher_factory = fetcher_factory
         self._clock = clock
@@ -116,42 +124,89 @@ class Phase3IngestionService:
                 fetcher=fetcher,
                 selection=selection,
             )
-            source_filename = sanitize_source_filename(
-                fetched.source_filename,
-                fallback=f"remote-file-{selection.remote_file_id}.pdf",
-            )
-            staged = self._blob_store.stage(fetched.body)
-            parsed_pdf = self._pdf_processor.process(fetched.body)
-            existing_version = self._repository.existing_version_for_sha256(
-                remote_file_id=selection.remote_file_id,
-                sha256=staged.sha256,
-            )
-            if existing_version is not None:
-                result = DocumentIngestionResult(
-                    remote_file_id=selection.remote_file_id,
-                    code=DocumentResultCode.UNCHANGED,
-                    version_number=existing_version,
-                    size_bytes=staged.size_bytes,
-                    page_count=parsed_pdf.page_count,
-                    extraction_status=parsed_pdf.extraction_status,
+            if isinstance(fetched, FetchedDocx):
+                source_filename = sanitize_source_filename(
+                    fetched.source_filename,
+                    fallback=f"remote-file-{selection.remote_file_id}.docx",
+                    suffix=".docx",
                 )
+                staged = self._blob_store.stage(fetched.body)
+                parsed_docx = self._docx_processor.process(fetched.body)
+                existing_version = (
+                    self._repository.existing_structural_version_for_sha256(
+                        remote_file_id=selection.remote_file_id,
+                        sha256=staged.sha256,
+                    )
+                )
+                if existing_version is not None:
+                    result = DocumentIngestionResult(
+                        remote_file_id=selection.remote_file_id,
+                        code=DocumentResultCode.UNCHANGED,
+                        version_number=existing_version,
+                        size_bytes=staged.size_bytes,
+                        extraction_status=ExtractionStatus.SUCCESS,
+                    )
+                else:
+                    installed = self._blob_store.install(
+                        staged,
+                        suffix=".docx",
+                    )
+                    persisted = self._repository.persist_structural_success(
+                        selection=selection,
+                        blob=installed,
+                        source_filename=source_filename,
+                        parsed_docx=parsed_docx,
+                        attempted_at=attempted_at,
+                    )
+                    result = DocumentIngestionResult(
+                        remote_file_id=selection.remote_file_id,
+                        code=DocumentResultCode.INGESTED,
+                        version_number=persisted.version_number,
+                        size_bytes=installed.size_bytes,
+                        extraction_status=ExtractionStatus.SUCCESS,
+                        deduplicated=not persisted.content_blob_created,
+                    )
+            elif isinstance(fetched, FetchedPdf):
+                source_filename = sanitize_source_filename(
+                    fetched.source_filename,
+                    fallback=f"remote-file-{selection.remote_file_id}.pdf",
+                )
+                staged = self._blob_store.stage(fetched.body)
+                parsed_pdf = self._pdf_processor.process(fetched.body)
+                existing_version = self._repository.existing_version_for_sha256(
+                    remote_file_id=selection.remote_file_id,
+                    sha256=staged.sha256,
+                )
+                if existing_version is not None:
+                    result = DocumentIngestionResult(
+                        remote_file_id=selection.remote_file_id,
+                        code=DocumentResultCode.UNCHANGED,
+                        version_number=existing_version,
+                        size_bytes=staged.size_bytes,
+                        page_count=parsed_pdf.page_count,
+                        extraction_status=parsed_pdf.extraction_status,
+                    )
+                else:
+                    installed = self._blob_store.install(staged)
+                    persisted = self._repository.persist_success(
+                        selection=selection,
+                        blob=installed,
+                        source_filename=source_filename,
+                        parsed_pdf=parsed_pdf,
+                        attempted_at=attempted_at,
+                    )
+                    result = DocumentIngestionResult(
+                        remote_file_id=selection.remote_file_id,
+                        code=DocumentResultCode.INGESTED,
+                        version_number=persisted.version_number,
+                        size_bytes=installed.size_bytes,
+                        page_count=parsed_pdf.page_count,
+                        extraction_status=parsed_pdf.extraction_status,
+                        deduplicated=not persisted.content_blob_created,
+                    )
             else:
-                installed = self._blob_store.install(staged)
-                persisted = self._repository.persist_success(
-                    selection=selection,
-                    blob=installed,
-                    source_filename=source_filename,
-                    parsed_pdf=parsed_pdf,
-                    attempted_at=attempted_at,
-                )
-                result = DocumentIngestionResult(
-                    remote_file_id=selection.remote_file_id,
-                    code=DocumentResultCode.INGESTED,
-                    version_number=persisted.version_number,
-                    size_bytes=installed.size_bytes,
-                    page_count=parsed_pdf.page_count,
-                    extraction_status=parsed_pdf.extraction_status,
-                    deduplicated=not persisted.content_blob_created,
+                raise DocumentIngestionFailure(
+                    IngestionErrorCode.UNAUTHORIZED_ROUTE
                 )
         except DocumentIngestionFailure as failure:
             failure_code = failure.code
@@ -185,7 +240,7 @@ class Phase3IngestionService:
         *,
         fetcher: PdfFetcher,
         selection: RemoteFileSelection,
-    ) -> FetchedPdf:
+    ) -> FetchedPdf | FetchedDocx:
         for attempt in range(MAX_TRANSIENT_RETRIES + 1):
             try:
                 return fetcher.fetch(selection)

@@ -22,6 +22,7 @@ _MAX_FILENAME_BYTES = 255
 _TEMPORARY_DIRECTORY = ".temporary"
 _TEMPORARY_PREFIX = "aaos-"
 _TEMPORARY_SUFFIX = ".tmp"
+_SUPPORTED_STORAGE_SUFFIXES = frozenset({".pdf", ".docx"})
 _WINDOWS_RESERVED_CHARACTERS = frozenset('<>:"/\\|?*')
 _WINDOWS_RESERVED_BASENAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -62,19 +63,35 @@ def _clean_display_component(value: str) -> str:
     return _truncate_utf8(cleaned, _MAX_FILENAME_BYTES).rstrip(" .")
 
 
-def sanitize_source_filename(value: str | None, *, fallback: str) -> str:
+def sanitize_source_filename(
+    value: str | None,
+    *,
+    fallback: str,
+    suffix: str = ".pdf",
+) -> str:
     """Return bounded display metadata with no filesystem-path semantics."""
+    if suffix not in _SUPPORTED_STORAGE_SUFFIXES:
+        raise _storage_failure()
+
     cleaned = _clean_display_component(value or "")
     if cleaned:
         return cleaned
 
     fallback_name = _clean_display_component(fallback)
-    if fallback_name.lower().endswith(".pdf"):
-        fallback_name = fallback_name[:-4].rstrip(" .")
+    if fallback_name.lower().endswith(suffix):
+        fallback_name = fallback_name[: -len(suffix)].rstrip(" .")
     if not fallback_name:
         fallback_name = "document"
-    result = _truncate_utf8(f"{fallback_name}.pdf", _MAX_FILENAME_BYTES).rstrip(" .")
-    return result or "document.pdf"
+
+    maximum_base_bytes = _MAX_FILENAME_BYTES - len(suffix.encode("utf-8"))
+    fallback_name = _truncate_utf8(
+        fallback_name,
+        maximum_base_bytes,
+    ).rstrip(" .")
+    if not fallback_name:
+        fallback_name = "document"
+
+    return f"{fallback_name}{suffix}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,10 +156,18 @@ class ContentBlobStore:
                 except OSError:
                     pass
 
-    def install(self, staged: StagedBlob) -> BlobInstall:
+    def install(
+        self,
+        staged: StagedBlob,
+        *,
+        suffix: str = ".pdf",
+    ) -> BlobInstall:
         try:
             self._validate_staged_blob(staged)
-            storage_key = _storage_key(staged.sha256)
+            storage_key = _storage_key(
+                staged.sha256,
+                suffix=suffix,
+            )
             relative_path = Path(*storage_key.split("/"))
             target = self._root / relative_path
             hash_root = self._root / "sha256"
@@ -203,8 +228,14 @@ class ContentBlobStore:
         if not install.created or referenced:
             return
         try:
-            expected_key = _storage_key(install.sha256)
-            if install.storage_key != expected_key or Path(install.storage_key).is_absolute():
+            if Path(install.storage_key).is_absolute():
+                raise _storage_failure()
+
+            expected_keys = {
+                _storage_key(install.sha256, suffix=suffix)
+                for suffix in _SUPPORTED_STORAGE_SUFFIXES
+            }
+            if install.storage_key not in expected_keys:
                 raise _storage_failure()
             target = self._root / Path(*install.storage_key.split("/"))
             self._ensure_confined(target)
@@ -323,10 +354,14 @@ class ContentBlobStore:
             pass
 
 
-def _storage_key(sha256: str) -> str:
-    if not _is_sha256(sha256):
+def _storage_key(
+    sha256: str,
+    *,
+    suffix: str = ".pdf",
+) -> str:
+    if not _is_sha256(sha256) or suffix not in _SUPPORTED_STORAGE_SUFFIXES:
         raise _storage_failure()
-    return f"sha256/{sha256[:2]}/{sha256}.pdf"
+    return f"sha256/{sha256[:2]}/{sha256}{suffix}"
 
 
 def _is_sha256(value: str) -> bool:

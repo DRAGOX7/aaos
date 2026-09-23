@@ -109,6 +109,13 @@ class FetchedPdf:
 
 
 @dataclass(frozen=True, slots=True)
+class FetchedDocx:
+    body: bytes = field(repr=False)
+    source_filename: str
+    advisory_media_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BlobInstall:
     sha256: str
     size_bytes: int

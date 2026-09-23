@@ -1313,3 +1313,69 @@ def test_cross_media_sha_reuse_fails_closed(tmp_path: Path) -> None:
                 )
                 == 0
             )
+def test_existing_sha_lookup_is_provenance_aware(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions):
+        pdf_id, docx_id = seed_remote_files(
+            sessions,
+            ("moodle:fixture", "pdf-resource", True),
+            ("moodle:fixture", "docx-resource", True),
+        )
+
+        pdf_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=pdf_id,
+        )
+        docx_selection = selected_remote_file(
+            repository,
+            source_system="moodle:fixture",
+            remote_file_id=docx_id,
+        )
+
+        pdf_blob = installed_blob("9")
+        docx_blob = installed_docx_blob("8")
+
+        repository.persist_success(
+            selection=pdf_selection,
+            blob=pdf_blob,
+            source_filename="source.pdf",
+            parsed_pdf=parsed_pdf(),
+            attempted_at=NOW,
+        )
+        repository.persist_structural_success(
+            selection=docx_selection,
+            blob=docx_blob,
+            source_filename="source.docx",
+            parsed_docx=parsed_docx(),
+            attempted_at=NOW,
+        )
+
+        assert (
+            repository.existing_version_for_sha256(
+                remote_file_id=pdf_id,
+                sha256=pdf_blob.sha256,
+            )
+            == 1
+        )
+        assert (
+            repository.existing_structural_version_for_sha256(
+                remote_file_id=pdf_id,
+                sha256=pdf_blob.sha256,
+            )
+            is None
+        )
+
+        assert (
+            repository.existing_structural_version_for_sha256(
+                remote_file_id=docx_id,
+                sha256=docx_blob.sha256,
+            )
+            == 1
+        )
+        assert (
+            repository.existing_version_for_sha256(
+                remote_file_id=docx_id,
+                sha256=docx_blob.sha256,
+            )
+            is None
+        )

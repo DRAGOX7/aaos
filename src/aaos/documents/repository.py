@@ -123,6 +123,34 @@ class DocumentRepository:
         remote_file_id: int,
         sha256: str,
     ) -> int | None:
+        return self._existing_version_number_for_sha256(
+            remote_file_id=remote_file_id,
+            sha256=sha256,
+            media_type=_PDF_MEDIA_TYPE,
+            provenance_mode=_PAGE_PROVENANCE_MODE,
+        )
+
+    def existing_structural_version_for_sha256(
+        self,
+        *,
+        remote_file_id: int,
+        sha256: str,
+    ) -> int | None:
+        return self._existing_version_number_for_sha256(
+            remote_file_id=remote_file_id,
+            sha256=sha256,
+            media_type=_DOCX_MEDIA_TYPE,
+            provenance_mode=_STRUCTURE_PROVENANCE_MODE,
+        )
+
+    def _existing_version_number_for_sha256(
+        self,
+        *,
+        remote_file_id: int,
+        sha256: str,
+        media_type: str,
+        provenance_mode: str,
+    ) -> int | None:
         session = self._session_factory()
         try:
             return session.scalar(
@@ -132,10 +160,14 @@ class DocumentRepository:
                 .where(
                     DocumentORM.remote_file_id == remote_file_id,
                     ContentBlobORM.sha256 == sha256,
+                    ContentBlobORM.media_type == media_type,
+                    DocumentVersionORM.provenance_mode == provenance_mode,
                 )
             )
         except SQLAlchemyError:
-            raise DocumentIngestionFailure(IngestionErrorCode.PERSISTENCE_FAILED) from None
+            raise DocumentIngestionFailure(
+                IngestionErrorCode.PERSISTENCE_FAILED
+            ) from None
         finally:
             session.close()
 
