@@ -7,6 +7,7 @@ from typing import Protocol
 
 from aaos.documents.contracts import (
     DocumentIngestionFailure,
+    FetchedDocx,
     FetchedPdf,
     IngestionErrorCode,
     RemoteFileSelection,
@@ -23,7 +24,10 @@ _DRIVE_FILE_ID = re.compile(
 
 
 class _ProviderPdfFetcher(Protocol):
-    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf: ...
+    def fetch(
+        self,
+        selection: RemoteFileSelection,
+    ) -> FetchedPdf | FetchedDocx: ...
 
 
 class ProviderRoutingPdfFetcher:
@@ -60,7 +64,10 @@ class ProviderRoutingPdfFetcher:
 
         raise DocumentIngestionFailure(IngestionErrorCode.UNAUTHORIZED_ROUTE)
 
-    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf:
+    def fetch(
+        self,
+        selection: RemoteFileSelection,
+    ) -> FetchedPdf | FetchedDocx:
         provider = _provider_for(selection)
 
         if provider == "moodle":

@@ -14,6 +14,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from docx_fixtures import mixed_structure_docx
 from pdf_fixtures import html_as_pdf, valid_multipage_pdf, valid_one_page_pdf
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
@@ -27,6 +28,7 @@ from aaos.documents.contracts import (
     DocumentIngestionFailure,
     DocumentResultCode,
     ExtractionStatus,
+    FetchedDocx,
     FetchedPdf,
     IngestionErrorCode,
     IngestionMode,
@@ -34,6 +36,7 @@ from aaos.documents.contracts import (
     ParsedPdf,
     RemoteFileSelection,
 )
+from aaos.documents.docx import DocxProcessor
 from aaos.documents.lock import IngestionLock
 from aaos.documents.pdf import PdfProcessor
 from aaos.documents.repository import DocumentRepository, PersistedVersion
@@ -46,6 +49,7 @@ from aaos.persistence.document_models import (
     ContentBlobORM,
     DocumentORM,
     DocumentPageORM,
+    DocumentStructureUnitORM,
     DocumentVersionORM,
 )
 
@@ -91,10 +95,15 @@ def guard_normal_paths(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @dataclass
 class FakeAuthorizedFetcher(BrowserAuthenticatedFetcher):
-    outcomes: dict[int, list[FetchedPdf]] = field(default_factory=dict)
+    outcomes: dict[int, list[FetchedPdf | FetchedDocx]] = field(
+        default_factory=dict
+    )
     calls: list[int] = field(default_factory=list)
 
-    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf:
+    def fetch(
+        self,
+        selection: RemoteFileSelection,
+    ) -> FetchedPdf | FetchedDocx:
         self.calls.append(selection.remote_file_id)
         return self.outcomes[selection.remote_file_id].pop(0)
 
@@ -146,6 +155,7 @@ def integration_harness(tmp_path: Path) -> Iterator[IntegrationHarness]:
         repository=repository,
         blob_store=store,
         pdf_processor=PdfProcessor(),
+        docx_processor=DocxProcessor(),
         ingestion_lock=IngestionLock(lock_path),
         fetcher_factory=fetcher_factory,
         clock=lambda: NOW,
@@ -194,6 +204,20 @@ def fetched(body: bytes, filename: str = "unsafe/lecture.pdf") -> FetchedPdf:
         body=body,
         source_filename=filename,
         advisory_media_type="application/pdf",
+    )
+
+
+def fetched_docx(
+    body: bytes,
+    filename: str = "unsafe/lecture.docx",
+) -> FetchedDocx:
+    return FetchedDocx(
+        body=body,
+        source_filename=filename,
+        advisory_media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
     )
 
 
@@ -476,4 +500,119 @@ def test_persistence_failure_compensates_new_blob_but_preserves_shared_blob(
         with test.sessions() as session:
             assert session.scalar(select(func.count()).select_from(ContentBlobORM)) == 1
             assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 1
+        assert_no_temporary_artifacts(test.content_root)
+
+def test_docx_ingestion_persists_structural_provenance_without_pages(
+    tmp_path: Path,
+) -> None:
+    body = mixed_structure_docx()
+
+    with integration_harness(tmp_path) as test:
+        remote_file_id = sync_remote_files(test.sessions, (601,))[601]
+        test.fetcher.outcomes[remote_file_id] = [
+            fetched_docx(body)
+        ]
+
+        result = test.service.run(
+            mode=IngestionMode.INGEST_NEW,
+            source_system=SOURCE_SYSTEM,
+        )
+
+        assert result.remote_files_selected == 1
+        assert result.ingested == 1
+        assert result.failed == 0
+        assert result.new_versions == 1
+
+        item = result.documents[0]
+        assert item.code is DocumentResultCode.INGESTED
+        assert item.page_count is None
+        assert item.extraction_status is ExtractionStatus.SUCCESS
+
+        digest = hashlib.sha256(body).hexdigest()
+        expected_key = f"sha256/{digest[:2]}/{digest}.docx"
+
+        with test.sessions() as session:
+            document = session.scalar(
+                select(DocumentORM).where(
+                    DocumentORM.remote_file_id == remote_file_id
+                )
+            )
+            assert document is not None
+            assert document.ingestion_status == IngestionStatus.READY
+
+            version = session.scalar(
+                select(DocumentVersionORM).where(
+                    DocumentVersionORM.document_id == document.id
+                )
+            )
+            assert version is not None
+            assert version.provenance_mode == "STRUCTURE"
+            assert version.page_count is None
+            assert version.extraction_status == "SUCCESS"
+            assert version.source_filename == "lecture.docx"
+
+            blob = session.get(
+                ContentBlobORM,
+                version.content_blob_id,
+            )
+            assert blob is not None
+            assert blob.sha256 == digest
+            assert blob.media_type == (
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            )
+            assert blob.storage_key == expected_key
+
+            units = tuple(
+                session.scalars(
+                    select(DocumentStructureUnitORM)
+                    .where(
+                        DocumentStructureUnitORM.document_version_id
+                        == version.id
+                    )
+                    .order_by(DocumentStructureUnitORM.ordinal)
+                )
+            )
+            pages = tuple(
+                session.scalars(
+                    select(DocumentPageORM).where(
+                        DocumentPageORM.document_version_id
+                        == version.id
+                    )
+                )
+            )
+
+            assert len(units) == 10
+            assert [unit.ordinal for unit in units] == list(
+                range(1, 11)
+            )
+            assert units[0].kind == "HEADING"
+            assert units[0].text == "Course Overview"
+            assert units[0].heading_level == 1
+
+            assert units[1].kind == "PARAGRAPH"
+            assert units[1].text == (
+                "تعلم الآلة — Machine Learning"
+            )
+
+            assert units[2].kind == "TABLE_CELL"
+            assert (
+                units[2].table_index,
+                units[2].row_index,
+                units[2].column_index,
+            ) == (0, 0, 0)
+
+            assert units[9].kind == "HEADING"
+            assert units[9].text == "Details"
+            assert units[9].heading_level == 3
+
+            assert pages == ()
+
+        stored_path = (
+            test.content_root
+            / "sha256"
+            / digest[:2]
+            / f"{digest}.docx"
+        )
+        assert stored_path.read_bytes() == body
         assert_no_temporary_artifacts(test.content_root)

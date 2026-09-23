@@ -21,6 +21,7 @@ from aaos.documents.contracts import (
     MAX_AUTHORIZED_REDIRECTS,
     MAX_PDF_BYTES,
     DocumentIngestionFailure,
+    FetchedDocx,
     FetchedPdf,
     IngestionErrorCode,
     RemoteFileSelection,
@@ -44,6 +45,9 @@ _CONTENT_DISPOSITION_FILENAME = re.compile(
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _AUTH_TIMEOUT_SECONDS = 600
 _HTML_MEDIA_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+_DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +209,10 @@ class BrowserAuthenticatedFetcher:
         self._authorizer = authorizer
         self._timeout_ms = timeout_ms
 
-    def fetch(self, selection: RemoteFileSelection) -> FetchedPdf:
+    def fetch(
+        self,
+        selection: RemoteFileSelection,
+    ) -> FetchedPdf | FetchedDocx:
         permit = self._authorizer.authorize(selection)
         current_url = permit.initial_url
         visited = {current_url}
@@ -267,12 +274,30 @@ class BrowserAuthenticatedFetcher:
             if is_html:
                 _fail(IngestionErrorCode.UNAUTHORIZED_REDIRECT)
             cmid = permit.source_id.removeprefix("resource-cm:")
+            media_type = _media_type(
+                _header(response.headers, "content-type")
+            )
+            suffix = ".docx" if media_type == _DOCX_MEDIA_TYPE else ".pdf"
+            source_filename = _source_filename(
+                _header(response.headers, "content-disposition"),
+                cmid,
+                fallback_suffix=suffix,
+            )
+
+            if (
+                media_type == _DOCX_MEDIA_TYPE
+                or source_filename.casefold().endswith(".docx")
+            ):
+                return FetchedDocx(
+                    body=body,
+                    source_filename=source_filename,
+                    advisory_media_type=media_type,
+                )
+
             return FetchedPdf(
                 body=body,
-                source_filename=_source_filename(
-                    _header(response.headers, "content-disposition"), cmid
-                ),
-                advisory_media_type=_media_type(_header(response.headers, "content-type")),
+                source_filename=source_filename,
+                advisory_media_type=media_type,
             )
 
     def _get(self, url: str) -> Any:
@@ -461,8 +486,15 @@ def _declared_size(value: str | None) -> int | None:
     return int(value)
 
 
-def _source_filename(content_disposition: str | None, cmid: str) -> str:
-    fallback = f"resource-{cmid}.pdf"
+def _source_filename(
+    content_disposition: str | None,
+    cmid: str,
+    *,
+    fallback_suffix: str = ".pdf",
+) -> str:
+    if fallback_suffix not in {".pdf", ".docx"}:
+        _fail(IngestionErrorCode.UNAUTHORIZED_ROUTE)
+    fallback = f"resource-{cmid}{fallback_suffix}"
     if content_disposition is None:
         return fallback
     match = _CONTENT_DISPOSITION_FILENAME.search(content_disposition)

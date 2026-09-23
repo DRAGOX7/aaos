@@ -31,6 +31,7 @@ from aaos.documents.contracts import (
     IngestionErrorCode,
     IngestionMode,
 )
+from aaos.documents.docx import DocxProcessor
 from aaos.documents.drive_pdf_fetch import DrivePdfFetcher
 from aaos.documents.fetch_routing import ProviderRoutingPdfFetcher
 from aaos.documents.lock import IngestionLock, IngestionLockUnavailable
@@ -241,6 +242,7 @@ def build_phase3_service(
             repository=repository,
             blob_store=blob_store,
             pdf_processor=PdfProcessor(),
+            docx_processor=DocxProcessor(),
             ingestion_lock=ingestion_lock,
             fetcher_factory=fetcher_factory,
             clock=_utc_now,

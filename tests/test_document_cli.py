@@ -361,7 +361,12 @@ def test_build_binds_canonical_wwwroot_and_source_system_explicitly(
     monkeypatch.setattr(module, "DocumentRepository", lambda _factory: object())
     monkeypatch.setattr(module, "ContentBlobStore", lambda _root: object())
     monkeypatch.setattr(module, "IngestionLock", lambda _path: object())
-    monkeypatch.setattr(module, "PdfProcessor", lambda: object())
+
+    pdf_processor = object()
+    docx_processor = object()
+
+    monkeypatch.setattr(module, "PdfProcessor", lambda: pdf_processor)
+    monkeypatch.setattr(module, "DocxProcessor", lambda: docx_processor)
     monkeypatch.setattr(module, "Phase3IngestionService", FakeService)
 
     def fake_fetcher_factory(**kwargs: object) -> object:
@@ -378,6 +383,9 @@ def test_build_binds_canonical_wwwroot_and_source_system_explicitly(
     assert isinstance(runtime, Phase3ServiceRuntime)
     service = runtime.service
     assert isinstance(service, FakeService)
+    assert captured["pdf_processor"] is pdf_processor
+    assert captured["docx_processor"] is docx_processor
+
     factory = captured["fetcher_factory"]
     assert callable(factory)
     factory()
