@@ -22,6 +22,12 @@ class TextSource(StrEnum):
     EMBEDDED_PDF = "EMBEDDED_PDF"
 
 
+class StructureUnitKind(StrEnum):
+    HEADING = "HEADING"
+    PARAGRAPH = "PARAGRAPH"
+    TABLE_CELL = "TABLE_CELL"
+
+
 class IngestionErrorCode(StrEnum):
     NETWORK_TIMEOUT = "NETWORK_TIMEOUT"
     NETWORK_FAILURE = "NETWORK_FAILURE"
@@ -31,6 +37,9 @@ class IngestionErrorCode(StrEnum):
     INVALID_PDF = "INVALID_PDF"
     PDF_ENCRYPTED = "PDF_ENCRYPTED"
     PDF_PARSE_FAILED = "PDF_PARSE_FAILED"
+    INVALID_DOCX = "INVALID_DOCX"
+    DOCX_PARSE_FAILED = "DOCX_PARSE_FAILED"
+    UNSUPPORTED_DOCX_STRUCTURE = "UNSUPPORTED_DOCX_STRUCTURE"
     STORAGE_FAILED = "STORAGE_FAILED"
     PERSISTENCE_FAILED = "PERSISTENCE_FAILED"
 
@@ -74,6 +83,22 @@ class ParsedPdf:
     page_count: int
     extraction_status: ExtractionStatus
     pages: tuple[ExtractedPage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedStructureUnit:
+    ordinal: int
+    kind: StructureUnitKind
+    text: str
+    heading_level: int | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedDocx:
+    units: tuple[ExtractedStructureUnit, ...]
 
 
 @dataclass(frozen=True, slots=True)

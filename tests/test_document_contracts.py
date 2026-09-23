@@ -64,6 +64,9 @@ def test_closed_enums_expose_only_the_approved_values() -> None:
         "INVALID_PDF",
         "PDF_ENCRYPTED",
         "PDF_PARSE_FAILED",
+        "INVALID_DOCX",
+        "DOCX_PARSE_FAILED",
+        "UNSUPPORTED_DOCX_STRUCTURE",
         "STORAGE_FAILED",
         "PERSISTENCE_FAILED",
     }
