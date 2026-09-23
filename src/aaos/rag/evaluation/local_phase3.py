@@ -52,7 +52,7 @@ ACCEPTANCE_SOURCE_SYSTEM = "local:phase4:acceptance"
 _PDF_ID = re.compile(r"local-pdf:[0-9a-f]{16}:[0-9a-f]{64}\Z", re.ASCII)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 _SAFE_COURSE_ID = re.compile(r"local-course:[a-z0-9][a-z0-9-]{0,99}\Z", re.ASCII)
-_HEAD_REVISION = "0003_phase3_document_ingestion"
+_HEAD_REVISION = "0008_document_structural_provenance"
 _MAX_MANIFEST_FILES = 10_000
 
 

@@ -61,7 +61,7 @@ def collect_clean_setup(root: Path, *, probe: SetupProbe) -> CleanSetupReport:
         python_version=python_version or "UNAVAILABLE",
         uv_lock_ok=results[4].returncode == 0,
         frontend_lock_ok=results[5].returncode == 0,
-        migration_head="0007_phase8_visual_provenance",
+        migration_head="0008_document_structural_provenance",
         import_inert=True,
         external_calls=0,
         created_paths=(),
@@ -132,7 +132,7 @@ def qualify_database(path: Path, *, baseline: str | None = None) -> MigrationRep
         )
     return MigrationReport(
         revision=revision,
-        head_matches=revision == "0007_phase8_visual_provenance",
+        head_matches=revision == "0008_document_structural_provenance",
         tables=tables,
         external_calls=0,
         external_writes=0,

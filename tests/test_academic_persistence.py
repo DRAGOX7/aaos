@@ -45,6 +45,7 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
         "content_blobs",
         "document_versions",
         "document_pages",
+        "document_structure_units",
         "rag_index_generations",
         "rag_document_indexes",
         "rag_chunks",

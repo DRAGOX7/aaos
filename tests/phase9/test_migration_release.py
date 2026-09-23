@@ -9,9 +9,10 @@ def test_disposable_database_reaches_phase8_head_without_normal_db(tmp_path: Pat
     disposable = tmp_path / "acceptance.db"
     report = qualify_database(disposable)
     assert report.head_matches is True
-    assert report.revision == "0007_phase8_visual_provenance"
+    assert report.revision == "0008_document_structural_provenance"
     assert "visual_analysis_runs" in report.tables
     assert "visual_elements" in report.tables
+    assert "document_structure_units" in report.tables
     assert report.external_calls == 0
     assert report.external_writes == 0
     assert report.created_paths == (str(disposable),)

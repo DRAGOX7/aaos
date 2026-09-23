@@ -142,6 +142,7 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "content_blobs",
             "document_versions",
             "document_pages",
+            "document_structure_units",
             "rag_index_generations",
             "rag_document_indexes",
             "rag_chunks",
