@@ -32,6 +32,8 @@ def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int:
 
 def main() -> int:
     """Expose the configured AAOS command through the project entry point."""
+    if sys.argv[1:] == ["sync"]:
+        return _run_configured_sync_workflow()
     if sys.argv[1:2] == ["documents"]:
         from aaos.documents.cli import run_documents_command
 
@@ -65,6 +67,18 @@ def main() -> int:
     if sys.argv[1:] == ["moodle", "diagnose-final-bootstrap-script"]:
         return _run_configured_final_bootstrap_script_diagnostic()
     return run_cli(sys.argv[1:], _run_configured_doctor)
+
+
+def _run_configured_sync_workflow() -> int:
+    """Run the explicit end-to-end academic synchronization workflow lazily."""
+    from aaos.documents.cli import run_documents_command
+    from aaos.sync import run_sync_workflow
+
+    return run_sync_workflow(
+        run_moodle_sync=_run_configured_moodle_sync,
+        run_document_ingest=lambda: run_documents_command(["ingest-new"]),
+        run_rag_index=lambda: _run_configured_rag(["index-new"]),
+    )
 
 
 def _run_configured_rag(argv: Sequence[str]) -> int:
