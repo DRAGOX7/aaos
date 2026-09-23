@@ -137,7 +137,39 @@ class RagChunkORM(Base):
             name="ck_rag_chunks_text_sha256",
         ),
         CheckConstraint(
-            "page_start > 0 AND page_end >= page_start", name="ck_rag_chunks_page_bounds"
+
+            "provenance_mode IN ('PAGE', 'STRUCTURE')",
+
+            name="ck_rag_chunks_provenance_mode",
+
+        ),
+
+        CheckConstraint(
+
+            "("
+
+            "provenance_mode = 'PAGE' "
+
+            "AND page_start IS NOT NULL "
+
+            "AND page_end IS NOT NULL "
+
+            "AND page_start > 0 "
+
+            "AND page_end >= page_start"
+
+            ") OR ("
+
+            "provenance_mode = 'STRUCTURE' "
+
+            "AND page_start IS NULL "
+
+            "AND page_end IS NULL"
+
+            ")",
+
+            name="ck_rag_chunks_provenance_shape",
+
         ),
         Index(
             "ix_rag_chunks_generation_document_ordinal",
@@ -160,8 +192,20 @@ class RagChunkORM(Base):
     exact_text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     text_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    page_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    page_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    provenance_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="PAGE",
+        server_default="PAGE",
+    )
+    page_start: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    page_end: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
 
 
@@ -196,3 +240,69 @@ class RagChunkSourceSpanORM(Base):
     page_char_end: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_char_start: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_char_end: Mapped[int] = mapped_column(Integer, nullable=False)
+
+class RagChunkStructureSourceSpanORM(Base):
+    __tablename__ = "rag_chunk_structure_source_spans"
+    __table_args__ = (
+        UniqueConstraint(
+            "rag_chunk_id",
+            "ordinal",
+            name="uq_rag_chunk_structure_source_spans_chunk_ordinal",
+        ),
+        CheckConstraint(
+            "id > 0",
+            name="ck_rag_chunk_structure_source_spans_id",
+        ),
+        CheckConstraint(
+            "rag_chunk_id > 0",
+            name="ck_rag_chunk_structure_source_spans_chunk_id",
+        ),
+        CheckConstraint(
+            "document_structure_unit_id > 0",
+            name="ck_rag_chunk_structure_source_spans_unit_id",
+        ),
+        CheckConstraint(
+            "ordinal > 0",
+            name="ck_rag_chunk_structure_source_spans_ordinal",
+        ),
+        CheckConstraint(
+            "source_char_start >= 0 AND source_char_end > source_char_start",
+            name="ck_rag_chunk_structure_source_spans_source_bounds",
+        ),
+        CheckConstraint(
+            "chunk_char_start >= 0 AND chunk_char_end > chunk_char_start",
+            name="ck_rag_chunk_structure_source_spans_chunk_bounds",
+        ),
+        Index(
+            "ix_rag_chunk_structure_source_spans_chunk_ordinal",
+            "rag_chunk_id",
+            "ordinal",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rag_chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("rag_chunks.id"),
+        nullable=False,
+    )
+    document_structure_unit_id: Mapped[int] = mapped_column(
+        ForeignKey("document_structure_units.id"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_char_start: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    source_char_end: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    chunk_char_start: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    chunk_char_end: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )

@@ -259,11 +259,17 @@ def test_phase4_schema_enforces_named_constraints_indexes_and_foreign_keys(tmp_p
             "ck_rag_document_indexes_searchable_page_count",
             "ck_rag_document_indexes_chunk_count",
         }
-        assert {item["name"] for item in inspector.get_check_constraints("rag_chunks")} >= {
+        rag_chunk_checks = {
+            item["name"]
+            for item in inspector.get_check_constraints("rag_chunks")
+        }
+        assert rag_chunk_checks >= {
             "ck_rag_chunks_ordinal",
             "ck_rag_chunks_token_count",
-            "ck_rag_chunks_page_bounds",
+            "ck_rag_chunks_provenance_mode",
+            "ck_rag_chunks_provenance_shape",
         }
+        assert "ck_rag_chunks_page_bounds" not in rag_chunk_checks
         assert {
             item["name"] for item in inspector.get_check_constraints("rag_chunk_source_spans")
         } >= {
@@ -548,5 +554,142 @@ def test_phase4_downgrade_to_phase3_removes_rag_tables_and_fts5(tmp_path: Path) 
         assert not (set(inspect(engine).get_table_names()) & RAG_TABLES)
         with engine.connect() as connection:
             assert "rag_chunks_fts" not in sqlite_master_names(connection)
+    finally:
+        engine.dispose()
+
+def test_rag_structural_migration_preserves_existing_pdf_chunk_provenance(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "rag-structural-upgrade.db"
+    config = make_config(database_path)
+
+    command.upgrade(
+        config,
+        "0008_document_structural_provenance",
+    )
+
+    engine = create_database_engine(database_path)
+    try:
+        with engine.begin() as connection:
+            seed_phase3_provenance(connection)
+            generation_id = insert_generation(connection)
+            chunk_id = insert_chunk(
+                connection,
+                generation_id=generation_id,
+            )
+            insert_source_span(
+                connection,
+                rag_chunk_id=chunk_id,
+            )
+
+        with engine.connect() as connection:
+            chunk_before = connection.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        chunk_key,
+                        generation_id,
+                        document_version_id,
+                        ordinal,
+                        heading,
+                        exact_text,
+                        token_count,
+                        text_sha256,
+                        page_start,
+                        page_end
+                    FROM rag_chunks
+                    WHERE id = :chunk_id
+                    """
+                ),
+                {"chunk_id": chunk_id},
+            ).one()
+
+            span_before = connection.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        rag_chunk_id,
+                        document_page_id,
+                        ordinal,
+                        page_number,
+                        page_char_start,
+                        page_char_end,
+                        chunk_char_start,
+                        chunk_char_end
+                    FROM rag_chunk_source_spans
+                    WHERE rag_chunk_id = :chunk_id
+                    """
+                ),
+                {"chunk_id": chunk_id},
+            ).one()
+    finally:
+        engine.dispose()
+
+    command.upgrade(
+        config,
+        "0009_rag_structural_provenance",
+    )
+
+    engine = create_database_engine(database_path)
+    try:
+        with engine.connect() as connection:
+            chunk_after = connection.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        chunk_key,
+                        generation_id,
+                        document_version_id,
+                        ordinal,
+                        heading,
+                        exact_text,
+                        token_count,
+                        text_sha256,
+                        page_start,
+                        page_end,
+                        provenance_mode
+                    FROM rag_chunks
+                    WHERE id = :chunk_id
+                    """
+                ),
+                {"chunk_id": chunk_id},
+            ).one()
+
+            span_after = connection.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        rag_chunk_id,
+                        document_page_id,
+                        ordinal,
+                        page_number,
+                        page_char_start,
+                        page_char_end,
+                        chunk_char_start,
+                        chunk_char_end
+                    FROM rag_chunk_source_spans
+                    WHERE rag_chunk_id = :chunk_id
+                    """
+                ),
+                {"chunk_id": chunk_id},
+            ).one()
+
+            structure_span_count = connection.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM rag_chunk_structure_source_spans
+                    """
+                )
+            ).scalar_one()
+
+        assert tuple(chunk_after[:-1]) == tuple(chunk_before)
+        assert chunk_after.provenance_mode == "PAGE"
+        assert tuple(span_after) == tuple(span_before)
+        assert structure_span_count == 0
     finally:
         engine.dispose()
