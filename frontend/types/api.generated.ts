@@ -605,7 +605,7 @@ export interface components {
             /** Answer Text */
             answer_text: string;
             /** Citations */
-            citations: components["schemas"]["RagCitation"][];
+            citations: (components["schemas"]["RagCitation"] | components["schemas"]["RagStructuralCitation"])[];
             /** Language */
             language: string;
             status: components["schemas"]["RagAnswerStatusView"];
@@ -663,6 +663,28 @@ export interface components {
             question: string;
             /** Scope */
             scope: components["schemas"]["RagGlobalScopeRequest"] | components["schemas"]["RagCourseScopeRequest"];
+        };
+        /**
+         * RagStructuralCitation
+         * @description Safe structural citation target resolved by trusted backend code.
+         */
+        RagStructuralCitation: {
+            /** Column Index */
+            column_index?: number | null;
+            /** Document Id */
+            document_id: number;
+            /** Document Title */
+            document_title: string;
+            /** Heading */
+            heading?: string | null;
+            /** Row Index */
+            row_index?: number | null;
+            /** Table Index */
+            table_index?: number | null;
+            /** Unit End */
+            unit_end: number;
+            /** Unit Start */
+            unit_start: number;
         };
         /**
          * SafeActionSummary

@@ -51,6 +51,7 @@ from aaos.rag.repository import (
     GenerationBuild,
     RagRepository,
     SourceSpanRecord,
+    StructureSourceSpanRecord,
 )
 
 
@@ -1134,3 +1135,132 @@ def test_structural_retry_cleanup_removes_derived_provenance(
             generation.identity,
             version_id,
         ) == ()
+
+def test_materialize_snapshot_chunks_returns_structural_provenance(
+    tmp_path: Path,
+) -> None:
+    with repository_database(
+        tmp_path
+    ) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        version_id = ids["one_v2"]
+
+        heading_id, paragraph_id, _ = (
+            _convert_version_to_structure_for_rag_test(
+                sessions,
+                version_id,
+            )
+        )
+
+        generation = _create_generation(repository)
+        repository.activate_generation(
+            generation.identity,
+            expected_revision=0,
+        )
+
+        repository.insert_document_index(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+            status=DocumentIndexStatus.READY,
+            coverage_status=CoverageStatus.FULL,
+            searchable_page_count=0,
+            chunk_count=1,
+        )
+
+        exact_text = (
+            "Neural Networks\n\n"
+            "A neural network learns patterns."
+        )
+
+        chunk = repository.insert_chunk(
+            generation.identity,
+            expected_revision=0,
+            document_version_id=version_id,
+            chunk_key="9" * 64,
+            ordinal=1,
+            heading="Neural Networks",
+            exact_text=exact_text,
+            token_count=7,
+            text_sha256="6" * 64,
+            provenance_mode="STRUCTURE",
+            page_start=None,
+            page_end=None,
+        )
+
+        heading_text = "Neural Networks"
+        repository.insert_structure_source_span(
+            generation.identity,
+            expected_revision=0,
+            rag_chunk_id=chunk.chunk_id,
+            document_structure_unit_id=heading_id,
+            ordinal=1,
+            source_char_start=0,
+            source_char_end=len(heading_text),
+            chunk_char_start=0,
+            chunk_char_end=len(heading_text),
+        )
+
+        paragraph_text = (
+            "A neural network learns patterns."
+        )
+        paragraph_start = len(
+            "Neural Networks\n\n"
+        )
+
+        repository.insert_structure_source_span(
+            generation.identity,
+            expected_revision=0,
+            rag_chunk_id=chunk.chunk_id,
+            document_structure_unit_id=paragraph_id,
+            ordinal=2,
+            source_char_start=0,
+            source_char_end=len(paragraph_text),
+            chunk_char_start=paragraph_start,
+            chunk_char_end=len(exact_text),
+        )
+
+        snapshot = repository.pin_query_snapshot(
+            CourseScope(ids["course_one"])
+        )
+
+        materialized = (
+            repository.materialize_snapshot_chunks(
+                snapshot,
+                (chunk.chunk_key,),
+            )
+        )
+
+        assert len(materialized) == 1
+
+        item = materialized[0]
+
+        assert item.chunk == chunk
+        assert item.chunk.provenance_mode == "STRUCTURE"
+        assert item.document_version.provenance_mode == "STRUCTURE"
+
+        assert len(item.source_spans) == 2
+
+        assert all(
+            isinstance(
+                span,
+                StructureSourceSpanRecord,
+            )
+            for span in item.source_spans
+        )
+
+        first, second = item.source_spans
+
+        assert first.document_structure_unit_id == heading_id
+        assert first.unit_ordinal == 1
+        assert first.kind == "HEADING"
+        assert first.heading_level == 1
+
+        assert second.document_structure_unit_id == paragraph_id
+        assert second.unit_ordinal == 2
+        assert second.kind == "PARAGRAPH"
+        assert second.heading_level is None
+
+        for span in item.source_spans:
+            assert not hasattr(span, "page_number")
+            assert not hasattr(span, "document_page_id")

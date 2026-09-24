@@ -562,31 +562,146 @@ def _safe_scalar_text(value: str, limit: int) -> str:
     return safe
 
 
-def _sanitize_citations(value: object, limit: int) -> tuple[dict[str, object], ...]:
+def _sanitize_citations(
+    value: object,
+    limit: int,
+) -> tuple[dict[str, object], ...]:
     if not isinstance(value, (tuple, list)):
         raise ObservationSanitizationError()
+
+    page_fields = {
+        "claim_id",
+        "document_version_id",
+        "document_title",
+        "page_start",
+        "page_end",
+    }
+    structure_fields = {
+        "claim_id",
+        "document_version_id",
+        "document_title",
+        "unit_start",
+        "unit_end",
+        "heading",
+        "table_index",
+        "row_index",
+        "column_index",
+    }
+
     citations: list[dict[str, object]] = []
+
     for item in value:
         if not isinstance(item, Mapping):
             raise ObservationSanitizationError()
-        allowed = {"claim_id", "document_version_id", "document_title", "page_start", "page_end"}
-        if set(item) != allowed:
+
+        fields = set(item)
+        if fields not in {
+            frozenset(page_fields),
+            frozenset(structure_fields),
+        }:
             raise ObservationSanitizationError()
+
         claim_id = item.get("claim_id")
         title = item.get("document_title")
+
         if not isinstance(claim_id, str) or not claim_id.strip():
             raise ObservationSanitizationError()
         if not isinstance(title, str) or not title.strip():
             raise ObservationSanitizationError()
+
+        common: dict[str, object] = {
+            "claim_id": _sanitize_text(
+                claim_id,
+                limit,
+                truncate=False,
+            ),
+            "document_version_id": _positive_int(
+                item.get("document_version_id")
+            ),
+            "document_title": _sanitize_text(
+                title,
+                limit,
+                truncate=False,
+            ),
+        }
+
+        if fields == page_fields:
+            page_start = _positive_int(
+                item.get("page_start")
+            )
+            page_end = _positive_int(
+                item.get("page_end")
+            )
+            if page_end < page_start:
+                raise ObservationSanitizationError()
+
+            citations.append(
+                {
+                    **common,
+                    "page_start": page_start,
+                    "page_end": page_end,
+                }
+            )
+            continue
+
+        unit_start = _positive_int(
+            item.get("unit_start")
+        )
+        unit_end = _positive_int(
+            item.get("unit_end")
+        )
+        if unit_end < unit_start:
+            raise ObservationSanitizationError()
+
+        heading = item.get("heading")
+        if heading is not None:
+            if not isinstance(heading, str) or not heading.strip():
+                raise ObservationSanitizationError()
+            heading = _sanitize_text(
+                heading,
+                limit,
+                truncate=False,
+            )
+
+        coordinate_values: list[int | None] = []
+        for field in (
+            "table_index",
+            "row_index",
+            "column_index",
+        ):
+            coordinate = item.get(field)
+            if coordinate is None:
+                coordinate_values.append(None)
+                continue
+            if (
+                isinstance(coordinate, bool)
+                or not isinstance(coordinate, int)
+                or coordinate < 0
+            ):
+                raise ObservationSanitizationError()
+            coordinate_values.append(coordinate)
+
+        if any(
+            coordinate is None
+            for coordinate in coordinate_values
+        ) and not all(
+            coordinate is None
+            for coordinate in coordinate_values
+        ):
+            raise ObservationSanitizationError()
+
         citations.append(
             {
-                "claim_id": _sanitize_text(claim_id, limit, truncate=False),
-                "document_title": _sanitize_text(title, limit, truncate=False),
-                "document_version_id": _positive_int(item.get("document_version_id")),
-                "page_end": _positive_int(item.get("page_end")),
-                "page_start": _positive_int(item.get("page_start")),
+                **common,
+                "unit_start": unit_start,
+                "unit_end": unit_end,
+                "heading": heading,
+                "table_index": coordinate_values[0],
+                "row_index": coordinate_values[1],
+                "column_index": coordinate_values[2],
             }
         )
+
     return tuple(citations)
 
 

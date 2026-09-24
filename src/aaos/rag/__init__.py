@@ -34,6 +34,7 @@ from .contracts import (
     RagAnswer,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
+    RagChunkStructureSourceSpanValue,
     RagClaim,
     RagErrorCode,
     RagGenerationIdentity,
@@ -54,6 +55,7 @@ from .contracts import (
     SemanticCoverageDecision,
     SemanticCoverageRequest,
     SemanticCoverageStatus,
+    StructuralCitation,
 )
 from .semantic_coverage import (
     AtomicRequirementDecomposer,
@@ -68,6 +70,7 @@ from .service import GuardedLocalRagService
 __all__ = [
     "MAX_RAG_TEXT_CHARACTERS",
     "Citation",
+    "StructuralCitation",
     "AtomicDecompositionStatus",
     "AtomicRequirementDecomposition",
     "CourseScope",
@@ -91,6 +94,7 @@ __all__ = [
     "RagAnswer",
     "RagAnswerStatus",
     "RagChunkSourceSpanValue",
+    "RagChunkStructureSourceSpanValue",
     "RagClaim",
     "RagErrorCode",
     "RagGenerationIdentity",

@@ -870,22 +870,112 @@ class GroundedRagResponse:
         citations = values["citations"]
         if not isinstance(citations, tuple):
             raise ValueError("grounded RAG citations must be a tuple")
+
+        page_fields = {
+            "claim_id",
+            "document_version_id",
+            "document_title",
+            "page_start",
+            "page_end",
+        }
+        structure_fields = {
+            "claim_id",
+            "document_version_id",
+            "document_title",
+            "unit_start",
+            "unit_end",
+            "heading",
+            "table_index",
+            "row_index",
+            "column_index",
+        }
+
         for citation in citations:
-            if not isinstance(citation, Mapping) or set(citation) != {
-                "claim_id",
-                "document_version_id",
-                "document_title",
-                "page_start",
-                "page_end",
-            }:
+            if not isinstance(citation, Mapping):
                 raise ValueError("grounded RAG citation is invalid")
-            _nonblank_text(citation["claim_id"], "citation.claim_id")
-            _nonblank_text(citation["document_title"], "citation.document_title")
-            _positive_int(citation["document_version_id"], "citation.document_version_id")
-            _positive_int(citation["page_start"], "citation.page_start")
-            _positive_int(citation["page_end"], "citation.page_end")
-            if citation["page_end"] < citation["page_start"]:
-                raise ValueError("grounded RAG citation page range is invalid")
+
+            citation_fields = set(citation)
+
+            _nonblank_text(
+                citation.get("claim_id"),
+                "citation.claim_id",
+            )
+            _nonblank_text(
+                citation.get("document_title"),
+                "citation.document_title",
+            )
+            _positive_int(
+                citation.get("document_version_id"),
+                "citation.document_version_id",
+            )
+
+            if citation_fields == page_fields:
+                _positive_int(
+                    citation["page_start"],
+                    "citation.page_start",
+                )
+                _positive_int(
+                    citation["page_end"],
+                    "citation.page_end",
+                )
+                if citation["page_end"] < citation["page_start"]:
+                    raise ValueError(
+                        "grounded RAG citation page range is invalid"
+                    )
+                continue
+
+            if citation_fields != structure_fields:
+                raise ValueError("grounded RAG citation is invalid")
+
+            _positive_int(
+                citation["unit_start"],
+                "citation.unit_start",
+            )
+            _positive_int(
+                citation["unit_end"],
+                "citation.unit_end",
+            )
+            if citation["unit_end"] < citation["unit_start"]:
+                raise ValueError(
+                    "grounded RAG citation unit range is invalid"
+                )
+
+            heading = citation["heading"]
+            if heading is not None:
+                _nonblank_text(
+                    heading,
+                    "citation.heading",
+                )
+
+            coordinates = (
+                citation["table_index"],
+                citation["row_index"],
+                citation["column_index"],
+            )
+
+            if all(value is None for value in coordinates):
+                continue
+
+            if any(value is None for value in coordinates):
+                raise ValueError(
+                    "grounded RAG structural citation coordinates "
+                    "must be all present or all absent"
+                )
+
+            for coordinate_field, value in zip(
+                (
+                    "table_index",
+                    "row_index",
+                    "column_index",
+                ),
+                coordinates,
+                strict=True,
+            ):
+                _nonnegative_int(
+                    value,
+                    f"citation.{coordinate_field}",
+                )
+
         if status == "INSUFFICIENT_EVIDENCE" and citations:
             raise ValueError("grounded RAG refusal cannot contain citations")
         if status != "INSUFFICIENT_EVIDENCE" and not citations:

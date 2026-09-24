@@ -94,34 +94,142 @@ def _parse_query(arguments: ValidatedToolArguments) -> RagQuery:
 
 
 def _citation_payload(citation: object) -> dict[str, object]:
+    page_fields = {
+        "claim_id",
+        "document_version_id",
+        "document_title",
+        "page_start",
+        "page_end",
+    }
+    structure_fields = {
+        "claim_id",
+        "document_version_id",
+        "document_title",
+        "unit_start",
+        "unit_end",
+        "heading",
+        "table_index",
+        "row_index",
+        "column_index",
+    }
+
+    def read(field: str) -> object:
+        if isinstance(citation, Mapping):
+            return citation.get(field)
+        return getattr(citation, field, None)
+
     if isinstance(citation, Mapping):
-        if set(citation) != {
-            "claim_id",
-            "document_version_id",
-            "document_title",
-            "page_start",
-            "page_end",
-        }:
-            raise ValueError("citation is malformed")
-    else:
-        if not hasattr(citation, "claim_id"):
-            raise ValueError("citation is malformed")
-    values: dict[str, object] = {}
-    for field in ("claim_id", "document_version_id", "document_title", "page_start", "page_end"):
-        value = (
-            citation.get(field) if isinstance(citation, Mapping) else getattr(citation, field, None)
-        )
-        if field in {"claim_id", "document_title"}:
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError("citation text is malformed")
-            values[field] = value.strip()
-        elif field in {"document_version_id", "page_start", "page_end"}:
-            values[field] = _positive_id(value, field)
+        keys = set(citation)
+        if keys == page_fields:
+            mode = "PAGE"
+        elif keys == structure_fields:
+            mode = "STRUCTURE"
         else:
             raise ValueError("citation is malformed")
-    if values["page_end"] < values["page_start"]:  # type: ignore[operator]
-        raise ValueError("citation page range is malformed")
-    return values
+    else:
+        has_page = all(
+            hasattr(citation, field)
+            for field in ("page_start", "page_end")
+        )
+        has_structure = all(
+            hasattr(citation, field)
+            for field in ("unit_start", "unit_end")
+        )
+
+        if has_page == has_structure:
+            raise ValueError("citation is malformed")
+
+        mode = "PAGE" if has_page else "STRUCTURE"
+
+    claim_id = read("claim_id")
+    document_title = read("document_title")
+
+    if not isinstance(claim_id, str) or not claim_id.strip():
+        raise ValueError("claim_id must contain text")
+    if not isinstance(document_title, str) or not document_title.strip():
+        raise ValueError("document_title must contain text")
+
+    document_version_id = _positive_id(
+        read("document_version_id"),
+        "document_version_id",
+    )
+
+    if mode == "PAGE":
+        page_start = _positive_id(
+            read("page_start"),
+            "page_start",
+        )
+        page_end = _positive_id(
+            read("page_end"),
+            "page_end",
+        )
+        if page_end < page_start:
+            raise ValueError("citation page range is invalid")
+
+        return {
+            "claim_id": claim_id,
+            "document_version_id": document_version_id,
+            "document_title": document_title,
+            "page_start": page_start,
+            "page_end": page_end,
+        }
+
+    unit_start = _positive_id(
+        read("unit_start"),
+        "unit_start",
+    )
+    unit_end = _positive_id(
+        read("unit_end"),
+        "unit_end",
+    )
+    if unit_end < unit_start:
+        raise ValueError("citation unit range is invalid")
+
+    heading = read("heading")
+    if heading is not None and (
+        not isinstance(heading, str)
+        or not heading.strip()
+    ):
+        raise ValueError("heading must contain text")
+
+    coordinates: list[int | None] = []
+    for field in (
+        "table_index",
+        "row_index",
+        "column_index",
+    ):
+        value = read(field)
+        if value is None:
+            coordinates.append(None)
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise ValueError(
+                f"{field} must be a nonnegative integer or None"
+            )
+        coordinates.append(value)
+
+    if any(value is None for value in coordinates) and not all(
+        value is None for value in coordinates
+    ):
+        raise ValueError(
+            "structural table coordinates must be all present or all absent"
+        )
+
+    return {
+        "claim_id": claim_id,
+        "document_version_id": document_version_id,
+        "document_title": document_title,
+        "unit_start": unit_start,
+        "unit_end": unit_end,
+        "heading": heading,
+        "table_index": coordinates[0],
+        "row_index": coordinates[1],
+        "column_index": coordinates[2],
+    }
 
 
 def _response_payload(response: object) -> RagOutput:

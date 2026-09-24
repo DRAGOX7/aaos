@@ -222,12 +222,35 @@ class SourceSpanRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class StructureSourceSpanRecord:
+    """Persisted exact structural-unit-to-chunk provenance value."""
+
+    source_span_id: int
+    rag_chunk_id: int
+    document_structure_unit_id: int
+    ordinal: int
+    unit_ordinal: int
+    kind: str
+    heading_level: int | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+    source_char_start: int
+    source_char_end: int
+    chunk_char_start: int
+    chunk_char_end: int
+
+
+@dataclass(frozen=True, slots=True)
 class AuthoritativeRetrievalChunk:
     """One snapshot-authorized chunk with immutable document provenance."""
 
     chunk: ChunkRecord
     document_version: DocumentVersionRecord
-    source_spans: tuple[SourceSpanRecord, ...]
+    source_spans: tuple[
+        SourceSpanRecord | StructureSourceSpanRecord,
+        ...,
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2567,24 +2590,85 @@ class RagRepository:
                     ) != int(chunk.document_version_id):
                         raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
-                span_rows = tuple(
+                page_span_rows = tuple(
                     session.execute(
-                        select(RagChunkSourceSpanORM, DocumentPageORM, RagChunkORM)
+                        select(
+                            RagChunkSourceSpanORM,
+                            DocumentPageORM,
+                            RagChunkORM,
+                        )
                         .join(
                             DocumentPageORM,
-                            RagChunkSourceSpanORM.document_page_id == DocumentPageORM.id,
+                            RagChunkSourceSpanORM.document_page_id
+                            == DocumentPageORM.id,
                         )
-                        .join(RagChunkORM, RagChunkSourceSpanORM.rag_chunk_id == RagChunkORM.id)
-                        .where(RagChunkSourceSpanORM.rag_chunk_id.in_(chunk_ids))
-                        .order_by(RagChunkSourceSpanORM.rag_chunk_id, RagChunkSourceSpanORM.ordinal)
+                        .join(
+                            RagChunkORM,
+                            RagChunkSourceSpanORM.rag_chunk_id
+                            == RagChunkORM.id,
+                        )
+                        .where(
+                            RagChunkSourceSpanORM.rag_chunk_id.in_(
+                                chunk_ids
+                            )
+                        )
+                        .order_by(
+                            RagChunkSourceSpanORM.rag_chunk_id,
+                            RagChunkSourceSpanORM.ordinal,
+                        )
                     )
                 )
-                spans_by_chunk: dict[int, list[SourceSpanRecord]] = {}
-                for span, page, chunk in span_rows:
+
+                structure_span_rows = tuple(
+                    session.execute(
+                        select(
+                            RagChunkStructureSourceSpanORM,
+                            DocumentStructureUnitORM,
+                            RagChunkORM,
+                        )
+                        .join(
+                            DocumentStructureUnitORM,
+                            RagChunkStructureSourceSpanORM.document_structure_unit_id
+                            == DocumentStructureUnitORM.id,
+                        )
+                        .join(
+                            RagChunkORM,
+                            RagChunkStructureSourceSpanORM.rag_chunk_id
+                            == RagChunkORM.id,
+                        )
+                        .where(
+                            RagChunkStructureSourceSpanORM.rag_chunk_id.in_(
+                                chunk_ids
+                            )
+                        )
+                        .order_by(
+                            RagChunkStructureSourceSpanORM.rag_chunk_id,
+                            RagChunkStructureSourceSpanORM.ordinal,
+                        )
+                    )
+                )
+
+                spans_by_chunk: dict[
+                    int,
+                    list[
+                        SourceSpanRecord
+                        | StructureSourceSpanRecord
+                    ],
+                ] = {}
+
+                for span, page, chunk in page_span_rows:
                     if (
-                        int(chunk.generation_id) != generation_id
-                        or int(page.document_version_id) != int(chunk.document_version_id)
-                        or int(page.page_number) != int(span.page_number)
+                        chunk.provenance_mode != "PAGE"
+                        or int(span.rag_chunk_id)
+                        != int(chunk.id)
+                        or int(span.document_page_id)
+                        != int(page.id)
+                        or int(chunk.generation_id)
+                        != generation_id
+                        or int(page.document_version_id)
+                        != int(chunk.document_version_id)
+                        or int(page.page_number)
+                        != int(span.page_number)
                         or not (
                             0
                             <= int(span.page_char_start)
@@ -2597,17 +2681,126 @@ class RagRepository:
                             < int(span.chunk_char_end)
                             <= len(chunk.exact_text)
                         )
-                        or page.text[int(span.page_char_start) : int(span.page_char_end)]
-                        != chunk.exact_text[int(span.chunk_char_start) : int(span.chunk_char_end)]
+                        or page.text[
+                            int(span.page_char_start)
+                            : int(span.page_char_end)
+                        ]
+                        != chunk.exact_text[
+                            int(span.chunk_char_start)
+                            : int(span.chunk_char_end)
+                        ]
                     ):
-                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
-                    spans_by_chunk.setdefault(int(chunk.id), []).append(self._record_span(span))
+                        raise RagOperationalError(
+                            RagErrorCode.RETRIEVAL_INCONSISTENCY
+                        )
+
+                    spans_by_chunk.setdefault(
+                        int(chunk.id),
+                        [],
+                    ).append(
+                        self._record_span(span)
+                    )
+
+                for span, unit, chunk in structure_span_rows:
+                    if (
+                        chunk.provenance_mode != "STRUCTURE"
+                        or int(span.rag_chunk_id)
+                        != int(chunk.id)
+                        or int(
+                            span.document_structure_unit_id
+                        )
+                        != int(unit.id)
+                        or int(chunk.generation_id)
+                        != generation_id
+                        or int(unit.document_version_id)
+                        != int(chunk.document_version_id)
+                        or not (
+                            0
+                            <= int(span.source_char_start)
+                            < int(span.source_char_end)
+                            <= len(unit.text)
+                        )
+                        or not (
+                            0
+                            <= int(span.chunk_char_start)
+                            < int(span.chunk_char_end)
+                            <= len(chunk.exact_text)
+                        )
+                        or unit.text[
+                            int(span.source_char_start)
+                            : int(span.source_char_end)
+                        ]
+                        != chunk.exact_text[
+                            int(span.chunk_char_start)
+                            : int(span.chunk_char_end)
+                        ]
+                    ):
+                        raise RagOperationalError(
+                            RagErrorCode.RETRIEVAL_INCONSISTENCY
+                        )
+
+                    spans_by_chunk.setdefault(
+                        int(chunk.id),
+                        [],
+                    ).append(
+                        self._record_structure_span(
+                            span,
+                            unit,
+                        )
+                    )
+
                 for chunk in all_chunks:
-                    spans = spans_by_chunk.get(int(chunk.id), [])
-                    if not spans or tuple(span.ordinal for span in spans) != tuple(
-                        range(1, len(spans) + 1)
+                    spans = spans_by_chunk.get(
+                        int(chunk.id),
+                        [],
+                    )
+
+                    if (
+                        not spans
+                        or tuple(
+                            span.ordinal
+                            for span in spans
+                        )
+                        != tuple(
+                            range(
+                                1,
+                                len(spans) + 1,
+                            )
+                        )
                     ):
-                        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+                        raise RagOperationalError(
+                            RagErrorCode.RETRIEVAL_INCONSISTENCY
+                        )
+
+                    if chunk.provenance_mode == "PAGE":
+                        if any(
+                            not isinstance(
+                                span,
+                                SourceSpanRecord,
+                            )
+                            for span in spans
+                        ):
+                            raise RagOperationalError(
+                                RagErrorCode.RETRIEVAL_INCONSISTENCY
+                            )
+                    elif (
+                        chunk.provenance_mode
+                        == "STRUCTURE"
+                    ):
+                        if any(
+                            not isinstance(
+                                span,
+                                StructureSourceSpanRecord,
+                            )
+                            for span in spans
+                        ):
+                            raise RagOperationalError(
+                                RagErrorCode.RETRIEVAL_INCONSISTENCY
+                            )
+                    else:
+                        raise RagOperationalError(
+                            RagErrorCode.RETRIEVAL_INCONSISTENCY
+                        )
 
                 version_query = (
                     select(
@@ -2647,6 +2840,54 @@ class RagRepository:
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY) from None
         finally:
             session.close()
+
+    @staticmethod
+    def _record_structure_span(
+        row: RagChunkStructureSourceSpanORM,
+        unit: DocumentStructureUnitORM,
+    ) -> StructureSourceSpanRecord:
+        return StructureSourceSpanRecord(
+            source_span_id=int(row.id),
+            rag_chunk_id=int(row.rag_chunk_id),
+            document_structure_unit_id=int(
+                row.document_structure_unit_id
+            ),
+            ordinal=int(row.ordinal),
+            unit_ordinal=int(unit.ordinal),
+            kind=str(unit.kind),
+            heading_level=(
+                int(unit.heading_level)
+                if unit.heading_level is not None
+                else None
+            ),
+            table_index=(
+                int(unit.table_index)
+                if unit.table_index is not None
+                else None
+            ),
+            row_index=(
+                int(unit.row_index)
+                if unit.row_index is not None
+                else None
+            ),
+            column_index=(
+                int(unit.column_index)
+                if unit.column_index is not None
+                else None
+            ),
+            source_char_start=int(
+                row.source_char_start
+            ),
+            source_char_end=int(
+                row.source_char_end
+            ),
+            chunk_char_start=int(
+                row.chunk_char_start
+            ),
+            chunk_char_end=int(
+                row.chunk_char_end
+            ),
+        )
 
     def insert_structure_source_span(
         self,

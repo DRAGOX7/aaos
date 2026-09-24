@@ -22,6 +22,7 @@ from aaos.rag.contracts import (
     DenseSearchHit,
     EmbeddingService,
     RagChunkSourceSpanValue,
+    RagChunkStructureSourceSpanValue,
     RagErrorCode,
     RagOperationalError,
     RagQuery,
@@ -33,6 +34,7 @@ from aaos.rag.repository import (
     QuerySnapshot,
     RagRepository,
     SourceSpanRecord,
+    StructureSourceSpanRecord,
 )
 
 _LEXICAL_RESCUE_MAX_RANK = 2
@@ -319,8 +321,31 @@ def _selection_config(
     raise ValueError("config must be an EvidenceSelectionConfig or RagIndexConfig")
 
 
-def _span_interval(span: SourceSpanRecord) -> tuple[int, int, int]:
-    return span.page_number, span.page_char_start, span.page_char_end
+def _span_interval(
+    span: SourceSpanRecord | StructureSourceSpanRecord,
+) -> tuple[int, int, int]:
+    if isinstance(span, SourceSpanRecord):
+        return (
+            span.page_number,
+            span.page_char_start,
+            span.page_char_end,
+        )
+    if isinstance(span, StructureSourceSpanRecord):
+        return (
+            span.document_structure_unit_id,
+            span.source_char_start,
+            span.source_char_end,
+        )
+    raise RagOperationalError(
+        RagErrorCode.RETRIEVAL_INCONSISTENCY
+    )
+
+
+def _span_length(
+    span: SourceSpanRecord | StructureSourceSpanRecord,
+) -> int:
+    _, start, end = _span_interval(span)
+    return end - start
 
 
 def _overlap_ratio(
@@ -332,8 +357,17 @@ def _overlap_ratio(
         return 0.0
     if abs(left.chunk.ordinal - right.chunk.ordinal) > 1:
         return 0.0
-    left_total = sum(span.page_char_end - span.page_char_start for span in left.source_spans)
-    right_total = sum(span.page_char_end - span.page_char_start for span in right.source_spans)
+    if left.chunk.provenance_mode != right.chunk.provenance_mode:
+        return 0.0
+
+    left_total = sum(
+        _span_length(span)
+        for span in left.source_spans
+    )
+    right_total = sum(
+        _span_length(span)
+        for span in right.source_spans
+    )
     if left_total <= 0 or right_total <= 0:
         return 0.0
     overlap = 0
@@ -344,6 +378,31 @@ def _overlap_ratio(
             if left_page == right_page:
                 overlap += max(0, min(left_end, right_end) - max(left_start, right_start))
     return overlap / min(left_total, right_total)
+
+
+def _source_span_matches_chunk(
+    span: SourceSpanRecord | StructureSourceSpanRecord,
+    item: AuthoritativeRetrievalChunk,
+) -> bool:
+    if (
+        span.rag_chunk_id != item.chunk.chunk_id
+        or span.chunk_char_end <= span.chunk_char_start
+    ):
+        return False
+
+    if item.chunk.provenance_mode == "PAGE":
+        return (
+            isinstance(span, SourceSpanRecord)
+            and span.page_char_end > span.page_char_start
+        )
+
+    if item.chunk.provenance_mode == "STRUCTURE":
+        return (
+            isinstance(span, StructureSourceSpanRecord)
+            and span.source_char_end > span.source_char_start
+        )
+
+    return False
 
 
 def _validate_selection_inputs(
@@ -393,15 +452,91 @@ def _validate_selection_inputs(
             or item.chunk.token_count <= 0
             or not isinstance(item.chunk.exact_text, str)
             or not item.chunk.exact_text.strip()
+            or item.chunk.provenance_mode not in {
+                "PAGE",
+                "STRUCTURE",
+            }
+            or (
+                item.document_version.provenance_mode
+                != item.chunk.provenance_mode
+            )
             or any(
-                not isinstance(span, SourceSpanRecord)
-                or span.rag_chunk_id != item.chunk.chunk_id
-                or span.page_char_end <= span.page_char_start
-                or span.chunk_char_end <= span.chunk_char_start
+                not _source_span_matches_chunk(
+                    span,
+                    item,
+                )
                 for span in item.source_spans
             )
         ):
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+
+
+def _project_source_spans(
+    item: AuthoritativeRetrievalChunk,
+) -> tuple[
+    RagChunkSourceSpanValue
+    | RagChunkStructureSourceSpanValue,
+    ...,
+]:
+    projected: list[
+        RagChunkSourceSpanValue
+        | RagChunkStructureSourceSpanValue
+    ] = []
+
+    for span in item.source_spans:
+        if isinstance(span, SourceSpanRecord):
+            if item.chunk.provenance_mode != "PAGE":
+                raise RagOperationalError(
+                    RagErrorCode.RETRIEVAL_INCONSISTENCY
+                )
+
+            projected.append(
+                RagChunkSourceSpanValue(
+                    document_page_id=span.document_page_id,
+                    page_number=span.page_number,
+                    source_char_start=span.page_char_start,
+                    source_char_end=span.page_char_end,
+                    chunk_char_start=span.chunk_char_start,
+                    chunk_char_end=span.chunk_char_end,
+                )
+            )
+            continue
+
+        if isinstance(span, StructureSourceSpanRecord):
+            if item.chunk.provenance_mode != "STRUCTURE":
+                raise RagOperationalError(
+                    RagErrorCode.RETRIEVAL_INCONSISTENCY
+                )
+
+            projected.append(
+                RagChunkStructureSourceSpanValue(
+                    document_structure_unit_id=(
+                        span.document_structure_unit_id
+                    ),
+                    unit_ordinal=span.unit_ordinal,
+                    kind=span.kind,
+                    heading_level=span.heading_level,
+                    table_index=span.table_index,
+                    row_index=span.row_index,
+                    column_index=span.column_index,
+                    source_char_start=span.source_char_start,
+                    source_char_end=span.source_char_end,
+                    chunk_char_start=span.chunk_char_start,
+                    chunk_char_end=span.chunk_char_end,
+                )
+            )
+            continue
+
+        raise RagOperationalError(
+            RagErrorCode.RETRIEVAL_INCONSISTENCY
+        )
+
+    if not projected:
+        raise RagOperationalError(
+            RagErrorCode.RETRIEVAL_INCONSISTENCY
+        )
+
+    return tuple(projected)
 
 
 class EvidenceSelector:
@@ -608,16 +743,8 @@ class EvidenceSelector:
                         document_version_id=item.document_version.document_version_id,
                         document_title=item.document_version.source_filename,
                         course_id=item.document_version.course_id,
-                        source_spans=tuple(
-                            RagChunkSourceSpanValue(
-                                document_page_id=span.document_page_id,
-                                page_number=span.page_number,
-                                source_char_start=span.page_char_start,
-                                source_char_end=span.page_char_end,
-                                chunk_char_start=span.chunk_char_start,
-                                chunk_char_end=span.chunk_char_end,
-                            )
-                            for span in item.source_spans
+                        source_spans=_project_source_spans(
+                            item
                         ),
                         dense_rank=candidate.dense_rank,
                         lexical_rank=candidate.lexical_rank,
@@ -625,6 +752,9 @@ class EvidenceSelector:
                         generation_id=snapshot.generation.generation_id,
                         content_revision=snapshot.generation.content_revision,
                         token_count=item.chunk.token_count,
+                        provenance_mode=(
+                            item.chunk.provenance_mode
+                        ),
                     )
                 )
             except (TypeError, ValueError):

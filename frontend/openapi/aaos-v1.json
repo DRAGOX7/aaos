@@ -894,7 +894,14 @@
           },
           "citations": {
             "items": {
-              "$ref": "#/components/schemas/RagCitation"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RagCitation"
+                },
+                {
+                  "$ref": "#/components/schemas/RagStructuralCitation"
+                }
+              ]
             },
             "title": "Citations",
             "type": "array"
@@ -1035,6 +1042,90 @@
           "scope"
         ],
         "title": "RagQueryRequest",
+        "type": "object"
+      },
+      "RagStructuralCitation": {
+        "additionalProperties": false,
+        "description": "Safe structural citation target resolved by trusted backend code.",
+        "properties": {
+          "column_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Index"
+          },
+          "document_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Document Id",
+            "type": "integer"
+          },
+          "document_title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Document Title",
+            "type": "string"
+          },
+          "heading": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading"
+          },
+          "row_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Index"
+          },
+          "table_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Index"
+          },
+          "unit_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Unit End",
+            "type": "integer"
+          },
+          "unit_start": {
+            "exclusiveMinimum": 0.0,
+            "title": "Unit Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "document_title",
+          "unit_start",
+          "unit_end"
+        ],
+        "title": "RagStructuralCitation",
         "type": "object"
       },
       "SafeActionSummary": {

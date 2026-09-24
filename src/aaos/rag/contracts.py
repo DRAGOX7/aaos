@@ -41,6 +41,7 @@ class ProvenanceKind(StrEnum):
 
     EMBEDDED_PDF = "EMBEDDED_PDF"
     DERIVED_VISUAL_EVIDENCE = "DERIVED_VISUAL_EVIDENCE"
+    STRUCTURAL_DOCUMENT = "STRUCTURAL_DOCUMENT"
 
 
 class SemanticCoverageStatus(StrEnum):
@@ -299,6 +300,120 @@ class RagChunkSourceSpanValue:
 
 
 @dataclass(frozen=True, slots=True)
+class RagChunkStructureSourceSpanValue:
+    """Exact structural-unit provenance for one retrieved RAG chunk span."""
+
+    document_structure_unit_id: int
+    unit_ordinal: int
+    kind: str
+    heading_level: int | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+    source_char_start: int
+    source_char_end: int
+    chunk_char_start: int
+    chunk_char_end: int
+
+    def __post_init__(self) -> None:
+        _positive_int(
+            self.document_structure_unit_id,
+            "document_structure_unit_id",
+        )
+        _positive_int(
+            self.unit_ordinal,
+            "unit_ordinal",
+        )
+
+        if self.kind not in {
+            "HEADING",
+            "PARAGRAPH",
+            "TABLE_CELL",
+        }:
+            raise ValueError(
+                "kind must be HEADING, PARAGRAPH, or TABLE_CELL"
+            )
+
+        for name in (
+            "source_char_start",
+            "source_char_end",
+            "chunk_char_start",
+            "chunk_char_end",
+        ):
+            _nonnegative_int(
+                getattr(self, name),
+                name,
+            )
+
+        if self.source_char_end <= self.source_char_start:
+            raise ValueError(
+                "source_char span must be monotonic and non-empty"
+            )
+        if self.chunk_char_end <= self.chunk_char_start:
+            raise ValueError(
+                "chunk_char span must be monotonic and non-empty"
+            )
+
+        if self.kind == "HEADING":
+            if (
+                self.heading_level is None
+                or isinstance(self.heading_level, bool)
+                or not isinstance(self.heading_level, int)
+                or not 1 <= self.heading_level <= 9
+            ):
+                raise ValueError(
+                    "HEADING requires heading_level between 1 and 9"
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.table_index,
+                    self.row_index,
+                    self.column_index,
+                )
+            ):
+                raise ValueError(
+                    "HEADING cannot carry table coordinates"
+                )
+            return
+
+        if self.heading_level is not None:
+            raise ValueError(
+                "non-heading structural spans cannot carry heading_level"
+            )
+
+        if self.kind == "PARAGRAPH":
+            if any(
+                value is not None
+                for value in (
+                    self.table_index,
+                    self.row_index,
+                    self.column_index,
+                )
+            ):
+                raise ValueError(
+                    "PARAGRAPH cannot carry table coordinates"
+                )
+            return
+
+        for name in (
+            "table_index",
+            "row_index",
+            "column_index",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{name} must be a non-negative integer "
+                    "for TABLE_CELL"
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievedEvidence:
     evidence_id: str
     chunk_key: str
@@ -307,7 +422,11 @@ class RetrievedEvidence:
     document_version_id: int
     document_title: str
     course_id: int
-    source_spans: tuple[RagChunkSourceSpanValue, ...]
+    source_spans: tuple[
+        RagChunkSourceSpanValue
+        | RagChunkStructureSourceSpanValue,
+        ...,
+    ]
     dense_rank: int | None
     lexical_rank: int | None
     fused_rank: int
@@ -316,6 +435,7 @@ class RetrievedEvidence:
     # Legacy positional callers may omit this trailing field; selector output
     # always supplies the authoritative persisted count.
     token_count: int = 1
+    provenance_mode: str = "PAGE"
 
     def __post_init__(self) -> None:
         for name in ("evidence_id", "chunk_key", "document_title"):
@@ -333,8 +453,31 @@ class RetrievedEvidence:
         _positive_int(self.token_count, "token_count")
         if not isinstance(self.source_spans, tuple) or not self.source_spans:
             raise ValueError("source_spans must be a non-empty tuple")
-        if not all(isinstance(span, RagChunkSourceSpanValue) for span in self.source_spans):
-            raise ValueError("source_spans must contain RAG chunk source spans")
+
+        if self.provenance_mode == "PAGE":
+            if not all(
+                isinstance(span, RagChunkSourceSpanValue)
+                for span in self.source_spans
+            ):
+                raise ValueError(
+                    "PAGE evidence requires page source spans"
+                )
+        elif self.provenance_mode == "STRUCTURE":
+            if not all(
+                isinstance(
+                    span,
+                    RagChunkStructureSourceSpanValue,
+                )
+                for span in self.source_spans
+            ):
+                raise ValueError(
+                    "STRUCTURE evidence requires structural "
+                    "source spans"
+                )
+        else:
+            raise ValueError(
+                "provenance_mode must be PAGE or STRUCTURE"
+            )
         for name in ("dense_rank", "lexical_rank"):
             rank = getattr(self, name)
             if rank is not None:
@@ -900,7 +1043,123 @@ class Citation:
             if isinstance(self.provenance_kind, ProvenanceKind)
             else ProvenanceKind(self.provenance_kind)
         )
+        if kind not in {
+            ProvenanceKind.EMBEDDED_PDF,
+            ProvenanceKind.DERIVED_VISUAL_EVIDENCE,
+        }:
+            raise ValueError(
+                "page citation requires page-based provenance"
+            )
         object.__setattr__(self, "provenance_kind", kind)
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralCitation:
+    """Trusted page-free citation into structural document provenance."""
+
+    claim_id: str
+    document_version_id: int
+    document_title: str
+    unit_start: int
+    unit_end: int
+    heading: str | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+    provenance_kind: ProvenanceKind = (
+        ProvenanceKind.STRUCTURAL_DOCUMENT
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "claim_id",
+            _nonblank_text(
+                self.claim_id,
+                "claim_id",
+            ),
+        )
+        _positive_int(
+            self.document_version_id,
+            "document_version_id",
+        )
+        object.__setattr__(
+            self,
+            "document_title",
+            _nonblank_text(
+                self.document_title,
+                "document_title",
+            ),
+        )
+        _positive_int(
+            self.unit_start,
+            "unit_start",
+        )
+        _positive_int(
+            self.unit_end,
+            "unit_end",
+        )
+        if self.unit_end < self.unit_start:
+            raise ValueError(
+                "unit_end must not precede unit_start"
+            )
+
+        if self.heading is not None:
+            object.__setattr__(
+                self,
+                "heading",
+                _nonblank_text(
+                    self.heading,
+                    "heading",
+                ),
+            )
+
+        coordinates = (
+            self.table_index,
+            self.row_index,
+            self.column_index,
+        )
+        present = tuple(
+            value is not None
+            for value in coordinates
+        )
+        if any(present) and not all(present):
+            raise ValueError(
+                "table coordinates must be all present "
+                "or all absent"
+            )
+
+        if all(present):
+            for name in (
+                "table_index",
+                "row_index",
+                "column_index",
+            ):
+                _nonnegative_int(
+                    getattr(self, name),
+                    name,
+                )
+
+        kind = (
+            self.provenance_kind
+            if isinstance(
+                self.provenance_kind,
+                ProvenanceKind,
+            )
+            else ProvenanceKind(
+                self.provenance_kind
+            )
+        )
+        if kind is not ProvenanceKind.STRUCTURAL_DOCUMENT:
+            raise ValueError(
+                "structural citation requires "
+                "STRUCTURAL_DOCUMENT provenance"
+            )
+        object.__setattr__(
+            self,
+            "provenance_kind",
+            kind,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,7 +1168,10 @@ class RagAnswer:
     answer_text: str
     language: str
     claims: tuple[RagClaim, ...]
-    citations: tuple[Citation, ...]
+    citations: tuple[
+        Citation | StructuralCitation,
+        ...,
+    ]
     generation_id: int
     content_revision: int
     _validation_marker: object = field(default=None, init=False, repr=False, compare=False)
@@ -924,9 +1186,15 @@ class RagAnswer:
         ):
             raise ValueError("claims must be a tuple of RagClaim")
         if not isinstance(self.citations, tuple) or not all(
-            isinstance(citation, Citation) for citation in self.citations
+            isinstance(
+                citation,
+                (Citation, StructuralCitation),
+            )
+            for citation in self.citations
         ):
-            raise ValueError("citations must be a tuple of Citation")
+            raise ValueError(
+                "citations must contain trusted citation values"
+            )
         claim_ids = {claim.claim_id for claim in self.claims}
         citation_claim_ids = {citation.claim_id for citation in self.citations}
         if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
