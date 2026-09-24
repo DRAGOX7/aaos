@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -26,6 +26,13 @@ from aaos.persistence.document_models import (
     DocumentPageORM,
     DocumentStructureUnitORM,
     DocumentVersionORM,
+)
+from aaos.persistence.rag_models import (
+    RagChunkORM,
+    RagChunkSourceSpanORM,
+    RagChunkStructureSourceSpanORM,
+    RagDocumentIndexORM,
+    RagIndexGenerationORM,
 )
 from aaos.rag.chunking import DeterministicChunker
 from aaos.rag.config import RagIndexConfig, compute_config_fingerprint
@@ -1463,6 +1470,7 @@ def test_terminal_state_rejects_incoherent_metadata(
 
         assert caught.value.code is RagErrorCode.DOCUMENT_INDEX_FAILED
 
+
 def _convert_to_structural_index_fixture(
     sessions: SessionFactory,
     document_version_id: int,
@@ -1476,8 +1484,7 @@ def _convert_to_structural_index_fixture(
         assert version is not None
 
         session.query(DocumentPageORM).filter(
-            DocumentPageORM.document_version_id
-            == document_version_id
+            DocumentPageORM.document_version_id == document_version_id
         ).delete(synchronize_session=False)
 
         version.source_filename = "structural-notes.docx"
@@ -1525,36 +1532,26 @@ def _convert_to_structural_index_fixture(
 def test_prepare_document_indexes_structure_provenance_without_fake_pages(
     tmp_path: Path,
 ) -> None:
-    with _database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with _database(tmp_path) as (repository, sessions, _):
         version_id = _seed(
             sessions,
             ("temporary PAGE fixture",),
         )
 
-        expected_unit_ids = (
-            _convert_to_structural_index_fixture(
-                sessions,
-                version_id,
-            )
+        expected_unit_ids = _convert_to_structural_index_fixture(
+            sessions,
+            version_id,
         )
 
         generation = _generation(repository)
 
-        version = repository.get_eligible_document_version(
-            version_id
-        )
+        version = repository.get_eligible_document_version(version_id)
         assert version.provenance_mode == "STRUCTURE"
         assert version.page_count is None
 
-        structure_units = repository.read_structure_units(
-            version_id
-        )
+        structure_units = repository.read_structure_units(version_id)
         assert len(structure_units) == 2
-        assert tuple(
-            unit.text for unit in structure_units
-        ) == (
+        assert tuple(unit.text for unit in structure_units) == (
             "Neural Networks",
             "A neural network learns patterns.",
         )
@@ -1581,35 +1578,21 @@ def test_prepare_document_indexes_structure_provenance_without_fake_pages(
         )
 
         assert chunks
-        assert all(
-            chunk.provenance_mode == "STRUCTURE"
-            for chunk in chunks
-        )
-        assert all(
-            chunk.page_start is None
-            and chunk.page_end is None
-            for chunk in chunks
-        )
+        assert all(chunk.provenance_mode == "STRUCTURE" for chunk in chunks)
+        assert all(chunk.page_start is None and chunk.page_end is None for chunk in chunks)
 
-        verification = (
-            repository.verify_generation_document(
-                generation.identity,
-                version_id,
-            )
+        verification = repository.verify_generation_document(
+            generation.identity,
+            version_id,
         )
 
         assert verification == result.verification
-        assert verification.source_span_count == len(
-            expected_unit_ids
-        )
+        assert verification.source_span_count == len(expected_unit_ids)
 
         with sessions() as session:
             assert (
                 session.query(DocumentPageORM)
-                .filter(
-                    DocumentPageORM.document_version_id
-                    == version_id
-                )
+                .filter(DocumentPageORM.document_version_id == version_id)
                 .count()
                 == 0
             )
@@ -1622,12 +1605,11 @@ def test_prepare_document_indexes_structure_provenance_without_fake_pages(
         assert indexed.status is DocumentIndexStatus.READY
         assert indexed.searchable_page_count == 0
 
+
 def test_index_new_structural_document_publishes_once_then_no_ops(
     tmp_path: Path,
 ) -> None:
-    with _database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with _database(tmp_path) as (repository, sessions, _):
         version_id = _seed(
             sessions,
             ("temporary PAGE fixture",),
@@ -1644,9 +1626,7 @@ def test_index_new_structural_document_publishes_once_then_no_ops(
             expected_revision=0,
         )
 
-        lock = RagIndexLock(
-            tmp_path / "phase4-structural-index-new.lock"
-        )
+        lock = RagIndexLock(tmp_path / "phase4-structural-index-new.lock")
         embeddings = _CountingEmbeddings()
 
         indexer = RagDocumentIndexer(
@@ -1662,19 +1642,13 @@ def test_index_new_structural_document_publishes_once_then_no_ops(
             lock,
         )
 
-        before = repository.get_generation(
-            active.generation_id
-        ).identity
+        before = repository.get_generation(active.generation_id).identity
 
         assert before.content_revision == 0
 
-        first = coordinator.index_new(
-            version_id
-        )
+        first = coordinator.index_new(version_id)
 
-        after_first = repository.get_generation(
-            active.generation_id
-        ).identity
+        after_first = repository.get_generation(active.generation_id).identity
 
         chunks = repository.list_chunks(
             after_first,
@@ -1685,15 +1659,8 @@ def test_index_new_structural_document_publishes_once_then_no_ops(
         assert after_first.content_revision == 1
 
         assert chunks
-        assert all(
-            chunk.provenance_mode == "STRUCTURE"
-            for chunk in chunks
-        )
-        assert all(
-            chunk.page_start is None
-            and chunk.page_end is None
-            for chunk in chunks
-        )
+        assert all(chunk.provenance_mode == "STRUCTURE" for chunk in chunks)
+        assert all(chunk.page_start is None and chunk.page_end is None for chunk in chunks)
 
         indexed = repository.get_document_index(
             after_first,
@@ -1705,13 +1672,9 @@ def test_index_new_structural_document_publishes_once_then_no_ops(
         assert indexed.searchable_page_count == 0
         assert indexed.chunk_count == len(chunks)
 
-        second = coordinator.index_new(
-            version_id
-        )
+        second = coordinator.index_new(version_id)
 
-        after_second = repository.get_generation(
-            active.generation_id
-        ).identity
+        after_second = repository.get_generation(active.generation_id).identity
 
         assert second.safe_status == "NO_OP"
         assert second.content_revision == 1
@@ -1726,10 +1689,117 @@ def test_index_new_structural_document_publishes_once_then_no_ops(
             version_id,
         )
 
-        assert tuple(
-            chunk.chunk_key
-            for chunk in second_chunks
-        ) == tuple(
-            chunk.chunk_key
-            for chunk in chunks
+        assert tuple(chunk.chunk_key for chunk in second_chunks) == tuple(
+            chunk.chunk_key for chunk in chunks
         )
+
+
+def test_index_new_initialization_failure_keeps_no_active_generation_and_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        version_id = _seed(sessions, ("first-generation searchable evidence",))
+        lock = RagIndexLock(tmp_path / "phase4-bootstrap.lock")
+        embeddings = _CountingEmbeddings()
+        indexer = RagDocumentIndexer(
+            repository, _chunker(), embeddings, InMemoryDenseIndexFactory(), lock
+        )
+        coordinator = RagIndexingCoordinator(repository, indexer, lock)
+        original_verify = coordinator.verify_generation
+        verification_calls = 0
+
+        def fail_first_verification(
+            identity: RagGenerationIdentity,
+            expected_document_version_ids: tuple[int, ...] | None = None,
+        ) -> object:
+            nonlocal verification_calls
+            verification_calls += 1
+            if verification_calls == 1:
+                raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+            return original_verify(identity, expected_document_version_ids)
+
+        monkeypatch.setattr(coordinator, "verify_generation", fail_first_verification)
+
+        with pytest.raises(RagOperationalError) as caught:
+            coordinator.index_new()
+
+        assert caught.value.code is RagErrorCode.INDEX_INTEGRITY_FAILED
+        assert verification_calls == 1
+        with pytest.raises(RagOperationalError) as no_active:
+            repository.get_active_generation()
+        assert no_active.value.code is RagErrorCode.NO_ACTIVE_GENERATION
+
+        failed_builds = repository.list_building_generations()
+        assert len(failed_builds) == 1
+        failed_build = failed_builds[0]
+        failed_chunks = repository.list_chunks(failed_build.identity, version_id)
+        assert failed_chunks
+        assert len({chunk.chunk_key for chunk in failed_chunks}) == len(failed_chunks)
+        failed_spans = tuple(
+            (chunk.chunk_key, repository.list_source_spans(failed_build.identity, chunk.chunk_id))
+            for chunk in failed_chunks
+        )
+        assert all(spans for _, spans in failed_spans)
+        span_ids = tuple(span.source_span_id for _, spans in failed_spans for span in spans)
+        assert len(span_ids) == len(set(span_ids))
+        assert repository.get_document_index(failed_build.identity, version_id).status is (
+            DocumentIndexStatus.READY
+        )
+
+        with lock.acquire():
+            pass
+
+        monkeypatch.setattr(coordinator, "verify_generation", original_verify)
+        retried = coordinator.index_new()
+
+        active = repository.get_active_generation()
+        assert retried.safe_status == "PASS"
+        assert active.generation_id == failed_build.generation_id
+        assert repository.list_building_generations() == ()
+        assert repository.list_chunks(active.identity, version_id) == failed_chunks
+        retried_spans = tuple(
+            (chunk.chunk_key, repository.list_source_spans(active.identity, chunk.chunk_id))
+            for chunk in repository.list_chunks(active.identity, version_id)
+        )
+        assert retried_spans == failed_spans
+        with sessions() as session:
+            assert session.scalar(select(func.count()).select_from(RagIndexGenerationORM)) == 1
+            assert session.scalar(select(func.count()).select_from(RagDocumentIndexORM)) == 1
+            assert session.scalar(select(func.count()).select_from(RagChunkORM)) == len(
+                failed_chunks
+            )
+            assert session.scalar(select(func.count()).select_from(RagChunkSourceSpanORM)) == len(
+                span_ids
+            )
+        with lock.acquire():
+            pass
+
+
+def test_index_new_explicit_version_does_not_bootstrap_without_active_generation(
+    tmp_path: Path,
+) -> None:
+    with _database(tmp_path) as (repository, sessions, _):
+        explicit_version_id = _seed(sessions, ("eligible explicit document",))
+        _seed(sessions, ("unrelated eligible document",))
+        lock = RagIndexLock(tmp_path / "phase4-explicit-no-bootstrap.lock")
+        coordinator = RagIndexingCoordinator(repository, _indexer(tmp_path, repository), lock)
+
+        with pytest.raises(RagOperationalError) as caught:
+            coordinator.index_new(explicit_version_id)
+
+        assert caught.value.code is RagErrorCode.NO_ACTIVE_GENERATION
+        with pytest.raises(RagOperationalError) as no_active:
+            repository.get_active_generation()
+        assert no_active.value.code is RagErrorCode.NO_ACTIVE_GENERATION
+        assert repository.list_building_generations() == ()
+        with sessions() as session:
+            assert session.scalar(select(func.count()).select_from(RagIndexGenerationORM)) == 0
+            assert session.scalar(select(func.count()).select_from(RagDocumentIndexORM)) == 0
+            assert session.scalar(select(func.count()).select_from(RagChunkORM)) == 0
+            assert session.scalar(select(func.count()).select_from(RagChunkSourceSpanORM)) == 0
+            assert (
+                session.scalar(select(func.count()).select_from(RagChunkStructureSourceSpanORM))
+                == 0
+            )
+        with lock.acquire():
+            pass

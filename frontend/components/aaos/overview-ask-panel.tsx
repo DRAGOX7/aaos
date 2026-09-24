@@ -9,7 +9,7 @@ import { AskCitation } from "@/components/aaos/ask-citation";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
-import { fetchRagQuery, type RagQueryRequest } from "@/lib/api/rag";
+import { fetchRagQuery, ragCitationKey, type RagQueryRequest } from "@/lib/api/rag";
 
 export function OverviewAskPanel() {
   const [question, setQuestion] = useState("");
@@ -112,7 +112,7 @@ export function OverviewAskPanel() {
               <ul className="mt-3 space-y-1.5" aria-label="Citations">
                 {answer.citations.map((citation) => (
                   <AskCitation
-                    key={`${citation.document_id}-${citation.page_start}-${citation.page_end}`}
+                    key={ragCitationKey(citation)}
                     citation={citation}
                   />
                 ))}

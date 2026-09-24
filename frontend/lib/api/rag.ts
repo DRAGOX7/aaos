@@ -5,6 +5,20 @@ import { createApiError } from "@/lib/api/errors";
 export type RagQueryRequest = components["schemas"]["RagQueryRequest"];
 export type RagAnswerResponse = components["schemas"]["RagAnswerResponse"];
 export type RagCitation = components["schemas"]["RagCitation"];
+export type RagStructuralCitation = components["schemas"]["RagStructuralCitation"];
+export type RagAnswerCitation = RagCitation | RagStructuralCitation;
+
+export function isRagStructuralCitation(
+  citation: RagAnswerCitation,
+): citation is RagStructuralCitation {
+  return "unit_start" in citation;
+}
+
+export function ragCitationKey(citation: RagAnswerCitation): string {
+  return isRagStructuralCitation(citation)
+    ? `${citation.document_id}-structure-${citation.unit_start}-${citation.unit_end}`
+    : `${citation.document_id}-${citation.page_start}-${citation.page_end}`;
+}
 
 function requirePositiveInteger(value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {

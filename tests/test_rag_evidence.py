@@ -64,6 +64,7 @@ def _authority(
         exact_text=text,
         token_count=token_count,
         text_sha256="b" * 64,
+        provenance_mode="PAGE",
         page_start=1,
         page_end=1,
     )
@@ -87,6 +88,7 @@ def _authority(
         content_blob_id=version_id,
         content_sha256="c" * 64,
         source_filename=title,
+        provenance_mode="PAGE",
         page_count=1,
     )
     return AuthoritativeRetrievalChunk(chunk, version, (span,))

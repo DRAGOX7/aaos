@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
+from aaos.agent.contracts import ToolResult
+from aaos.agent.phase4_adapter import _citation_payload, rag_result_to_observation
+from aaos.inference import ChatRequest, ChatResponse, ModelAvailability
 from aaos.rag.contracts import (
     Citation,
     GlobalScope,
@@ -12,6 +16,9 @@ from aaos.rag.contracts import (
     RagChunkStructureSourceSpanValue,
     RagClaim,
     RagGenerationIdentity,
+    Requirement,
+    RequirementSet,
+    SemanticCoverageStatus,
     StructuralCitation,
 )
 from aaos.rag.generation import (
@@ -30,6 +37,10 @@ from aaos.rag.retrieval import (
     EvidenceSelector,
     FusedCandidate,
 )
+from aaos.rag.semantic_coverage import RequirementCoverageClassifier
+from aaos.web.contracts import RagCitation as WebPageCitation
+from aaos.web.contracts import RagStructuralCitation as WebStructuralCitation
+from aaos.web.rag import RagReadService
 
 
 def test_mixed_page_and_structure_survive_retrieval_and_citation(
@@ -203,6 +214,39 @@ def test_mixed_page_and_structure_survive_retrieval_and_citation(
         RagChunkStructureSourceSpanValue,
     )
 
+    requirements = RequirementSet(
+        (Requirement("r1", "Explain the information in the selected sources."),)
+    )
+
+    class CoverageGateway:
+        async def check_availability(self) -> ModelAvailability:
+            return ModelAvailability(True, True, "qwen/qwen3.5-4b", ("qwen/qwen3.5-4b",), (8192,))
+
+        async def generate(self, _request: ChatRequest) -> ChatResponse:
+            return ChatResponse(
+                content=(
+                    '{"requirements":[{"requirement_id":"r1",'
+                    '"support":"SUPPORTED","evidence_ids":'
+                    '["ev-page","ev-structure"]}]}'
+                ),
+                model_identifier="qwen/qwen3.5-4b",
+            )
+
+    coverage = asyncio.run(
+        RequirementCoverageClassifier(CoverageGateway()).classify(
+            requirements,
+            question="Explain the selected page and structural evidence.",
+            answer_language="en",
+            generation_id=1,
+            content_revision=0,
+            policy_version="grounded-v1",
+            evidence=evidence,
+        )
+    )
+
+    assert coverage.status is SemanticCoverageStatus.SUPPORTED
+    assert coverage.judgments[0].evidence_ids == ("ev-page", "ev-structure")
+
     output = GroundedModelOutput(
         status=RagAnswerStatus.ANSWER,
         answer_text="Untrusted aggregate text.",
@@ -229,16 +273,11 @@ def test_mixed_page_and_structure_survive_retrieval_and_citation(
         evidence,
     )
 
-    assert answer.answer_text == (
-        "Page claim.\n"
-        "Structural claim."
-    )
+    assert answer.answer_text == ("Page claim.\nStructural claim.")
 
     assert len(answer.citations) == 2
 
-    page_citation, structural_citation = (
-        answer.citations
-    )
+    page_citation, structural_citation = answer.citations
 
     assert isinstance(
         page_citation,
@@ -273,3 +312,68 @@ def test_mixed_page_and_structure_survive_retrieval_and_citation(
         "[claim-structure] notes.docx "
         "(unit 4; heading Neural Networks)"
     )
+
+    agent_citations = tuple(_citation_payload(item) for item in answer.citations)
+    assert agent_citations[0] == {
+        "claim_id": "claim-page",
+        "document_version_id": 10,
+        "document_title": "lecture.pdf",
+        "page_start": 2,
+        "page_end": 2,
+    }
+    assert agent_citations[1] == {
+        "claim_id": "claim-structure",
+        "document_version_id": 20,
+        "document_title": "notes.docx",
+        "unit_start": 4,
+        "unit_end": 4,
+        "heading": "Neural Networks",
+        "table_index": None,
+        "row_index": None,
+        "column_index": None,
+    }
+    observation = rag_result_to_observation(
+        ToolResult.success(
+            {
+                "status": answer.status.value,
+                "answer_text": answer.answer_text,
+                "language": answer.language,
+                "rendered_text": rendered.rendered_text,
+                "citations": agent_citations,
+                "generation_id": answer.generation_id,
+                "content_revision": answer.content_revision,
+            }
+        )
+    )
+    observed_citations = dict(observation.fields)["citations"]
+    assert observed_citations == agent_citations
+    assert "page_start" not in observed_citations[1]
+    assert "unit_start" not in observed_citations[0]
+
+    class ProjectedRows:
+        def all(self) -> list[tuple[int, int, str]]:
+            return [(10, 1, "lecture.pdf"), (20, 2, "notes.docx")]
+
+    class ProjectionSession:
+        def __enter__(self) -> ProjectionSession:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+        def execute(self, _statement: object) -> ProjectedRows:
+            return ProjectedRows()
+
+    projection = object.__new__(RagReadService)
+    projection._sessions = ProjectionSession  # type: ignore[attr-defined]
+    web_citations = projection._project_citations(answer.citations)
+    assert isinstance(web_citations[0], WebPageCitation)
+    assert web_citations[0].document_id == 1
+    assert web_citations[0].page_start == 2
+    assert web_citations[0].page_end == 2
+    assert isinstance(web_citations[1], WebStructuralCitation)
+    assert web_citations[1].document_id == 2
+    assert web_citations[1].unit_start == 4
+    assert web_citations[1].unit_end == 4
+    assert not hasattr(web_citations[1], "page_start")
+    assert not hasattr(web_citations[1], "page_end")

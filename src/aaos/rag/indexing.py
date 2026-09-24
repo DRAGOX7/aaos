@@ -169,9 +169,7 @@ class RagDocumentIndexer:
                 or metadata.dimensions != generation.embedding_dimensions
             ):
                 raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
-            version = self._repository.get_eligible_document_version(
-                document_version_id
-            )
+            version = self._repository.get_eligible_document_version(document_version_id)
 
             pages: tuple[DocumentPageRecord, ...]
             structure_units: tuple[
@@ -180,21 +178,13 @@ class RagDocumentIndexer:
             ]
 
             if version.provenance_mode == "PAGE":
-                pages = self._repository.read_pages(
-                    document_version_id
-                )
+                pages = self._repository.read_pages(document_version_id)
                 structure_units = ()
             elif version.provenance_mode == "STRUCTURE":
                 pages = ()
-                structure_units = (
-                    self._repository.read_structure_units(
-                        document_version_id
-                    )
-                )
+                structure_units = self._repository.read_structure_units(document_version_id)
             else:
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             self._assert_lease(lease)
             begin = (
@@ -223,11 +213,7 @@ class RagDocumentIndexer:
                     )
                 )
 
-                searchable_pages = sum(
-                    1
-                    for page in pages
-                    if page.text.strip()
-                )
+                searchable_pages = sum(1 for page in pages if page.text.strip())
 
                 coverage = (
                     CoverageStatus.NONE
@@ -238,11 +224,7 @@ class RagDocumentIndexer:
                 )
 
             else:
-                structure_chunker = (
-                    DeterministicStructureChunker(
-                        self._chunker.config
-                    )
-                )
+                structure_chunker = DeterministicStructureChunker(self._chunker.config)
 
                 chunks = tuple(
                     structure_chunker.chunk(
@@ -255,18 +237,13 @@ class RagDocumentIndexer:
                 # STRUCTURE provenance has no page concept.
                 searchable_pages = 0
 
-                searchable_units = sum(
-                    1
-                    for unit in structure_units
-                    if unit.text.strip()
-                )
+                searchable_units = sum(1 for unit in structure_units if unit.text.strip())
 
                 coverage = (
                     CoverageStatus.NONE
                     if searchable_units == 0
                     else CoverageStatus.FULL
-                    if searchable_units
-                    == len(structure_units)
+                    if searchable_units == len(structure_units)
                     else CoverageStatus.PARTIAL
                 )
 
@@ -343,26 +320,14 @@ class RagDocumentIndexer:
                         self._assert_lease(lease)
                         self._repository.insert_structure_source_span(
                             generation,
-                            expected_revision=(
-                                generation.content_revision
-                            ),
+                            expected_revision=(generation.content_revision),
                             rag_chunk_id=chunk.chunk_id,
-                            document_structure_unit_id=(
-                                structure_span.document_structure_unit_id
-                            ),
+                            document_structure_unit_id=(structure_span.document_structure_unit_id),
                             ordinal=span_ordinal,
-                            source_char_start=(
-                                structure_span.source_char_start
-                            ),
-                            source_char_end=(
-                                structure_span.source_char_end
-                            ),
-                            chunk_char_start=(
-                                structure_span.chunk_char_start
-                            ),
-                            chunk_char_end=(
-                                structure_span.chunk_char_end
-                            ),
+                            source_char_start=(structure_span.source_char_start),
+                            source_char_end=(structure_span.source_char_end),
+                            chunk_char_start=(structure_span.chunk_char_start),
+                            chunk_char_end=(structure_span.chunk_char_end),
                         )
 
                 else:
@@ -373,27 +338,15 @@ class RagDocumentIndexer:
                         self._assert_lease(lease)
                         self._repository.insert_source_span(
                             generation,
-                            expected_revision=(
-                                generation.content_revision
-                            ),
+                            expected_revision=(generation.content_revision),
                             rag_chunk_id=chunk.chunk_id,
-                            document_page_id=(
-                                page_span.document_page_id
-                            ),
+                            document_page_id=(page_span.document_page_id),
                             ordinal=span_ordinal,
                             page_number=page_span.page_number,
-                            page_char_start=(
-                                page_span.source_char_start
-                            ),
-                            page_char_end=(
-                                page_span.source_char_end
-                            ),
-                            chunk_char_start=(
-                                page_span.chunk_char_start
-                            ),
-                            chunk_char_end=(
-                                page_span.chunk_char_end
-                            ),
+                            page_char_start=(page_span.source_char_start),
+                            page_char_end=(page_span.source_char_end),
+                            chunk_char_start=(page_span.chunk_char_start),
+                            chunk_char_end=(page_span.chunk_char_end),
                         )
 
             try:
@@ -537,7 +490,15 @@ class RagIndexingCoordinator:
     def index_new(self, document_version_id: int | None = None) -> IndexRunResult:
         """Stage current candidates serially and publish once, or return no-op."""
         with self._index_lock.acquire() as lease:
-            generation = self._repository.get_active_generation()
+            try:
+                generation = self._repository.get_active_generation()
+            except RagOperationalError as error:
+                if (
+                    error.code is not RagErrorCode.NO_ACTIVE_GENERATION
+                    or document_version_id is not None
+                ):
+                    raise
+                return self._rebuild_locked(lease)
             candidates = self._repository.resolve_index_new_candidates(
                 generation.identity, document_version_id
             )
@@ -576,63 +537,65 @@ class RagIndexingCoordinator:
     def rebuild(self) -> IndexRunResult:
         """Build an isolated generation and activate it only after integrity checks."""
         with self._index_lock.acquire() as lease:
-            try:
-                active = self._repository.get_active_generation()
-            except RagOperationalError as error:
-                if error.code is not RagErrorCode.NO_ACTIVE_GENERATION:
-                    raise
-                active = None
+            return self._rebuild_locked(lease)
 
-            candidates = self._repository.resolve_rebuild_candidates()
-            if not candidates:
-                raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
-            building = self._resolve_or_create_building(active)
-            existing_indexes = {
-                item.document_version_id: item
-                for item in self._repository.list_document_indexes(building.identity)
-            }
-            try:
-                for candidate in candidates:
-                    existing = existing_indexes.get(candidate.document_version_id)
-                    if existing is not None and existing.status in {
-                        DocumentIndexStatus.READY,
-                        DocumentIndexStatus.NOT_SEARCHABLE,
-                    }:
-                        continue
-                    prepared = self._document_indexer.prepare_document(
-                        building.identity,
-                        candidate.document_version_id,
-                        lease=lease,
-                    )
-                    if prepared.status not in {
-                        DocumentIndexStatus.READY,
-                        DocumentIndexStatus.NOT_SEARCHABLE,
-                    }:
-                        raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
-            finally:
-                self._document_indexer.release_embedding_model()
-            self._index_lock.assert_owned(lease)
-            report = self.verify_generation(
-                building.identity,
-                tuple(candidate.document_version_id for candidate in candidates),
-            )
-            if not report.valid or not report.dense_index_healthy:
-                raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
-            self._index_lock.assert_owned(lease)
-            activated = self._repository.activate_generation(
-                building.identity,
-                expected_revision=building.identity.content_revision,
-                expected_active_generation_id=(
-                    active.generation_id if active is not None else None
-                ),
-            )
-            return IndexRunResult(
-                "PASS",
-                activated.generation_id,
-                activated.identity.content_revision,
-                report.ready_document_count,
-                report.not_searchable_document_count,
-            )
+    def _rebuild_locked(self, lease: RagIndexLease) -> IndexRunResult:
+        """Publish a verified full generation while the caller owns the lock."""
+        try:
+            active = self._repository.get_active_generation()
+        except RagOperationalError as error:
+            if error.code is not RagErrorCode.NO_ACTIVE_GENERATION:
+                raise
+            active = None
+
+        candidates = self._repository.resolve_rebuild_candidates()
+        if not candidates:
+            raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
+        building = self._resolve_or_create_building(active)
+        existing_indexes = {
+            item.document_version_id: item
+            for item in self._repository.list_document_indexes(building.identity)
+        }
+        try:
+            for candidate in candidates:
+                existing = existing_indexes.get(candidate.document_version_id)
+                if existing is not None and existing.status in {
+                    DocumentIndexStatus.READY,
+                    DocumentIndexStatus.NOT_SEARCHABLE,
+                }:
+                    continue
+                prepared = self._document_indexer.prepare_document(
+                    building.identity,
+                    candidate.document_version_id,
+                    lease=lease,
+                )
+                if prepared.status not in {
+                    DocumentIndexStatus.READY,
+                    DocumentIndexStatus.NOT_SEARCHABLE,
+                }:
+                    raise RagOperationalError(RagErrorCode.DOCUMENT_INDEX_FAILED)
+        finally:
+            self._document_indexer.release_embedding_model()
+        self._index_lock.assert_owned(lease)
+        report = self.verify_generation(
+            building.identity,
+            tuple(candidate.document_version_id for candidate in candidates),
+        )
+        if not report.valid or not report.dense_index_healthy:
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+        self._index_lock.assert_owned(lease)
+        activated = self._repository.activate_generation(
+            building.identity,
+            expected_revision=building.identity.content_revision,
+            expected_active_generation_id=(active.generation_id if active is not None else None),
+        )
+        return IndexRunResult(
+            "PASS",
+            activated.generation_id,
+            activated.identity.content_revision,
+            report.ready_document_count,
+            report.not_searchable_document_count,
+        )
 
     def _resolve_or_create_building(self, active: GenerationBuild | None) -> GenerationBuild:
         """Reuse one matching interrupted build or create an isolated BUILDING row."""

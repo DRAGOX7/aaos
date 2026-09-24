@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.script.revision import MultipleHeads
+
 from scripts.phase9.qualify_clean_setup import (
     CleanSetupReport,
     ProbeResult,
@@ -21,12 +26,19 @@ class FakeSetupProbe:
 def test_clean_setup_uses_explicit_commands_and_is_bounded(tmp_path: Path) -> None:
     probe = FakeSetupProbe()
     report = collect_clean_setup(tmp_path, probe=probe)
+    repository_root = Path(__file__).resolve().parents[2]
+    expected_head = ScriptDirectory.from_config(
+        Config(str(repository_root / "alembic.ini"))
+    ).get_current_head()
     assert isinstance(report, CleanSetupReport)
+    assert report.migration_head == expected_head
     assert report.uv_lock_ok is True
     assert report.frontend_lock_ok is True
     assert report.external_calls == 0
     assert report.created_paths == ()
-    assert all(";" not in part and "&&" not in part for command in probe.commands for part in command)
+    assert all(
+        ";" not in part and "&&" not in part for command in probe.commands for part in command
+    )
     assert ("python", "--version") in probe.commands
     assert ("uv", "lock", "--check") in probe.commands
     assert ("npm", "ci", "--ignore-scripts", "--dry-run") in probe.commands
@@ -42,3 +54,20 @@ def test_clean_setup_reports_failed_probe_without_secret_output(tmp_path: Path) 
     assert report.uv_lock_ok is False
     assert report.frontend_lock_ok is False
     assert "credential" not in report.to_dict()
+
+
+def test_clean_setup_fails_closed_when_multiple_migration_heads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MultipleHeadScriptDirectory:
+        def get_current_head(self) -> str:
+            raise MultipleHeads(("head-a", "head-b"), "head")
+
+    monkeypatch.setattr(
+        ScriptDirectory,
+        "from_config",
+        classmethod(lambda _cls, _config: MultipleHeadScriptDirectory()),
+    )
+
+    with pytest.raises(MultipleHeads):
+        collect_clean_setup(tmp_path, probe=FakeSetupProbe())

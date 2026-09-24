@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from .contracts import (
     EvidenceSpan,
     RagChunkSourceSpanValue,
+    RagChunkStructureSourceSpanValue,
     RagErrorCode,
     RagOperationalError,
     RetrievedEvidence,
@@ -52,6 +53,59 @@ class EvidenceSegmentSourceSpan:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceSegmentStructureSourceSpan:
+    """Trusted structural source interval for one request-local segment."""
+
+    document_structure_unit_id: int
+    unit_ordinal: int
+    kind: str
+    heading_level: int | None
+    table_index: int | None
+    row_index: int | None
+    column_index: int | None
+    source_char_start: int
+    source_char_end: int
+    chunk_char_start: int
+    chunk_char_end: int
+    segment_char_start: int
+    segment_char_end: int
+
+    def __post_init__(self) -> None:
+        try:
+            RagChunkStructureSourceSpanValue(
+                document_structure_unit_id=self.document_structure_unit_id,
+                unit_ordinal=self.unit_ordinal,
+                kind=self.kind,
+                heading_level=self.heading_level,
+                table_index=self.table_index,
+                row_index=self.row_index,
+                column_index=self.column_index,
+                source_char_start=self.source_char_start,
+                source_char_end=self.source_char_end,
+                chunk_char_start=self.chunk_char_start,
+                chunk_char_end=self.chunk_char_end,
+            )
+        except (TypeError, ValueError):
+            raise ValueError("invalid structural source span") from None
+
+        segment_offsets = (self.segment_char_start, self.segment_char_end)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in segment_offsets):
+            raise ValueError("segment character offsets require integers")
+        if self.segment_char_start < 0 or self.segment_char_end <= self.segment_char_start:
+            raise ValueError("segment character span must be monotonic and non-empty")
+        if (
+            self.source_char_end - self.source_char_start
+            != self.chunk_char_end - self.chunk_char_start
+            or self.chunk_char_end - self.chunk_char_start
+            != self.segment_char_end - self.segment_char_start
+        ):
+            raise ValueError("structural source, chunk, and segment spans must align")
+
+
+EvidenceSegmentSourceSpanValue = EvidenceSegmentSourceSpan | EvidenceSegmentStructureSourceSpan
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceSegment:
     """One exact, non-overlapping request-local slice of selected evidence."""
 
@@ -60,7 +114,7 @@ class EvidenceSegment:
     exact_text: str
     start_offset: int
     end_offset: int
-    source_spans: tuple[EvidenceSegmentSourceSpan, ...]
+    source_spans: tuple[EvidenceSegmentSourceSpanValue, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.segment_id, str) or not _SEGMENT_ID_PATTERN.fullmatch(
@@ -82,15 +136,35 @@ class EvidenceSegment:
             raise ValueError("segment offsets must match exact_text")
         if not isinstance(self.source_spans, tuple) or not self.source_spans:
             raise ValueError("source_spans must be non-empty")
-        if not all(isinstance(span, EvidenceSegmentSourceSpan) for span in self.source_spans):
-            raise ValueError("source_spans must contain EvidenceSegmentSourceSpan values")
-        if self.source_spans[0].segment_char_start != 0:
-            raise ValueError("segment source mapping must begin at zero")
-        if self.source_spans[-1].segment_char_end != len(self.exact_text):
-            raise ValueError("segment source mapping must cover exact_text")
-        for previous, current in zip(self.source_spans, self.source_spans[1:]):
-            if previous.segment_char_end != current.segment_char_start:
-                raise ValueError("segment source mappings must be contiguous")
+        if all(isinstance(span, EvidenceSegmentSourceSpan) for span in self.source_spans):
+            if self.source_spans[0].segment_char_start != 0:
+                raise ValueError("segment source mapping must begin at zero")
+            if self.source_spans[-1].segment_char_end != len(self.exact_text):
+                raise ValueError("segment source mapping must cover exact_text")
+            for previous, current in zip(self.source_spans, self.source_spans[1:]):
+                if previous.segment_char_end != current.segment_char_start:
+                    raise ValueError("segment source mappings must be contiguous")
+            return
+
+        if not all(
+            isinstance(span, EvidenceSegmentStructureSourceSpan) for span in self.source_spans
+        ):
+            raise ValueError("segment source mappings must use one supported family")
+
+        previous_end = 0
+        for span in self.source_spans:
+            if not isinstance(span, EvidenceSegmentStructureSourceSpan):
+                raise ValueError("invalid structural segment source span")
+            if span.segment_char_end > len(self.exact_text):
+                raise ValueError("structural segment source span exceeds exact_text")
+            if (
+                span.chunk_char_start != self.start_offset + span.segment_char_start
+                or span.chunk_char_end != self.start_offset + span.segment_char_end
+            ):
+                raise ValueError("structural chunk offsets must match segment offsets")
+            if span.segment_char_start < previous_end:
+                raise ValueError("structural segment source mappings must not overlap")
+            previous_end = span.segment_char_end
 
 
 def segment_selected_evidence(
@@ -250,11 +324,17 @@ def _map_source_spans(
     evidence: RetrievedEvidence,
     start: int,
     end: int,
-) -> tuple[EvidenceSegmentSourceSpan, ...]:
-    intersections: list[EvidenceSegmentSourceSpan] = []
+) -> tuple[EvidenceSegmentSourceSpanValue, ...]:
+    intersections: list[EvidenceSegmentSourceSpanValue] = []
     for span in evidence.source_spans:
-        if not isinstance(span, RagChunkSourceSpanValue):
-            raise ValueError("invalid source span")
+        if evidence.provenance_mode == "PAGE":
+            if not isinstance(span, RagChunkSourceSpanValue):
+                raise ValueError("PAGE evidence requires page source spans")
+        elif evidence.provenance_mode == "STRUCTURE":
+            if not isinstance(span, RagChunkStructureSourceSpanValue):
+                raise ValueError("STRUCTURE evidence requires structural source spans")
+        else:
+            raise ValueError("unknown evidence provenance mode")
         if (
             span.chunk_char_start < 0
             or span.chunk_char_end <= span.chunk_char_start
@@ -267,23 +347,51 @@ def _map_source_spans(
             continue
         source_start = span.source_char_start + (overlap_start - span.chunk_char_start)
         source_end = source_start + (overlap_end - overlap_start)
-        intersections.append(
-            EvidenceSegmentSourceSpan(
-                document_page_id=span.document_page_id,
-                page_number=span.page_number,
-                source_char_start=source_start,
-                source_char_end=source_end,
-                segment_char_start=overlap_start - start,
-                segment_char_end=overlap_end - start,
+        if isinstance(span, RagChunkSourceSpanValue):
+            intersections.append(
+                EvidenceSegmentSourceSpan(
+                    document_page_id=span.document_page_id,
+                    page_number=span.page_number,
+                    source_char_start=source_start,
+                    source_char_end=source_end,
+                    segment_char_start=overlap_start - start,
+                    segment_char_end=overlap_end - start,
+                )
             )
-        )
-    if not intersections or intersections[0].segment_char_start != 0:
-        raise ValueError("source spans do not cover segment start")
-    if intersections[-1].segment_char_end != end - start:
-        raise ValueError("source spans do not cover segment end")
+        elif isinstance(span, RagChunkStructureSourceSpanValue):
+            intersections.append(
+                EvidenceSegmentStructureSourceSpan(
+                    document_structure_unit_id=span.document_structure_unit_id,
+                    unit_ordinal=span.unit_ordinal,
+                    kind=span.kind,
+                    heading_level=span.heading_level,
+                    table_index=span.table_index,
+                    row_index=span.row_index,
+                    column_index=span.column_index,
+                    source_char_start=source_start,
+                    source_char_end=source_end,
+                    chunk_char_start=overlap_start,
+                    chunk_char_end=overlap_end,
+                    segment_char_start=overlap_start - start,
+                    segment_char_end=overlap_end - start,
+                )
+            )
+        else:
+            raise ValueError("invalid source span")
+
+    if not intersections:
+        raise ValueError("source spans do not cover segment")
+    if evidence.provenance_mode == "PAGE":
+        if intersections[0].segment_char_start != 0:
+            raise ValueError("source spans do not cover segment start")
+        if intersections[-1].segment_char_end != end - start:
+            raise ValueError("source spans do not cover segment end")
     for previous, current in zip(intersections, intersections[1:]):
-        if previous.segment_char_end != current.segment_char_start:
-            raise ValueError("source spans are not contiguous")
+        if evidence.provenance_mode == "PAGE":
+            if previous.segment_char_end != current.segment_char_start:
+                raise ValueError("source spans are not contiguous")
+        elif previous.segment_char_end > current.segment_char_start:
+            raise ValueError("structural source spans overlap")
     return tuple(intersections)
 
 

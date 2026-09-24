@@ -8,7 +8,7 @@ import { AskCitation } from "@/components/aaos/ask-citation";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
-import { fetchRagQuery, type RagQueryRequest } from "@/lib/api/rag";
+import { fetchRagQuery, ragCitationKey, type RagQueryRequest } from "@/lib/api/rag";
 import { courseListQueryOptions } from "@/lib/query/courses";
 
 export function AskView() {
@@ -128,7 +128,7 @@ export function AskView() {
             <ul className="mt-4 space-y-2 border-t border-border pt-4" aria-label="Citations">
               {answer.citations.map((citation) => (
                 <AskCitation
-                  key={`${citation.document_id}-${citation.page_start}-${citation.page_end}`}
+                  key={ragCitationKey(citation)}
                   citation={citation}
                 />
               ))}

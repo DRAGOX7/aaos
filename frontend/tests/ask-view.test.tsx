@@ -121,4 +121,38 @@ describe("Ask AAOS view", () => {
     expect(screen.getByText("AAOS could not answer from the local knowledge base.")).toBeInTheDocument();
     expect(screen.queryByText(/safe message|traceback|provider/i)).not.toBeInTheDocument();
   });
+
+  it("renders structural citations without reading page fields", () => {
+    setState({
+      mutation: {
+        data: {
+          status: "ANSWER",
+          answer_text: "The table defines candidate keys.",
+          language: "en",
+          citations: [
+            {
+              document_id: 12,
+              document_title: "Database Systems",
+              unit_start: 8,
+              unit_end: 8,
+              heading: "Keys",
+              table_index: 1,
+              row_index: 2,
+              column_index: 0,
+            },
+          ],
+        },
+      },
+    });
+    render(<AskView />);
+
+    expect(screen.getByRole("link", { name: "Database Systems" })).toHaveAttribute(
+      "href",
+      "/documents/12",
+    );
+    expect(screen.getByText(/unit 8/)).toBeInTheDocument();
+    expect(screen.getByText(/heading Keys/)).toBeInTheDocument();
+    expect(screen.getByText(/table 2, row 3, column 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/page/i)).not.toBeInTheDocument();
+  });
 });

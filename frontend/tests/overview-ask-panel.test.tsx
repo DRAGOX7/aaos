@@ -98,4 +98,33 @@ describe("overview Ask AAOS panel", () => {
     expect(screen.getByText("Insufficient evidence")).toBeInTheDocument();
     expect(screen.getByText("There is not enough evidence in the active academic content.")).toBeInTheDocument();
   });
+
+  it("renders structural citations in the inline grounded answer", () => {
+    useMutationMock.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      data: {
+        status: "ANSWER",
+        answer_text: "Normalization reduces update anomalies.",
+        language: "en",
+        citations: [
+          {
+            document_id: 15,
+            document_title: "Database Systems",
+            unit_start: 2,
+            unit_end: 3,
+          },
+        ],
+      },
+    });
+
+    render(<OverviewAskPanel />);
+
+    expect(screen.getByRole("link", { name: "Database Systems" })).toHaveAttribute(
+      "href",
+      "/documents/15",
+    );
+    expect(screen.getByText(/units 2–3/)).toBeInTheDocument();
+    expect(screen.queryByText(/page/i)).not.toBeInTheDocument();
+  });
 });

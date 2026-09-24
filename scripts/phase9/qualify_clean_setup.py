@@ -9,6 +9,7 @@ from typing import Mapping, Protocol
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +62,7 @@ def collect_clean_setup(root: Path, *, probe: SetupProbe) -> CleanSetupReport:
         python_version=python_version or "UNAVAILABLE",
         uv_lock_ok=results[4].returncode == 0,
         frontend_lock_ok=results[5].returncode == 0,
-        migration_head="0008_document_structural_provenance",
+        migration_head=_current_migration_head(),
         import_inert=True,
         external_calls=0,
         created_paths=(),
@@ -114,12 +115,22 @@ def _migration_config(database_path: Path) -> Config:
     return config
 
 
+def _current_migration_head() -> str:
+    repository_root = Path(__file__).resolve().parents[2]
+    config = Config(str(repository_root / "alembic.ini"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if head is None:
+        raise RuntimeError("Alembic migration head is unavailable")
+    return head
+
+
 def qualify_database(path: Path, *, baseline: str | None = None) -> MigrationReport:
     if not isinstance(path, Path):
         raise TypeError("path must be a Path")
     if path.exists():
         raise FileExistsError("qualification database must be new")
     path.parent.mkdir(parents=True, exist_ok=True)
+    current_head = _current_migration_head()
     target = baseline or "head"
     command.upgrade(_migration_config(path), target)
     with sqlite3.connect(path) as connection:
@@ -132,7 +143,7 @@ def qualify_database(path: Path, *, baseline: str | None = None) -> MigrationRep
         )
     return MigrationReport(
         revision=revision,
-        head_matches=revision == "0008_document_structural_provenance",
+        head_matches=revision == current_head,
         tables=tables,
         external_calls=0,
         external_writes=0,
