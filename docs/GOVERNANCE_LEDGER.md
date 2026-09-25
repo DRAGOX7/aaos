@@ -22,6 +22,44 @@ These are separate evidence dimensions, not automatic promotions. Historical
 ACCEPTED maps to accepted evidence only; it does not manufacture a freeze tag.
 Unresolved evidence remains explicitly unresolved.
 
+## Current project-owner amendment (2026-09-26)
+
+On 2026-09-26, the project owner established this current AAOS governance
+rule. It records the current instruction; it does not assert prior human
+acceptance.
+
+- `TECHNICAL_ACCEPTANCE` means objective satisfaction of the canonical
+  implementation, deterministic test, evaluation, architecture/security,
+  private-data, exact-SHA evidence, and no-blocking-finding requirements.
+  Classify each gate as `TECHNICALLY_SATISFIED`,
+  `TECHNICALLY_UNSATISFIED`, or `NOT_PROVABLE`. Report
+  `TECHNICAL_GATE_CLEAR=YES` only when every applicable requirement passes.
+
+- After a clear technical gate, `LOCAL`, `REVERSIBLE`, `NON-PRODUCTION`
+  AAOS engineering may continue without another routine human confirmation.
+  This supersedes only older stop/wait instructions that block such work
+  after objective technical acceptance. It does not waive requirements or
+  turn missing evidence into a pass.
+
+- Do not invent or backdate `HUMAN_APPROVED`, `PASSED`, or `FROZEN` history.
+  Historical reports and tags remain evidence only for their recorded scope
+  and SHA.
+
+- `HUMAN_RELEASE_AUTHORIZATION` remains required for production deployment
+  or configuration changes, external writes with user impact, destructive
+  operations, irreversible migrations against real user data,
+  credential-sensitive live operations not already narrowly authorized,
+  release publication, official phase/release tags, and other high-risk or
+  irreversible actions.
+
+This amendment supersedes the downstream human-acceptance handoff clauses in
+`docs/superpowers/plans/2026-08-13-phase-0g-security-baseline-implementation.md`,
+`docs/superpowers/plans/2026-08-13-phase-0h-phase-0-final-acceptance.md`, and
+`docs/superpowers/specs/2026-08-13-phase-0h-phase-0-final-acceptance-design.md`
+only where they would stop later local work after a clear technical gate.
+Their objective criteria remain in force. `phase-00-passed` remains a release
+declaration and is not authorized by this amendment.
+
 ## Phase evidence
 
 | Scope | Status / evidence | Constraint |
