@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit
 
@@ -10,7 +11,7 @@ from aaos.documents.contracts import (
     IngestionErrorCode,
     RemoteFileSelection,
 )
-from aaos.documents.drive_pdf_fetch import DrivePdfFetcher
+from aaos.documents.drive_pdf_fetch import DrivePdfFetcher, _HttpResponse
 
 DRIVE_ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz"
 SOURCE_ID = f"drive-file:2037:{DRIVE_ID}"
@@ -33,7 +34,7 @@ def selection(
 @dataclass
 class FakeResponse:
     status: int
-    headers: dict[str, str]
+    headers: Mapping[str, str]
     chunks: list[bytes] = field(default_factory=list)
     closed: bool = False
 
@@ -63,7 +64,7 @@ class FakeHttp:
         method: str,
         url: str,
         **kwargs: object,
-    ) -> FakeResponse:
+    ) -> _HttpResponse:
         self.calls.append(
             {
                 "method": method,
@@ -616,7 +617,7 @@ def test_fetch_maps_timeout_to_network_timeout() -> None:
             method: str,
             url: str,
             **kwargs: object,
-        ) -> FakeResponse:
+        ) -> _HttpResponse:
             del method, url, kwargs
             raise urllib3.exceptions.TimeoutError("synthetic timeout")
 
@@ -641,7 +642,7 @@ def test_fetch_maps_http_failure_to_network_failure() -> None:
             method: str,
             url: str,
             **kwargs: object,
-        ) -> FakeResponse:
+        ) -> _HttpResponse:
             del method, url, kwargs
             raise urllib3.exceptions.HTTPError("synthetic network failure")
 
