@@ -27,6 +27,9 @@ def test_navigator_installs_interception_before_creating_page_and_blocks_unsafe_
     class Page:
         url = "https://moodle.example.edu/current/my/courses.php"
 
+        def route(self, _pattern: str, _handler: object) -> None:
+            return None
+
         def goto(self, _url: str, *, wait_until: str, timeout: int) -> None:
             calls.append("goto")
 
@@ -92,6 +95,9 @@ def test_navigator_keeps_document_when_owned_page_is_already_closed_during_clean
 
         def __init__(self, context: Context) -> None:
             self._context = context
+
+        def route(self, _pattern: str, _handler: object) -> None:
+            return None
 
         def goto(self, _url: str, *, wait_until: str, timeout: int) -> None:
             return None

@@ -37,6 +37,21 @@ class _Route:
 class _Sentinel:
     url = "about:blank"
 
+    def goto(self, _url: str, *, wait_until: str, timeout: int) -> None:
+        del wait_until, timeout
+
+    def content(self) -> str:
+        return ""
+
+    def wait_for_timeout(self, _milliseconds: int) -> None:
+        return None
+
+    def on(self, _event: str, _handler: object) -> None:
+        return None
+
+    def route(self, _pattern: str, _handler: object) -> None:
+        return None
+
     def close(self) -> None:
         raise AssertionError("sentinel must survive provider read")
 
@@ -68,13 +83,11 @@ class _Page:
 
         # The explicit folder document is allowed by the page-scoped
         # capability.
-        self.page_route_handler(  # type: ignore[operator]
-            self.exact_route,
-            _Request(url),
-        )
+        assert callable(self.page_route_handler)
+        self.page_route_handler(self.exact_route, _Request(url))
 
         # An unrelated request from the Drive document remains blocked.
-        self.page_route_handler(  # type: ignore[operator]
+        self.page_route_handler(
             self.unrelated_route,
             _Request(
                 "https://drive.google.com/images/branding/product/drive.svg",
@@ -137,7 +150,7 @@ def test_drive_reader_is_explicit_and_page_scoped() -> None:
 
     global_route = _Route()
 
-    context.context_handler(  # type: ignore[operator]
+    context.context_handler(
         global_route,
         _Request(_DRIVE_TARGET),
     )
@@ -176,7 +189,7 @@ def test_drive_reader_does_not_change_normal_cross_origin_policy() -> None:
 
     route = _Route()
 
-    context.context_handler(  # type: ignore[operator]
+    context.context_handler(
         route,
         _Request("https://drive.google.com/file/d/file_ALPHA_123/view"),
     )

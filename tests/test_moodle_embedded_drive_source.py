@@ -34,6 +34,12 @@ class _Navigator:
             """,
         )
 
+    def open_course_index_document(self) -> BrowserDocument:
+        raise AssertionError("course index navigation must not run")
+
+    def open_frontend_course_index(self) -> BrowserDocument:
+        raise AssertionError("frontend course index navigation must not run")
+
     def read_embedded_drive_folder(
         self,
         folder: DriveFolderReference,
@@ -62,6 +68,9 @@ class _Navigator:
 
     def open_announcement_list(self, identifier: int) -> BrowserDocument:
         raise AssertionError(f"announcement navigation must not run: {identifier}")
+
+    def close(self) -> None:
+        return None
 
 
 def test_browser_source_merges_native_and_embedded_drive_files() -> None:
