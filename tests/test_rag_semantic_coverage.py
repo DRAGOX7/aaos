@@ -55,11 +55,10 @@ def test_atomic_decomposition_canonicalizes_redundant_paraphrases_before_final_c
 
     candidates = (
         "Give the deadline.",
-        "State the deadline.",
         "Identify the deadline!",
         "Please give the deadline.",
         "Tell me the deadline.",
-        "Name the deadline.",
+        "Provide the deadline.",
         "the deadline",
     )
     payload = json.dumps(
@@ -98,6 +97,29 @@ def test_atomic_decomposition_preserves_distinct_wh_question_slots() -> None:
     result = asyncio.run(
         AtomicRequirementDecomposer(gateway).decompose(
             RagQuery("Who or what runs the fictional course?", GlobalScope())
+        )
+    )
+
+    assert result.status.value == "OK"
+    assert tuple(item.requirement_text for item in result.requirements) == candidates
+
+
+def test_atomic_decomposition_preserves_value_significant_internal_punctuation() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    candidates = ("What is version 1.2?", "What is version 1-2?")
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [{"requirement_text": item} for item in candidates],
+        }
+    )
+    gateway = FakeGateway([_response(payload)])
+
+    result = asyncio.run(
+        AtomicRequirementDecomposer(gateway).decompose(
+            RagQuery("Compare the requested version values.", GlobalScope())
         )
     )
 

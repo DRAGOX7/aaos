@@ -1134,11 +1134,8 @@ _REQUIREMENT_FRAME_PREFIXES = (
     "tell me ",
     "give me ",
     "give ",
-    "state ",
     "identify ",
-    "name ",
     "provide ",
-    "say ",
     "please ",
     "اذكر ",
     "حدد ",
@@ -1147,12 +1144,9 @@ _REQUIREMENT_FRAME_PREFIXES = (
 
 def _canonical_requirement_key(text: str) -> str:
     """Collapse only deterministic request framing and Unicode surface variants."""
-    normalized = unicodedata.normalize("NFKC", text).casefold()
-    characters: list[str] = []
-    for character in normalized:
-        category = unicodedata.category(character)
-        characters.append(" " if category.startswith("P") else character)
-    normalized = " ".join("".join(characters).split())
+    normalized = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+    while normalized and unicodedata.category(normalized[-1]).startswith("P"):
+        normalized = normalized[:-1].rstrip()
 
     changed = True
     while changed:

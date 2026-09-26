@@ -1653,11 +1653,12 @@ remains one requirement; explicit independently answerable parts, comparison
 dimensions, or separately answerable categories may remain separate.
 
 Trusted code applies conservative deterministic request-frame and Unicode
-surface normalization, retains the first original text for each distinct key,
-and owns the final six-requirement limit. Interrogative words and combining
-marks remain part of the key so different answer slots or marked forms are not
-silently collapsed. After deduplication, more than six distinct requirements
-produce the internal `TOO_MANY_REQUIREMENTS` result; the final cap and IDs
+surface normalization, removes trailing punctuation only, retains the first
+original text for each distinct key, and owns the final six-requirement limit.
+Interrogative words, internal punctuation, and combining marks remain part of
+the key so different answer slots or values are not silently collapsed. After
+deduplication, more than six distinct requirements produce the internal
+`TOO_MANY_REQUIREMENTS` result; the final cap and IDs
 `r1` through `r6` remain unchanged. The candidate-limit status is not a length,
 uncertainty, evidence-difficulty, conservative-refusal, or qualifier shortcut.
 Malformed statuses, empty `OK`, non-empty candidate-limit results, or more than
