@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect
+from sqlalchemy import Table, inspect
 
-from aaos.persistence import rag_models
+import aaos.persistence.rag_models as rag_models
 from aaos.persistence.database import create_database_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +38,7 @@ def test_rag_structural_provenance_revision_extends_document_structure_head(
 
 
 def test_rag_chunk_orm_declares_explicit_provenance_shape() -> None:
-    table = rag_models.RagChunkORM.__table__
+    table = cast(Table, rag_models.RagChunkORM.__table__)
 
     assert "provenance_mode" in table.c
     assert table.c.provenance_mode.nullable is False

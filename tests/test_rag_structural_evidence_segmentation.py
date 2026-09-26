@@ -18,7 +18,11 @@ from aaos.rag.contracts import (
     RequirementSet,
     RetrievedEvidence,
 )
-from aaos.rag.evidence_segments import segment_selected_evidence
+from aaos.rag.evidence_segments import (
+    EvidenceSegmentSourceSpan,
+    EvidenceSegmentStructureSourceSpan,
+    segment_selected_evidence,
+)
 from aaos.rag.semantic_coverage import EvidenceSpanExtractor
 
 GENERATION_ID = 2
@@ -189,6 +193,7 @@ def test_structural_segment_offsets_map_exactly_to_source_and_chunk_text() -> No
     for segment in segments:
         assert evidence.exact_text[segment.start_offset : segment.end_offset] == segment.exact_text
         for source_span in segment.source_spans:
+            assert isinstance(source_span, EvidenceSegmentStructureSourceSpan)
             chunk_start = segment.start_offset + source_span.segment_char_start
             chunk_end = segment.start_offset + source_span.segment_char_end
             assert source_span.chunk_char_start == chunk_start
@@ -238,9 +243,16 @@ def test_chunk_separators_remain_unattributed_in_structural_segments() -> None:
 
     assert len(segments) == 1
     assert segments[0].exact_text == text
-    assert tuple(
-        (span.chunk_char_start, span.chunk_char_end) for span in segments[0].source_spans
-    ) == ((0, len(heading)), (paragraph_start, len(text)))
+    structural_spans = tuple(
+        span
+        for span in segments[0].source_spans
+        if isinstance(span, EvidenceSegmentStructureSourceSpan)
+    )
+    assert len(structural_spans) == 2
+    assert tuple((span.chunk_char_start, span.chunk_char_end) for span in structural_spans) == (
+        (0, len(heading)),
+        (paragraph_start, len(text)),
+    )
 
 
 def test_page_segment_mapping_keeps_page_identity_and_exact_offsets() -> None:
@@ -267,6 +279,13 @@ def test_page_segment_mapping_keeps_page_identity_and_exact_offsets() -> None:
     segments = segment_selected_evidence((evidence,))
 
     assert tuple(segment.exact_text for segment in segments) == ("A" * 400, "B" * 100)
+    page_spans = tuple(
+        span
+        for segment in segments
+        for span in segment.source_spans
+        if isinstance(span, EvidenceSegmentSourceSpan)
+    )
+    assert len(page_spans) == 2
     assert tuple(
         (
             span.document_page_id,
@@ -276,8 +295,7 @@ def test_page_segment_mapping_keeps_page_identity_and_exact_offsets() -> None:
             span.segment_char_start,
             span.segment_char_end,
         )
-        for segment in segments
-        for span in segment.source_spans
+        for span in page_spans
     ) == ((10, 3, 20, 420, 0, 400), (11, 4, 800, 900, 0, 100))
 
 

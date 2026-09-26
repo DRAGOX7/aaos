@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from typing import TypedDict, cast
 
 import pytest
 
@@ -9,17 +10,37 @@ import aaos.rag.contracts as contracts
 TEXT = "Neural Networks"
 
 
-def _structure_span_type() -> type:
+class _RetrievedEvidenceKwargs(TypedDict):
+    evidence_id: str
+    chunk_key: str
+    exact_text: str
+    heading: str | None
+    document_version_id: int
+    document_title: str
+    course_id: int
+    source_spans: tuple[
+        contracts.RagChunkSourceSpanValue | contracts.RagChunkStructureSourceSpanValue,
+        ...,
+    ]
+    dense_rank: int | None
+    lexical_rank: int | None
+    fused_rank: int
+    generation_id: int
+    content_revision: int
+    token_count: int
+
+
+def _structure_span_type() -> type[contracts.RagChunkStructureSourceSpanValue]:
     span_type = getattr(
         contracts,
         "RagChunkStructureSourceSpanValue",
         None,
     )
-    assert span_type is not None, "RagChunkStructureSourceSpanValue is missing"
-    return span_type
+    assert isinstance(span_type, type), "RagChunkStructureSourceSpanValue is missing"
+    return cast(type[contracts.RagChunkStructureSourceSpanValue], span_type)
 
 
-def _structural_span() -> object:
+def _structural_span() -> contracts.RagChunkStructureSourceSpanValue:
     span_type = _structure_span_type()
     return span_type(
         document_structure_unit_id=7,
@@ -37,8 +58,11 @@ def _structural_span() -> object:
 
 
 def _evidence_kwargs(
-    source_spans: tuple[object, ...],
-) -> dict[str, object]:
+    source_spans: tuple[
+        contracts.RagChunkSourceSpanValue | contracts.RagChunkStructureSourceSpanValue,
+        ...,
+    ],
+) -> _RetrievedEvidenceKwargs:
     return {
         "evidence_id": "ev-1",
         "chunk_key": "chunk-1",

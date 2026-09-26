@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from types import ModuleType
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 import pytest
 
@@ -13,12 +13,50 @@ from aaos.rag.config import RagIndexConfig
 SOURCE_SHA = "a" * 64
 
 
+class _RagConfigValues(TypedDict):
+    chunk_target_tokens: int
+    chunk_preferred_min_tokens: int
+    chunk_preferred_max_tokens: int
+    chunk_hard_max_tokens: int
+    chunk_overlap_tokens: int
+    dense_candidate_limit: int
+    lexical_candidate_limit: int
+    rrf_k: int
+    max_evidence_chunks: int
+    max_evidence_tokens: int
+    chunker_version: str
+    lexical_normalizer_version: str
+    sufficiency_policy_version: str
+    embedding_model_identifier: str
+    embedding_model_revision: str
+    embedding_dimensions: int
+
+
+class _RagConfigOverrides(TypedDict, total=False):
+    chunk_target_tokens: int
+    chunk_preferred_min_tokens: int
+    chunk_preferred_max_tokens: int
+    chunk_hard_max_tokens: int
+    chunk_overlap_tokens: int
+    dense_candidate_limit: int
+    lexical_candidate_limit: int
+    rrf_k: int
+    max_evidence_chunks: int
+    max_evidence_tokens: int
+    chunker_version: str
+    lexical_normalizer_version: str
+    sufficiency_policy_version: str
+    embedding_model_identifier: str
+    embedding_model_revision: str
+    embedding_dimensions: int
+
+
 def subject() -> ModuleType:
     return import_module("aaos.rag.structural_chunking")
 
 
-def make_config(**changes: object) -> RagIndexConfig:
-    values: dict[str, object] = {
+def make_config(**changes: Unpack[_RagConfigOverrides]) -> RagIndexConfig:
+    values: _RagConfigValues = {
         "chunk_target_tokens": 5,
         "chunk_preferred_min_tokens": 3,
         "chunk_preferred_max_tokens": 6,
@@ -37,7 +75,7 @@ def make_config(**changes: object) -> RagIndexConfig:
         "embedding_dimensions": 1024,
     }
     values.update(changes)
-    return RagIndexConfig(**values)  # type: ignore[arg-type]
+    return RagIndexConfig(**values)
 
 
 def unit(
@@ -72,12 +110,14 @@ def chunk_structure(
     *,
     source_version_sha256: str = SOURCE_SHA,
 ) -> tuple[Any, ...]:
-    return subject().chunk_structure_document(
+    chunks = subject().chunk_structure_document(
         document_version_id,
         units,
         config,
         source_version_sha256=source_version_sha256,
     )
+    assert isinstance(chunks, tuple)
+    return chunks
 
 
 def assert_source_mapping(
@@ -131,7 +171,7 @@ def test_structural_chunk_surface_is_explicit_and_page_free() -> None:
     assert draft.source_spans == (span,)
 
     with pytest.raises(AttributeError):
-        draft.text = "changed"  # type: ignore[misc]
+        draft.text = "changed"
 
 
 def test_heading_and_paragraphs_render_with_exact_unit_provenance() -> None:

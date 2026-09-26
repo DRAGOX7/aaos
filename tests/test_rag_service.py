@@ -17,6 +17,7 @@ from aaos.rag.contracts import (
     EntailmentResult,
     EvidenceSpan,
     GlobalScope,
+    RagAnswer,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
     RagClaim,
@@ -725,7 +726,9 @@ def test_claim_verification_occurs_after_generation_and_before_citation_validati
             claim: RagClaim,
             *,
             evidence: tuple[RetrievedEvidence, ...],
+            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
         ) -> EntailmentResult:
+            del validated_requirement_spans
             assert events == ["coverage", "generation"]
             assert claim.text == "The deadline is Friday."
             assert claim.evidence_ids == ("ev-1",)
@@ -741,7 +744,7 @@ def test_claim_verification_occurs_after_generation_and_before_citation_validati
             self,
             output: GroundedModelOutput,
             request: GroundedAnswerRequest,
-        ):
+        ) -> RagAnswer:
             assert events == ["coverage", "generation", "claim_nli"]
             events.append("citation_validation")
             return self._inner.validate(output, request)
@@ -832,7 +835,9 @@ def test_citation_validation_receives_only_entailed_generated_claims() -> None:
             claim: RagClaim,
             *,
             evidence: tuple[RetrievedEvidence, ...],
+            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
         ) -> EntailmentResult:
+            del validated_requirement_spans
             assert evidence == EVIDENCE
             if claim.claim_id == "claim-1":
                 return EntailmentResult.ENTAILED
@@ -848,7 +853,7 @@ def test_citation_validation_receives_only_entailed_generated_claims() -> None:
             self,
             output: GroundedModelOutput,
             request: GroundedAnswerRequest,
-        ):
+        ) -> RagAnswer:
             received_claims.append(output.claims)
             return self._inner.validate(output, request)
 
@@ -929,7 +934,9 @@ def test_zero_entailed_generated_claims_project_to_insufficient_evidence() -> No
             claim: RagClaim,
             *,
             evidence: tuple[RetrievedEvidence, ...],
+            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
         ) -> EntailmentResult:
+            del validated_requirement_spans
             assert claim == unsupported_claim
             assert evidence == EVIDENCE
             return EntailmentResult.NOT_ENTAILED
@@ -942,7 +949,7 @@ def test_zero_entailed_generated_claims_project_to_insufficient_evidence() -> No
             self,
             output: GroundedModelOutput,
             request: GroundedAnswerRequest,
-        ):
+        ) -> RagAnswer:
             received_outputs.append(output)
 
             return self._inner.validate(output, request)
@@ -1047,7 +1054,7 @@ def test_atomic_path_uses_question_aware_coverage_after_validated_spans() -> Non
             claim: RagClaim,
             *,
             evidence: tuple[RetrievedEvidence, ...],
-            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...],
+            validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = (),
         ) -> EntailmentResult:
             assert events == ["decompose", "spans", "coverage", "generation"]
             assert claim.text == "The deadline is Friday."

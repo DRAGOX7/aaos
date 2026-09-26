@@ -714,7 +714,7 @@ def test_page_records_are_immutable_typed_values(tmp_path: Path) -> None:
         pages = repository.read_pages(ids["one_v2"])
         assert pages and isinstance(pages[0], DocumentPageRecord)
         with pytest.raises((AttributeError, TypeError)):
-            pages[0].text = "mutated"  # type: ignore[misc]
+            setattr(pages[0], "text", "mutated")
 
 
 def test_no_active_generation_is_safe_error(tmp_path: Path) -> None:
@@ -1201,6 +1201,8 @@ def test_materialize_snapshot_chunks_returns_structural_provenance(
 
         first, second = item.source_spans
 
+        assert isinstance(first, StructureSourceSpanRecord)
+        assert isinstance(second, StructureSourceSpanRecord)
         assert first.document_structure_unit_id == heading_id
         assert first.unit_ordinal == 1
         assert first.kind == "HEADING"

@@ -83,7 +83,7 @@ def test_web_structural_citation_contract_is_page_free() -> None:
 
 def test_web_projection_projects_structural_citation_without_pages() -> None:
     service = object.__new__(RagReadService)
-    service._sessions = _sessions  # type: ignore[attr-defined]
+    setattr(service, "_sessions", _sessions)
 
     projected = service._project_citations((_citation(),))
 

@@ -365,7 +365,7 @@ def test_mixed_page_and_structure_survive_retrieval_and_citation(
             return ProjectedRows()
 
     projection = object.__new__(RagReadService)
-    projection._sessions = ProjectionSession  # type: ignore[attr-defined]
+    setattr(projection, "_sessions", ProjectionSession)
     web_citations = projection._project_citations(answer.citations)
     assert isinstance(web_citations[0], WebPageCitation)
     assert web_citations[0].document_id == 1

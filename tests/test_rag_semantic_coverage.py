@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import cast
 
 import pytest
 
@@ -715,7 +716,7 @@ def test_claim_entailment_verifier_maps_nli_operational_failures() -> None:
     for raised_error, expected_code in cases:
 
         class RaisingClassifier:
-            def classify(self, premise: str, hypothesis: str) -> object:
+            def classify(self, premise: str, hypothesis: str) -> NliClassification:
                 del premise, hypothesis
                 raise raised_error
 
@@ -737,9 +738,9 @@ def test_claim_entailment_verifier_rejects_invalid_classifier_result() -> None:
     from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
 
     class InvalidClassifier:
-        def classify(self, premise: str, hypothesis: str) -> object:
+        def classify(self, premise: str, hypothesis: str) -> NliClassification:
             del premise, hypothesis
-            return object()
+            return cast(NliClassification, object())
 
         def close(self) -> None:
             pass

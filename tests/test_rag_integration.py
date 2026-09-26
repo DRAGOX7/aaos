@@ -28,6 +28,7 @@ from aaos.persistence.document_models import (
 from aaos.rag.chroma import ChromaDenseIndexFactory
 from aaos.rag.config import RagIndexConfig, RagRuntimePaths, compute_config_fingerprint
 from aaos.rag.contracts import (
+    Citation,
     CourseScope,
     EntailmentResult,
     GenerationStatus,
@@ -383,6 +384,8 @@ def test_disposable_bilingual_pipeline_uses_authoritative_citations(tmp_path: Pa
 
         assert first.answer.status is RagAnswerStatus.ANSWER
         assert second.answer.status is RagAnswerStatus.ANSWER
+        assert isinstance(first.answer.citations[0], Citation)
+        assert isinstance(second.answer.citations[0], Citation)
         assert first.answer.citations[0].page_start == 1
         assert second.answer.citations[0].page_start == 1
         assert first.answer.citations[0].document_version_id == ids["en"]

@@ -10,6 +10,7 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RetrievedEvidence,
 )
+from aaos.rag.evidence_segments import EvidenceSegmentSourceSpan, segment_selected_evidence
 
 GENERATION_ID = 2
 CONTENT_REVISION = 4
@@ -44,8 +45,6 @@ def _evidence(
 
 
 def test_identical_selected_evidence_has_stable_unique_ids_and_exact_reconstruction() -> None:
-    from aaos.rag.evidence_segments import segment_selected_evidence
-
     evidence = (
         _evidence("First paragraph has enough text.\n\nSecond paragraph has Arabic العربية."),
         _evidence("Another selected source.", evidence_id="ev-2"),
@@ -116,6 +115,8 @@ def test_segment_source_intersection_maps_cross_page_offsets() -> None:
     segments = segment_selected_evidence((evidence,))
 
     assert len(segments) == 2
+    assert isinstance(segments[0].source_spans[0], EvidenceSegmentSourceSpan)
+    assert isinstance(segments[1].source_spans[0], EvidenceSegmentSourceSpan)
     assert segments[0].source_spans[0].document_page_id == 10
     assert segments[0].source_spans[0].source_char_start == 100
     assert segments[0].source_spans[0].source_char_end == 350
