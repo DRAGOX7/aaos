@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import pytest
-
-from aaos.phase8.evaluation import Phase8Report, run_phase8_calibration
-from tests.phase8.evaluation.manifest import (
+from evaluation.manifest import (
     FROZEN_PHASE8_MANIFEST,
     Phase8EvaluationManifest,
 )
+
+from aaos.phase8.evaluation import Phase8Report, run_phase8_calibration
 
 
 def test_frozen_manifest_is_deterministic_and_disjoint() -> None:

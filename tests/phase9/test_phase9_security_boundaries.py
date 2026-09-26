@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.phase9.security_corpus import (
+from phase9.security_corpus import (
     PHASE9_SECURITY_CORPUS,
     SecurityFixtureResult,
     evaluate_untrusted_content,

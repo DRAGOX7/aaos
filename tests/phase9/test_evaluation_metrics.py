@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.phase9.evaluation.metrics import (
+from phase9.evaluation.metrics import (
     NliLabel,
     citation_accuracy,
     nli_confusion,

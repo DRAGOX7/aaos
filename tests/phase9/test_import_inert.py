@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.phase9.failure_scenarios import import_inert_probe
+from phase9.failure_scenarios import import_inert_probe
 
 
 def test_import_probe_is_side_effect_free(tmp_path: Path) -> None:

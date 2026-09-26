@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.phase9.failure_scenarios import (
+from phase9.failure_scenarios import (
     PHASE9_FAILURE_MATRIX,
     FailureFakes,
     FailureResult,

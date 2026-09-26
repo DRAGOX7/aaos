@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.phase9.action_safety_harness import FrozenClock, run_action_scenario
+from phase9.action_safety_harness import FrozenClock, run_action_scenario
 
 
 def test_action_results_are_bounded_and_fake_only() -> None:

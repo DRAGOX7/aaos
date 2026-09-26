@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.phase9.action_safety_harness import (
+from phase9.action_safety_harness import (
     ActionScenario,
     FrozenClock,
     run_action_scenario,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.phase9.action_safety_harness import FrozenClock, run_concurrent_claims
+from phase9.action_safety_harness import FrozenClock, run_concurrent_claims
 
 
 def test_duplicate_claim_has_one_winner_and_one_operation() -> None:

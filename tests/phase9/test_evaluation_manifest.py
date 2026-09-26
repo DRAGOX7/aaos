@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.phase9.evaluation.manifest import (
+from phase9.evaluation.manifest import (
     CALIBRATION_IDS,
     DOMAINS,
     HELDOUT_IDS,
