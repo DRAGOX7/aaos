@@ -1,4 +1,6 @@
+from collections.abc import Iterator
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -35,10 +37,8 @@ def record(
 
 
 @pytest.fixture
-def repository(tmp_path):
+def repository(tmp_path: Path) -> Iterator[TaskRepository]:
     engine = create_database_engine(tmp_path / "task.db")
-    from pathlib import Path
-
     from alembic import command
     from alembic.config import Config
 
@@ -67,7 +67,7 @@ def test_create_or_get_is_idempotent_and_conflicts_on_fingerprint(
 
 def test_creation_state_cas_and_action_link_are_guarded(repository: TaskRepository) -> None:
     repository.create_or_get(record())
-    with repository._session_factory() as session:  # type: ignore[attr-defined]
+    with repository._session_factory() as session:
         session.execute(
             text(
                 "INSERT INTO prepared_actions "

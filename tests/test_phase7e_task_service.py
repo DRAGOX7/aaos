@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import NoReturn
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,8 +17,10 @@ from aaos.agent.policy import PermissionPolicy
 from aaos.approval.contracts import (
     ActionType,
     ActorIdentity,
+    ApprovalRecord,
     ApprovalState,
     Phase6ActionDefinition,
+    PreparedAction,
     TrustedApproverContext,
 )
 from aaos.approval.repository import ApprovalRepository
@@ -193,8 +195,13 @@ def test_invalid_calendar_request_is_bounded_without_adapter_or_phase6_execution
 
 def test_preparation_failure_leaves_task_in_created_preparing_state(
     service: TaskApplicationService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service._prepare_action = cast(object, lambda **_: (_ for _ in ()).throw(RuntimeError("boom")))
+    def fail_prepare_action(*, request: CalendarCreateRequest, now: datetime) -> NoReturn:
+        del request, now
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(service, "_prepare_action", fail_prepare_action)
     with pytest.raises(TaskPreparationError) as error:
         service.create_calendar_task(_request(), idempotency_key="task-6", now=NOW)
     assert error.value.code is TaskFailureCode.PREPARATION_FAILED
@@ -205,22 +212,23 @@ def test_preparation_failure_leaves_task_in_created_preparing_state(
 
 def test_recovery_after_action_linkage_issues_one_existing_approval(
     service: TaskApplicationService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = service._issue_approval
     calls = 0
 
-    def fail_once(**kwargs: object) -> object:
+    def fail_once(*, prepared: PreparedAction, now: datetime) -> ApprovalRecord:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise RuntimeError("approval issuance interrupted")
-        return original(**kwargs)
+        return original(prepared=prepared, now=now)
 
-    service._issue_approval = fail_once  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "_issue_approval", fail_once)
     with pytest.raises(TaskPreparationError):
         service.create_calendar_task(_request(), idempotency_key="task-7", now=NOW)
 
-    service._issue_approval = original  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "_issue_approval", original)
     recovered = service.create_calendar_task(_request(), idempotency_key="task-7", now=NOW)
     assert recovered.approval is not None
     with service._approval_repository.transaction() as session:

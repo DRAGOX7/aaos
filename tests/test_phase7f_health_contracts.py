@@ -30,12 +30,14 @@ def test_health_contract_is_closed_and_immutable() -> None:
     with pytest.raises(ValidationError):
         response.components = ()
     with pytest.raises(ValidationError):
-        HealthComponent(
-            name=HealthComponentName.DATABASE,
-            status=HealthStatus.HEALTHY,
-            required=True,
-            detail_code=HealthDetailCode.RAG_INDEX_READY,
-            database_url="secret",
+        HealthComponent.model_validate(
+            {
+                "name": HealthComponentName.DATABASE,
+                "status": HealthStatus.HEALTHY,
+                "required": True,
+                "detail_code": HealthDetailCode.RAG_INDEX_READY,
+                "database_url": "secret",
+            }
         )
 
 

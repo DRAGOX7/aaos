@@ -24,6 +24,7 @@ def test_rag_request_accepts_only_bounded_question_and_closed_scopes() -> None:
     )
 
     assert global_request.question == "Explain self-attention."
+    assert isinstance(course_request.scope, RagCourseScopeRequest)
     assert course_request.scope.course_id == 12
 
 
@@ -51,7 +52,7 @@ def test_rag_models_are_strict_frozen_and_closed() -> None:
         scope=RagGlobalScopeRequest(type="global"),
     )
     with pytest.raises(ValidationError):
-        request.question = "changed"  # type: ignore[misc]
+        request.question = "changed"
     with pytest.raises(ValidationError):
         RagCitation.model_validate(
             {

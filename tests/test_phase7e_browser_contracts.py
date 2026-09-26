@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from aaos.approval.contracts import ApprovalState
 from aaos.tasks.contracts import BrowserTaskState, TaskKind
 from aaos.web.contracts import (
     ApprovalDetail,
+    ApprovalState,
     ApprovalSummary,
     CalendarCreateTaskRequest,
     SafeActionSummary,
@@ -48,7 +48,7 @@ def test_browser_task_models_have_exact_closed_shapes() -> None:
         "action",
     }
     with pytest.raises(ValidationError):
-        TaskSummary(**task.model_dump(), provider_payload={})
+        TaskSummary.model_validate({**task.model_dump(), "provider_payload": {}})
 
 
 def test_task_request_rejects_authority_fields_and_coerced_values() -> None:
@@ -69,13 +69,17 @@ def test_task_request_rejects_authority_fields_and_coerced_values() -> None:
         "location",
     }
     with pytest.raises(ValidationError):
-        CalendarCreateTaskRequest(**request.model_dump(), approver_identity="attacker")
+        CalendarCreateTaskRequest.model_validate(
+            {**request.model_dump(), "approver_identity": "attacker"}
+        )
     with pytest.raises(ValidationError):
-        CalendarCreateTaskRequest(
-            summary=123,
-            start=request.start,
-            end=request.end,
-            timezone=request.timezone,
+        CalendarCreateTaskRequest.model_validate(
+            {
+                "summary": 123,
+                "start": request.start,
+                "end": request.end,
+                "timezone": request.timezone,
+            }
         )
 
 
@@ -111,6 +115,6 @@ def test_detail_models_are_frozen_and_closed() -> None:
     )
     assert detail.approval_id == "approval-1"
     with pytest.raises((ValidationError, TypeError, AttributeError)):
-        detail.approval_id = "other"  # type: ignore[misc]
+        detail.approval_id = "other"
     with pytest.raises(ValidationError):
-        TaskDetail(**task.model_dump(), raw_event={})
+        TaskDetail.model_validate({**task.model_dump(), "raw_event": {}})

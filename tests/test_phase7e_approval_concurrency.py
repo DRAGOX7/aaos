@@ -5,19 +5,24 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import Lock
-from typing import cast
 
 from fastapi.testclient import TestClient
 
 from aaos.approval.contracts import (
     ApprovalId,
-    ApprovalState,
     Phase6ErrorCode,
     TrustedApproverContext,
 )
 from aaos.approval.service import Phase6ServiceError
 from aaos.main import create_app
-from aaos.web.contracts import ApprovalDetail, ApprovalSummary, SafeActionSummary
+from aaos.web.contracts import (
+    ApprovalDetail,
+    ApprovalSummary,
+    SafeActionSummary,
+)
+from aaos.web.contracts import (
+    ApprovalState as ApprovalViewState,
+)
 
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
 APPROVER = TrustedApproverContext("local-user", "local-context")
@@ -36,7 +41,7 @@ def _detail(approval_id: str) -> ApprovalDetail:
         approval_id=approval_id,
         task_id="task-1",
         action=action,
-        status=ApprovalState.APPROVED,
+        status=ApprovalViewState.APPROVED,
         issued_at=NOW,
         approval_expires_at=NOW.replace(hour=13),
         operation_state=None,
@@ -78,8 +83,8 @@ def test_concurrent_decisions_have_one_authoritative_winner() -> None:
     commands = CompareAndSwapCommands()
     client = TestClient(
         create_app(
-            task_commands=cast(object, commands),
-            principal_provider=cast(object, Principal()),
+            task_commands=commands,
+            principal_provider=Principal(),
         ),
         raise_server_exceptions=False,
     )

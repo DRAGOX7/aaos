@@ -10,7 +10,9 @@ def test_frozen_fixture_covers_validated_answer_partial_and_insufficient_states(
     answers = tuple(fixture_answer(status) for status in RagAnswerStatus)
 
     assert manifest.name == "phase7d-rag-fixture-v1"
-    assert {answer.status for answer in answers} == set(RagAnswerStatus)
+    assert {answer.status.value for answer in answers} == {
+        status.value for status in RagAnswerStatus
+    }
     assert answers[2].citations == ()
     assert manifest.model_calls == 0
     assert manifest.writes == 0

@@ -4,15 +4,15 @@ from fastapi.testclient import TestClient
 
 from aaos.main import create_app
 from aaos.rag.contracts import RagErrorCode, RagOperationalError
-from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView
+from aaos.web.contracts import RagAnswerResponse, RagAnswerStatusView, RagQueryRequest
 
 
 class FakeRagReader:
     def __init__(self, response: RagAnswerResponse | Exception) -> None:
         self.response = response
-        self.requests = []
+        self.requests: list[RagQueryRequest] = []
 
-    async def ask(self, request):
+    async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
         self.requests.append(request)
         if isinstance(self.response, Exception):
             raise self.response

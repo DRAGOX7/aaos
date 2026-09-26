@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from aaos.persistence.academic_models import Base, CourseORM, RemoteFileORM
 from aaos.persistence.document_models import DocumentORM, DocumentVersionORM
@@ -22,6 +22,7 @@ from aaos.rag.contracts import (
 )
 from aaos.web.contracts import (
     RagAnswerStatusView,
+    RagCitation,
     RagCourseScopeRequest,
     RagGlobalScopeRequest,
     RagQueryRequest,
@@ -59,7 +60,7 @@ def _validated_response(
     return RenderedRagResponse(answer=answer, rendered_text="Validated answer")
 
 
-def _sessions() -> sessionmaker:
+def _sessions() -> sessionmaker[Session]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
@@ -166,6 +167,7 @@ def test_citations_are_mapped_to_public_document_identity() -> None:
 
     assert result.citations[0].document_id == 7
     assert result.citations[0].document_title == "Notes"
+    assert isinstance(result.citations[0], RagCitation)
     assert result.citations[0].page_start == 2
     assert result.citations[0].page_end == 3
 

@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
 
 from aaos.approval.contracts import (
     ApprovalId,
-    ApprovalState,
     Phase6ErrorCode,
     TrustedApproverContext,
 )
@@ -20,6 +18,9 @@ from aaos.web.contracts import (
     ApprovalDetail,
     ApprovalSummary,
     SafeActionSummary,
+)
+from aaos.web.contracts import (
+    ApprovalState as ApprovalViewState,
 )
 
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
@@ -39,7 +40,7 @@ def _approval_detail(approval_id: str = "approval-1") -> ApprovalDetail:
         approval_id=approval_id,
         task_id="task-1",
         action=action,
-        status=ApprovalState.APPROVED,
+        status=ApprovalViewState.APPROVED,
         issued_at=NOW,
         approval_expires_at=NOW.replace(hour=13),
         operation_state=None,
@@ -115,8 +116,8 @@ class FailingCommands(RecordingCommands):
 def _client(commands: RecordingCommands) -> TestClient:
     return TestClient(
         create_app(
-            task_commands=cast(object, commands),
-            principal_provider=cast(object, RecordingPrincipal()),
+            task_commands=commands,
+            principal_provider=RecordingPrincipal(),
         ),
         raise_server_exceptions=False,
     )
