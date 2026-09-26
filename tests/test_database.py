@@ -147,6 +147,7 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "rag_document_indexes",
             "rag_chunks",
             "rag_chunk_source_spans",
+            "rag_chunk_structure_source_spans",
             "rag_chunks_fts",
             "prepared_actions",
             "action_lifecycles",
