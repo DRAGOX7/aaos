@@ -51,24 +51,24 @@ class HeldoutReservation:
     candidate_sha: str
 
 
-@dataclass(frozen=True, slots=True)
-class PreSemanticFailureEvidence:
-    """Trusted evidence produced only by the runner's pre-semantic preflight path."""
+_PRESEMANTIC_EVIDENCE_SEAL = object()
 
-    preflight_failed: bool
-    protected_case_materialized: bool
-    model_or_tool_execution_started: bool
-    scoring_started: bool
-    case_result_produced: bool
 
-    def proves_no_semantic_access(self) -> bool:
-        return (
-            self.preflight_failed
-            and not self.protected_case_materialized
-            and not self.model_or_tool_execution_started
-            and not self.scoring_started
-            and not self.case_result_produced
-        )
+class _PreSemanticFailureEvidence:
+    """Opaque proof created only by the runner's preflight-failure branch."""
+
+    __slots__ = ("_reservation_id", "_seal")
+    _reservation_id: str
+    _seal: object
+
+    def __init__(self, reservation_id: str, *, _seal: object) -> None:
+        if _seal is not _PRESEMANTIC_EVIDENCE_SEAL:
+            raise TypeError("pre-semantic evidence cannot be constructed directly")
+        self._reservation_id = reservation_id
+        self._seal = _seal
+
+    def authorizes(self, reservation_id: str) -> bool:
+        return self._seal is _PRESEMANTIC_EVIDENCE_SEAL and (self._reservation_id == reservation_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,15 +204,14 @@ class V4HeldoutLedger:
         except Exception:
             raise HeldoutLedgerError("held-out completion could not be persisted") from None
 
-    def release_presemantic(
+    def _release_presemantic(
         self,
         reservation_id: str,
-        evidence: PreSemanticFailureEvidence,
+        evidence: _PreSemanticFailureEvidence,
     ) -> None:
         normalized_id = self._validate_reservation_id(reservation_id)
-        if (
-            not isinstance(evidence, PreSemanticFailureEvidence)
-            or not evidence.proves_no_semantic_access()
+        if not isinstance(evidence, _PreSemanticFailureEvidence) or not evidence.authorizes(
+            normalized_id
         ):
             raise HeldoutLedgerError("pre-semantic release lacks trusted proof")
         try:

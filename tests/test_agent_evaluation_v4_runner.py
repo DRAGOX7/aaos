@@ -289,6 +289,21 @@ def test_presemantic_preflight_failure_releases_reserved_permit(tmp_path: Path) 
     assert SECRET not in str(status.to_dict())
 
 
+def test_arbitrary_caller_cannot_release_reserved_permit(tmp_path: Path) -> None:
+    import aaos.agent.evaluation.v4_ledger as ledger_module
+
+    ledger = V4HeldoutLedger(tmp_path / "ledger.json")
+    reservation = ledger.reserve(CANDIDATE_SHA)
+
+    assert not hasattr(ledger, "release_presemantic")
+    assert not hasattr(ledger_module, "PreSemanticFailureEvidence")
+    with pytest.raises(TypeError):
+        ledger_module._PreSemanticFailureEvidence("0" * 32, _seal=object())
+    with pytest.raises(HeldoutLedgerError):
+        getattr(ledger, "_release_presemantic")(reservation.reservation_id, object())
+    assert ledger.status().state is HeldoutState.RESERVED
+
+
 def test_heldout_becomes_consumed_before_manifest_materialization(tmp_path: Path) -> None:
     runner = _runner(tmp_path)
     observed: list[HeldoutState] = []
@@ -539,19 +554,19 @@ def test_reading_available_ledger_status_has_no_filesystem_side_effect(tmp_path:
 
 
 def test_presemantic_release_cannot_reverse_consumed_state(tmp_path: Path) -> None:
-    from aaos.agent.evaluation.v4_ledger import PreSemanticFailureEvidence
+    from aaos.agent.evaluation.v4_ledger import (
+        _PRESEMANTIC_EVIDENCE_SEAL,
+        _PreSemanticFailureEvidence,
+    )
 
     ledger = V4HeldoutLedger(tmp_path / "ledger.json")
     reservation = ledger.reserve(CANDIDATE_SHA)
     ledger.consume(reservation.reservation_id)
-    evidence = PreSemanticFailureEvidence(
-        preflight_failed=True,
-        protected_case_materialized=False,
-        model_or_tool_execution_started=False,
-        scoring_started=False,
-        case_result_produced=False,
+    evidence = _PreSemanticFailureEvidence(
+        reservation.reservation_id,
+        _seal=_PRESEMANTIC_EVIDENCE_SEAL,
     )
 
     with pytest.raises(HeldoutLedgerError):
-        ledger.release_presemantic(reservation.reservation_id, evidence)
+        ledger._release_presemantic(reservation.reservation_id, evidence)
     assert ledger.status().state is HeldoutState.CONSUMED
