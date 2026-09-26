@@ -1639,24 +1639,29 @@ factual generation.
 
 #### Atomic decomposition and span-completeness prompt contract amendment
 
-The decomposition contract preserves the closed statuses `OK` and
-`TOO_MANY_REQUIREMENTS`, with a maximum of six requirements. A material
-requirement is the smallest independently answerable factual portion needed to
-satisfy the request. The model must preserve every independently answerable
-material part, but must not split a coherent fact merely because it contains
-descriptive words, qualifiers, examples, attributes, clauses, noun phrases, or
-supporting details. It must prefer the minimum complete set of independently
-supportable/refusable requirements: one coherent fact normally remains one
-requirement; explicit independently answerable parts, comparison dimensions,
-or separately answerable categories may remain separate.
+The model-facing decomposition schema returns `OK` with one through twelve raw
+candidates, or `CANDIDATE_LIMIT_REACHED` with an empty candidate array only when
+the request genuinely has more than twelve distinct material facts. Twelve is
+a bounded handoff budget, twice the final six-requirement cap, so trusted code
+can normalize redundant candidates before deciding whether the request exceeds
+the supported requirement count. The model must preserve every independently
+answerable material part, but must not split a coherent fact merely because it
+contains descriptive words, qualifiers, examples, attributes, clauses, noun
+phrases, or supporting details. It must prefer the minimum complete set of
+independently supportable/refusable requirements: one coherent fact normally
+remains one requirement; explicit independently answerable parts, comparison
+dimensions, or separately answerable categories may remain separate.
 
-`TOO_MANY_REQUIREMENTS` is valid only when, after applying those
-anti-over-splitting rules, the request genuinely contains more than six
-independently answerable material factual requirements. It is not a length,
+Trusted code applies conservative deterministic request-frame and Unicode
+surface normalization, retains the first original text for each distinct key,
+and owns the final six-requirement limit. Interrogative words and combining
+marks remain part of the key so different answer slots or marked forms are not
+silently collapsed. After deduplication, more than six distinct requirements
+produce the internal `TOO_MANY_REQUIREMENTS` result; the final cap and IDs
+`r1` through `r6` remain unchanged. The candidate-limit status is not a length,
 uncertainty, evidence-difficulty, conservative-refusal, or qualifier shortcut.
-When the request fits faithfully within one through six requirements, status
-must be `OK`; `OK` with zero requirements and `TOO_MANY_REQUIREMENTS` with any
-requirements remain invalid combinations.
+Malformed statuses, empty `OK`, non-empty candidate-limit results, or more than
+twelve raw candidates remain invalid and fail closed.
 
 For every extractive span request, the prompt explicitly states
 `EXPECTED_REQUIREMENT_COUNT=N` and the exact immutable ID set

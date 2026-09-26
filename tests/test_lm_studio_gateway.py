@@ -431,6 +431,35 @@ def test_generate_serializes_requirement_json_schema_contract(
     assert schema_body["properties"]["requirements"]["items"]["required"] == item_required
 
 
+def test_generate_serializes_bounded_atomic_requirement_candidate_contract() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Decompose requirements."),),
+            max_output_tokens=256,
+            structured_output="json_schema",
+            structured_output_schema="atomic_requirement_decomposition",
+        ),
+        handler,
+    )
+
+    schema = json.loads(requests[0].content)["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["status"]["enum"] == ["OK", "CANDIDATE_LIMIT_REACHED"]
+    assert schema["properties"]["requirements"]["maxItems"] == 12
+    assert "TOO_MANY_REQUIREMENTS" not in schema["properties"]["status"]["enum"]
+
+
 def test_generate_serializes_single_requirement_span_schema() -> None:
     requests: list[httpx2.Request] = []
 

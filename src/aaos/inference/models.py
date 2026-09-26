@@ -9,6 +9,8 @@ ChatRole = Literal["system", "user", "assistant"]
 _VISION_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _VISION_SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 StructuredOutputMode = Literal["plain", "json_schema"]
+# Bounded handoff is twice the final cap; trusted RAG code owns the six-item limit.
+MAX_ATOMIC_REQUIREMENT_CANDIDATES = 12
 StructuredOutputSchema = Literal[
     "agent_proposal",
     "agent_proposal_transport",

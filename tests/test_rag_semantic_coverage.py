@@ -30,15 +30,15 @@ from aaos.rag.semantic_coverage import SemanticCoverageClassifier
 
 
 def test_atomic_decomposition_overflow_is_a_non_exceptional_closed_result() -> None:
-    """A seven-item proposal must refuse before span or entailment work."""
+    """A raw-candidate limit signal refuses before span or entailment work."""
     from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
 
-    gateway = FakeGateway([_response('{"status":"TOO_MANY_REQUIREMENTS","requirements":[]}')])
+    gateway = FakeGateway([_response('{"status":"CANDIDATE_LIMIT_REACHED","requirements":[]}')])
 
     result = asyncio.run(
         AtomicRequirementDecomposer(gateway).decompose(
             __import__("aaos.rag.contracts", fromlist=["RagQuery"]).RagQuery(
-                "Give a through g",
+                "Give facts a through m",
                 __import__("aaos.rag.contracts", fromlist=["GlobalScope"]).GlobalScope(),
             )
         )
@@ -47,6 +47,143 @@ def test_atomic_decomposition_overflow_is_a_non_exceptional_closed_result() -> N
     assert result.status.value == "TOO_MANY_REQUIREMENTS"
     assert result.requirements == ()
     assert len(gateway.requests) == 1
+
+
+def test_atomic_decomposition_canonicalizes_redundant_paraphrases_before_final_cap() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    candidates = (
+        "Give the deadline.",
+        "State the deadline.",
+        "Identify the deadline!",
+        "Please give the deadline.",
+        "Tell me the deadline.",
+        "Name the deadline.",
+        "the deadline",
+    )
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [{"requirement_text": item} for item in candidates],
+        }
+    )
+    gateway = FakeGateway([_response(payload)])
+
+    result = asyncio.run(
+        AtomicRequirementDecomposer(gateway).decompose(
+            RagQuery("Ask the deadline seven ways.", GlobalScope())
+        )
+    )
+
+    assert result.status.value == "OK"
+    assert tuple(item.requirement_text for item in result.requirements) == ("Give the deadline.",)
+    assert tuple(item.requirement_id for item in result.requirements) == ("r1",)
+    assert len(gateway.requests) == 1
+
+
+def test_atomic_decomposition_preserves_distinct_wh_question_slots() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    candidates = ("Who is running the fictional course?", "What is running the fictional course?")
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [{"requirement_text": item} for item in candidates],
+        }
+    )
+    gateway = FakeGateway([_response(payload)])
+
+    result = asyncio.run(
+        AtomicRequirementDecomposer(gateway).decompose(
+            RagQuery("Who or what runs the fictional course?", GlobalScope())
+        )
+    )
+
+    assert result.status.value == "OK"
+    assert tuple(item.requirement_text for item in result.requirements) == candidates
+
+
+def test_atomic_decomposition_canonicalizes_arabic_request_frames() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    candidates = (
+        "اذكر موعد التسليم.",
+        "حدد موعد التسليم؟",
+        "موعد التسليم",
+    )
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [{"requirement_text": item} for item in candidates],
+        },
+        ensure_ascii=False,
+    )
+    gateway = FakeGateway([_response(payload)])
+
+    result = asyncio.run(
+        AtomicRequirementDecomposer(gateway).decompose(
+            RagQuery("ما موعد التسليم؟", GlobalScope(), answer_language="ar")
+        )
+    )
+
+    assert result.status.value == "OK"
+    assert tuple(item.requirement_text for item in result.requirements) == ("اذكر موعد التسليم.",)
+
+
+def test_atomic_decomposition_keeps_six_distinct_requirements_and_refuses_seven() -> None:
+    from aaos.rag.contracts import AtomicRequirementDecomposition, GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    def decompose(count: int) -> AtomicRequirementDecomposition:
+        payload = json.dumps(
+            {
+                "status": "OK",
+                "requirements": [
+                    {"requirement_text": f"Give distinct fact {index}"} for index in range(count)
+                ],
+            }
+        )
+        return asyncio.run(
+            AtomicRequirementDecomposer(FakeGateway([_response(payload)])).decompose(
+                RagQuery("Give the requested facts.", GlobalScope())
+            )
+        )
+
+    six = decompose(6)
+    seven = decompose(7)
+
+    assert six.status.value == "OK"
+    assert len(six.requirements) == 6
+    assert seven.status.value == "TOO_MANY_REQUIREMENTS"
+    assert seven.requirements == ()
+
+
+def test_atomic_decomposition_rejects_candidates_over_the_bounded_envelope() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [
+                {"requirement_text": f"Give independent fact {index}"} for index in range(13)
+            ],
+        }
+    )
+    gateway = FakeGateway([_response(payload), _response(payload)])
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(
+            AtomicRequirementDecomposer(gateway).decompose(
+                RagQuery("Give the requested facts.", GlobalScope())
+            )
+        )
+
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+    assert len(gateway.requests) == 2
 
 
 def test_segment_selection_rejects_unknown_ids_and_entailment_skips_empty_span() -> None:
@@ -506,8 +643,9 @@ def test_atomic_prompt_balances_completeness_atomicity_and_minimality() -> None:
     assert "smallest independently answerable factual portion" in system_prompt
     assert "do not split a requirement merely" in system_prompt.lower()
     assert "minimum number of requirements" in system_prompt
-    assert "What is X?" in system_prompt
-    assert "status must be OK" in system_prompt
+    assert "same fact" in system_prompt.lower()
+    assert "trusted code" in system_prompt.lower()
+    assert "six" in system_prompt.lower()
 
 
 def test_atomic_prompt_defines_explicit_multi_part_and_overflow_boundaries() -> None:
@@ -521,9 +659,11 @@ def test_atomic_prompt_defines_explicit_multi_part_and_overflow_boundaries() -> 
     normalized_prompt = system_prompt.lower()
     assert "explicit independently answerable parts" in normalized_prompt
     assert "comparison dimensions" in normalized_prompt
-    assert "genuinely contains more than six" in normalized_prompt
+    assert "candidate limit" in normalized_prompt
+    assert "twelve" in normalized_prompt
     assert "not a length" in normalized_prompt
-    assert "too_many_requirements" in normalized_prompt
+    assert "trusted code can normalize" in normalized_prompt
+    assert "final six-requirement cap" in normalized_prompt
 
 
 def test_segment_prompt_is_single_requirement_and_empty_selection_rule() -> None:

@@ -21,7 +21,13 @@ from .gateway import (
     ModelUnavailableError,
     UnsupportedInferenceFeatureError,
 )
-from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
+from .models import (
+    MAX_ATOMIC_REQUIREMENT_CANDIDATES,
+    ChatRequest,
+    ChatResponse,
+    ModelAvailability,
+    TokenUsage,
+)
 from .telemetry import (
     LocalInferenceTelemetryEvent,
     TelemetrySink,
@@ -298,10 +304,10 @@ _STRUCTURED_RESPONSE_FORMATS = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "status": {"type": "string", "enum": ["OK", "TOO_MANY_REQUIREMENTS"]},
+                    "status": {"type": "string", "enum": ["OK", "CANDIDATE_LIMIT_REACHED"]},
                     "requirements": {
                         "type": "array",
-                        "maxItems": 6,
+                        "maxItems": MAX_ATOMIC_REQUIREMENT_CANDIDATES,
                         "items": {
                             "type": "object",
                             "additionalProperties": False,
