@@ -274,6 +274,9 @@ class AgentProposalAdapter:
         self._max_repair_attempts = max_repair_attempts
         self._request_timeout_seconds = float(request_timeout_seconds)
         self._last_failure: AgentFailure | None = None
+        self._invalid_output_count = 0
+        self._parse_failure_count = 0
+        self._schema_failure_count = 0
         self._model_visible_tool_metadata_json = "[]"
         if tool_registry is not None:
             self.configure_tool_registry(tool_registry)
@@ -287,6 +290,33 @@ class AgentProposalAdapter:
         # Keep the hook for orchestration compatibility, but never serialize
         # the registry catalog into model-visible context.
         self._model_visible_tool_metadata_json = "[]"
+
+    @property
+    def invalid_output_count(self) -> int:
+        """Count model responses rejected by the strict proposal parser."""
+
+        return self._invalid_output_count
+
+    @property
+    def parse_failure_count(self) -> int:
+        """Count responses that are not valid JSON under the strict parser."""
+
+        return self._parse_failure_count
+
+    @property
+    def schema_failure_count(self) -> int:
+        """Count valid JSON responses that violate the proposal contract."""
+
+        return self._schema_failure_count
+
+    def _record_parse_failure(self, kind: Literal["parse", "schema"] | None) -> None:
+        if kind is None:
+            return
+        self._invalid_output_count += 1
+        if kind == "parse":
+            self._parse_failure_count += 1
+        else:
+            self._schema_failure_count += 1
 
     @property
     def max_repair_attempts(self) -> int:
@@ -323,7 +353,8 @@ class AgentProposalAdapter:
             return ProposalResult.failed(
                 self._last_failure or _failure(AgentErrorCode.MODEL_UNAVAILABLE)
             )
-        proposal = _parse_proposal(response)
+        proposal, parse_failure = _parse_proposal_diagnostic(response)
+        self._record_parse_failure(parse_failure)
         if proposal is not None:
             return ProposalResult.success(proposal)
         if self._max_repair_attempts == 0:
@@ -335,7 +366,8 @@ class AgentProposalAdapter:
             return ProposalResult.failed(
                 self._last_failure or _failure(AgentErrorCode.MODEL_UNAVAILABLE)
             )
-        repaired_proposal = _parse_proposal(repaired_response)
+        repaired_proposal, repair_failure = _parse_proposal_diagnostic(repaired_response)
+        self._record_parse_failure(repair_failure)
         if repaired_proposal is None:
             return ProposalResult.failed(_failure(AgentErrorCode.INVALID_PROPOSAL))
         return ProposalResult.success(repaired_proposal)
@@ -397,21 +429,28 @@ class AgentProposalAdapter:
 
 
 def _parse_proposal(response: ChatResponse | None) -> RetrieveProposal | TerminalProposal | None:
+    proposal, _ = _parse_proposal_diagnostic(response)
+    return proposal
+
+
+def _parse_proposal_diagnostic(
+    response: ChatResponse | None,
+) -> tuple[RetrieveProposal | TerminalProposal | None, Literal["parse", "schema"] | None]:
     if response is None:
-        return None
+        return None, None
     content = response.content
     if len(content) > MAX_PROPOSAL_OUTPUT_CHARACTERS:
-        return None
+        return None, "schema"
     try:
         payload = json.loads(content, object_pairs_hook=_reject_duplicate_keys)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+        return None, "parse"
     if not isinstance(payload, Mapping):
-        return None
+        return None, "schema"
     try:
-        return ProviderProposalEnvelope.from_mapping(payload).to_canonical()
+        return ProviderProposalEnvelope.from_mapping(payload).to_canonical(), None
     except (TypeError, ValueError, KeyError):
-        return None
+        return None, "schema"
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

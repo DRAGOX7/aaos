@@ -138,6 +138,29 @@ def test_invalid_model_proposal_fails_closed(payload: str) -> None:
     assert len(gateway.requests) == 2
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_parse", "expected_schema"),
+    [
+        ('{"action":"terminal_text"', 2, 0),
+        ("{}", 0, 2),
+    ],
+)
+def test_invalid_output_diagnostics_are_non_overlapping(
+    payload: str,
+    expected_parse: int,
+    expected_schema: int,
+) -> None:
+    gateway = FakeGateway(_response(payload), _response(payload))
+    adapter = AgentProposalAdapter(gateway)
+
+    result = asyncio.run(adapter.propose(ProposalRequest("synthetic diagnostic request")))
+
+    assert result.failure is not None
+    assert adapter.invalid_output_count == 2
+    assert adapter.parse_failure_count == expected_parse
+    assert adapter.schema_failure_count == expected_schema
+
+
 def test_one_bounded_repair_can_recover_a_valid_proposal() -> None:
     gateway = FakeGateway(
         _response('{"action":"terminal_text","terminal_text":"missing brace"'),

@@ -32,6 +32,10 @@ def run_cli(argv: Sequence[str], run_doctor: Callable[[], DoctorReport]) -> int:
 
 def main() -> int:
     """Expose the configured AAOS command through the project entry point."""
+    if sys.argv[1:3] == ["phase5", "v4"]:
+        from aaos.agent.evaluation.v4_cli import run_phase5_v4_command
+
+        return run_phase5_v4_command(sys.argv[3:])
     if sys.argv[1:] == ["sync"]:
         return _run_configured_sync_workflow()
     if sys.argv[1:2] == ["documents"]:
