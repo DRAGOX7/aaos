@@ -15,7 +15,11 @@ from aaos.agent.evaluation.v4 import (
     build_v4_manifests,
     score_v4_evaluation,
 )
-from aaos.agent.evaluation.v4_cli import V4Command, resolve_evaluation_home
+from aaos.agent.evaluation.v4_cli import (
+    V4Command,
+    V4WorkerExitCode,
+    resolve_evaluation_home,
+)
 from aaos.agent.evaluation.v4_ledger import HeldoutLedgerError, V4HeldoutLedger
 from aaos.agent.evaluation.v4_live import (
     check_configured_local_model,
@@ -60,7 +64,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ledger=ledger,
                 report_root=report_root,
             )
-            report = runner.verify_manifest()
+            try:
+                report = runner.verify_manifest()
+            except V4RunnerError as exc:
+                if exc.code == "manifest_failed":
+                    return int(V4WorkerExitCode.MANIFEST_STRUCTURE_FAILURE)
+                if exc.code == "report_write_failed":
+                    return int(V4WorkerExitCode.REPORT_WRITE_FAILURE)
+                return 1
         else:
             executor = create_configured_local_executor()
             runner = V4SealedRunner(
@@ -77,7 +88,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if command is V4Command.CALIBRATION
                 else runner.evaluate_heldout()
             )
-        _write_response(response_path, report)
+        try:
+            _write_response(response_path, report)
+        except Exception:
+            return int(V4WorkerExitCode.PROTOCOL_FAILURE)
         return 0 if report.passed else 3
     except HeldoutLedgerError:
         return 4

@@ -79,7 +79,12 @@ class V4RunnerError(RuntimeError):
     """A public-safe runner failure code."""
 
     def __init__(self, code: str) -> None:
-        if code not in {"evaluation_failed", "preflight_failed", "manifest_failed"}:
+        if code not in {
+            "evaluation_failed",
+            "preflight_failed",
+            "manifest_failed",
+            "report_write_failed",
+        }:
             code = "evaluation_failed"
         self.code = code
         super().__init__(code)
@@ -658,7 +663,7 @@ class V4SealedRunner:
         filename = filenames[report.evaluation_kind]
         root = self._report_root
         if root.is_symlink() or root.parent.is_symlink():
-            raise V4RunnerError("evaluation_failed")
+            raise V4RunnerError("report_write_failed")
         temporary: str | None = None
         try:
             root.mkdir(parents=True, exist_ok=True)
@@ -679,7 +684,7 @@ class V4SealedRunner:
                 finally:
                     os.close(directory)
         except Exception:
-            raise V4RunnerError("evaluation_failed") from None
+            raise V4RunnerError("report_write_failed") from None
         finally:
             if temporary is not None:
                 try:

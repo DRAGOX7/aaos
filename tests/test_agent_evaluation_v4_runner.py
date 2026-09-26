@@ -24,6 +24,7 @@ from aaos.agent.evaluation.v4_ledger import (
     V4HeldoutLedger,
 )
 from aaos.agent.evaluation.v4_runner import (
+    V4RunnerError,
     V4SafeAggregate,
     V4SealedRunner,
     contain_evaluation_output,
@@ -227,6 +228,33 @@ def test_manifest_mode_returns_only_safe_aggregates(tmp_path: Path) -> None:
     assert report.fingerprint_valid is True
     assert SECRET not in json.dumps(report.to_dict(), sort_keys=True)
     assert not (tmp_path / "heldout-ledger.json").exists()
+
+
+def test_manifest_factory_exception_has_a_closed_structure_code(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+
+    def fail_with_synthetic_secret() -> tuple[V4EvaluationManifest, V4EvaluationManifest]:
+        raise RuntimeError(SECRET)
+
+    runner._manifest_factory = fail_with_synthetic_secret
+    with pytest.raises(V4RunnerError) as caught:
+        runner.verify_manifest()
+
+    assert caught.value.code == "manifest_failed"
+    assert SECRET not in str(caught.value)
+    assert not (tmp_path / "reports" / "manifest-latest.json").exists()
+
+
+def test_report_write_exception_has_a_closed_report_code(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    report_root = tmp_path / "reports"
+    report_root.write_text(SECRET, encoding="utf-8")
+
+    with pytest.raises(V4RunnerError) as caught:
+        runner.verify_manifest()
+
+    assert caught.value.code == "report_write_failed"
+    assert SECRET not in str(caught.value)
 
 
 def test_calibration_mode_uses_canonical_scorer_and_safe_aggregate(tmp_path: Path) -> None:

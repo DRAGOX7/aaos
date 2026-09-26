@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -29,12 +29,37 @@ class V4Command(StrEnum):
     LEDGER_STATUS = "ledger-status"
 
 
+class V4SafeErrorCode(StrEnum):
+    """Closed, non-semantic error codes for the public V4 command surface."""
+
+    USAGE_ERROR = "V4_USAGE_ERROR"
+    CLI_FAILURE = "V4_CLI_FAILURE"
+    LEDGER_FAILURE = "V4_LEDGER_FAILURE"
+    WORKER_START_FAILURE = "V4_WORKER_START_FAILURE"
+    WORKER_EXIT_FAILURE = "V4_WORKER_EXIT_FAILURE"
+    WORKER_PROTOCOL_FAILURE = "V4_WORKER_PROTOCOL_FAILURE"
+    MANIFEST_STRUCTURE_FAILURE = "V4_MANIFEST_STRUCTURE_FAILURE"
+    REPORT_WRITE_FAILURE = "V4_REPORT_WRITE_FAILURE"
+
+
+class V4WorkerExitCode(IntEnum):
+    """Private closed status codes used to classify safe worker failures."""
+
+    MANIFEST_STRUCTURE_FAILURE = 10
+    REPORT_WRITE_FAILURE = 11
+    PROTOCOL_FAILURE = 12
+
+
 class V4CliUsageError(ValueError):
     """The V4 command surface was not invoked exactly."""
 
 
 class V4CliError(RuntimeError):
     """A fixed, safe CLI failure code."""
+
+    def __init__(self, code: V4SafeErrorCode = V4SafeErrorCode.CLI_FAILURE) -> None:
+        self.code = code
+        super().__init__(code.value)
 
 
 def parse_v4_command(argv: Sequence[str]) -> V4Command:
@@ -55,10 +80,10 @@ def resolve_evaluation_home(
     if raw_appdata is None:
         raw_appdata = os.environ.get("LOCALAPPDATA")
     if raw_appdata is None:
-        raise V4CliError("private evaluation home is unavailable")
+        raise V4CliError
     base_candidate = Path(raw_appdata)
     if not base_candidate.is_absolute():
-        raise V4CliError("private evaluation home is unavailable")
+        raise V4CliError
     try:
         base = base_candidate.resolve(strict=True)
         repository = Path(repo_root).resolve(strict=True)
@@ -71,7 +96,7 @@ def resolve_evaluation_home(
             raise ValueError
         return home
     except Exception:
-        raise V4CliError("private evaluation home is unsafe") from None
+        raise V4CliError from None
 
 
 def run_isolated_process(
@@ -94,7 +119,7 @@ def run_isolated_process(
     process = process_factory(list(command), **options)
     if process.stdout is None or process.stderr is None:
         process.kill()
-        raise V4CliError("worker output could not be contained")
+        raise V4CliError(V4SafeErrorCode.WORKER_START_FAILURE)
 
     readers = [
         threading.Thread(target=_drain_pipe, args=(process.stdout,), daemon=True),
@@ -118,7 +143,7 @@ def run_phase5_v4_command(
     try:
         command = parse_v4_command(argv)
     except V4CliUsageError:
-        _write_error(2, "usage: aaos phase5 v4 {manifest|calibration|heldout|ledger-status}")
+        _write_error(2, V4SafeErrorCode.USAGE_ERROR)
         return 2
 
     repository = Path(repo_root).resolve() if repo_root is not None else _repository_root()
@@ -128,10 +153,13 @@ def run_phase5_v4_command(
             return _write_ledger_status(home)
         return _run_worker(command, repository, home, process_factory)
     except HeldoutLedgerError:
-        _write_error(1, "ledger is corrupt or unavailable; failing closed")
+        _write_error(1, V4SafeErrorCode.LEDGER_FAILURE)
+        return 1
+    except V4CliError as exc:
+        _write_error(1, exc.code)
         return 1
     except Exception:
-        _write_error(1, "V4 evaluation failed safely")
+        _write_error(1, V4SafeErrorCode.CLI_FAILURE)
         return 1
 
 
@@ -143,10 +171,10 @@ def _run_worker(
 ) -> int:
     ipc_root = home / "ipc"
     if ipc_root.is_symlink():
-        raise V4CliError("private evaluation home is unsafe")
+        raise V4CliError
     ipc_root.mkdir(parents=True, exist_ok=True)
     if not ipc_root.resolve().is_relative_to(home):
-        raise V4CliError("private evaluation home is unsafe")
+        raise V4CliError
     response_path = ipc_root / f"result-{uuid.uuid4().hex}.json"
     worker = [
         sys.executable,
@@ -157,17 +185,42 @@ def _run_worker(
         str(repository),
     ]
     try:
-        exit_code = run_isolated_process(worker, cwd=repository, process_factory=process_factory)
-        if exit_code not in {0, 3}:
-            if exit_code == 4:
-                _write_error(4, "held-out ledger is unavailable or ambiguous; failing closed")
-                return 4
-            _write_error(1, "V4 evaluation failed safely")
+        try:
+            exit_code = run_isolated_process(
+                worker, cwd=repository, process_factory=process_factory
+            )
+        except Exception:
+            _write_error(1, V4SafeErrorCode.WORKER_START_FAILURE)
             return 1
-        aggregate = V4SafeAggregate.from_dict(_read_bounded_json(response_path))
-        public_json = aggregate.to_json()
-        if len(public_json) > 16_384:
-            raise V4CliError("aggregate output exceeds the public bound")
+
+        if exit_code == 4:
+            _write_error(4, V4SafeErrorCode.LEDGER_FAILURE)
+            return 4
+        worker_errors = {
+            V4WorkerExitCode.MANIFEST_STRUCTURE_FAILURE: (
+                V4SafeErrorCode.MANIFEST_STRUCTURE_FAILURE
+            ),
+            V4WorkerExitCode.REPORT_WRITE_FAILURE: V4SafeErrorCode.REPORT_WRITE_FAILURE,
+            V4WorkerExitCode.PROTOCOL_FAILURE: V4SafeErrorCode.WORKER_PROTOCOL_FAILURE,
+        }
+        try:
+            worker_code = V4WorkerExitCode(exit_code)
+        except ValueError:
+            worker_code = None
+        if worker_code in worker_errors:
+            _write_error(1, worker_errors[worker_code])
+            return 1
+        if exit_code not in {0, 3}:
+            _write_error(1, V4SafeErrorCode.WORKER_EXIT_FAILURE)
+            return 1
+        try:
+            aggregate = V4SafeAggregate.from_dict(_read_bounded_json(response_path))
+            public_json = aggregate.to_json()
+            if len(public_json) > 16_384:
+                raise ValueError
+        except Exception:
+            _write_error(1, V4SafeErrorCode.WORKER_PROTOCOL_FAILURE)
+            return 1
         sys.stdout.write(public_json + "\n")
         sys.stdout.flush()
         return exit_code
@@ -194,7 +247,7 @@ def _write_ledger_status(home: Path) -> int:
     }
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len(encoded) > 4096:
-        _write_error(1, "ledger status exceeds the public output bound")
+        _write_error(1, V4SafeErrorCode.CLI_FAILURE)
         return 1
     sys.stdout.write(encoded + "\n")
     sys.stdout.flush()
@@ -208,13 +261,18 @@ def _read_bounded_json(path: Path) -> object:
         raw = path.read_bytes()
         return json.loads(raw)
     except Exception:
-        raise V4CliError("safe aggregate is unavailable") from None
+        raise V4CliError(V4SafeErrorCode.WORKER_PROTOCOL_FAILURE) from None
 
 
-def _write_error(exit_code: int, message: str) -> None:
-    sys.stderr.write(
-        json.dumps({"error": message}, ensure_ascii=True, separators=(",", ":")) + "\n"
-    )
+def _write_error(exit_code: int, code: V4SafeErrorCode) -> None:
+    messages = {
+        V4SafeErrorCode.USAGE_ERROR: "usage: aaos phase5 v4 {manifest|calibration|heldout|ledger-status}",
+        V4SafeErrorCode.LEDGER_FAILURE: "ledger is corrupt or unavailable; failing closed",
+    }
+    payload = {"error": messages.get(code, "V4 evaluation failed safely")}
+    if code is not V4SafeErrorCode.USAGE_ERROR:
+        payload["code"] = code.value
+    sys.stderr.write(json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n")
     sys.stderr.flush()
 
 
