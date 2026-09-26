@@ -110,6 +110,7 @@ class ToolField:
     value_type: ToolValueType
     required: bool = True
     enum_values: tuple[str, ...] = ()
+    max_length: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _safe_name(self.name, "field name", limit=64))
@@ -128,14 +129,29 @@ class ToolField:
         if len(set(normalized)) != len(normalized):
             raise ValueError("enum_values must be unique")
         object.__setattr__(self, "enum_values", normalized)
+        if self.max_length is not None and (
+            isinstance(self.max_length, bool)
+            or not isinstance(self.max_length, int)
+            or self.max_length <= 0
+            or self.max_length > MAX_TOOL_DESCRIPTION_CHARACTERS
+        ):
+            raise ValueError("max_length must be a positive bounded integer")
+        if self.max_length is not None and self.value_type not in {
+            ToolValueType.STRING,
+            ToolValueType.SAFE_IDENTIFIER,
+        }:
+            raise ValueError("max_length requires a string field")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "enum_values": self.enum_values,
             "name": self.name,
             "required": self.required,
             "value_type": self.value_type.value,
         }
+        if self.max_length is not None:
+            result["max_length"] = self.max_length
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +261,12 @@ class ToolInputSchema:
             raise ValueError(f"argument {field.name} has an invalid type")
         if isinstance(value, str) and not value.strip():
             raise ValueError(f"argument {field.name} must not be blank")
+        if (
+            isinstance(value, str)
+            and field.max_length is not None
+            and len(value) > field.max_length
+        ):
+            raise ValueError(f"argument {field.name} exceeds its maximum length")
         if field.enum_values and value not in field.enum_values:
             raise ValueError(f"argument {field.name} has an invalid enum value")
 
@@ -446,6 +468,8 @@ class ToolDefinition:
             }
             if field.enum_values:
                 value["allowed_values"] = list(field.enum_values)
+            if field.max_length is not None:
+                value["max_length"] = field.max_length
             if self.input_schema.schema_name == "rag_query" and field.name == "scope":
                 value.update(rag_scope_model_contract())
             if self.input_schema.schema_name == "rag_query" and field.name == "answer_language":
@@ -680,10 +704,13 @@ class ToolRegistry:
                     AgentErrorCode.TOOL_NOT_EXECUTABLE, "tool handler is disabled"
                 )
             async_handler = getattr(handler, "handle_async", None)
-            if definition.name is ToolName.RAG_QUERY and callable(async_handler):
-                result = await async_handler(
-                    invocation.arguments, trusted_task_scope=trusted_task_scope
-                )
+            if callable(async_handler):
+                if definition.name is ToolName.RAG_QUERY:
+                    result = await async_handler(
+                        invocation.arguments, trusted_task_scope=trusted_task_scope
+                    )
+                else:
+                    result = await async_handler(invocation.arguments)
                 if not isinstance(result, ToolResult):
                     raise ToolInvocationError(
                         AgentErrorCode.HANDLER_EXECUTION_FAILED,

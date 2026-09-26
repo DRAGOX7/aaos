@@ -27,6 +27,7 @@ MAX_TOOL_NAME_CHARACTERS = 64
 MAX_TIMEOUT_SECONDS = 86_400
 _EMPTY_FINGERPRINT = "0" * 64
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_SAFE_OBSERVATION_KIND = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 JSONScalar: TypeAlias = None | bool | int | float | str
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
@@ -45,6 +46,12 @@ class AgentState(StrEnum):
 
 class ToolName(StrEnum):
     RAG_QUERY = "rag_query"
+    ACADEMIC_LIST_COURSES = "academic.list_courses"
+    ACADEMIC_GET_COURSE = "academic.get_course"
+    ACADEMIC_LIST_ASSIGNMENTS = "academic.list_assignments"
+    ACADEMIC_GET_ASSIGNMENT = "academic.get_assignment"
+    ACADEMIC_LIST_DOCUMENTS = "academic.list_documents"
+    RAG_ANSWER = "rag.answer"
     READ_TASK_STATE = "read_task_state"
     WRITE_TASK_STATE = "write_task_state"
     COMPLETE_TASK = "complete_task"
@@ -119,6 +126,15 @@ class AgentErrorCode(StrEnum):
     SCOPE_DENIED = "SCOPE_DENIED"
     SCOPE_GRANTED = "SCOPE_GRANTED"
     INVALID_GROUNDED_REFERENCE = "INVALID_GROUNDED_REFERENCE"
+    COURSE_NOT_FOUND = "COURSE_NOT_FOUND"
+    AMBIGUOUS_COURSE = "AMBIGUOUS_COURSE"
+    ASSIGNMENT_NOT_FOUND = "ASSIGNMENT_NOT_FOUND"
+    AMBIGUOUS_ASSIGNMENT = "AMBIGUOUS_ASSIGNMENT"
+    NO_MATCHING_DOCUMENT = "NO_MATCHING_DOCUMENT"
+    AMBIGUOUS_DOCUMENT = "AMBIGUOUS_DOCUMENT"
+    RESULT_TOO_LARGE = "RESULT_TOO_LARGE"
+    INVALID_TOOL_OUTPUT = "INVALID_TOOL_OUTPUT"
+    REQUEST_DEADLINE_EXCEEDED = "REQUEST_DEADLINE_EXCEEDED"
 
 
 AgentFailureCode = AgentErrorCode
@@ -625,7 +641,8 @@ class ToolObservation:
     fields: tuple[tuple[str, object], ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "kind", _safe_identifier(self.kind, "kind", limit=64))
+        if not isinstance(self.kind, str) or not _SAFE_OBSERVATION_KIND.fullmatch(self.kind):
+            raise ValueError("kind must be a safe observation identifier")
         object.__setattr__(self, "status", _safe_identifier(self.status, "status", limit=64))
         if self.text is not None:
             object.__setattr__(self, "text", _nonblank_text(self.text, "text"))

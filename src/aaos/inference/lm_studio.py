@@ -105,6 +105,126 @@ _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT: dict[str, object] = {
     },
 }
 
+
+def _academic_call_schema(
+    tool_name: str,
+    properties: dict[str, object],
+    required: list[str],
+) -> dict[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "action": {"type": "string", "enum": ["CALL_TOOL"]},
+            "tool_name": {"type": "string", "enum": [tool_name]},
+            "arguments": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": properties,
+                "required": required,
+            },
+        },
+        "required": ["action", "tool_name", "arguments"],
+    }
+
+
+_ACADEMIC_COURSE_NAME: dict[str, object] = {
+    "type": ["string", "null"],
+    "maxLength": 512,
+}
+_ACADEMIC_DECISION_RESPONSE_FORMAT: dict[str, object] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "aaos_read_only_academic_decision_v1",
+        "strict": True,
+        "schema": {
+            "oneOf": [
+                _academic_call_schema(
+                    "academic.list_courses",
+                    {},
+                    [],
+                ),
+                _academic_call_schema(
+                    "academic.get_course",
+                    {"course_name": {"type": "string", "minLength": 1, "maxLength": 512}},
+                    ["course_name"],
+                ),
+                _academic_call_schema(
+                    "academic.list_assignments",
+                    {
+                        "course_name": _ACADEMIC_COURSE_NAME,
+                        "due_window": {
+                            "type": ["string", "null"],
+                            "enum": ["NEXT_7_DAYS", None],
+                        },
+                    },
+                    ["course_name", "due_window"],
+                ),
+                _academic_call_schema(
+                    "academic.get_assignment",
+                    {
+                        "assignment_title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                        },
+                        "course_name": _ACADEMIC_COURSE_NAME,
+                    },
+                    ["assignment_title", "course_name"],
+                ),
+                _academic_call_schema(
+                    "academic.list_documents",
+                    {
+                        "course_name": _ACADEMIC_COURSE_NAME,
+                        "document_title": _ACADEMIC_COURSE_NAME,
+                    },
+                    ["course_name", "document_title"],
+                ),
+                _academic_call_schema(
+                    "rag.answer",
+                    {"course_name": _ACADEMIC_COURSE_NAME},
+                    ["course_name"],
+                ),
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "action": {"type": "string", "enum": ["ANSWER"]},
+                        "evidence_refs": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": {
+                                "type": "string",
+                                "pattern": "^read-[1-8]$",
+                            },
+                        },
+                    },
+                    "required": ["action", "evidence_refs"],
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "action": {"type": "string", "enum": ["REFUSE"]},
+                        "reason": {
+                            "type": "string",
+                            "enum": [
+                                "UNSUPPORTED_CAPABILITY",
+                                "INSUFFICIENT_EVIDENCE",
+                                "AMBIGUOUS_ENTITY",
+                                "MISSING_ENTITY",
+                                "READ_ONLY_ACTION_UNSUPPORTED",
+                            ],
+                        },
+                    },
+                    "required": ["action", "reason"],
+                },
+            ]
+        },
+    },
+}
+
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "json_schema": {
@@ -244,6 +364,7 @@ _REQUIREMENT_COVERAGE_RESPONSE_FORMAT: dict[str, object] = {
 _STRUCTURED_RESPONSE_FORMATS = {
     "agent_proposal_transport": _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "least_authority_proposal_transport": _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
+    "read_only_academic_decision": _ACADEMIC_DECISION_RESPONSE_FORMAT,
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

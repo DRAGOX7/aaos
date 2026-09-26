@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -38,7 +39,15 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session, sessionmaker
 
+    from aaos.agent.academic_orchestrator import (
+        AcademicAskResult,
+        AcademicDocumentPort,
+        AcademicReadPort,
+        ReadOnlyAcademicAssistant,
+    )
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
+    from aaos.inference.lm_studio import LMStudioGateway
+    from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
@@ -46,6 +55,10 @@ if TYPE_CHECKING:
     from aaos.web.health_read import SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
+    from aaos.web.routes import AcademicAskService
+
+    class _AcademicDocumentReadDelegate(AcademicDocumentPort, Protocol):
+        def get_document(self, document_id: int) -> DocumentSummary: ...
 
 
 class HealthResponse(BaseModel):
@@ -60,11 +73,11 @@ class _LazyDefaultCourseReader:
     """Create default academic persistence only when courses are requested."""
 
     def __init__(self) -> None:
-        self._delegate: AcademicReader | None = None
-        self._document_delegate: DocumentReader | None = None
+        self._delegate: AcademicReadPort | None = None
+        self._document_delegate: _AcademicDocumentReadDelegate | None = None
         self._engine: Engine | None = None
 
-    def _ensure_delegate(self) -> AcademicReader:
+    def _ensure_delegate(self) -> AcademicReadPort:
         if self._delegate is None:
             from aaos.persistence.database import (
                 create_database_engine,
@@ -82,13 +95,13 @@ class _LazyDefaultCourseReader:
 
         return self._delegate
 
-    def _ensure_document_delegate(self) -> DocumentReader:
+    def _ensure_document_delegate(self) -> _AcademicDocumentReadDelegate:
         self._ensure_delegate()
         assert self._document_delegate is not None
         return self._document_delegate
 
-    def list_courses(self) -> tuple[CourseSummary, ...]:
-        return self._ensure_delegate().list_courses()
+    def list_courses(self, *, limit: int | None = None) -> tuple[CourseSummary, ...]:
+        return self._ensure_delegate().list_courses(limit=limit)
 
     def get_course(self, course_id: int) -> CourseSummary:
         return self._ensure_delegate().get_course(course_id)
@@ -96,14 +109,21 @@ class _LazyDefaultCourseReader:
     def list_assignments(
         self,
         course_id: int | None = None,
+        *,
+        limit: int | None = None,
     ) -> tuple[AssignmentSummary, ...]:
-        return self._ensure_delegate().list_assignments(course_id)
+        return self._ensure_delegate().list_assignments(course_id, limit=limit)
+
+    def get_assignment(self, assignment_id: int) -> AssignmentSummary:
+        return self._ensure_delegate().get_assignment(assignment_id)
 
     def list_documents(
         self,
         course_id: int | None = None,
+        *,
+        limit: int | None = None,
     ) -> tuple[DocumentSummary, ...]:
-        return self._ensure_document_delegate().list_documents(course_id)
+        return self._ensure_document_delegate().list_documents(course_id, limit=limit)
 
     def get_document(self, document_id: int) -> DocumentSummary:
         return self._ensure_document_delegate().get_document(document_id)
@@ -142,11 +162,72 @@ class _LazyDefaultRagReader:
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
         return await self._ensure_delegate().ask(request)
 
+    async def ask_trusted(self, query: RagQuery) -> RenderedRagResponse:
+        self._ensure_delegate()
+        assert self._runtime is not None
+        return await self._runtime.service.ask(query)
+
     async def dispose(self) -> None:
         if self._runtime is not None:
             await self._runtime.aclose()
         if self._engine is not None:
             self._engine.dispose()
+
+
+class _DefaultAgentRagReadService:
+    """Expose the configured Phase 4 service through its trusted query contract."""
+
+    def __init__(self, reader: _LazyDefaultRagReader) -> None:
+        self._reader = reader
+
+    async def ask(self, query: RagQuery) -> RenderedRagResponse:
+        return await self._reader.ask_trusted(query)
+
+
+class _LazyDefaultAcademicAskService:
+    """Own one lazy local gateway and the bounded read-only assistant."""
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        academic_reader: AcademicReadPort,
+        document_reader: AcademicDocumentPort,
+        rag_service: LocalRagService,
+    ) -> None:
+        self._settings = settings
+        self._academic_reader = academic_reader
+        self._document_reader = document_reader
+        self._rag_service = rag_service
+        self._gateway: LMStudioGateway | None = None
+        self._assistant: ReadOnlyAcademicAssistant | None = None
+
+    def _ensure_assistant(self) -> ReadOnlyAcademicAssistant:
+        if self._assistant is None:
+            import httpx2
+
+            from aaos.agent.academic_orchestrator import ReadOnlyAcademicAssistant
+            from aaos.inference.lm_studio import LMStudioGateway
+
+            self._gateway = LMStudioGateway(self._settings, httpx2.AsyncHTTPTransport())
+            self._assistant = ReadOnlyAcademicAssistant(
+                self._gateway,
+                self._academic_reader,
+                self._document_reader,
+                self._rag_service,
+            )
+        assert self._assistant is not None
+        return self._assistant
+
+    async def ask(
+        self,
+        question: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> AcademicAskResult:
+        return await self._ensure_assistant().ask(question, cancel_event)
+
+    async def dispose(self) -> None:
+        if self._gateway is not None:
+            await self._gateway.aclose()
 
 
 class _LazyDefaultTaskReader:
@@ -311,6 +392,7 @@ def create_app(
     principal_provider: LocalApproverContextProvider | None = None,
     activity_reader: ActivityReader | None = None,
     system_health_reader: SystemHealthReader | None = None,
+    ask_service: AcademicAskService | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -330,6 +412,7 @@ def create_app(
     resolved_system_health_reader: SystemHealthReader
     resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
+    resolved_ask_service = ask_service
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
@@ -390,6 +473,20 @@ def create_app(
         resolved_rag_reader = lazy_rag_reader
         application.router.add_event_handler("shutdown", lazy_rag_reader.dispose)
 
+    if resolved_ask_service is None:
+        if isinstance(resolved_rag_reader, _LazyDefaultRagReader):
+            agent_rag_reader = resolved_rag_reader
+        else:
+            agent_rag_reader = _LazyDefaultRagReader(session_factory)
+            application.router.add_event_handler("shutdown", agent_rag_reader.dispose)
+        resolved_ask_service = _LazyDefaultAcademicAskService(
+            settings,
+            academic_reader,
+            document_reader,
+            _DefaultAgentRagReadService(agent_rag_reader),
+        )
+        application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
+
     application.include_router(
         create_api_v1_router(
             course_reader,
@@ -401,6 +498,7 @@ def create_app(
             task_reader=task_reader,
             task_commands=resolved_task_commands,
             principal_provider=resolved_principal_provider,
+            ask_service=resolved_ask_service,
         )
     )
 

@@ -36,13 +36,19 @@ MAX_POLICY_TIMEOUT_SECONDS = 86_400
 MAX_MODEL_PROPOSAL_TIMEOUT_SECONDS = 60.0
 _CONCEPTUAL_TOOL_TIMEOUTS: Mapping[str, float] = MappingProxyType(
     {
+        "academic.get_assignment": 5.0,
+        "academic.get_course": 5.0,
+        "academic.list_assignments": 5.0,
+        "academic.list_courses": 5.0,
+        "academic.list_documents": 5.0,
         "rag_query": 120.0,
+        "rag.answer": 120.0,
         "read_task_state": 5.0,
         "write_task_state": 5.0,
         "complete_task": 5.0,
     }
 )
-_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class RuntimePolicyCompositionError(ValueError):
@@ -401,6 +407,12 @@ def _assert_limits_match(
     )
     policy_timeouts = dict(policy.executable_tool_timeouts)
     component_timeouts = {
+        "academic.get_assignment": 5.0,
+        "academic.get_course": 5.0,
+        "academic.list_assignments": 5.0,
+        "academic.list_courses": 5.0,
+        "academic.list_documents": 5.0,
+        "rag.answer": 120.0,
         "rag_query": limits.rag_query_timeout_seconds,
         "read_task_state": limits.read_task_state_timeout_seconds,
         "write_task_state": limits.write_task_state_timeout_seconds,
@@ -425,6 +437,12 @@ def _assert_non_executable_limits_are_canonical(
     if limits is None:
         return
     component_timeouts = {
+        "academic.get_assignment": 5.0,
+        "academic.get_course": 5.0,
+        "academic.list_assignments": 5.0,
+        "academic.list_courses": 5.0,
+        "academic.list_documents": 5.0,
+        "rag.answer": 120.0,
         "rag_query": limits.rag_query_timeout_seconds,
         "read_task_state": limits.read_task_state_timeout_seconds,
         "write_task_state": limits.write_task_state_timeout_seconds,

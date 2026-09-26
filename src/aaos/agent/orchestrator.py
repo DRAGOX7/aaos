@@ -70,6 +70,10 @@ class ProposalSource(Protocol):
     async def propose(self, request: ProposalRequest) -> ProposalResult: ...
 
 
+class _ProposalCancelled(Exception):
+    """Internal signal that the trusted caller cancelled model planning."""
+
+
 @dataclass(slots=True)
 class _RunEventContext:
     run_id: AgentRunId
@@ -106,6 +110,15 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.MODEL_UNAVAILABLE: "agent proposal model is unavailable",
     AgentErrorCode.INTERNAL_AGENT_FAILURE: "agent execution failed safely",
     AgentErrorCode.INVALID_GROUNDED_REFERENCE: "grounded result reference was invalid",
+    AgentErrorCode.COURSE_NOT_FOUND: "the requested course was not found",
+    AgentErrorCode.AMBIGUOUS_COURSE: "the requested course name is ambiguous",
+    AgentErrorCode.ASSIGNMENT_NOT_FOUND: "the requested assignment was not found",
+    AgentErrorCode.AMBIGUOUS_ASSIGNMENT: "the requested assignment is ambiguous",
+    AgentErrorCode.NO_MATCHING_DOCUMENT: "the requested document was not found",
+    AgentErrorCode.AMBIGUOUS_DOCUMENT: "the requested document title is ambiguous",
+    AgentErrorCode.RESULT_TOO_LARGE: "the read result exceeds its bounded limit",
+    AgentErrorCode.INVALID_TOOL_OUTPUT: "a read tool returned invalid data",
+    AgentErrorCode.REQUEST_DEADLINE_EXCEEDED: "the request deadline was reached",
 }
 
 
@@ -331,11 +344,10 @@ class AgentOrchestrator:
                     last_proposal_fingerprint,
                 )
             try:
-                result = await asyncio.wait_for(
-                    self._proposal_adapter.propose(request),
-                    timeout=self._limits.model_proposal_timeout_seconds,
-                )
+                result = await self._await_proposal(request, cancel_event)
             except asyncio.CancelledError:
+                return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
+            except _ProposalCancelled:
                 return self._cancelled(task, machine, proposal_steps, last_proposal_fingerprint)
             except asyncio.TimeoutError:
                 return self._failure(
@@ -767,7 +779,12 @@ class AgentOrchestrator:
                         tool_execution_lifecycle=last_tool_execution_lifecycle,
                     )
 
-            if direct_trusted_retrieve:
+            direct_trusted_phase4_output = (
+                trusted_phase4_output
+                and definition is not None
+                and getattr(definition.handler, "complete_trusted_output", False) is True
+            )
+            if direct_trusted_retrieve or direct_trusted_phase4_output:
                 if captured_grounded_result is None:
                     return self._failure(
                         task,
@@ -1056,6 +1073,45 @@ class AgentOrchestrator:
             resource_cleanup_requested=False,
             resource_cleanup_complete=None,
         )
+
+    async def _await_proposal(
+        self,
+        request: ProposalRequest,
+        cancel_event: asyncio.Event | None,
+    ) -> ProposalResult:
+        """Bound one model decision and promptly stop it on trusted cancellation."""
+
+        operation = asyncio.create_task(self._proposal_adapter.propose(request))
+        cancellation_watchers: list[asyncio.Task[object]] = []
+        if cancel_event is not None:
+            cancellation_watchers.append(asyncio.create_task(_wait_for_event(cancel_event)))
+        if self._cancel_signal is not None:
+            cancellation_watchers.append(asyncio.create_task(_wait_for_event(self._cancel_signal)))
+        try:
+            done, _ = await asyncio.wait(
+                {operation, *cancellation_watchers},
+                timeout=self._limits.model_proposal_timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            raise
+        finally:
+            for watcher in cancellation_watchers:
+                if not watcher.done():
+                    watcher.cancel()
+            if cancellation_watchers:
+                await asyncio.gather(*cancellation_watchers, return_exceptions=True)
+
+        if operation in done:
+            return operation.result()
+
+        operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+        if any(watcher in done for watcher in cancellation_watchers):
+            raise _ProposalCancelled()
+        raise asyncio.TimeoutError()
 
     def run_task(
         self, task: AgentTask, cancel_event: asyncio.Event | None = None

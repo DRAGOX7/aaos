@@ -68,6 +68,59 @@ class ApiErrorResponse(BaseModel):
     error: ApiErrorDetail
 
 
+class AcademicAskStatusView(StrEnum):
+    ANSWERED = "ANSWERED"
+    REFUSED = "REFUSED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    TIMED_OUT = "TIMED_OUT"
+
+
+class AcademicAskRequest(BaseModel):
+    """Closed request contract for one self-contained academic question."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    question: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("question")
+    @classmethod
+    def _question_is_nonblank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("question must not be blank")
+        return normalized
+
+
+class AcademicAskSource(BaseModel):
+    """Trusted academic source identity attached to a structured answer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    tool_name: str = Field(min_length=1, max_length=64)
+    entity_kind: str = Field(min_length=1, max_length=32)
+    entity_id: int | None
+    course_id: int | None = None
+    title: str | None = Field(default=None, max_length=2048)
+    query_filter: str | None = Field(default=None, max_length=4096)
+
+
+class AcademicAskResponse(BaseModel):
+    """Bounded answer, refusal, or typed failure from read-only orchestration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    status: AcademicAskStatusView
+    answer_text: str | None = Field(default=None, max_length=16384)
+    failure_code: str | None = Field(default=None, max_length=64)
+    failure_message: str | None = Field(default=None, max_length=1024)
+    refusal_code: str | None = Field(default=None, max_length=64)
+    sources: tuple[AcademicAskSource, ...] = ()
+    rag_provenance: dict[str, object] | None = None
+    step_count: int = Field(ge=0, le=8)
+
+
 class CourseSummary(BaseModel):
     """Browser-safe projection of an active academic course."""
 

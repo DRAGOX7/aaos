@@ -353,6 +353,8 @@ class ObservationSanitizer:
             if normalized_name == ToolName.RAG_QUERY.value:
                 observation = self._rag_observation(result)
                 truncated = False
+            elif normalized_name.startswith("academic.") and result.ok:
+                observation, truncated = self._academic_observation(result, normalized_name)
             elif result.ok:
                 observation, truncated = self._generic_observation(result, normalized_name)
             else:
@@ -376,6 +378,75 @@ class ObservationSanitizer:
             raise
         except (TypeError, ValueError, KeyError, OverflowError) as exc:
             raise ObservationSanitizationError() from exc
+
+    def _academic_observation(
+        self, result: ToolResult, tool_name: str
+    ) -> tuple[ToolObservation, bool]:
+        output = result.output
+        if not isinstance(output, Mapping):
+            raise ObservationSanitizationError()
+        source_ref = output.get("source_ref")
+        records = output.get("records")
+        if (
+            not isinstance(source_ref, str)
+            or not re.fullmatch(r"read-[1-8]", source_ref)
+            or not isinstance(records, (tuple, list))
+            or len(records) > 50
+        ):
+            raise ObservationSanitizationError()
+
+        if tool_name in {
+            ToolName.ACADEMIC_LIST_COURSES.value,
+            ToolName.ACADEMIC_GET_COURSE.value,
+        }:
+            allowed_fields = {"id", "title", "code", "description"}
+        elif tool_name in {
+            ToolName.ACADEMIC_LIST_ASSIGNMENTS.value,
+            ToolName.ACADEMIC_GET_ASSIGNMENT.value,
+        }:
+            allowed_fields = {
+                "id",
+                "course_id",
+                "course_title",
+                "title",
+                "description",
+                "due_at",
+            }
+        elif tool_name == ToolName.ACADEMIC_LIST_DOCUMENTS.value:
+            allowed_fields = {
+                "id",
+                "course_id",
+                "title",
+                "page_count",
+                "index_readiness",
+                "index_coverage",
+            }
+        else:
+            raise ObservationSanitizationError()
+
+        safe_records: list[dict[str, object]] = []
+        for record in records:
+            if not isinstance(record, Mapping):
+                raise ObservationSanitizationError()
+            safe_record: dict[str, object] = {}
+            for key in sorted(allowed_fields.intersection(record)):
+                value = record[key]
+                if isinstance(value, str):
+                    safe_record[key] = _sanitize_text(value, self._max_text_size, truncate=True)
+                elif value is None or isinstance(value, (int, bool)):
+                    safe_record[key] = value
+                else:
+                    raise ObservationSanitizationError()
+            safe_records.append(safe_record)
+        observation = ToolObservation(
+            kind=tool_name,
+            status="OK",
+            fields=(
+                ("records", tuple(safe_records)),
+                ("source_ref", source_ref),
+            ),
+        )
+        return observation, False
 
     def _rag_observation(self, result: ToolResult) -> ToolObservation:
         # Slice 3 owns the trusted Phase 4 response schema.  Reuse that
@@ -456,7 +527,7 @@ class ObservationSanitizer:
         # Generic text has already been deterministically shortened.  A RAG
         # answer is an approved Phase 4 projection and is rejected rather than
         # silently changing its trusted answer text at this boundary.
-        if observation.kind == ToolName.RAG_QUERY.value:
+        if observation.kind == ToolName.RAG_QUERY.value or observation.kind.startswith("academic."):
             raise ObservationSanitizationError()
 
         fields = dict(observation.fields)

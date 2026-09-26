@@ -20,6 +20,20 @@ from aaos.web.contracts import (
 )
 from aaos.web.errors import Phase7ApiError
 
+MAX_AGENT_READ_LIMIT = 51
+
+
+def _validated_read_limit(limit: int | None) -> int | None:
+    if limit is None:
+        return None
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not (1 <= limit <= MAX_AGENT_READ_LIMIT)
+    ):
+        raise ValueError("read limit must be between one and 51")
+    return limit
+
 
 def _to_utc(value: datetime) -> datetime:
     """Normalize a persisted aware timestamp to canonical UTC."""
@@ -35,9 +49,12 @@ class DocumentReadService:
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
 
-    def list_documents(self, course_id: int | None = None) -> tuple[DocumentSummary, ...]:
+    def list_documents(
+        self, course_id: int | None = None, *, limit: int | None = None
+    ) -> tuple[DocumentSummary, ...]:
         """Return active document projections in deterministic title/id order."""
 
+        limit = _validated_read_limit(limit)
         if course_id is not None:
             self._require_active_course(course_id)
 
@@ -53,6 +70,8 @@ class DocumentReadService:
         )
         if course_id is not None:
             statement = statement.where(RemoteFileORM.course_id == course_id)
+        if limit is not None:
+            statement = statement.limit(limit)
 
         with self._sessions() as session:
             rows = session.execute(statement).tuples().all()

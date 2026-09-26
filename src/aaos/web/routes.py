@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
+from aaos.agent.academic_orchestrator import AcademicAskResult
 from aaos.web.activity import (
     ActivityCursor,
     ActivityEvent,
@@ -17,6 +19,10 @@ from aaos.web.activity import (
 )
 from aaos.web.activity_stream import iter_activity_sse
 from aaos.web.contracts import (
+    AcademicAskRequest,
+    AcademicAskResponse,
+    AcademicAskSource,
+    AcademicAskStatusView,
     ApprovalCommandRequest,
     ApprovalDetail,
     ApprovalListResponse,
@@ -137,6 +143,16 @@ class DocumentReader(Protocol):
         """Return one active document."""
 
 
+class AcademicAskService(Protocol):
+    """Bounded read-only question service exposed through the Ask route."""
+
+    async def ask(
+        self,
+        question: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> AcademicAskResult: ...
+
+
 def create_api_v1_router(
     course_reader: CourseReader,
     *,
@@ -148,6 +164,7 @@ def create_api_v1_router(
     task_reader: TaskReader | None = None,
     task_commands: TaskApprovalCommands | None = None,
     principal_provider: LocalApproverContextProvider | None = None,
+    ask_service: AcademicAskService | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -277,6 +294,55 @@ def create_api_v1_router(
                     "AAOS could not answer from the local knowledge base.",
                 ) from error
 
+    if ask_service is not None:
+
+        @router.post("/ask", response_model=AcademicAskResponse)
+        async def ask_academic(
+            request: Request,
+            body: AcademicAskRequest,
+        ) -> AcademicAskResponse:
+            cancellation = asyncio.Event()
+            ask_task = asyncio.create_task(ask_service.ask(body.question, cancellation))
+
+            async def monitor_disconnect() -> None:
+                while not ask_task.done():
+                    if await request.is_disconnected():
+                        cancellation.set()
+                        return
+                    await asyncio.sleep(0.1)
+
+            monitor_task = asyncio.create_task(monitor_disconnect())
+            try:
+                result = await ask_task
+            finally:
+                monitor_task.cancel()
+                await asyncio.gather(monitor_task, return_exceptions=True)
+
+            return AcademicAskResponse(
+                status=AcademicAskStatusView(result.status.value),
+                answer_text=result.answer_text,
+                failure_code=(
+                    result.failure_code.value if result.failure_code is not None else None
+                ),
+                failure_message=result.failure_message,
+                refusal_code=(
+                    result.refusal_code.value if result.refusal_code is not None else None
+                ),
+                sources=tuple(
+                    AcademicAskSource(
+                        tool_name=source.tool_name,
+                        entity_kind=source.entity_kind,
+                        entity_id=source.entity_id,
+                        course_id=source.course_id,
+                        title=source.title,
+                        query_filter=source.query_filter,
+                    )
+                    for source in result.sources
+                ),
+                rag_provenance=_json_compatible_mapping(result.rag_provenance),
+                step_count=result.step_count,
+            )
+
     if task_reader is not None:
 
         @router.get("/tasks", response_model=TaskListResponse)
@@ -399,3 +465,24 @@ def create_api_v1_router(
                 raise _phase6_error(error.code) from error
 
     return router
+
+
+def _json_compatible_mapping(value: Mapping[str, object] | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+
+    def convert(item: object) -> object:
+        if isinstance(item, Mapping):
+            return {str(key): convert(nested) for key, nested in item.items()}
+        if isinstance(item, (tuple, list)):
+            return [convert(nested) for nested in item]
+        if hasattr(item, "value") and isinstance(getattr(item, "value"), str):
+            return getattr(item, "value")
+        if item is None or isinstance(item, (str, bool, int, float)):
+            return item
+        raise TypeError("academic answer provenance is not JSON-compatible")
+
+    normalized = convert(value)
+    if not isinstance(normalized, dict):
+        raise TypeError("academic answer provenance must be an object")
+    return normalized
