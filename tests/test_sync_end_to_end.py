@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from docx_fixtures import mixed_structure_docx
@@ -15,7 +16,7 @@ from sqlalchemy import func, select
 
 from aaos.academic.source import CompleteSourceSnapshot, RawCourse, RawRemoteFile
 from aaos.documents.cli import Phase3ServiceRuntime
-from aaos.documents.config import resolve_document_runtime_paths
+from aaos.documents.config import DocumentRuntimePaths, resolve_document_runtime_paths
 from aaos.documents.contracts import FetchedDocx, FetchedPdf, RemoteFileSelection
 from aaos.documents.docx import DocxProcessor
 from aaos.documents.lock import IngestionLock
@@ -57,7 +58,7 @@ from aaos.rag.contracts import (
 from aaos.rag.dense import InMemoryDenseIndexFactory
 from aaos.rag.embeddings import FakeEmbeddingService
 from aaos.rag.retrieval import SufficiencyDecision
-from aaos.rag.runtime import build_phase4_runtime
+from aaos.rag.runtime import Phase4RagRuntime, build_phase4_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SYSTEM = "moodle:fixture:offline-step5"
@@ -198,8 +199,8 @@ def _offline_snapshot() -> CompleteSourceSnapshot:
 
 def test_sync_ingests_and_indexes_page_and_structure_content_offline(
     tmp_path: Path,
-    monkeypatch,
-    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from aaos import cli as app_cli
     from aaos.documents import cli as documents_cli
@@ -242,8 +243,13 @@ def test_sync_ingests_and_indexes_page_and_structure_content_offline(
         sufficiency_max_fused_rank=10,
     )
 
-    def build_document_runtime(**kwargs: object) -> Phase3ServiceRuntime:
-        paths = kwargs["paths"]
+    def build_document_runtime(
+        bootstrap_config: object,
+        settings: object,
+        auth_paths: object,
+        paths: DocumentRuntimePaths,
+    ) -> Phase3ServiceRuntime:
+        del bootstrap_config, settings, auth_paths
         assert paths.database_path == database_path
         document_engine = create_database_engine(database_path)
         document_sessions = create_session_factory(document_engine)
@@ -258,7 +264,7 @@ def test_sync_ingests_and_indexes_page_and_structure_content_offline(
         )
         return Phase3ServiceRuntime(service=service, _engine=document_engine)
 
-    def build_rag_runtime():
+    def build_rag_runtime() -> Phase4RagRuntime:
         return build_phase4_runtime(
             paths=rag_paths,
             config=rag_config,
@@ -326,19 +332,13 @@ def test_sync_ingests_and_indexes_page_and_structure_content_offline(
                 )
                 == 0
             )
-            assert (
-                session.scalar(
-                    select(func.count())
-                    .select_from(DocumentStructureUnitORM)
-                    .where(DocumentStructureUnitORM.document_version_id == structure_version.id)
-                )
-                > 0
-            )
             initial_structure_unit_count = session.scalar(
                 select(func.count())
                 .select_from(DocumentStructureUnitORM)
                 .where(DocumentStructureUnitORM.document_version_id == structure_version.id)
             )
+            assert initial_structure_unit_count is not None
+            assert initial_structure_unit_count > 0
 
             generation = session.scalar(
                 select(RagIndexGenerationORM).where(RagIndexGenerationORM.status == "ACTIVE")
@@ -375,7 +375,9 @@ def test_sync_ingests_and_indexes_page_and_structure_content_offline(
                     )
                 )
             )
+            assert initial_page_span_count is not None
             assert initial_page_span_count > 0
+            assert initial_structure_span_count is not None
             assert initial_structure_span_count > 0
             indexes = tuple(
                 session.scalars(

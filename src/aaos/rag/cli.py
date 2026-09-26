@@ -40,8 +40,11 @@ _INDEX_STATUSES = frozenset({"PASS", "NO_OP"})
 
 
 class _Runtime(Protocol):
-    service: _Service
-    indexing: _Indexing
+    @property
+    def service(self) -> _Service: ...
+
+    @property
+    def indexing(self) -> _Indexing: ...
 
     def close(self) -> None: ...
 

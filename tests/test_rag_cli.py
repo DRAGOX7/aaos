@@ -388,7 +388,7 @@ def test_ask_closes_configured_gateway_on_same_event_loop() -> None:
             self._gateway = gateway
             self._delegate = FakeService([])
 
-        async def ask(self, query: RagQuery) -> object:
+        async def ask(self, query: RagQuery) -> RenderedRagResponse:
             await self._gateway.mark_used()
             return await self._delegate.ask(query)
 

@@ -55,9 +55,8 @@ from .semantic_coverage import (
     IndependentEntailmentVerifier,
     RequirementCoverageClassifier,
     RequirementDecomposer,
-    SemanticCoverageClassifier,
 )
-from .service import GuardedLocalRagService
+from .service import GuardedLocalRagService, _Generator, _SemanticClassifier
 
 DatabaseEngineFactory = Callable[[Any], Engine]
 SessionFactoryFactory = Callable[[Engine], Callable[[], Any]]
@@ -279,14 +278,14 @@ def build_phase4_runtime(
     retriever_factory: Callable[..., HybridRetriever] | None = None,
     evidence_selector_factory: Callable[..., EvidenceSelector] | None = None,
     sufficiency_gate_factory: Callable[..., EvidenceSufficiencyGate] | None = None,
-    semantic_classifier_factory: Callable[..., SemanticCoverageClassifier] | None = None,
+    semantic_classifier_factory: Callable[..., _SemanticClassifier] | None = None,
     requirement_decomposer_factory: RequirementDecomposerFactory | None = None,
     requirement_coverage_factory: RequirementCoverageFactory | None = None,
     atomic_requirement_decomposer_factory: AtomicRequirementDecomposerFactory | None = None,
     evidence_span_extractor_factory: EvidenceSpanExtractorFactory | None = None,
     entailment_verifier_factory: EntailmentVerifierFactory | None = None,
     nli_snapshot_path: str | Path | None = None,
-    answer_generator_factory: Callable[..., GroundedAnswerGenerator] | None = None,
+    answer_generator_factory: Callable[..., _Generator] | None = None,
     citation_validator_factory: Callable[[], CitationValidator] | None = None,
     service_factory: Callable[..., LocalRagService] | None = None,
     indexing_factory: Callable[..., RagIndexingService] | None = None,
@@ -455,7 +454,7 @@ def build_phase4_runtime(
         managed_gateway = _ManagedModelGateway(
             gateway, model_lifecycle, managed_embedding, residency
         )
-        semantic_classifier: SemanticCoverageClassifier | None = None
+        semantic_classifier: _SemanticClassifier | None = None
         requirement_decomposer: RequirementDecomposer | None = None
         requirement_coverage_classifier: RequirementCoverageClassifier | None = None
         claim_entailment_verifier: IndependentClaimEntailmentVerifier | None = None
