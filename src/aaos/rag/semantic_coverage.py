@@ -1140,12 +1140,13 @@ _REQUIREMENT_FRAME_PREFIXES = (
     "اذكر ",
     "حدد ",
 )
+_TRAILING_SENTENCE_PUNCTUATION = frozenset(".!?。！？؟…")
 
 
 def _canonical_requirement_key(text: str) -> str:
     """Collapse only deterministic request framing and Unicode surface variants."""
     normalized = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
-    while normalized and unicodedata.category(normalized[-1]).startswith("P"):
+    while normalized and normalized[-1] in _TRAILING_SENTENCE_PUNCTUATION:
         normalized = normalized[:-1].rstrip()
 
     changed = True

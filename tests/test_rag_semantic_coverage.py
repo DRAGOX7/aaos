@@ -127,6 +127,29 @@ def test_atomic_decomposition_preserves_value_significant_internal_punctuation()
     assert tuple(item.requirement_text for item in result.requirements) == candidates
 
 
+def test_atomic_decomposition_preserves_trailing_path_separator() -> None:
+    from aaos.rag.contracts import GlobalScope, RagQuery
+    from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
+
+    candidates = ("What is the endpoint path /api/v1/?", "What is the endpoint path /api/v1?")
+    payload = json.dumps(
+        {
+            "status": "OK",
+            "requirements": [{"requirement_text": item} for item in candidates],
+        }
+    )
+    gateway = FakeGateway([_response(payload)])
+
+    result = asyncio.run(
+        AtomicRequirementDecomposer(gateway).decompose(
+            RagQuery("Compare the endpoint paths.", GlobalScope())
+        )
+    )
+
+    assert result.status.value == "OK"
+    assert tuple(item.requirement_text for item in result.requirements) == candidates
+
+
 def test_atomic_decomposition_canonicalizes_arabic_request_frames() -> None:
     from aaos.rag.contracts import GlobalScope, RagQuery
     from aaos.rag.semantic_coverage import AtomicRequirementDecomposer
