@@ -146,8 +146,8 @@ def run_phase5_v4_command(
         _write_error(2, V4SafeErrorCode.USAGE_ERROR)
         return 2
 
-    repository = Path(repo_root).resolve() if repo_root is not None else _repository_root()
     try:
+        repository = Path(repo_root).resolve() if repo_root is not None else _repository_root()
         home = resolve_evaluation_home(local_appdata, repo_root=repository)
         if command is V4Command.LEDGER_STATUS:
             return _write_ledger_status(home)

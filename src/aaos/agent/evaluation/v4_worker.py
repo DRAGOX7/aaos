@@ -64,14 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ledger=ledger,
                 report_root=report_root,
             )
-            try:
-                report = runner.verify_manifest()
-            except V4RunnerError as exc:
-                if exc.code == "manifest_failed":
-                    return int(V4WorkerExitCode.MANIFEST_STRUCTURE_FAILURE)
-                if exc.code == "report_write_failed":
-                    return int(V4WorkerExitCode.REPORT_WRITE_FAILURE)
-                return 1
+            report = runner.verify_manifest()
         else:
             executor = create_configured_local_executor()
             runner = V4SealedRunner(
@@ -95,10 +88,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report.passed else 3
     except HeldoutLedgerError:
         return 4
-    except (V4RunnerError, OSError, ValueError, RuntimeError):
+    except V4RunnerError as exc:
+        return _runner_error_exit_code(exc)
+    except (OSError, ValueError, RuntimeError):
         return 1
     except Exception:
         return 1
+
+
+def _runner_error_exit_code(error: V4RunnerError) -> int:
+    if error.code == "manifest_failed":
+        return int(V4WorkerExitCode.MANIFEST_STRUCTURE_FAILURE)
+    if error.code == "report_write_failed":
+        return int(V4WorkerExitCode.REPORT_WRITE_FAILURE)
+    return 1
 
 
 def _candidate_sha(repo_root: Path) -> str:

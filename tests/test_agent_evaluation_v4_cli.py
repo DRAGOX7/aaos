@@ -9,6 +9,7 @@ from typing import Callable, cast
 
 import pytest
 
+import aaos.agent.evaluation.v4_cli as v4_cli
 from aaos.agent.evaluation.v4_cli import (
     V4CliUsageError,
     V4Command,
@@ -143,6 +144,75 @@ def test_worker_exit_error_is_closed_and_uses_parent_interpreter(
     options = launched["options"]
     assert isinstance(options, dict)
     assert options["cwd"] == str(repository)
+    assert not (
+        local_appdata / "AAOS" / "evaluation" / "v4" / "reports" / "manifest-latest.json"
+    ).exists()
+
+
+@pytest.mark.parametrize(
+    ("worker_exit_code", "public_code"),
+    [
+        (10, "V4_MANIFEST_STRUCTURE_FAILURE"),
+        (11, "V4_REPORT_WRITE_FAILURE"),
+        (12, "V4_WORKER_PROTOCOL_FAILURE"),
+    ],
+)
+def test_worker_stage_exit_codes_map_to_closed_public_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    worker_exit_code: int,
+    public_code: str,
+) -> None:
+    secret = "SECRET_V4_CASE_DO_NOT_LEAK"
+    repository = tmp_path / "repo"
+    local_appdata = tmp_path / "local-appdata"
+    repository.mkdir()
+    local_appdata.mkdir()
+
+    def process_factory(*args: object, **kwargs: object) -> _SyntheticChild:
+        return _SyntheticChild(secret.encode(), secret.encode(), worker_exit_code)
+
+    result = run_phase5_v4_command(
+        ["manifest"],
+        repo_root=repository,
+        local_appdata=local_appdata,
+        process_factory=cast(Callable[..., subprocess.Popen[bytes]], process_factory),
+    )
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": "V4 evaluation failed safely",
+        "code": public_code,
+    }
+    assert secret not in captured.out + captured.err
+
+
+def test_repository_resolution_exception_is_sanitized_and_not_propagated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "SECRET_V4_CASE_DO_NOT_LEAK"
+    local_appdata = tmp_path / "local-appdata"
+    local_appdata.mkdir()
+
+    def fail_repository_resolution() -> Path:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(v4_cli, "_repository_root", fail_repository_resolution)
+
+    result = run_phase5_v4_command(["manifest"], local_appdata=local_appdata)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": "V4 evaluation failed safely",
+        "code": "V4_CLI_FAILURE",
+    }
+    assert secret not in captured.out + captured.err
     assert not (
         local_appdata / "AAOS" / "evaluation" / "v4" / "reports" / "manifest-latest.json"
     ).exists()
