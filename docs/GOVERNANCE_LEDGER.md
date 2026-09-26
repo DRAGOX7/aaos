@@ -60,6 +60,31 @@ only where they would stop later local work after a clear technical gate.
 Their objective criteria remain in force. `phase-00-passed` remains a release
 declaration and is not authorized by this amendment.
 
+## Phase 5 deferred V4 disposition (2026-09-26)
+
+The project owner records Phase 5 implementation and corrective work as
+complete for local downstream development, with deterministic verification
+PASS and formal V4 acceptance deferred, at candidate
+`844afdeddd11a7cfa6fbed1d3eaefdf1e45ea07c`:
+
+- `PHASE5_IMPLEMENTATION=COMPLETE_FOR_LOCAL_DOWNSTREAM_DEVELOPMENT`
+- `PHASE5_DETERMINISTIC_VERIFICATION=PASS`
+- `PHASE5_FORMAL_V4_ACCEPTANCE=DEFERRED`
+- `PHASE5_V4_BLOCKER=SEALED_MANIFEST_CLI_FAILURE` (`V4_CLI_FAILURE`; no safe
+  manifest aggregate was produced)
+- `PHASE5_HELDOUT_STATE=AVAILABLE`
+- `PHASE5_HELDOUT_EXECUTION_COUNT=0`
+- `LOCAL_DOWNSTREAM_DEVELOPMENT=AUTHORIZED`
+- `PHASE5_RELEASE_FREEZE=BLOCKED_UNTIL_V4_COMPLETES`
+
+This disposition does not record Phase 5, V4, or held-out as PASSED, does not
+authorize moving `phase-05-passed`, and does not grant production or release
+authorization. Formal V4 acceptance remains deferred technical debt; preserve
+the release freeze until V4 completes. Phase 5 Slice 7 / Slice 8 acceptance
+remains blocked pending its applicable gates. The local downstream
+authorization does not itself start downstream work or waive that work's scope
+and gates.
+
 ## Phase evidence
 
 | Scope | Status / evidence | Constraint |
@@ -69,7 +94,7 @@ declaration and is not authorized by this amendment.
 | Phase 2 | Historical ACCEPTED at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`; NOT FROZEN | No recorded `phase-02-passed`; do not invent one |
 | Phase 3 | FROZEN: `phase-03-passed`, `12a27f7a77ed79a3e638d9fc6bf4509840a9b326` | No reopening |
 | Phase 4 | FROZEN: `phase-04-passed`, `e99c494628952e0a1ebcafa2450c87611b4dc6c8` | No reopening or held-out rerun |
-| Phase 5 | AUTHORIZED; partially IMPLEMENTED; not PASSED/FROZEN | Corrective gate blocks Slice 7 / Slice 8 acceptance work |
+| Phase 5 | Implementation COMPLETE_FOR_LOCAL_DOWNSTREAM_DEVELOPMENT; deterministic verification PASS; formal V4 acceptance DEFERRED | `SEALED_MANIFEST_CLI_FAILURE`; held-out AVAILABLE (`execution_count=0`); local downstream development AUTHORIZED; Slice 7 / Slice 8 acceptance remains blocked; release freeze BLOCKED until V4 completes; not PASSED/FROZEN and no `phase-05-passed` move |
 | Phase 6A | IMPLEMENTED / VERIFIED as the durable approval/execution prerequisite exercised by the frozen Phase 6B workflow; no separate freeze tag is recorded here | Preserve the approval/execution authority boundary; do not invent a standalone Phase 6A freeze |
 | Phase 6B | FROZEN: `phase-06b-passed`, `40ff9d3ef6e0e3010982dabfb37cb597aceeb6ed` | Real Google Calendar acceptance reached `CONFIRMED_SUCCESS`; exactly one real CREATE attempt was performed; do not reopen without defect evidence |
 | Phase 6C | OPTIONAL / NOT PURSUED | GitHub read-only remains outside the current scope; no GitHub write authority follows |
