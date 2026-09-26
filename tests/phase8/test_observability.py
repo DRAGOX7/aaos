@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import aaos.agent.events as events
 from aaos.agent.events import (
     Phase8ActivityEvent,
     Phase8ActivityKind,
@@ -12,16 +13,19 @@ from aaos.agent.events import (
 from aaos.agent.observations import project_phase8_activity
 
 
-def _event(**overrides: object) -> Phase8ActivityEvent:
-    values: dict[str, object] = {
-        "event_kind": Phase8ActivityKind.COMPUTATION_COMPLETED,
-        "resource_id": "request-001",
-        "status": Phase8ActivityStatus.SUCCEEDED,
-        "sequence_number": 1,
-        "timestamp_utc": datetime(2026, 9, 18, tzinfo=timezone.utc),
-    }
-    values.update(overrides)
-    return Phase8ActivityEvent(**values)
+def _event(
+    *,
+    resource_id: str = "request-001",
+    event_kind: Phase8ActivityKind = Phase8ActivityKind.COMPUTATION_COMPLETED,
+    status: Phase8ActivityStatus = Phase8ActivityStatus.SUCCEEDED,
+) -> Phase8ActivityEvent:
+    return Phase8ActivityEvent(
+        event_kind=event_kind,
+        resource_id=resource_id,
+        status=status,
+        sequence_number=1,
+        timestamp_utc=datetime(2026, 9, 18, tzinfo=timezone.utc),
+    )
 
 
 def test_phase8_activity_event_has_closed_safe_projection() -> None:
@@ -38,21 +42,29 @@ def test_phase8_activity_event_has_closed_safe_projection() -> None:
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    "resource_id",
     [
-        ("resource_id", "C:\\Users\\secret\\workspace"),
-        ("resource_id", "token=super-secret"),
-        ("resource_id", "traceback ValueError at /private/path"),
+        "C:\\Users\\secret\\workspace",
+        "token=super-secret",
+        "traceback ValueError at /private/path",
     ],
 )
-def test_phase8_activity_rejects_paths_secrets_and_traceback_text(field: str, value: str) -> None:
+def test_phase8_activity_rejects_paths_secrets_and_traceback_text(resource_id: str) -> None:
     with pytest.raises(ValueError):
-        _event(**{field: value})
+        _event(resource_id=resource_id)
 
 
 def test_phase8_activity_has_no_arbitrary_details_field() -> None:
+    event_type = getattr(events, "Phase8ActivityEvent")
     with pytest.raises(TypeError):
-        _event(details={"code": "print(secret)"})
+        event_type(
+            event_kind=Phase8ActivityKind.COMPUTATION_COMPLETED,
+            resource_id="request-001",
+            status=Phase8ActivityStatus.SUCCEEDED,
+            sequence_number=1,
+            timestamp_utc=datetime(2026, 9, 18, tzinfo=timezone.utc),
+            details={"code": "print(secret)"},
+        )
 
 
 def test_phase8_activity_unknown_outcome_is_distinct() -> None:

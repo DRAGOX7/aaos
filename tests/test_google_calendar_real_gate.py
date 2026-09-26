@@ -90,7 +90,7 @@ def authorization(
 
 
 @pytest.fixture
-def engine(tmp_path) -> Iterator[Engine]:
+def engine(tmp_path: Path) -> Iterator[Engine]:
     db_engine = create_database_engine(tmp_path / "phase6b-real-gate.db")
     Base.metadata.create_all(db_engine)
 
@@ -594,7 +594,10 @@ def test_acceptance_restart_recovers_executing_by_read_only_reconciliation(
 
     operator_request = _live_shaped_request()
 
-    original_record_adapter_outcome = real_acceptance_cli.record_adapter_outcome
+    original_record_adapter_outcome = getattr(
+        real_acceptance_cli,
+        "record_adapter_outcome",
+    )
 
     def simulate_process_loss(
         *args: object,

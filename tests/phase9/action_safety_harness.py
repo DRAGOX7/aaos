@@ -19,14 +19,21 @@ from aaos.approval import service
 from aaos.approval.contracts import (
     ActionId,
     ActionState,
+    ActionType,
+    ActorIdentity,
     AdapterExecutionOutcome,
     AdapterOutcomeKind,
+    AdapterReconciliationOutcome,
     ApprovalId,
     ApprovalRecord,
+    ClaimIdentity,
+    ExecutableAction,
+    HumanDecisionReason,
     OperationId,
     OperationState,
     Phase6ActionDefinition,
     RemotePrecondition,
+    TargetIdentity,
     TrustedApproverContext,
 )
 from aaos.approval.repository import ApprovalRepository
@@ -92,13 +99,9 @@ class FakeExternalAdapter:
         self.outcome = outcome
         self.execute_count = 0
         self.side_effect_count = 0
-        self.last_action = None
+        self.last_action: ExecutableAction | None = None
 
-    def execute(self, action: object) -> AdapterExecutionOutcome:
-        from aaos.approval.contracts import ExecutableAction
-
-        if not isinstance(action, ExecutableAction):
-            raise TypeError("fake adapter received an invalid projection")
+    def execute(self, action: ExecutableAction) -> AdapterExecutionOutcome:
         self.execute_count += 1
         self.last_action = action
         if action.remote_precondition != self.precondition:
@@ -109,11 +112,9 @@ class FakeExternalAdapter:
             self.side_effect_count += 1
         return AdapterExecutionOutcome(self.outcome, "bounded fake adapter evidence")
 
-    def reconcile(self, operation_id: OperationId) -> AdapterExecutionOutcome:
+    def reconcile(self, operation_id: OperationId) -> AdapterReconciliationOutcome:
         del operation_id
-        return AdapterExecutionOutcome(
-            AdapterOutcomeKind.AUTHORITATIVE_FAILURE, "fake reconciliation"
-        )
+        return AdapterReconciliationOutcome(AdapterOutcomeKind.UNKNOWN, "fake reconciliation")
 
 
 @contextmanager
@@ -130,7 +131,7 @@ def _repository() -> Iterator[tuple[ApprovalRepository, sessionmaker[Session]]]:
 
 def _definition() -> Phase6ActionDefinition:
     return Phase6ActionDefinition(
-        action_type=service.ActionType("PHASE9_FAKE_ACTION"),
+        action_type=ActionType("PHASE9_FAKE_ACTION"),
         tool_name="phase9-fake-tool",
         tool_schema_version="phase9-v1",
         tool_definition_fingerprint="1" * 64,
@@ -157,8 +158,8 @@ def _prepare(
     prepared = service.prepare_action(
         repository,
         definition,
-        actor_identity=service.ActorIdentity("phase9-user"),
-        target_identity=service.TargetIdentity("phase9-fake", "account", "resource"),
+        actor_identity=ActorIdentity("phase9-user"),
+        target_identity=TargetIdentity("phase9-fake", "account", "resource"),
         arguments={"summary": "synthetic action"},
         remote_precondition=precondition,
         action_expires_at=clock.now(600),
@@ -258,7 +259,7 @@ def run_action_scenario(
                 approval.approval_id,
                 approver,
                 clock.now(3),
-                service.HumanDecisionReason.USER_REJECTED,
+                HumanDecisionReason.USER_REJECTED,
             )
         elif selected is ActionScenario.REVOKED:
             service.revoke_approval(
@@ -266,7 +267,7 @@ def run_action_scenario(
                 approval.approval_id,
                 approver,
                 clock.now(3),
-                service.HumanDecisionReason.USER_REVOKED,
+                HumanDecisionReason.USER_REVOKED,
             )
         else:
             # The expiry scenario intentionally claims after the approval TTL.
@@ -280,9 +281,7 @@ def run_action_scenario(
             capability_policy=policy,
             definition=_definition(),
             now=claim_now,
-            claim_identity=__import__(
-                "aaos.approval.contracts", fromlist=["ClaimIdentity"]
-            ).ClaimIdentity("phase9-worker"),
+            claim_identity=ClaimIdentity("phase9-worker"),
         )
         if not claimed.claimed or claimed.operation_id is None:
             action_state, events = _read_terminal_without_operation(sessions, action_id)
@@ -384,7 +383,7 @@ def run_concurrent_claims(
                 capability_policy=_policy(),
                 definition=_definition(),
                 now=clock.now(3),
-                claim_identity=service.ClaimIdentity("phase9-worker"),
+                claim_identity=ClaimIdentity("phase9-worker"),
             )
             attempts = 0
             invoked = 0

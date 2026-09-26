@@ -24,6 +24,7 @@ from aaos.approval.contracts import (
     ActionType,
     ActorIdentity,
     ClaimIdentity,
+    ExecutableAction,
     OperationId,
     OperationState,
     Phase6ActionDefinition,
@@ -218,7 +219,7 @@ def _adapter(
 ) -> GoogleCalendarAdapter:
     def load_expected(
         operation_id: OperationId,
-    ):
+    ) -> ExecutableAction:
         return load_executable_action(
             repository,
             operation_id,
@@ -258,7 +259,7 @@ def _durable_operation_snapshot(
 def _durable_report(
     *,
     repository: ApprovalRepository,
-    action_id,
+    action_id: ActionId,
     operation_id: OperationId,
     started_at: datetime,
     completed_at: datetime,

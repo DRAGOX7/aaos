@@ -8,6 +8,7 @@ import pytest
 
 from aaos.phase8.visual_provenance import VisualAnalysis, VisualElement, VisualKind, VisualStatus
 from aaos.rag.contracts import (
+    Citation,
     GroundedModelOutput,
     MultimodalEvidence,
     ProvenanceKind,
@@ -104,6 +105,7 @@ def test_multimodal_projection_emits_only_page_level_derived_citation() -> None:
 
     assert response.answer.status is RagAnswerStatus.ANSWER
     assert response.answer.citations[0].provenance_kind is ProvenanceKind.DERIVED_VISUAL_EVIDENCE
+    assert isinstance(response.answer.citations[0], Citation)
     assert response.answer.citations[0].page_start == 2
     assert "Physics (page 2)" in response.rendered_text
     assert "exact_text" not in response.rendered_text

@@ -46,7 +46,7 @@ def test_phase8_acceptance_report_has_closed_serialization() -> None:
         "rlm_work",
     }
     with pytest.raises(TypeError):
-        run_phase8_acceptance(details={"code": "not allowed"})  # type: ignore[call-arg]
+        run_phase8_acceptance(details={"code": "not allowed"})
 
 
 def test_phase8_acceptance_keeps_unknown_outcome_and_visual_fallback_covered() -> None:
