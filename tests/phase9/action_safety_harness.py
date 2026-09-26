@@ -114,7 +114,10 @@ class FakeExternalAdapter:
 
     def reconcile(self, operation_id: OperationId) -> AdapterReconciliationOutcome:
         del operation_id
-        return AdapterReconciliationOutcome(AdapterOutcomeKind.UNKNOWN, "fake reconciliation")
+        return AdapterReconciliationOutcome(
+            AdapterOutcomeKind.AUTHORITATIVE_FAILURE,
+            "fake reconciliation confirmed failure",
+        )
 
 
 @contextmanager
