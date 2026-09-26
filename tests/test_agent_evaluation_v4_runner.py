@@ -296,11 +296,17 @@ def test_arbitrary_caller_cannot_release_reserved_permit(tmp_path: Path) -> None
     reservation = ledger.reserve(CANDIDATE_SHA)
 
     assert not hasattr(ledger, "release_presemantic")
+    assert not hasattr(ledger, "_release_presemantic")
     assert not hasattr(ledger_module, "PreSemanticFailureEvidence")
-    with pytest.raises(TypeError):
-        ledger_module._PreSemanticFailureEvidence("0" * 32, _seal=object())
+    assert not hasattr(ledger_module, "_PRESEMANTIC_EVIDENCE_SEAL")
+    preflight_calls: list[bool] = []
     with pytest.raises(HeldoutLedgerError):
-        getattr(ledger, "_release_presemantic")(reservation.reservation_id, object())
+        ledger._reserve_after_preflight(
+            CANDIDATE_SHA,
+            lambda: preflight_calls.append(True),
+        )
+    assert preflight_calls == []
+    assert ledger.status().reservation_id == reservation.reservation_id
     assert ledger.status().state is HeldoutState.RESERVED
 
 
@@ -554,19 +560,15 @@ def test_reading_available_ledger_status_has_no_filesystem_side_effect(tmp_path:
 
 
 def test_presemantic_release_cannot_reverse_consumed_state(tmp_path: Path) -> None:
-    from aaos.agent.evaluation.v4_ledger import (
-        _PRESEMANTIC_EVIDENCE_SEAL,
-        _PreSemanticFailureEvidence,
-    )
-
     ledger = V4HeldoutLedger(tmp_path / "ledger.json")
     reservation = ledger.reserve(CANDIDATE_SHA)
     ledger.consume(reservation.reservation_id)
-    evidence = _PreSemanticFailureEvidence(
-        reservation.reservation_id,
-        _seal=_PRESEMANTIC_EVIDENCE_SEAL,
-    )
+    preflight_calls: list[bool] = []
 
     with pytest.raises(HeldoutLedgerError):
-        ledger._release_presemantic(reservation.reservation_id, evidence)
+        ledger._reserve_after_preflight(
+            CANDIDATE_SHA,
+            lambda: preflight_calls.append(True),
+        )
+    assert preflight_calls == []
     assert ledger.status().state is HeldoutState.CONSUMED

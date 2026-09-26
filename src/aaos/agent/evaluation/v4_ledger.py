@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 LEDGER_SCHEMA_VERSION = "phase5-v4-heldout-ledger-v1"
 EVALUATION_VERSION = "phase5-agent-benchmark-v4"
@@ -49,26 +49,6 @@ class HeldoutLedgerError(RuntimeError):
 class HeldoutReservation:
     reservation_id: str
     candidate_sha: str
-
-
-_PRESEMANTIC_EVIDENCE_SEAL = object()
-
-
-class _PreSemanticFailureEvidence:
-    """Opaque proof created only by the runner's preflight-failure branch."""
-
-    __slots__ = ("_reservation_id", "_seal")
-    _reservation_id: str
-    _seal: object
-
-    def __init__(self, reservation_id: str, *, _seal: object) -> None:
-        if _seal is not _PRESEMANTIC_EVIDENCE_SEAL:
-            raise TypeError("pre-semantic evidence cannot be constructed directly")
-        self._reservation_id = reservation_id
-        self._seal = _seal
-
-    def authorizes(self, reservation_id: str) -> bool:
-        return self._seal is _PRESEMANTIC_EVIDENCE_SEAL and (self._reservation_id == reservation_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +125,39 @@ class V4HeldoutLedger:
         except Exception:
             raise HeldoutLedgerError("held-out permit acquisition failed; failing closed") from None
 
+    def _reserve_after_preflight(
+        self,
+        candidate_sha: str,
+        preflight: Callable[[], None],
+    ) -> HeldoutReservation | None:
+        """Reserve and run the non-semantic preflight before returning a permit."""
+
+        if not callable(preflight):
+            raise HeldoutLedgerError("preflight dependency is invalid")
+        reservation = self.reserve(candidate_sha)
+        try:
+            preflight()
+        except Exception:
+            try:
+                with self._exclusive_lock():
+                    current = self._read_locked()
+                    if (
+                        current.state is not HeldoutState.RESERVED
+                        or current.reservation_id != reservation.reservation_id
+                    ):
+                        raise HeldoutLedgerError("reservation cannot be released")
+                    available = replace(
+                        self._available(),
+                        last_presemantic_release_at_utc=self._now(),
+                    )
+                    self._write_locked(available)
+            except HeldoutLedgerError:
+                raise
+            except Exception:
+                raise HeldoutLedgerError("pre-semantic release could not be persisted") from None
+            return None
+        return reservation
+
     def consume(self, reservation_id: str) -> None:
         normalized_id = self._validate_reservation_id(reservation_id)
         try:
@@ -203,34 +216,6 @@ class V4HeldoutLedger:
             raise
         except Exception:
             raise HeldoutLedgerError("held-out completion could not be persisted") from None
-
-    def _release_presemantic(
-        self,
-        reservation_id: str,
-        evidence: _PreSemanticFailureEvidence,
-    ) -> None:
-        normalized_id = self._validate_reservation_id(reservation_id)
-        if not isinstance(evidence, _PreSemanticFailureEvidence) or not evidence.authorizes(
-            normalized_id
-        ):
-            raise HeldoutLedgerError("pre-semantic release lacks trusted proof")
-        try:
-            with self._exclusive_lock():
-                current = self._read_locked()
-                if (
-                    current.state is not HeldoutState.RESERVED
-                    or current.reservation_id != normalized_id
-                ):
-                    raise HeldoutLedgerError("reservation cannot be released")
-                available = replace(
-                    self._available(),
-                    last_presemantic_release_at_utc=self._now(),
-                )
-                self._write_locked(available)
-        except HeldoutLedgerError:
-            raise
-        except Exception:
-            raise HeldoutLedgerError("pre-semantic release could not be persisted") from None
 
     @contextmanager
     def _exclusive_lock(self) -> Iterator[None]:

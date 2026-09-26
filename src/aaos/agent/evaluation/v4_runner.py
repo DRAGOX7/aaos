@@ -22,10 +22,8 @@ from aaos.agent.evaluation.v4 import (
     score_v4_evaluation,
 )
 from aaos.agent.evaluation.v4_ledger import (
-    _PRESEMANTIC_EVIDENCE_SEAL,
     HeldoutLedgerError,
     V4HeldoutLedger,
-    _PreSemanticFailureEvidence,
 )
 
 AGGREGATE_SCHEMA_VERSION = "phase5-v4-safe-aggregate-v1"
@@ -484,15 +482,11 @@ class V4SealedRunner:
         return report
 
     def _evaluate_heldout(self) -> V4SafeAggregate:
-        reservation = self._ledger.reserve(self._candidate_sha)
-        try:
-            self._preflight()
-        except Exception:
-            evidence = _PreSemanticFailureEvidence(
-                reservation.reservation_id,
-                _seal=_PRESEMANTIC_EVIDENCE_SEAL,
-            )
-            self._ledger._release_presemantic(reservation.reservation_id, evidence)
+        reservation = self._ledger._reserve_after_preflight(
+            self._candidate_sha,
+            self._preflight,
+        )
+        if reservation is None:
             raise V4RunnerError("preflight_failed") from None
 
         self._ledger.consume(reservation.reservation_id)
