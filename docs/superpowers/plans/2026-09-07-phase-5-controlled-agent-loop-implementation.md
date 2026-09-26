@@ -398,7 +398,10 @@ regressions, full pytest, Ruff, strict mypy, `uv lock --check`, diff-check and
 import smoke. `MODEL_CALL_COUNT=0`, `RAG_EXECUTION_COUNT=0`,
 `V4_CALIBRATION_EXECUTION_COUNT=0` and `V4_HELDOUT_EXECUTION_COUNT=0` are
 required. The V4 held-out manifest must exist before any future calibration,
-remain unconsumed/invisible, and retain a distinct fingerprint.
+remain unconsumed/invisible, and retain a distinct fingerprint. For V4, the
+exact first-semantic-operation boundary, atomic one-time states, and the only
+permitted pre-semantic release path are defined by the
+[C10 V4 evaluation contract](../specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md#one-time-held-out-consumption-and-recovery).
 
 **Acceptance gate:** V1/V2/V3 artifacts are unchanged; V4 routing coverage,
 ownership, disjointness and fingerprints are deterministic; the exact C10

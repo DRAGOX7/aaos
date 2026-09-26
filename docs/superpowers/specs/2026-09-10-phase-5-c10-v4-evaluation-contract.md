@@ -89,7 +89,53 @@ trusted-system cases, so their total language counts are reported separately.
 Existing C9 trusted-system material is migrated deterministically and remains
 owned by its original trusted condition. V4 held-out is created and fingerprinted
 before any V4 calibration execution, but remains unconsumed and invisible until
-a separate authorization.
+a separate authorization. A reservation alone does not consume the split.
+
+### One-time held-out consumption and recovery
+
+The one-time V4 split is consumed at the start of protected semantic
+evaluation, not when a reservation is acquired. Protected semantic evaluation
+begins at the earliest of:
+
+1. the first protected held-out case being materialized or read for evaluation;
+2. the first held-out case being provided to model or tool execution;
+3. scoring beginning with held-out semantic case data; or
+4. production of any protected case-specific result.
+
+The durable ledger uses exactly these states:
+
+- `AVAILABLE` — no held-out semantic evaluation is in progress or consumed.
+- `RESERVED` — one runner holds the atomic permit; no protected held-out case
+  has been read, materialized, executed, or scored.
+- `CONSUMED` — protected semantic evaluation has begun; this state is
+  permanent.
+
+`AVAILABLE -> RESERVED` must be atomic so concurrent runners cannot both
+start. Before or atomically with the first protected semantic evaluation
+operation, the runner must persist `RESERVED -> CONSUMED`. It must never read
+or materialize the first protected case and only afterward mark the split
+consumed.
+
+A pre-semantic infrastructure failure does not consume the split only when
+trusted non-semantic audit metadata proves that no protected held-out case was
+read or materialized, no held-out model/tool execution or scoring occurred,
+and no protected case-specific result was produced. With that proof, the
+runner may release `RESERVED -> AVAILABLE`. The ledger records only safe
+metadata and contains no case content.
+
+A failure after the split reaches `CONSUMED` never permits a rerun, regardless
+of whether evaluation passes, fails, crashes, times out, or fails to write a
+complete aggregate report. `CONSUMED` has no outgoing transition. A stale
+`RESERVED` state must not be reset automatically: it may return to `AVAILABLE`
+only if trusted non-semantic audit metadata proves no semantic evaluation
+began; otherwise fail closed and treat the split as `CONSUMED`. Missing final
+output alone is not proof. A corrupt or ambiguous ledger also fails closed;
+it must never be interpreted as count zero.
+
+The non-semantic execution count is `0` in `AVAILABLE` or a provably
+pre-semantic `RESERVED` state, and `1` in `CONSUMED`. An ambiguous or corrupt
+state is unknown and blocks execution. These rules govern only the V4
+held-out split and do not change calibration iteration policy.
 
 V3 held-out remains unconsumed and invisible. No V4 model or RAG execution is
 part of this contract-creation change.

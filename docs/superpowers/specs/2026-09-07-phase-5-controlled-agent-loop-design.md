@@ -572,5 +572,9 @@ without changing semantic intent or inflating the routing denominator.
 
 V4 manifests and fingerprints are created before inference. V4 held-out is
 created before any calibration run and remains unconsumed/invisible until a
-separate authorization. No model or RAG execution, candidate freeze, or Phase 5
-acceptance is implied by this contract.
+separate authorization. For V4, the exact consumption boundary, atomic
+AVAILABLE / RESERVED / CONSUMED transitions, pre-semantic recovery and
+fail-closed stale-state handling are normative in the
+[C10 V4 evaluation contract](2026-09-10-phase-5-c10-v4-evaluation-contract.md#one-time-held-out-consumption-and-recovery).
+No model or RAG execution, candidate freeze, or Phase 5 acceptance is implied
+by this contract.

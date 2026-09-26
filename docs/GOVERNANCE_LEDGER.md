@@ -320,6 +320,20 @@ authorization. This documentation and contract change performs no model or
 RAG execution, does not modify the production orchestrator, and does not mark
 Phase 5 passed or freeze a candidate. See the [C10/V4 contract](superpowers/specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md).
 
+### 2026-09-26 owner clarification — V4 held-out consumption
+
+The project owner defines AVAILABLE, RESERVED, and CONSUMED as the canonical
+V4 held-out ledger states. Consumption begins at the first protected semantic
+evaluation operation. A reserved permit may return to available only when
+trusted non-semantic audit metadata proves no protected semantic access,
+execution, scoring, or case-specific result occurred. Once consumed, the split
+is permanent and cannot be rerun; stale or corrupt state fails closed unless
+the permitted pre-semantic release is proven. The complete transition and
+recovery rules are normative in the
+[C10 V4 evaluation contract](superpowers/specs/2026-09-10-phase-5-c10-v4-evaluation-contract.md#one-time-held-out-consumption-and-recovery).
+This docs-only clarification ran no evaluation and records no new evaluation
+result or execution-count assertion.
+
 ## Phase 9 whole-phase acceptance
 
 `PHASE_9=PASSED` was human-accepted for the final implementation/evidence
