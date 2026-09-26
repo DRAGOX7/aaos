@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import cast
+
+from sqlalchemy import Table
+
 
 def test_document_version_model_maps_structural_provenance_fields() -> None:
     from aaos.persistence.document_models import DocumentVersionORM
 
-    table = DocumentVersionORM.__table__
+    table = cast(Table, DocumentVersionORM.__table__)
 
     assert "provenance_mode" in table.c
     assert table.c.provenance_mode.nullable is False
@@ -23,7 +27,7 @@ def test_document_version_model_maps_structural_provenance_fields() -> None:
 def test_document_structure_unit_model_matches_migration_contract() -> None:
     from aaos.persistence.document_models import DocumentStructureUnitORM
 
-    table = DocumentStructureUnitORM.__table__
+    table = cast(Table, DocumentStructureUnitORM.__table__)
 
     assert set(table.c.keys()) == {
         "id",

@@ -24,6 +24,8 @@ from aaos.documents.cli import (
 )
 from aaos.documents.config import DocumentRuntimePaths
 from aaos.documents.contracts import (
+    FETCH_TIMEOUT_MS,
+    MAX_PDF_BYTES,
     BatchIngestionResult,
     DocumentIngestionFailure,
     DocumentIngestionResult,
@@ -707,27 +709,19 @@ def test_provider_fetcher_session_isolates_anonymous_drive_transport(
             pool_options.append(dict(kwargs))
             return pool
 
-    drive_fetcher = object()
+    drive_fetchers: list[object] = []
 
     class FakeDrivePdfFetcher:
-        def __new__(
-            cls,
-            **kwargs: object,
-        ) -> object:
-            del cls
+        def __init__(self, **kwargs: object) -> None:
             drive_options.append(dict(kwargs))
-            return drive_fetcher
+            drive_fetchers.append(self)
 
-    router = object()
+    routers: list[object] = []
 
     class FakeProviderRoutingPdfFetcher:
-        def __new__(
-            cls,
-            **kwargs: object,
-        ) -> object:
-            del cls
+        def __init__(self, **kwargs: object) -> None:
             router_options.append(dict(kwargs))
-            return router
+            routers.append(self)
 
     monkeypatch.setattr(
         module,
@@ -757,7 +751,7 @@ def test_provider_fetcher_session_isolates_anonymous_drive_transport(
     assert callable(opener)
 
     with opener(FakeMoodleSession()) as fetcher:
-        assert fetcher is router
+        assert fetcher is routers[0]
         assert entered == ["moodle"]
         assert exited == []
         assert cleared == []
@@ -774,13 +768,13 @@ def test_provider_fetcher_session_isolates_anonymous_drive_transport(
 
     assert len(drive_options) == 1
     assert drive_options[0]["http"] is pool
-    assert drive_options[0]["max_pdf_bytes"] == module.MAX_PDF_BYTES
-    assert drive_options[0]["timeout_seconds"] == (module.FETCH_TIMEOUT_MS / 1000)
+    assert drive_options[0]["max_pdf_bytes"] == MAX_PDF_BYTES
+    assert drive_options[0]["timeout_seconds"] == (FETCH_TIMEOUT_MS / 1000)
 
     assert router_options == [
         {
             "moodle_fetcher": moodle_fetcher,
-            "drive_fetcher": drive_fetcher,
+            "drive_fetcher": drive_fetchers[0],
         }
     ]
 

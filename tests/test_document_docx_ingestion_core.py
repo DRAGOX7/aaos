@@ -16,6 +16,7 @@ from aaos.documents.contracts import (
     DocumentResultCode,
     ExtractedStructureUnit,
     ExtractionStatus,
+    FetchedDocx,
     FileType,
     IngestionErrorCode,
     IngestionMode,
@@ -244,10 +245,7 @@ class _Lock:
 
 
 def _fetched_docx() -> object:
-    fetched_type = getattr(contracts, "FetchedDocx", None)
-    assert fetched_type is not None, "FetchedDocx contract is missing"
-
-    return fetched_type(
+    return FetchedDocx(
         body=b"docx-body",
         source_filename="unsafe/lecture.docx",
         advisory_media_type=DOCX_MIME,
@@ -257,10 +255,10 @@ def _fetched_docx() -> object:
 def test_fetched_docx_is_additive_and_keeps_pdf_only_phase3_flag() -> None:
     fetched_type = getattr(contracts, "FetchedDocx", None)
 
-    assert fetched_type is not None
-    assert getattr(documents, "FetchedDocx", None) is fetched_type
+    assert fetched_type is FetchedDocx
+    assert getattr(documents, "FetchedDocx", None) is FetchedDocx
 
-    fetched = fetched_type(
+    fetched = FetchedDocx(
         body=b"private-docx-bytes",
         source_filename="lecture.docx",
         advisory_media_type=DOCX_MIME,
