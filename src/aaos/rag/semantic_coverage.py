@@ -416,6 +416,7 @@ class IndependentClaimEntailmentVerifier:
             premise_parts: list[str] = []
             resolved_ids: set[str] = set()
 
+            seen_quotes: set[str] = set()
             for requirement_spans in validated_requirement_spans:
                 for span in requirement_spans.spans:
                     if span.evidence_id not in requested_ids:
@@ -428,15 +429,17 @@ class IndependentClaimEntailmentVerifier:
                     if span.quote not in source.exact_text:
                         raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-                    premise_parts.append(span.quote)
                     resolved_ids.add(span.evidence_id)
+                    if span.quote not in seen_quotes:
+                        premise_parts.append(span.quote)
+                        seen_quotes.add(span.quote)
 
             if resolved_ids != requested_ids:
                 raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
 
             premise = "\n\n".join(premise_parts)
         else:
-            premise = "\n\n".join(item.exact_text for item in bound_evidence)
+            premise = "\n\n".join(dict.fromkeys(item.exact_text for item in bound_evidence))
 
         try:
             result = self._classifier.classify(

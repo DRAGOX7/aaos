@@ -174,6 +174,8 @@ For each `RagClaim`:
 - on the corrected atomic path, NLI premise = only validated exact
   `EvidenceSpan.quote` values associated with the claim's cited evidence IDs;
 - validated spans are joined in deterministic requirement/span order;
+- each exact quote contributes once at its first occurrence, while every cited
+  evidence ID must still resolve to at least one validated span;
 - whole chunk text must not replace validated spans on the corrected atomic path;
 - premise and hypothesis are never reversed;
 - unrelated selected evidence or spans are not appended;

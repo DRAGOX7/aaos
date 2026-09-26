@@ -951,6 +951,74 @@ def test_claim_entailment_verifier_uses_validated_spans_instead_of_full_bound_ch
     ]
 
 
+def test_claim_entailment_verifier_deduplicates_repeated_validated_quotes() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EvidenceSpan, RagClaim, RequirementEvidenceSpans
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    quote = (
+        "The official notice for fictional course CS101 says that the second programming "
+        "assignment, which covers arrays, linked lists, and introductory algorithm analysis, "
+        "must be submitted through the course portal no later than Friday, November 13 at "
+        "11:59 p.m. local time, and that students should retain the confirmation receipt "
+        "after submission."
+    )
+    evidence = tuple(_evidence(quote, evidence_id=f"ev-{index}") for index in range(1, 9))
+    spans = (
+        RequirementEvidenceSpans(
+            "r1",
+            tuple(EvidenceSpan(item.evidence_id, quote) for item in evidence[:4]),
+        ),
+        RequirementEvidenceSpans(
+            "r2",
+            tuple(EvidenceSpan(item.evidence_id, quote) for item in evidence[4:]),
+        ),
+    )
+    claim = RagClaim(
+        claim_id="claim-1",
+        text=(
+            "The second programming assignment for fictional course CS101 is due Friday, "
+            "November 13 at 11:59 p.m. local time."
+        ),
+        evidence_ids=tuple(item.evidence_id for item in evidence),
+    )
+    classifier = FakeNliClassifier()
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim,
+            evidence=evidence,
+            validated_requirement_spans=spans,
+        )
+    )
+
+    assert result.value == "ENTAILED"
+    assert classifier.calls == [(quote, claim.text)]
+
+
+def test_claim_entailment_verifier_deduplicates_repeated_bound_chunks() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import RagClaim
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    quote = "The deadline for fictional course CS101 is Friday."
+    evidence = (
+        _evidence(quote, evidence_id="ev-1"),
+        _evidence(quote, evidence_id="ev-2"),
+    )
+    claim = RagClaim("claim-1", quote, ("ev-1", "ev-2"))
+    classifier = FakeNliClassifier()
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(claim, evidence=evidence)
+    )
+
+    assert result.value == "ENTAILED"
+    assert classifier.calls == [(quote, quote)]
+
+
 def test_claim_entailment_verifier_rejects_cited_evidence_without_validated_span() -> None:
     import asyncio
 
