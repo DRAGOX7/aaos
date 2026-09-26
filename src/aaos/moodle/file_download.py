@@ -45,9 +45,7 @@ _CONTENT_DISPOSITION_FILENAME = re.compile(
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _AUTH_TIMEOUT_SECONDS = 600
 _HTML_MEDIA_TYPES = frozenset({"text/html", "application/xhtml+xml"})
-_DOCX_MEDIA_TYPE = (
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
+_DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,9 +272,7 @@ class BrowserAuthenticatedFetcher:
             if is_html:
                 _fail(IngestionErrorCode.UNAUTHORIZED_REDIRECT)
             cmid = permit.source_id.removeprefix("resource-cm:")
-            media_type = _media_type(
-                _header(response.headers, "content-type")
-            )
+            media_type = _media_type(_header(response.headers, "content-type"))
             suffix = ".docx" if media_type == _DOCX_MEDIA_TYPE else ".pdf"
             source_filename = _source_filename(
                 _header(response.headers, "content-disposition"),
@@ -284,10 +280,7 @@ class BrowserAuthenticatedFetcher:
                 fallback_suffix=suffix,
             )
 
-            if (
-                media_type == _DOCX_MEDIA_TYPE
-                or source_filename.casefold().endswith(".docx")
-            ):
+            if media_type == _DOCX_MEDIA_TYPE or source_filename.casefold().endswith(".docx"):
                 return FetchedDocx(
                     body=body,
                     source_filename=source_filename,

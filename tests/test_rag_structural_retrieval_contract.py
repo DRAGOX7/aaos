@@ -15,9 +15,7 @@ def _structure_span_type() -> type:
         "RagChunkStructureSourceSpanValue",
         None,
     )
-    assert span_type is not None, (
-        "RagChunkStructureSourceSpanValue is missing"
-    )
+    assert span_type is not None, "RagChunkStructureSourceSpanValue is missing"
     return span_type
 
 
@@ -62,10 +60,7 @@ def _evidence_kwargs(
 def test_structural_source_span_contract_is_page_free() -> None:
     span_type = _structure_span_type()
 
-    names = {
-        field.name
-        for field in fields(span_type)
-    }
+    names = {field.name for field in fields(span_type)}
 
     assert names == {
         "document_structure_unit_id",

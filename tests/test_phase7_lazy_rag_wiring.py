@@ -18,4 +18,3 @@ def test_app_startup_and_health_do_not_build_rag_runtime(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-

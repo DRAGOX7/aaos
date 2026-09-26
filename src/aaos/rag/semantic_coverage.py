@@ -739,25 +739,15 @@ def _validate_coverage_inputs(
             or not isinstance(item.source_spans, tuple)
             or not _evidence_provenance_is_valid(item)
         ):
-            raise RagOperationalError(
-                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-            )
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
 
 def _is_positive_int(value: object) -> bool:
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and value > 0
-    )
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _is_nonnegative_int(value: object) -> bool:
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and value >= 0
-    )
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _evidence_provenance_is_valid(
@@ -772,15 +762,9 @@ def _evidence_provenance_is_valid(
     for span in item.source_spans:
         if (
             not _is_nonnegative_int(span.source_char_start)
-            or not _is_positive_int(
-                span.source_char_end
-                - span.source_char_start
-            )
+            or not _is_positive_int(span.source_char_end - span.source_char_start)
             or not _is_nonnegative_int(span.chunk_char_start)
-            or not _is_positive_int(
-                span.chunk_char_end
-                - span.chunk_char_start
-            )
+            or not _is_positive_int(span.chunk_char_end - span.chunk_char_start)
             or span.chunk_char_end > len(item.exact_text)
         ):
             return False
@@ -791,12 +775,8 @@ def _evidence_provenance_is_valid(
                     span,
                     RagChunkSourceSpanValue,
                 )
-                or not _is_positive_int(
-                    span.document_page_id
-                )
-                or not _is_positive_int(
-                    span.page_number
-                )
+                or not _is_positive_int(span.document_page_id)
+                or not _is_positive_int(span.page_number)
             ):
                 return False
             continue
@@ -808,9 +788,7 @@ def _evidence_provenance_is_valid(
             return False
 
         if (
-            not _is_positive_int(
-                span.document_structure_unit_id
-            )
+            not _is_positive_int(span.document_structure_unit_id)
             or not _is_positive_int(span.unit_ordinal)
             or span.kind
             not in {
@@ -834,30 +812,17 @@ def _evidence_provenance_is_valid(
                 isinstance(heading_level, bool)
                 or not isinstance(heading_level, int)
                 or not 1 <= heading_level <= 9
-                or any(
-                    value is not None
-                    for value in coordinates
-                )
+                or any(value is not None for value in coordinates)
             ):
                 return False
 
         elif span.kind == "PARAGRAPH":
-            if (
-                span.heading_level is not None
-                or any(
-                    value is not None
-                    for value in coordinates
-                )
-            ):
+            if span.heading_level is not None or any(value is not None for value in coordinates):
                 return False
 
         else:
-            if (
-                span.heading_level is not None
-                or not all(
-                    _is_nonnegative_int(value)
-                    for value in coordinates
-                )
+            if span.heading_level is not None or not all(
+                _is_nonnegative_int(value) for value in coordinates
             ):
                 return False
 

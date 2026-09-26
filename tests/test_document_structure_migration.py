@@ -826,6 +826,7 @@ def test_populated_pdf_database_downgrades_cleanly_to_0007(
     finally:
         engine.dispose()
 
+
 def test_populated_pdf_page_survives_upgrade_and_downgrade(
     tmp_path: Path,
 ) -> None:
@@ -936,9 +937,7 @@ def test_populated_pdf_page_survives_upgrade_and_downgrade(
 
             assert version.provenance_mode == "PAGE"
             assert version.page_count == 1
-            assert connection.exec_driver_sql(
-                "PRAGMA foreign_key_check"
-            ).first() is None
+            assert connection.exec_driver_sql("PRAGMA foreign_key_check").first() is None
     finally:
         engine.dispose()
 
@@ -978,13 +977,9 @@ def test_populated_pdf_page_survives_upgrade_and_downgrade(
                 )
                 == 1
             )
-            assert connection.exec_driver_sql(
-                "PRAGMA foreign_key_check"
-            ).first() is None
+            assert connection.exec_driver_sql("PRAGMA foreign_key_check").first() is None
             assert (
-                connection.scalar(
-                    text("SELECT version_num FROM alembic_version")
-                )
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == "0007_phase8_visual_provenance"
             )
     finally:

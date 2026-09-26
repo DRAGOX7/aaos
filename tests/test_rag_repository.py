@@ -795,6 +795,7 @@ def test_explicit_none_active_expectation_rejects_competing_active_generation(
             repository.get_generation(candidate.generation_id).status is GenerationStatus.BUILDING
         )
 
+
 def _convert_version_to_structure_for_rag_test(
     sessions: SessionFactory,
     document_version_id: int,
@@ -808,21 +809,15 @@ def _convert_version_to_structure_for_rag_test(
         assert version is not None
 
         session.query(DocumentPageORM).filter(
-            DocumentPageORM.document_version_id
-            == document_version_id
+            DocumentPageORM.document_version_id == document_version_id
         ).delete(synchronize_session=False)
 
-        digest = sha256(
-            f"structural-{document_version_id}".encode("utf-8")
-        ).hexdigest()
+        digest = sha256(f"structural-{document_version_id}".encode("utf-8")).hexdigest()
 
         blob = ContentBlobORM(
             sha256=digest,
             size_bytes=128,
-            media_type=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            ),
+            media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
             storage_key=f"sha256/{digest[:2]}/{digest}.docx",
             created_at=NOW,
         )
@@ -887,9 +882,7 @@ def _convert_version_to_structure_for_rag_test(
 def test_structural_version_is_an_index_new_candidate(
     tmp_path: Path,
 ) -> None:
-    with repository_database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with repository_database(tmp_path) as (repository, sessions, _):
         ids = _seed_phase3(sessions)
         version_id = ids["one_v2"]
 
@@ -921,43 +914,30 @@ def test_structural_version_is_an_index_new_candidate(
 def test_repository_reads_ordered_structural_units(
     tmp_path: Path,
 ) -> None:
-    with repository_database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with repository_database(tmp_path) as (repository, sessions, _):
         ids = _seed_phase3(sessions)
         version_id = ids["one_v2"]
 
-        expected_ids = (
-            _convert_version_to_structure_for_rag_test(
-                sessions,
-                version_id,
-            )
+        expected_ids = _convert_version_to_structure_for_rag_test(
+            sessions,
+            version_id,
         )
 
         units = repository.read_structure_units(
             version_id,
         )
 
-        assert tuple(
-            unit.document_structure_unit_id
-            for unit in units
-        ) == expected_ids
+        assert tuple(unit.document_structure_unit_id for unit in units) == expected_ids
 
-        assert tuple(
-            unit.ordinal for unit in units
-        ) == (1, 2, 3)
+        assert tuple(unit.ordinal for unit in units) == (1, 2, 3)
 
-        assert tuple(
-            unit.kind for unit in units
-        ) == (
+        assert tuple(unit.kind for unit in units) == (
             "HEADING",
             "PARAGRAPH",
             "TABLE_CELL",
         )
 
-        assert tuple(
-            unit.text for unit in units
-        ) == (
+        assert tuple(unit.text for unit in units) == (
             "Neural Networks",
             "A neural network learns patterns.",
             "Adam",
@@ -975,17 +955,13 @@ def test_repository_reads_ordered_structural_units(
 def test_repository_persists_and_verifies_structural_chunk(
     tmp_path: Path,
 ) -> None:
-    with repository_database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with repository_database(tmp_path) as (repository, sessions, _):
         ids = _seed_phase3(sessions)
         version_id = ids["one_v2"]
 
-        heading_id, paragraph_id, _ = (
-            _convert_version_to_structure_for_rag_test(
-                sessions,
-                version_id,
-            )
+        heading_id, paragraph_id, _ = _convert_version_to_structure_for_rag_test(
+            sessions,
+            version_id,
         )
 
         generation = _create_generation(repository)
@@ -996,10 +972,7 @@ def test_repository_persists_and_verifies_structural_chunk(
             document_version_id=version_id,
         )
 
-        exact_text = (
-            "Neural Networks\n\n"
-            "A neural network learns patterns."
-        )
+        exact_text = "Neural Networks\n\nA neural network learns patterns."
 
         chunk = repository.insert_chunk(
             generation.identity,
@@ -1030,12 +1003,8 @@ def test_repository_persists_and_verifies_structural_chunk(
             chunk_char_end=len(heading_text),
         )
 
-        paragraph_text = (
-            "A neural network learns patterns."
-        )
-        paragraph_start = len(
-            "Neural Networks\n\n"
-        )
+        paragraph_text = "A neural network learns patterns."
+        paragraph_start = len("Neural Networks\n\n")
 
         repository.insert_structure_source_span(
             generation.identity,
@@ -1058,34 +1027,26 @@ def test_repository_persists_and_verifies_structural_chunk(
         assert chunk.page_start is None
         assert chunk.page_end is None
 
-        verification = (
-            repository.verify_generation_document(
-                generation.identity,
-                version_id,
-            )
+        verification = repository.verify_generation_document(
+            generation.identity,
+            version_id,
         )
 
         assert verification.chunk_count == 1
         assert verification.source_span_count == 2
-        assert verification.chunk_keys == (
-            chunk.chunk_key,
-        )
+        assert verification.chunk_keys == (chunk.chunk_key,)
 
 
 def test_structural_retry_cleanup_removes_derived_provenance(
     tmp_path: Path,
 ) -> None:
-    with repository_database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with repository_database(tmp_path) as (repository, sessions, _):
         ids = _seed_phase3(sessions)
         version_id = ids["one_v2"]
 
-        heading_id, _, _ = (
-            _convert_version_to_structure_for_rag_test(
-                sessions,
-                version_id,
-            )
+        heading_id, _, _ = _convert_version_to_structure_for_rag_test(
+            sessions,
+            version_id,
         )
 
         generation = _create_generation(repository)
@@ -1131,25 +1092,25 @@ def test_structural_retry_cleanup_removes_derived_provenance(
             document_version_id=version_id,
         )
 
-        assert repository.list_chunks(
-            generation.identity,
-            version_id,
-        ) == ()
+        assert (
+            repository.list_chunks(
+                generation.identity,
+                version_id,
+            )
+            == ()
+        )
+
 
 def test_materialize_snapshot_chunks_returns_structural_provenance(
     tmp_path: Path,
 ) -> None:
-    with repository_database(
-        tmp_path
-    ) as (repository, sessions, _):
+    with repository_database(tmp_path) as (repository, sessions, _):
         ids = _seed_phase3(sessions)
         version_id = ids["one_v2"]
 
-        heading_id, paragraph_id, _ = (
-            _convert_version_to_structure_for_rag_test(
-                sessions,
-                version_id,
-            )
+        heading_id, paragraph_id, _ = _convert_version_to_structure_for_rag_test(
+            sessions,
+            version_id,
         )
 
         generation = _create_generation(repository)
@@ -1168,10 +1129,7 @@ def test_materialize_snapshot_chunks_returns_structural_provenance(
             chunk_count=1,
         )
 
-        exact_text = (
-            "Neural Networks\n\n"
-            "A neural network learns patterns."
-        )
+        exact_text = "Neural Networks\n\nA neural network learns patterns."
 
         chunk = repository.insert_chunk(
             generation.identity,
@@ -1201,12 +1159,8 @@ def test_materialize_snapshot_chunks_returns_structural_provenance(
             chunk_char_end=len(heading_text),
         )
 
-        paragraph_text = (
-            "A neural network learns patterns."
-        )
-        paragraph_start = len(
-            "Neural Networks\n\n"
-        )
+        paragraph_text = "A neural network learns patterns."
+        paragraph_start = len("Neural Networks\n\n")
 
         repository.insert_structure_source_span(
             generation.identity,
@@ -1220,15 +1174,11 @@ def test_materialize_snapshot_chunks_returns_structural_provenance(
             chunk_char_end=len(exact_text),
         )
 
-        snapshot = repository.pin_query_snapshot(
-            CourseScope(ids["course_one"])
-        )
+        snapshot = repository.pin_query_snapshot(CourseScope(ids["course_one"]))
 
-        materialized = (
-            repository.materialize_snapshot_chunks(
-                snapshot,
-                (chunk.chunk_key,),
-            )
+        materialized = repository.materialize_snapshot_chunks(
+            snapshot,
+            (chunk.chunk_key,),
         )
 
         assert len(materialized) == 1

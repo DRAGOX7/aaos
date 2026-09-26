@@ -81,10 +81,7 @@ def test_structural_citation_contract_is_page_free() -> None:
 
     assert citation_type is not None
 
-    names = {
-        field.name
-        for field in fields(citation_type)
-    }
+    names = {field.name for field in fields(citation_type)}
 
     assert names == {
         "claim_id",
@@ -111,9 +108,7 @@ def test_page_and_structural_citation_kinds_cannot_mix() -> None:
             "source.pdf",
             1,
             1,
-            provenance_kind=(
-                contracts.ProvenanceKind.STRUCTURAL_DOCUMENT
-            ),
+            provenance_kind=(contracts.ProvenanceKind.STRUCTURAL_DOCUMENT),
         )
 
     with pytest.raises(ValueError):
@@ -127,9 +122,7 @@ def test_page_and_structural_citation_kinds_cannot_mix() -> None:
             table_index=None,
             row_index=None,
             column_index=None,
-            provenance_kind=(
-                contracts.ProvenanceKind.EMBEDDED_PDF
-            ),
+            provenance_kind=(contracts.ProvenanceKind.EMBEDDED_PDF),
         )
 
 
@@ -165,10 +158,7 @@ def test_validator_maps_structural_evidence_without_fake_pages() -> None:
     assert citation.table_index is None
     assert citation.row_index is None
     assert citation.column_index is None
-    assert (
-        citation.provenance_kind
-        is contracts.ProvenanceKind.STRUCTURAL_DOCUMENT
-    )
+    assert citation.provenance_kind is contracts.ProvenanceKind.STRUCTURAL_DOCUMENT
 
     assert not hasattr(citation, "page_start")
     assert not hasattr(citation, "page_end")
@@ -183,9 +173,7 @@ def test_renderer_uses_structural_location_not_page_label() -> None:
     rendered = render_rag_answer(answer)
 
     assert rendered.rendered_text == (
-        "Neural networks are covered.\n\n"
-        "[claim-1] notes.docx "
-        "(unit 4; heading Neural Networks)"
+        "Neural networks are covered.\n\n[claim-1] notes.docx (unit 4; heading Neural Networks)"
     )
 
     assert "page " not in rendered.rendered_text

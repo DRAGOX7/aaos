@@ -44,11 +44,7 @@ def test_rag_chunk_orm_declares_explicit_provenance_shape() -> None:
     assert table.c.page_start.nullable is True
     assert table.c.page_end.nullable is True
 
-    checks = {
-        constraint.name
-        for constraint in table.constraints
-        if constraint.name is not None
-    }
+    checks = {constraint.name for constraint in table.constraints if constraint.name is not None}
 
     assert "ck_rag_chunks_provenance_mode" in checks
     assert "ck_rag_chunks_provenance_shape" in checks
@@ -98,34 +94,22 @@ def test_migration_preserves_page_spans_and_adds_structure_spans(
         schema = inspect(engine)
 
         assert "rag_chunk_source_spans" in schema.get_table_names()
-        assert (
-            "rag_chunk_structure_source_spans"
-            in schema.get_table_names()
-        )
+        assert "rag_chunk_structure_source_spans" in schema.get_table_names()
 
-        chunk_columns = {
-            column["name"]: column
-            for column in schema.get_columns("rag_chunks")
-        }
+        chunk_columns = {column["name"]: column for column in schema.get_columns("rag_chunks")}
 
         assert chunk_columns["provenance_mode"]["nullable"] is False
         assert chunk_columns["page_start"]["nullable"] is True
         assert chunk_columns["page_end"]["nullable"] is True
 
-        chunk_checks = {
-            item["name"]
-            for item in schema.get_check_constraints("rag_chunks")
-        }
+        chunk_checks = {item["name"] for item in schema.get_check_constraints("rag_chunks")}
 
         assert "ck_rag_chunks_provenance_mode" in chunk_checks
         assert "ck_rag_chunks_provenance_shape" in chunk_checks
 
         # Historical PAGE provenance remains PAGE-specific.
         page_columns = {
-            column["name"]: column
-            for column in schema.get_columns(
-                "rag_chunk_source_spans"
-            )
+            column["name"]: column for column in schema.get_columns("rag_chunk_source_spans")
         }
 
         assert tuple(page_columns) == (
@@ -144,9 +128,7 @@ def test_migration_preserves_page_spans_and_adds_structure_spans(
 
         structure_columns = {
             column["name"]: column
-            for column in schema.get_columns(
-                "rag_chunk_structure_source_spans"
-            )
+            for column in schema.get_columns("rag_chunk_structure_source_spans")
         }
 
         assert tuple(structure_columns) == (
@@ -160,9 +142,7 @@ def test_migration_preserves_page_spans_and_adds_structure_spans(
             "chunk_char_end",
         )
 
-        foreign_keys = schema.get_foreign_keys(
-            "rag_chunk_structure_source_spans"
-        )
+        foreign_keys = schema.get_foreign_keys("rag_chunk_structure_source_spans")
 
         targets = {
             (
@@ -190,9 +170,7 @@ def test_migration_preserves_page_spans_and_adds_structure_spans(
                 item["name"],
                 tuple(item["column_names"]),
             )
-            for item in schema.get_unique_constraints(
-                "rag_chunk_structure_source_spans"
-            )
+            for item in schema.get_unique_constraints("rag_chunk_structure_source_spans")
         }
 
         assert (
@@ -202,9 +180,7 @@ def test_migration_preserves_page_spans_and_adds_structure_spans(
 
         checks = {
             item["name"]
-            for item in schema.get_check_constraints(
-                "rag_chunk_structure_source_spans"
-            )
+            for item in schema.get_check_constraints("rag_chunk_structure_source_spans")
         }
 
         assert checks.issuperset(

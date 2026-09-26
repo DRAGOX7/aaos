@@ -16,10 +16,7 @@ from aaos.moodle.file_download import (
 
 SOURCE = "moodle:fixture"
 WWWROOT = "https://moodle.example/current"
-DOCX_MIME = (
-    "application/vnd.openxmlformats-officedocument."
-    "wordprocessingml.document"
-)
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def selection(
@@ -49,9 +46,7 @@ class FakeResponse:
 class FakeRequest:
     def __init__(self, response: FakeResponse) -> None:
         self.response = response
-        self.calls: list[
-            tuple[str, dict[str, object]]
-        ] = []
+        self.calls: list[tuple[str, dict[str, object]]] = []
 
     def get(
         self,
@@ -87,9 +82,7 @@ def test_moodle_resource_emits_fetched_docx_for_docx_response() -> None:
             status=200,
             headers={
                 "content-type": DOCX_MIME,
-                "content-disposition": (
-                    'attachment; filename="lecture.docx"'
-                ),
+                "content-disposition": ('attachment; filename="lecture.docx"'),
             },
             payload=b"PK-docx-fixture",
         )
@@ -107,9 +100,7 @@ def test_moodle_pdf_response_remains_fetched_pdf() -> None:
             status=200,
             headers={
                 "content-type": "application/pdf",
-                "content-disposition": (
-                    'attachment; filename="lecture.pdf"'
-                ),
+                "content-disposition": ('attachment; filename="lecture.pdf"'),
             },
             payload=b"%PDF-1.7",
         )

@@ -18,9 +18,7 @@ def _app() -> FastAPI:
 
     @app.get("/unexpected")
     async def unexpected() -> None:
-        raise RuntimeError(
-            r"secret path C:\Users\example\data\credentials\token.json"
-        )
+        raise RuntimeError(r"secret path C:\Users\example\data\credentials\token.json")
 
     @app.get("/validated/{item_id}")
     async def validated(item_id: int) -> dict[str, int]:

@@ -51,4 +51,3 @@ def test_oversized_output_is_rejected_before_a_result_can_escape() -> None:
     worker = FakeWorker(scenario=FakeWorkerScenario.OVERSIZED_OUTPUT)
     with pytest.raises(WorkerProtocolError, match="output"):
         worker.execute(_request())
-

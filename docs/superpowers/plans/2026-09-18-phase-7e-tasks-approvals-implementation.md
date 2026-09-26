@@ -57,15 +57,18 @@ must consume these interfaces rather than create parallel substitutes.
 class TaskKind(StrEnum):
     CALENDAR_CREATE_EVENT = "CALENDAR_CREATE_EVENT"
 
+
 class TaskCreationState(StrEnum):
     CREATED = "CREATED"
     ACTION_BOUND = "ACTION_BOUND"
     FAILED = "FAILED"
 
+
 class TaskFailureCode(StrEnum):
     INVALID_REQUEST = "INVALID_REQUEST"
     CAPABILITY_DENIED = "CAPABILITY_DENIED"
     PREPARATION_FAILED = "PREPARATION_FAILED"
+
 
 class BrowserTaskState(StrEnum):
     PREPARING = "PREPARING"
@@ -83,6 +86,7 @@ class BrowserTaskState(StrEnum):
     EXPIRED = "EXPIRED"
     REVOKED = "REVOKED"
 
+
 @dataclass(frozen=True, slots=True)
 class TaskRecord:
     task_id: str
@@ -95,6 +99,7 @@ class TaskRecord:
     action_id: ActionId | None
     created_at: datetime
     updated_at: datetime
+
 
 def project_task_state(
     creation_state: TaskCreationState,
@@ -110,6 +115,7 @@ def project_task_state(
 class LocalApproverContextProvider(Protocol):
     def current(self) -> TrustedApproverContext: ...
 
+
 class LocalPrincipalProvider(Protocol):
     def current_actor(self) -> ActorIdentity: ...
     def current_approver(self) -> TrustedApproverContext: ...
@@ -122,9 +128,7 @@ deterministic provider. Browser JSON never supplies either value.
 
 ```python
 class TaskRepository:
-    def create_or_get(
-        self, record: TaskRecord
-    ) -> tuple[TaskRecord, bool]: ...
+    def create_or_get(self, record: TaskRecord) -> tuple[TaskRecord, bool]: ...
     def get(self, task_id: str) -> TaskRecord | None: ...
     def get_by_idempotency(
         self, actor_identity: ActorIdentity, idempotency_key: str
@@ -161,9 +165,7 @@ class TaskApplicationService:
     def approve(self, approval_id: ApprovalId, *, now: datetime) -> ApprovalDetail: ...
     def reject(self, approval_id: ApprovalId, *, now: datetime) -> ApprovalDetail: ...
 
-    def execute_approved_task(
-        self, task_id: str, *, now: datetime
-    ) -> TaskDetail: ...
+    def execute_approved_task(self, task_id: str, *, now: datetime) -> TaskDetail: ...
 ```
 
 `execute_approved_task` is a trusted internal composition point with an

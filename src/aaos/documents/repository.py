@@ -31,9 +31,7 @@ from aaos.persistence.document_models import (
 )
 
 _PDF_MEDIA_TYPE = "application/pdf"
-_DOCX_MEDIA_TYPE = (
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
+_DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _PAGE_PROVENANCE_MODE = "PAGE"
 _STRUCTURE_PROVENANCE_MODE = "STRUCTURE"
 
@@ -165,9 +163,7 @@ class DocumentRepository:
                 )
             )
         except SQLAlchemyError:
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.PERSISTENCE_FAILED
-            ) from None
+            raise DocumentIngestionFailure(IngestionErrorCode.PERSISTENCE_FAILED) from None
         finally:
             session.close()
 
@@ -250,7 +246,6 @@ class DocumentRepository:
         finally:
             session.close()
 
-
     def persist_structural_success(
         self,
         *,
@@ -328,9 +323,7 @@ class DocumentRepository:
             return result
         except SQLAlchemyError:
             session.rollback()
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.PERSISTENCE_FAILED
-            ) from None
+            raise DocumentIngestionFailure(IngestionErrorCode.PERSISTENCE_FAILED) from None
         finally:
             session.close()
 
@@ -457,9 +450,7 @@ class DocumentRepository:
                 or content_blob.media_type != media_type
                 or content_blob.storage_key != blob.storage_key
             ):
-                raise DocumentIngestionFailure(
-                    IngestionErrorCode.PERSISTENCE_FAILED
-                )
+                raise DocumentIngestionFailure(IngestionErrorCode.PERSISTENCE_FAILED)
             return content_blob, False
         content_blob = ContentBlobORM(
             sha256=blob.sha256,

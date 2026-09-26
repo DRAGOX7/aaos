@@ -66,7 +66,18 @@ def test_activity_projection_exposes_no_raw_internal_fields() -> None:
 def test_browser_activity_health_surface_has_no_write_or_secret_authority() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in ACTIVITY_BROWSER_FILES)
     assert 'method: "GET"' in source
-    for forbidden in ("POST", "PUT", "PATCH", "DELETE", "TrustedApproverContext", "password", "token", "traceback", "sqlite", "provider"):
+    for forbidden in (
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "TrustedApproverContext",
+        "password",
+        "token",
+        "traceback",
+        "sqlite",
+        "provider",
+    ):
         assert forbidden.lower() not in source.lower()
     assert "/api/v1/activity" in source
     assert "/api/v1/system-health" in source

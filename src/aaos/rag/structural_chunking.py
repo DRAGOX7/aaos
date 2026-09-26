@@ -76,9 +76,7 @@ class DocumentStructureUnit:
                 or not isinstance(self.heading_level, int)
                 or not 1 <= self.heading_level <= 9
             ):
-                raise ValueError(
-                    "heading_level must be between 1 and 9"
-                )
+                raise ValueError("heading_level must be between 1 and 9")
             if any(
                 value is not None
                 for value in (
@@ -87,9 +85,7 @@ class DocumentStructureUnit:
                     self.column_index,
                 )
             ):
-                raise ValueError(
-                    "heading units cannot have table coordinates"
-                )
+                raise ValueError("heading units cannot have table coordinates")
             return
 
         if kind is StructureUnitKind.PARAGRAPH:
@@ -101,15 +97,11 @@ class DocumentStructureUnit:
                     self.column_index,
                 )
             ):
-                raise ValueError(
-                    "paragraph units cannot have heading or table metadata"
-                )
+                raise ValueError("paragraph units cannot have heading or table metadata")
             return
 
         if self.heading_level is not None:
-            raise ValueError(
-                "table cells cannot have heading metadata"
-            )
+            raise ValueError("table cells cannot have heading metadata")
 
         for name in (
             "table_index",
@@ -118,9 +110,7 @@ class DocumentStructureUnit:
         ):
             value = getattr(self, name)
             if value is None:
-                raise ValueError(
-                    "table cells require complete coordinates"
-                )
+                raise ValueError("table cells require complete coordinates")
             _nonnegative_int(value, name)
 
 
@@ -197,13 +187,9 @@ class StructureChunkSourceSpanDraft:
             _nonnegative_int(getattr(self, name), name)
 
         if self.source_char_end <= self.source_char_start:
-            raise ValueError(
-                "source_char span must be monotonic and non-empty"
-            )
+            raise ValueError("source_char span must be monotonic and non-empty")
         if self.chunk_char_end <= self.chunk_char_start:
-            raise ValueError(
-                "chunk_char span must be monotonic and non-empty"
-            )
+            raise ValueError("chunk_char span must be monotonic and non-empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,9 +217,7 @@ class StructureChunkDraft:
         _positive_int(self.token_count, "token_count")
 
         if not isinstance(self.source_spans, tuple):
-            raise ValueError(
-                "source_spans must be an immutable tuple"
-            )
+            raise ValueError("source_spans must be an immutable tuple")
         if not self.source_spans:
             raise ValueError("chunk must have source spans")
         if not all(
@@ -243,25 +227,18 @@ class StructureChunkDraft:
             )
             for span in self.source_spans
         ):
-            raise ValueError(
-                "source_spans must contain structural source spans"
-            )
+            raise ValueError("source_spans must contain structural source spans")
 
         if (
             not isinstance(self.chunk_key, str)
             or _CHUNK_KEY_PATTERN.fullmatch(self.chunk_key) is None
         ):
-            raise ValueError(
-                "chunk_key must be a lowercase SHA-256 hex digest"
-            )
+            raise ValueError("chunk_key must be a lowercase SHA-256 hex digest")
 
         if self.heading is not None and (
-            not isinstance(self.heading, str)
-            or not self.heading.strip()
+            not isinstance(self.heading, str) or not self.heading.strip()
         ):
-            raise ValueError(
-                "heading must be non-blank text when present"
-            )
+            raise ValueError("heading must be non-blank text when present")
 
     @property
     def exact_text(self) -> str:
@@ -306,13 +283,8 @@ class _Fragment:
 
 
 def _validate_source_version_sha256(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or _SHA256_PATTERN.fullmatch(value) is None
-    ):
-        raise ValueError(
-            "source version SHA-256 must be a lowercase hex digest"
-        )
+    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
+        raise ValueError("source version SHA-256 must be a lowercase hex digest")
     return value
 
 
@@ -321,8 +293,7 @@ def _split_long_unit(
     config: RagIndexConfig,
 ) -> tuple[_Fragment, ...]:
     token_spans = tuple(
-        (match.start(), match.end())
-        for match in _TOKEN_PATTERN.finditer(unit.text)
+        (match.start(), match.end()) for match in _TOKEN_PATTERN.finditer(unit.text)
     )
 
     token_count = len(token_spans)
@@ -352,16 +323,8 @@ def _split_long_unit(
             token_count,
         )
 
-        start_char = (
-            0
-            if start_index == 0
-            else token_spans[start_index][0]
-        )
-        end_char = (
-            len(unit.text)
-            if end_index == token_count
-            else token_spans[end_index][0]
-        )
+        start_char = 0 if start_index == 0 else token_spans[start_index][0]
+        end_char = len(unit.text) if end_index == token_count else token_spans[end_index][0]
 
         fragment_text = unit.text[start_char:end_char]
 
@@ -390,10 +353,7 @@ def _separator(
     left = previous.unit
     right = current.unit
 
-    if (
-        left.kind is StructureUnitKind.TABLE_CELL
-        and right.kind is StructureUnitKind.TABLE_CELL
-    ):
+    if left.kind is StructureUnitKind.TABLE_CELL and right.kind is StructureUnitKind.TABLE_CELL:
         if left.table_index == right.table_index:
             if left.row_index == right.row_index:
                 return "\t"
@@ -418,9 +378,7 @@ def _chunk_key(
         "source_version_sha256": source_version_sha256,
         "source_spans": [
             {
-                "document_structure_unit_id": (
-                    span.document_structure_unit_id
-                ),
+                "document_structure_unit_id": (span.document_structure_unit_id),
                 "source_char_start": span.source_char_start,
                 "source_char_end": span.source_char_end,
                 "chunk_char_start": span.chunk_char_start,
@@ -428,9 +386,7 @@ def _chunk_key(
             }
             for span in spans
         ],
-        "text_sha256": sha256(
-            text.encode("utf-8")
-        ).hexdigest(),
+        "text_sha256": sha256(text.encode("utf-8")).hexdigest(),
     }
 
     canonical = json.dumps(
@@ -466,9 +422,7 @@ def _draft_from_fragments(
         chunk_end = chunk_offset + len(fragment.text)
         spans.append(
             StructureChunkSourceSpanDraft(
-                document_structure_unit_id=(
-                    fragment.unit.document_structure_unit_id
-                ),
+                document_structure_unit_id=(fragment.unit.document_structure_unit_id),
                 source_char_start=fragment.source_start,
                 source_char_end=fragment.source_end,
                 chunk_char_start=chunk_offset,
@@ -505,14 +459,10 @@ class DeterministicStructureChunker:
 
     def __init__(self, config: RagIndexConfig) -> None:
         if not isinstance(config, RagIndexConfig):
-            raise ValueError(
-                "config must be a RagIndexConfig"
-            )
+            raise ValueError("config must be a RagIndexConfig")
 
         self._config = config
-        self._config_fingerprint = compute_config_fingerprint(
-            config
-        )
+        self._config_fingerprint = compute_config_fingerprint(config)
 
     @property
     def config(self) -> RagIndexConfig:
@@ -532,43 +482,24 @@ class DeterministicStructureChunker:
             document_version_id,
             "document_version_id",
         )
-        source_version_sha256 = (
-            _validate_source_version_sha256(
-                source_version_sha256
-            )
-        )
+        source_version_sha256 = _validate_source_version_sha256(source_version_sha256)
 
-        ordered_units = tuple(
-            _coerce_unit(unit)
-            for unit in units
-        )
+        ordered_units = tuple(_coerce_unit(unit) for unit in units)
 
         previous_ordinal = 0
         seen_unit_ids: set[int] = set()
 
         for unit in ordered_units:
             if unit.document_version_id != document_version_id:
-                raise ValueError(
-                    "structure unit document version "
-                    "does not match document version"
-                )
+                raise ValueError("structure unit document version does not match document version")
 
             if unit.ordinal <= previous_ordinal:
-                raise ValueError(
-                    "structure units must be ordered by ordinal"
-                )
+                raise ValueError("structure units must be ordered by ordinal")
 
-            if (
-                unit.document_structure_unit_id
-                in seen_unit_ids
-            ):
-                raise ValueError(
-                    "structure unit identities must be unique"
-                )
+            if unit.document_structure_unit_id in seen_unit_ids:
+                raise ValueError("structure unit identities must be unique")
 
-            seen_unit_ids.add(
-                unit.document_structure_unit_id
-            )
+            seen_unit_ids.add(unit.document_structure_unit_id)
             previous_ordinal = unit.ordinal
 
         drafts: list[StructureChunkDraft] = []
@@ -614,10 +545,7 @@ class DeterministicStructureChunker:
             )
             unit_tokens = count_tokens(unit.text)
 
-            if (
-                unit_tokens
-                > self._config.chunk_hard_max_tokens
-            ):
+            if unit_tokens > self._config.chunk_hard_max_tokens:
                 emit_current()
 
                 for fragment in fragments:
@@ -635,11 +563,7 @@ class DeterministicStructureChunker:
 
                 continue
 
-            if (
-                current
-                and current_tokens + unit_tokens
-                > self._config.chunk_hard_max_tokens
-            ):
+            if current and current_tokens + unit_tokens > self._config.chunk_hard_max_tokens:
                 emit_current()
 
             current.extend(fragments)
@@ -658,9 +582,7 @@ def chunk_structure_document(
 ) -> tuple[StructureChunkDraft, ...]:
     """Return deterministic page-less chunks for one STRUCTURE document."""
 
-    return DeterministicStructureChunker(
-        config
-    ).chunk(
+    return DeterministicStructureChunker(config).chunk(
         document_version_id,
         units,
         source_version_sha256,
@@ -676,10 +598,7 @@ def chunk_structure_document_result(
 ) -> StructureChunkingResult:
     """Return chunks with deterministic structural-unit coverage."""
 
-    ordered_units = tuple(
-        _coerce_unit(unit)
-        for unit in units
-    )
+    ordered_units = tuple(_coerce_unit(unit) for unit in units)
 
     chunks = chunk_structure_document(
         document_version_id,
@@ -688,11 +607,7 @@ def chunk_structure_document_result(
         source_version_sha256=source_version_sha256,
     )
 
-    usable_units = sum(
-        1
-        for unit in ordered_units
-        if unit.text.strip()
-    )
+    usable_units = sum(1 for unit in ordered_units if unit.text.strip())
 
     if not usable_units:
         coverage = ChunkCoverage.NONE

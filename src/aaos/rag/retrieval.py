@@ -336,9 +336,7 @@ def _span_interval(
             span.source_char_start,
             span.source_char_end,
         )
-    raise RagOperationalError(
-        RagErrorCode.RETRIEVAL_INCONSISTENCY
-    )
+    raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
 
 def _span_length(
@@ -360,14 +358,8 @@ def _overlap_ratio(
     if left.chunk.provenance_mode != right.chunk.provenance_mode:
         return 0.0
 
-    left_total = sum(
-        _span_length(span)
-        for span in left.source_spans
-    )
-    right_total = sum(
-        _span_length(span)
-        for span in right.source_spans
-    )
+    left_total = sum(_span_length(span) for span in left.source_spans)
+    right_total = sum(_span_length(span) for span in right.source_spans)
     if left_total <= 0 or right_total <= 0:
         return 0.0
     overlap = 0
@@ -384,17 +376,11 @@ def _source_span_matches_chunk(
     span: SourceSpanRecord | StructureSourceSpanRecord,
     item: AuthoritativeRetrievalChunk,
 ) -> bool:
-    if (
-        span.rag_chunk_id != item.chunk.chunk_id
-        or span.chunk_char_end <= span.chunk_char_start
-    ):
+    if span.rag_chunk_id != item.chunk.chunk_id or span.chunk_char_end <= span.chunk_char_start:
         return False
 
     if item.chunk.provenance_mode == "PAGE":
-        return (
-            isinstance(span, SourceSpanRecord)
-            and span.page_char_end > span.page_char_start
-        )
+        return isinstance(span, SourceSpanRecord) and span.page_char_end > span.page_char_start
 
     if item.chunk.provenance_mode == "STRUCTURE":
         return (
@@ -452,14 +438,12 @@ def _validate_selection_inputs(
             or item.chunk.token_count <= 0
             or not isinstance(item.chunk.exact_text, str)
             or not item.chunk.exact_text.strip()
-            or item.chunk.provenance_mode not in {
+            or item.chunk.provenance_mode
+            not in {
                 "PAGE",
                 "STRUCTURE",
             }
-            or (
-                item.document_version.provenance_mode
-                != item.chunk.provenance_mode
-            )
+            or (item.document_version.provenance_mode != item.chunk.provenance_mode)
             or any(
                 not _source_span_matches_chunk(
                     span,
@@ -474,21 +458,15 @@ def _validate_selection_inputs(
 def _project_source_spans(
     item: AuthoritativeRetrievalChunk,
 ) -> tuple[
-    RagChunkSourceSpanValue
-    | RagChunkStructureSourceSpanValue,
+    RagChunkSourceSpanValue | RagChunkStructureSourceSpanValue,
     ...,
 ]:
-    projected: list[
-        RagChunkSourceSpanValue
-        | RagChunkStructureSourceSpanValue
-    ] = []
+    projected: list[RagChunkSourceSpanValue | RagChunkStructureSourceSpanValue] = []
 
     for span in item.source_spans:
         if isinstance(span, SourceSpanRecord):
             if item.chunk.provenance_mode != "PAGE":
-                raise RagOperationalError(
-                    RagErrorCode.RETRIEVAL_INCONSISTENCY
-                )
+                raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
             projected.append(
                 RagChunkSourceSpanValue(
@@ -504,15 +482,11 @@ def _project_source_spans(
 
         if isinstance(span, StructureSourceSpanRecord):
             if item.chunk.provenance_mode != "STRUCTURE":
-                raise RagOperationalError(
-                    RagErrorCode.RETRIEVAL_INCONSISTENCY
-                )
+                raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
             projected.append(
                 RagChunkStructureSourceSpanValue(
-                    document_structure_unit_id=(
-                        span.document_structure_unit_id
-                    ),
+                    document_structure_unit_id=(span.document_structure_unit_id),
                     unit_ordinal=span.unit_ordinal,
                     kind=span.kind,
                     heading_level=span.heading_level,
@@ -527,14 +501,10 @@ def _project_source_spans(
             )
             continue
 
-        raise RagOperationalError(
-            RagErrorCode.RETRIEVAL_INCONSISTENCY
-        )
+        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
     if not projected:
-        raise RagOperationalError(
-            RagErrorCode.RETRIEVAL_INCONSISTENCY
-        )
+        raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
     return tuple(projected)
 
@@ -743,18 +713,14 @@ class EvidenceSelector:
                         document_version_id=item.document_version.document_version_id,
                         document_title=item.document_version.source_filename,
                         course_id=item.document_version.course_id,
-                        source_spans=_project_source_spans(
-                            item
-                        ),
+                        source_spans=_project_source_spans(item),
                         dense_rank=candidate.dense_rank,
                         lexical_rank=candidate.lexical_rank,
                         fused_rank=candidate.fused_rank,
                         generation_id=snapshot.generation.generation_id,
                         content_revision=snapshot.generation.content_revision,
                         token_count=item.chunk.token_count,
-                        provenance_mode=(
-                            item.chunk.provenance_mode
-                        ),
+                        provenance_mode=(item.chunk.provenance_mode),
                     )
                 )
             except (TypeError, ValueError):

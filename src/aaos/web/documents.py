@@ -122,9 +122,7 @@ class DocumentReadService:
                 versions_by_document.setdefault(version.document_id, version)
 
         active_generation_id = session.scalar(
-            select(RagIndexGenerationORM.id).where(
-                RagIndexGenerationORM.status == "ACTIVE"
-            )
+            select(RagIndexGenerationORM.id).where(RagIndexGenerationORM.status == "ACTIVE")
         )
         indexes_by_version: dict[int, RagDocumentIndexORM] = {}
         version_ids = [version.id for version in versions_by_document.values()]

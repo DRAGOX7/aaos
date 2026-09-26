@@ -137,39 +137,22 @@ class RagChunkORM(Base):
             name="ck_rag_chunks_text_sha256",
         ),
         CheckConstraint(
-
             "provenance_mode IN ('PAGE', 'STRUCTURE')",
-
             name="ck_rag_chunks_provenance_mode",
-
         ),
-
         CheckConstraint(
-
             "("
-
             "provenance_mode = 'PAGE' "
-
             "AND page_start IS NOT NULL "
-
             "AND page_end IS NOT NULL "
-
             "AND page_start > 0 "
-
             "AND page_end >= page_start"
-
             ") OR ("
-
             "provenance_mode = 'STRUCTURE' "
-
             "AND page_start IS NULL "
-
             "AND page_end IS NULL"
-
             ")",
-
             name="ck_rag_chunks_provenance_shape",
-
         ),
         Index(
             "ix_rag_chunks_generation_document_ordinal",
@@ -240,6 +223,7 @@ class RagChunkSourceSpanORM(Base):
     page_char_end: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_char_start: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_char_end: Mapped[int] = mapped_column(Integer, nullable=False)
+
 
 class RagChunkStructureSourceSpanORM(Base):
     __tablename__ = "rag_chunk_structure_source_spans"

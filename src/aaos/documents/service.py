@@ -132,11 +132,9 @@ class Phase3IngestionService:
                 )
                 staged = self._blob_store.stage(fetched.body)
                 parsed_docx = self._docx_processor.process(fetched.body)
-                existing_version = (
-                    self._repository.existing_structural_version_for_sha256(
-                        remote_file_id=selection.remote_file_id,
-                        sha256=staged.sha256,
-                    )
+                existing_version = self._repository.existing_structural_version_for_sha256(
+                    remote_file_id=selection.remote_file_id,
+                    sha256=staged.sha256,
                 )
                 if existing_version is not None:
                     result = DocumentIngestionResult(
@@ -205,9 +203,7 @@ class Phase3IngestionService:
                         deduplicated=not persisted.content_blob_created,
                     )
             else:
-                raise DocumentIngestionFailure(
-                    IngestionErrorCode.UNAUTHORIZED_ROUTE
-                )
+                raise DocumentIngestionFailure(IngestionErrorCode.UNAUTHORIZED_ROUTE)
         except DocumentIngestionFailure as failure:
             failure_code = failure.code
             if failure.code is IngestionErrorCode.PERSISTENCE_FAILED:

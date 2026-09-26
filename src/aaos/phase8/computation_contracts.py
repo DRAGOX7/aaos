@@ -142,7 +142,8 @@ class ComputationResult:
             if not isinstance(value, str) or len(value) > MAX_RESULT_TEXT_CHARACTERS:
                 raise ValueError(f"{field_name} exceeds the Phase 8 result bound")
         if self.result_json is not None and (
-            not isinstance(self.result_json, str) or len(self.result_json) > MAX_RESULT_TEXT_CHARACTERS
+            not isinstance(self.result_json, str)
+            or len(self.result_json) > MAX_RESULT_TEXT_CHARACTERS
         ):
             raise ValueError("result_json exceeds the Phase 8 result bound")
         if self.output_sha256 is not None and not _SHA256.fullmatch(self.output_sha256):

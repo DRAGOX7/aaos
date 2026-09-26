@@ -90,9 +90,7 @@ class RagReadService(AcademicRagReader):
 
     def _project_citations(
         self,
-        citations: Iterable[
-            Citation | StructuralCitation
-        ],
+        citations: Iterable[Citation | StructuralCitation],
     ) -> tuple[
         RagCitation | RagStructuralCitation,
         ...,
@@ -115,22 +113,15 @@ class RagReadService(AcademicRagReader):
             )
             for citation in citation_items
         ):
-            raise RagOperationalError(
-                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-            )
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         version_ids: list[int] = []
 
         for citation in citation_items:
             version_id = citation.document_version_id
 
-            if (
-                type(version_id) is not int
-                or version_id <= 0
-            ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+            if type(version_id) is not int or version_id <= 0:
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             version_ids.append(version_id)
 
@@ -142,18 +133,15 @@ class RagReadService(AcademicRagReader):
             )
             .join(
                 DocumentORM,
-                DocumentORM.id
-                == DocumentVersionORM.document_id,
+                DocumentORM.id == DocumentVersionORM.document_id,
             )
             .join(
                 RemoteFileORM,
-                RemoteFileORM.id
-                == DocumentORM.remote_file_id,
+                RemoteFileORM.id == DocumentORM.remote_file_id,
             )
             .join(
                 CourseORM,
-                CourseORM.id
-                == RemoteFileORM.course_id,
+                CourseORM.id == RemoteFileORM.course_id,
             )
             .where(
                 DocumentVersionORM.id.in_(version_ids),
@@ -175,23 +163,15 @@ class RagReadService(AcademicRagReader):
         }
 
         if len(targets) != len(set(version_ids)):
-            raise RagOperationalError(
-                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-            )
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-        result: list[
-            RagCitation | RagStructuralCitation
-        ] = []
+        result: list[RagCitation | RagStructuralCitation] = []
 
         for citation in citation_items:
-            target = targets.get(
-                citation.document_version_id
-            )
+            target = targets.get(citation.document_version_id)
 
             if target is None:
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             try:
                 if isinstance(citation, Citation):
@@ -223,15 +203,11 @@ class RagReadService(AcademicRagReader):
                     )
                     continue
 
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             except RagOperationalError:
                 raise
             except (TypeError, ValueError) as error:
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                ) from error
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from error
 
         return tuple(result)

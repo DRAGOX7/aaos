@@ -48,7 +48,9 @@ def _complete_snapshot() -> CompleteSourceSnapshot:
         source_system="moodle:fixture:live-sync",
         courses=(RawCourse(source_id="course-1", title="Course"),),
         assignments=(
-            RawAssignment(source_id="assignment-1", course_source_id="course-1", title="Assignment"),
+            RawAssignment(
+                source_id="assignment-1", course_source_id="course-1", title="Assignment"
+            ),
         ),
         announcements=(
             RawAnnouncement(
@@ -164,7 +166,9 @@ def test_main_dispatches_only_exact_moodle_sync(monkeypatch: pytest.MonkeyPatch)
     assert calls == ["sync"]
 
 
-def test_unsupported_moodle_command_remains_safe(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+def test_unsupported_moodle_command_remains_safe(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
     from aaos import cli
 
     called = False
@@ -223,7 +227,13 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
     monkeypatch.setattr(live_sync, "sync_moodle_snapshot", persist)
 
     assert live_sync.run_configured_moodle_sync() == 0
-    assert events == ["collect", f"engine:{database_path.resolve()}", "session-factory", "persist", "dispose"]
+    assert events == [
+        "collect",
+        f"engine:{database_path.resolve()}",
+        "session-factory",
+        "persist",
+        "dispose",
+    ]
     assert alternate_database_path.read_bytes() == b"moodle-runtime-database"
     assert capsys.readouterr().out == (
         "MOODLE_SYNC_PASS\n"
@@ -367,9 +377,7 @@ def test_same_context_collection_uses_collect_complete_and_cleans_context(
     monkeypatch.setattr(
         browser,
         "collect_complete",
-        lambda source, *, source_system: _record_collection_call(
-            calls, source, source_system
-        ),
+        lambda source, *, source_system: _record_collection_call(calls, source, source_system),
     )
 
     result = browser._run_same_context_complete_collection(
@@ -456,7 +464,9 @@ def test_no_alembic_upgrade_is_called_by_sync_command(
     engine = type("EngineProbe", (), {"dispose": lambda self: None})()
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
-    monkeypatch.setattr(live_sync, "collect_configured_snapshot", lambda _environment: _complete_snapshot())
+    monkeypatch.setattr(
+        live_sync, "collect_configured_snapshot", lambda _environment: _complete_snapshot()
+    )
     _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
     monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())

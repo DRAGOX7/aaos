@@ -67,8 +67,12 @@ Phase 6A interfaces consumed by Tasks 3 and 7 are frozen:
 
 ```python
 class ExternalAdapter(Protocol):
-    def execute(self, action: ExecutableAction) -> AdapterExecutionOutcome: pass
-    def reconcile(self, operation_id: OperationId) -> AdapterReconciliationOutcome: pass
+    def execute(self, action: ExecutableAction) -> AdapterExecutionOutcome:
+        pass
+
+    def reconcile(self, operation_id: OperationId) -> AdapterReconciliationOutcome:
+        pass
+
 
 def prepare_action(
     repository: ApprovalRepository,
@@ -81,28 +85,72 @@ def prepare_action(
     action_expires_at: datetime,
     capability_policy: PermissionPolicy,
     now: datetime,
-) -> PreparedAction: pass
+) -> PreparedAction:
+    pass
 
-def request_approval(repository: ApprovalRepository, action_id: ActionId,
-                     approver: TrustedApproverContext,
-                     approval_expires_at: datetime, now: datetime) -> ApprovalRecord: pass
-def approve_approval(repository: ApprovalRepository, approval_id: ApprovalId,
-                     approver: TrustedApproverContext, now: datetime) -> ApprovalRecord: pass
-def claim_action(repository: ApprovalRepository, action_id: ActionId, *,
-                 capability_policy: PermissionPolicy,
-                 definition: Phase6ActionDefinition, now: datetime,
-                 claim_identity: ClaimIdentity) -> ClaimResult: pass
-def dispatch_claimed_operation(repository: ApprovalRepository, adapter: ExternalAdapter,
-                               operation_id: OperationId, *,
-                               capability_policy: PermissionPolicy,
-                               definition: Phase6ActionDefinition,
-                               now: datetime) -> DispatchResult: pass
-def record_adapter_outcome(repository: ApprovalRepository, operation_id: OperationId, *,
-                           expected_revision: int,
-                           outcome: AdapterExecutionOutcome) -> OutcomeRecordResult: pass
-def reconcile_operation(repository: ApprovalRepository, adapter: ExternalAdapter,
-                        operation_id: OperationId, *, expected_revision: int,
-                        now: datetime) -> ReconciliationResult: pass
+
+def request_approval(
+    repository: ApprovalRepository,
+    action_id: ActionId,
+    approver: TrustedApproverContext,
+    approval_expires_at: datetime,
+    now: datetime,
+) -> ApprovalRecord:
+    pass
+
+
+def approve_approval(
+    repository: ApprovalRepository,
+    approval_id: ApprovalId,
+    approver: TrustedApproverContext,
+    now: datetime,
+) -> ApprovalRecord:
+    pass
+
+
+def claim_action(
+    repository: ApprovalRepository,
+    action_id: ActionId,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    now: datetime,
+    claim_identity: ClaimIdentity,
+) -> ClaimResult:
+    pass
+
+
+def dispatch_claimed_operation(
+    repository: ApprovalRepository,
+    adapter: ExternalAdapter,
+    operation_id: OperationId,
+    *,
+    capability_policy: PermissionPolicy,
+    definition: Phase6ActionDefinition,
+    now: datetime,
+) -> DispatchResult:
+    pass
+
+
+def record_adapter_outcome(
+    repository: ApprovalRepository,
+    operation_id: OperationId,
+    *,
+    expected_revision: int,
+    outcome: AdapterExecutionOutcome,
+) -> OutcomeRecordResult:
+    pass
+
+
+def reconcile_operation(
+    repository: ApprovalRepository,
+    adapter: ExternalAdapter,
+    operation_id: OperationId,
+    *,
+    expected_revision: int,
+    now: datetime,
+) -> ReconciliationResult:
+    pass
 ```
 
 The Phase 6A `ExecutableAction` contains only `target_identity`, `action_type`,

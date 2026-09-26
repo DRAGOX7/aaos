@@ -357,7 +357,9 @@ def test_list_documents_orders_by_title_then_id_and_filters_inactive_parents(
     _seed_document(sessions, document_id=12, title="Zulu")
     _seed_document(sessions, document_id=10, title="alpha")
     _seed_document(sessions, document_id=11, title="Alpha")
-    _seed_document(sessions, document_id=13, title="Hidden course", course_id=13, course_active=False)
+    _seed_document(
+        sessions, document_id=13, title="Hidden course", course_id=13, course_active=False
+    )
     _seed_document(sessions, document_id=14, title="Hidden file", remote_active=False)
 
     result = _service(sessions).list_documents()

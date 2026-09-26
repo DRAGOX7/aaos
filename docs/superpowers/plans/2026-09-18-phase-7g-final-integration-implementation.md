@@ -207,14 +207,20 @@ Phase 7 operations, with no Settings path:
 
 ~~~python
 EXPECTED = {
-    "/api/v1/courses", "/api/v1/courses/{course_id}",
-    "/api/v1/assignments", "/api/v1/documents",
-    "/api/v1/documents/{document_id}", "/api/v1/rag/queries",
-    "/api/v1/tasks", "/api/v1/tasks/{task_id}",
-    "/api/v1/approvals", "/api/v1/approvals/{approval_id}",
+    "/api/v1/courses",
+    "/api/v1/courses/{course_id}",
+    "/api/v1/assignments",
+    "/api/v1/documents",
+    "/api/v1/documents/{document_id}",
+    "/api/v1/rag/queries",
+    "/api/v1/tasks",
+    "/api/v1/tasks/{task_id}",
+    "/api/v1/approvals",
+    "/api/v1/approvals/{approval_id}",
     "/api/v1/approvals/{approval_id}/approve",
     "/api/v1/approvals/{approval_id}/reject",
-    "/api/v1/activity", "/api/v1/activity/stream",
+    "/api/v1/activity",
+    "/api/v1/activity/stream",
     "/api/v1/system-health",
 }
 ~~~

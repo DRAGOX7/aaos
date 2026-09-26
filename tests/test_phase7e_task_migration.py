@@ -38,9 +38,7 @@ def test_task_records_migration_is_additive_and_round_trips(tmp_path: Path) -> N
     engine = create_database_engine(path)
     try:
         assert "task_records" in inspect(engine).get_table_names()
-        assert {
-            column["name"] for column in inspect(engine).get_columns("task_records")
-        } == {
+        assert {column["name"] for column in inspect(engine).get_columns("task_records")} == {
             "task_id",
             "task_kind",
             "actor_identity",
@@ -99,7 +97,9 @@ def test_task_records_enforce_closed_values_and_identities(tmp_path: Path) -> No
         with pytest.raises(IntegrityError):
             with engine.begin() as connection:
                 connection.execute(
-                    text("INSERT INTO task_records SELECT :id, task_kind, actor_identity, idempotency_key, request_fingerprint, 'CREATED', NULL, NULL, created_at, updated_at FROM task_records WHERE task_id=:old"),
+                    text(
+                        "INSERT INTO task_records SELECT :id, task_kind, actor_identity, idempotency_key, request_fingerprint, 'CREATED', NULL, NULL, created_at, updated_at FROM task_records WHERE task_id=:old"
+                    ),
                     {"id": "task-2", "old": "task-1"},
                 )
         with pytest.raises(IntegrityError):

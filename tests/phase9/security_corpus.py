@@ -12,9 +12,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Final
 
-_CHANNELS: Final = frozenset(
-    {"TEXT", "VISUAL", "RETRIEVED", "TOOL_OBSERVATION", "COMPUTATION"}
-)
+_CHANNELS: Final = frozenset({"TEXT", "VISUAL", "RETRIEVED", "TOOL_OBSERVATION", "COMPUTATION"})
 _LANGUAGES: Final = frozenset({"EN", "AR", "NONE"})
 
 

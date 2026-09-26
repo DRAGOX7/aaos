@@ -97,7 +97,11 @@ def qualify_isolation_runtime(
     image = PROBE_IMAGE
     info = _run(("docker", "--context", docker_context, "info", "--format", "{{json .}}"))
     if info.returncode != 0:
-        reason = "PERMISSION_FAILURE" if "permission denied" in info.stderr.lower() else "DOCKER_ENGINE_UNAVAILABLE"
+        reason = (
+            "PERMISSION_FAILURE"
+            if "permission denied" in info.stderr.lower()
+            else "DOCKER_ENGINE_UNAVAILABLE"
+        )
         return _unavailable(reason)
 
     server = _json_output(info)
@@ -161,7 +165,11 @@ def qualify_isolation_runtime(
     )
     created = _run(create_args)
     if created.returncode != 0:
-        reason = "PERMISSION_FAILURE" if "permission denied" in created.stderr.lower() else "RUNTIME_PROBE_FAILED"
+        reason = (
+            "PERMISSION_FAILURE"
+            if "permission denied" in created.stderr.lower()
+            else "RUNTIME_PROBE_FAILED"
+        )
         return _unavailable(reason)
 
     try:
@@ -169,7 +177,11 @@ def qualify_isolation_runtime(
         # `docker inspect` returns a list; the helper accepts a mapping only,
         # so the raw JSON is decoded explicitly here.
         raw_details = json.loads(inspect.stdout)
-        if not isinstance(raw_details, list) or not raw_details or not isinstance(raw_details[0], dict):
+        if (
+            not isinstance(raw_details, list)
+            or not raw_details
+            or not isinstance(raw_details[0], dict)
+        ):
             return _unavailable("RUNTIME_PROFILE_UNREADABLE")
         container = raw_details[0]
         host_config = container.get("HostConfig")
@@ -209,7 +221,9 @@ def qualify_isolation_runtime(
         output = _json_output(logs)
         if waited.returncode != 0 or output is None:
             return _unavailable("RUNTIME_PROBE_FAILED")
-        profile["network_disabled"] = profile["network_disabled"] and output.get("network_disabled") is True
+        profile["network_disabled"] = (
+            profile["network_disabled"] and output.get("network_disabled") is True
+        )
         profile["credentials_absent"] = output.get("credentials_absent") is True
         profile["task_mount_only"] = (
             profile["task_mount_only"]

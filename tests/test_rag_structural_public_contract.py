@@ -85,10 +85,7 @@ def test_live_openapi_exposes_structural_citation_union() -> None:
     assert isinstance(variants, list)
 
     refs = {
-        variant["$ref"]
-        for variant in variants
-        if isinstance(variant, dict)
-        and "$ref" in variant
+        variant["$ref"] for variant in variants if isinstance(variant, dict) and "$ref" in variant
     }
 
     assert refs == {
@@ -98,9 +95,7 @@ def test_live_openapi_exposes_structural_citation_union() -> None:
 
 
 def test_generated_browser_types_include_structural_citation() -> None:
-    generated = Path(
-        "frontend/types/api.generated.ts"
-    ).read_text(
+    generated = Path("frontend/types/api.generated.ts").read_text(
         encoding="utf-8",
     )
 
@@ -108,7 +103,4 @@ def test_generated_browser_types_include_structural_citation() -> None:
     assert "unit_start" in generated
     assert "unit_end" in generated
 
-    assert (
-        'components["schemas"]["RagStructuralCitation"]'
-        in generated
-    )
+    assert 'components["schemas"]["RagStructuralCitation"]' in generated

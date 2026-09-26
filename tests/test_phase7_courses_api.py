@@ -331,9 +331,7 @@ def test_courses_endpoint_does_not_expose_source_identity_anywhere(
 
 
 def test_courses_route_layer_contains_no_direct_sql_query() -> None:
-    route_source = Path("src/aaos/web/routes.py").read_text(
-        encoding="utf-8"
-    )
+    route_source = Path("src/aaos/web/routes.py").read_text(encoding="utf-8")
 
     forbidden_tokens = (
         "CourseORM",

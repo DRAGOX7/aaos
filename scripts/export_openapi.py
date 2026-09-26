@@ -11,12 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from aaos.main import create_app
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_OUTPUT = (
-    _REPOSITORY_ROOT
-    / "frontend"
-    / "openapi"
-    / "aaos-v1.json"
-)
+_DEFAULT_OUTPUT = _REPOSITORY_ROOT / "frontend" / "openapi" / "aaos-v1.json"
 
 
 def build_openapi_schema() -> dict[str, object]:
@@ -46,9 +41,7 @@ def export_openapi(output_path: Path) -> None:
         exist_ok=True,
     )
 
-    output_path.write_bytes(
-        (rendered + "\n").encode("utf-8")
-    )
+    output_path.write_bytes((rendered + "\n").encode("utf-8"))
 
 
 def main() -> int:
@@ -61,11 +54,7 @@ def main() -> int:
         )
         return 2
 
-    output_path = (
-        Path(arguments[0])
-        if arguments
-        else _DEFAULT_OUTPUT
-    )
+    output_path = Path(arguments[0]) if arguments else _DEFAULT_OUTPUT
 
     export_openapi(output_path)
 

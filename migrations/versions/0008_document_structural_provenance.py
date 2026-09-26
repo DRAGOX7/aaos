@@ -40,53 +40,37 @@ def _sqlite_fk_rebuild_window() -> Iterator[None]:
     with op.get_context().autocommit_block():
         connection = op.get_bind()
 
-        enabled = connection.exec_driver_sql(
-            "PRAGMA foreign_keys"
-        ).scalar_one()
+        enabled = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
         if enabled != 1:
             raise RuntimeError(
                 "SQLite foreign key enforcement must be enabled "
                 "before structural provenance migration"
             )
 
-        existing_violation = connection.exec_driver_sql(
-            "PRAGMA foreign_key_check"
-        ).first()
+        existing_violation = connection.exec_driver_sql("PRAGMA foreign_key_check").first()
         if existing_violation is not None:
             raise RuntimeError(
-                "Cannot migrate structural provenance with existing "
-                "foreign key violations"
+                "Cannot migrate structural provenance with existing foreign key violations"
             )
 
         connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
-        disabled = connection.exec_driver_sql(
-            "PRAGMA foreign_keys"
-        ).scalar_one()
+        disabled = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
         if disabled != 0:
-            raise RuntimeError(
-                "Cannot safely suspend SQLite foreign key enforcement"
-            )
+            raise RuntimeError("Cannot safely suspend SQLite foreign key enforcement")
 
         try:
             yield
 
-            violation = connection.exec_driver_sql(
-                "PRAGMA foreign_key_check"
-            ).first()
+            violation = connection.exec_driver_sql("PRAGMA foreign_key_check").first()
             if violation is not None:
                 raise RuntimeError(
-                    "Structural provenance migration produced "
-                    "a foreign key violation"
+                    "Structural provenance migration produced a foreign key violation"
                 )
         finally:
             connection.exec_driver_sql("PRAGMA foreign_keys = ON")
-            restored = connection.exec_driver_sql(
-                "PRAGMA foreign_keys"
-            ).scalar_one()
+            restored = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
             if restored != 1:
-                raise RuntimeError(
-                    "SQLite foreign key enforcement was not restored"
-                )
+                raise RuntimeError("SQLite foreign key enforcement was not restored")
 
 
 def upgrade() -> None:
@@ -276,8 +260,7 @@ def _assert_downgrade_compatible() -> None:
         or incompatible_blob is not None
     ):
         raise RuntimeError(
-            "Cannot downgrade structural provenance while "
-            "STRUCTURE or non-PDF data exists"
+            "Cannot downgrade structural provenance while STRUCTURE or non-PDF data exists"
         )
 
 

@@ -25,9 +25,7 @@ class DocxProcessor:
 
     def process(self, body: bytes) -> ParsedDocx:
         if not isinstance(body, bytes) or not body:
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.INVALID_DOCX
-            )
+            raise DocumentIngestionFailure(IngestionErrorCode.INVALID_DOCX)
 
         try:
             archive_like = is_zipfile(BytesIO(body))
@@ -35,9 +33,7 @@ class DocxProcessor:
             archive_like = False
 
         if not archive_like:
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.INVALID_DOCX
-            )
+            raise DocumentIngestionFailure(IngestionErrorCode.INVALID_DOCX)
 
         try:
             document = Document(BytesIO(body))
@@ -48,9 +44,7 @@ class DocxProcessor:
             PackageNotFoundError,
             ValueError,
         ):
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.INVALID_DOCX
-            ) from None
+            raise DocumentIngestionFailure(IngestionErrorCode.INVALID_DOCX) from None
 
         units: list[ExtractedStructureUnit] = []
         ordinal = 1
@@ -79,9 +73,7 @@ class DocxProcessor:
                     continue
 
                 if not isinstance(block, Table):
-                    raise DocumentIngestionFailure(
-                        IngestionErrorCode.DOCX_PARSE_FAILED
-                    )
+                    raise DocumentIngestionFailure(IngestionErrorCode.DOCX_PARSE_FAILED)
 
                 seen_physical_cells: list[object] = []
 
@@ -91,12 +83,8 @@ class DocxProcessor:
                     for cell in row.cells:
                         physical_cell = cell._tc
 
-                        if (
-                            cell.grid_span != 1
-                            or any(
-                                physical_cell is existing
-                                for existing in seen_physical_cells
-                            )
+                        if cell.grid_span != 1 or any(
+                            physical_cell is existing for existing in seen_physical_cells
                         ):
                             raise DocumentIngestionFailure(
                                 IngestionErrorCode.UNSUPPORTED_DOCX_STRUCTURE
@@ -113,10 +101,7 @@ class DocxProcessor:
                             ExtractedStructureUnit(
                                 ordinal=ordinal,
                                 kind=StructureUnitKind.TABLE_CELL,
-                                text="\n".join(
-                                    paragraph.text
-                                    for paragraph in cell.paragraphs
-                                ),
+                                text="\n".join(paragraph.text for paragraph in cell.paragraphs),
                                 heading_level=None,
                                 table_index=table_index,
                                 row_index=row_index,
@@ -138,9 +123,7 @@ class DocxProcessor:
             TypeError,
             ValueError,
         ):
-            raise DocumentIngestionFailure(
-                IngestionErrorCode.DOCX_PARSE_FAILED
-            ) from None
+            raise DocumentIngestionFailure(IngestionErrorCode.DOCX_PARSE_FAILED) from None
 
         return ParsedDocx(units=tuple(units))
 

@@ -36,9 +36,7 @@ def _structure_span(
     return StructureSourceSpanRecord(
         source_span_id=source_span_id,
         rag_chunk_id=rag_chunk_id,
-        document_structure_unit_id=(
-            document_structure_unit_id
-        ),
+        document_structure_unit_id=(document_structure_unit_id),
         ordinal=ordinal,
         unit_ordinal=1,
         kind="HEADING",

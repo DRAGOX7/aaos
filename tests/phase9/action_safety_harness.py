@@ -111,7 +111,9 @@ class FakeExternalAdapter:
 
     def reconcile(self, operation_id: OperationId) -> AdapterExecutionOutcome:
         del operation_id
-        return AdapterExecutionOutcome(AdapterOutcomeKind.AUTHORITATIVE_FAILURE, "fake reconciliation")
+        return AdapterExecutionOutcome(
+            AdapterOutcomeKind.AUTHORITATIVE_FAILURE, "fake reconciliation"
+        )
 
 
 @contextmanager
@@ -142,14 +144,14 @@ def _definition() -> Phase6ActionDefinition:
 
 def _policy(allowed: bool = True) -> PermissionPolicy:
     return PermissionPolicy(
-        granted_permissions=frozenset(
-            (PermissionClass.LOCAL_STATE_WRITE,) if allowed else ()
-        ),
+        granted_permissions=frozenset((PermissionClass.LOCAL_STATE_WRITE,) if allowed else ()),
         policy_version="phase9-policy-v1",
     )
 
 
-def _prepare(repository: ApprovalRepository, clock: FrozenClock) -> tuple[ActionId, RemotePrecondition]:
+def _prepare(
+    repository: ApprovalRepository, clock: FrozenClock
+) -> tuple[ActionId, RemotePrecondition]:
     definition = _definition()
     precondition = RemotePrecondition("phase9-fake", "resource", "v1", "etag")
     prepared = service.prepare_action(
@@ -167,7 +169,11 @@ def _prepare(repository: ApprovalRepository, clock: FrozenClock) -> tuple[Action
 
 
 def _approve(
-    repository: ApprovalRepository, action_id: ActionId, clock: FrozenClock, *, expires_in: int = 300
+    repository: ApprovalRepository,
+    action_id: ActionId,
+    clock: FrozenClock,
+    *,
+    expires_in: int = 300,
 ) -> None:
     approver = TrustedApproverContext("phase9-reviewer", "phase9-session")
     approval = service.request_approval(
@@ -247,9 +253,21 @@ def run_action_scenario(
             )
             service.approve_approval(repository, approval.approval_id, approver, clock.now(2))
         if selected is ActionScenario.REJECTED:
-            service.reject_approval(repository, approval.approval_id, approver, clock.now(3), service.HumanDecisionReason.USER_REJECTED)
+            service.reject_approval(
+                repository,
+                approval.approval_id,
+                approver,
+                clock.now(3),
+                service.HumanDecisionReason.USER_REJECTED,
+            )
         elif selected is ActionScenario.REVOKED:
-            service.revoke_approval(repository, approval.approval_id, approver, clock.now(3), service.HumanDecisionReason.USER_REVOKED)
+            service.revoke_approval(
+                repository,
+                approval.approval_id,
+                approver,
+                clock.now(3),
+                service.HumanDecisionReason.USER_REVOKED,
+            )
         else:
             # The expiry scenario intentionally claims after the approval TTL.
             pass
@@ -262,7 +280,9 @@ def run_action_scenario(
             capability_policy=policy,
             definition=_definition(),
             now=claim_now,
-            claim_identity=__import__("aaos.approval.contracts", fromlist=["ClaimIdentity"]).ClaimIdentity("phase9-worker"),
+            claim_identity=__import__(
+                "aaos.approval.contracts", fromlist=["ClaimIdentity"]
+            ).ClaimIdentity("phase9-worker"),
         )
         if not claimed.claimed or claimed.operation_id is None:
             action_state, events = _read_terminal_without_operation(sessions, action_id)
@@ -314,7 +334,9 @@ def run_action_scenario(
                 now=clock.now(5),
             )
             reconciliation_count = int(reconciliation.committed)
-        _, action_state, operation_state, outcome, events = _operation_snapshot(sessions, operation_id)
+        _, action_state, operation_state, outcome, events = _operation_snapshot(
+            sessions, operation_id
+        )
         return ActionScenarioResult(
             action_state.value,
             operation_state.value,

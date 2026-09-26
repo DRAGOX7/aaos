@@ -641,9 +641,7 @@ def test_existing_only_database_engine_enables_foreign_keys(tmp_path: Path) -> N
     database_path = tmp_path / "existing.db"
     with sqlite3.connect(database_path) as connection:
         connection.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
-        connection.execute(
-            "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id))"
-        )
+        connection.execute("CREATE TABLE child (parent_id INTEGER REFERENCES parent(id))")
 
     engine = module._create_existing_database_engine(database_path)
     try:

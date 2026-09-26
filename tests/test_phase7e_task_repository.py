@@ -52,7 +52,9 @@ def repository(tmp_path):
         engine.dispose()
 
 
-def test_create_or_get_is_idempotent_and_conflicts_on_fingerprint(repository: TaskRepository) -> None:
+def test_create_or_get_is_idempotent_and_conflicts_on_fingerprint(
+    repository: TaskRepository,
+) -> None:
     first, created = repository.create_or_get(record())
     second, replayed = repository.create_or_get(record())
 
@@ -77,7 +79,7 @@ def test_creation_state_cas_and_action_link_are_guarded(repository: TaskReposito
                 ":arguments, :hash, 'calendar', 'v1', :hash, 'v1', :hash, '{}', "
                 "'2026-09-18T10:00:00Z', '2026-09-18T11:00:00Z', :hash)"
             ),
-            {"arguments": b'{}', "hash": "a" * 64},
+            {"arguments": b"{}", "hash": "a" * 64},
         )
         session.commit()
     linked = repository.cas_creation_state(

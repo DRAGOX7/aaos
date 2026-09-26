@@ -58,11 +58,7 @@ def _styles_xml() -> str:
 
 
 def _text(value: str) -> str:
-    return (
-        '<w:r><w:t xml:space="preserve">'
-        f"{escape(value)}"
-        "</w:t></w:r>"
-    )
+    return f'<w:r><w:t xml:space="preserve">{escape(value)}</w:t></w:r>'
 
 
 def _paragraph(value: str, *, style: str | None = None) -> str:
@@ -78,10 +74,7 @@ def _cell(*paragraphs: str) -> str:
 def _table(rows: tuple[tuple[tuple[str, ...], ...], ...]) -> str:
     column_count = max(len(row) for row in rows)
     grid = "".join("<w:gridCol/>" for _ in range(column_count))
-    row_xml = "".join(
-        "<w:tr>" + "".join(_cell(*cell) for cell in row) + "</w:tr>"
-        for row in rows
-    )
+    row_xml = "".join("<w:tr>" + "".join(_cell(*cell) for cell in row) + "</w:tr>" for row in rows)
     return f"<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid>{row_xml}</w:tbl>"
 
 
@@ -131,10 +124,7 @@ def mixed_structure_docx() -> bytes:
 
 def all_heading_levels_docx() -> bytes:
     return _package(
-        "".join(
-            _paragraph(f"Heading {level}", style=f"Heading{level}")
-            for level in range(1, 10)
-        )
+        "".join(_paragraph(f"Heading {level}", style=f"Heading{level}") for level in range(1, 10))
     )
 
 
@@ -148,9 +138,7 @@ def merged_cell_docx() -> bytes:
         "<w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid>"
         "<w:tr>"
         "<w:tc>"
-        '<w:tcPr><w:gridSpan w:val="2"/></w:tcPr>'
-        + _paragraph("merged")
-        + "</w:tc>"
+        '<w:tcPr><w:gridSpan w:val="2"/></w:tcPr>' + _paragraph("merged") + "</w:tc>"
         "</w:tr>"
         "</w:tbl>"
     )
@@ -163,15 +151,11 @@ def vertical_merged_cell_docx() -> bytes:
         "<w:tblGrid><w:gridCol/></w:tblGrid>"
         "<w:tr>"
         "<w:tc>"
-        '<w:tcPr><w:vMerge w:val="restart"/></w:tcPr>'
-        + _paragraph("merged")
-        + "</w:tc>"
+        '<w:tcPr><w:vMerge w:val="restart"/></w:tcPr>' + _paragraph("merged") + "</w:tc>"
         "</w:tr>"
         "<w:tr>"
         "<w:tc>"
-        "<w:tcPr><w:vMerge/></w:tcPr>"
-        + _paragraph("")
-        + "</w:tc>"
+        "<w:tcPr><w:vMerge/></w:tcPr>" + _paragraph("") + "</w:tc>"
         "</w:tr>"
         "</w:tbl>"
     )
@@ -185,10 +169,7 @@ def omitted_leading_cell_docx() -> bytes:
         "<w:gridCol/><w:gridCol/><w:gridCol/>"
         "</w:tblGrid>"
         "<w:tr>"
-        '<w:trPr><w:gridBefore w:val="1"/></w:trPr>'
-        + _cell("second")
-        + _cell("third")
-        + "</w:tr>"
+        '<w:trPr><w:gridBefore w:val="1"/></w:trPr>' + _cell("second") + _cell("third") + "</w:tr>"
         "</w:tbl>"
     )
     return _package(table)
@@ -196,16 +177,6 @@ def omitted_leading_cell_docx() -> bytes:
 
 def nested_table_docx() -> bytes:
     nested = _table(((("nested",),),))
-    outer_cell = (
-        "<w:tc><w:tcPr/>"
-        + _paragraph("before")
-        + nested
-        + _paragraph("after")
-        + "</w:tc>"
-    )
-    outer = (
-        "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid>"
-        f"<w:tr>{outer_cell}</w:tr>"
-        "</w:tbl>"
-    )
+    outer_cell = "<w:tc><w:tcPr/>" + _paragraph("before") + nested + _paragraph("after") + "</w:tc>"
+    outer = f"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid><w:tr>{outer_cell}</w:tr></w:tbl>"
     return _package(outer)

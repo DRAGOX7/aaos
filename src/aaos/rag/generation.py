@@ -200,9 +200,7 @@ class CitationValidator:
                 raise RagOperationalError(RagErrorCode.UNCITED_CLAIM)
             return _build_answer(output, ())
 
-        citations: list[
-            Citation | StructuralCitation
-        ] = []
+        citations: list[Citation | StructuralCitation] = []
         for claim in output.claims:
             if not isinstance(claim, RagClaim):
                 raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
@@ -414,22 +412,13 @@ def _citation_for_claim(
                     RagChunkSourceSpanValue,
                 )
             )
-            if len(page_spans) != len(
-                evidence.source_spans
-            ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+            if len(page_spans) != len(evidence.source_spans):
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-            page_numbers = tuple(
-                span.page_number
-                for span in page_spans
-            )
+            page_numbers = tuple(span.page_number for span in page_spans)
             return Citation(
                 claim_id=claim_id,
-                document_version_id=(
-                    evidence.document_version_id
-                ),
+                document_version_id=(evidence.document_version_id),
                 document_title=evidence.document_title,
                 page_start=min(page_numbers),
                 page_end=max(page_numbers),
@@ -444,28 +433,21 @@ def _citation_for_claim(
                     RagChunkStructureSourceSpanValue,
                 )
             )
-            if len(structure_spans) != len(
-                evidence.source_spans
-            ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+            if len(structure_spans) != len(evidence.source_spans):
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-            unit_ordinals = tuple(
-                span.unit_ordinal
-                for span in structure_spans
-            )
+            unit_ordinals = tuple(span.unit_ordinal for span in structure_spans)
 
-            table_coordinates: tuple[
-                int,
-                int,
-                int,
-            ] | None = None
+            table_coordinates: (
+                tuple[
+                    int,
+                    int,
+                    int,
+                ]
+                | None
+            ) = None
 
-            if structure_spans and all(
-                span.kind == "TABLE_CELL"
-                for span in structure_spans
-            ):
+            if structure_spans and all(span.kind == "TABLE_CELL" for span in structure_spans):
                 coordinates = {
                     (
                         span.table_index,
@@ -475,9 +457,7 @@ def _citation_for_claim(
                     for span in structure_spans
                 }
                 if len(coordinates) == 1:
-                    candidate = next(
-                        iter(coordinates)
-                    )
+                    candidate = next(iter(coordinates))
                     table_index = candidate[0]
                     row_index = candidate[1]
                     column_index = candidate[2]
@@ -510,39 +490,21 @@ def _citation_for_claim(
 
             return StructuralCitation(
                 claim_id=claim_id,
-                document_version_id=(
-                    evidence.document_version_id
-                ),
+                document_version_id=(evidence.document_version_id),
                 document_title=evidence.document_title,
                 unit_start=min(unit_ordinals),
                 unit_end=max(unit_ordinals),
                 heading=evidence.heading,
-                table_index=(
-                    table_coordinates[0]
-                    if table_coordinates is not None
-                    else None
-                ),
-                row_index=(
-                    table_coordinates[1]
-                    if table_coordinates is not None
-                    else None
-                ),
-                column_index=(
-                    table_coordinates[2]
-                    if table_coordinates is not None
-                    else None
-                ),
+                table_index=(table_coordinates[0] if table_coordinates is not None else None),
+                row_index=(table_coordinates[1] if table_coordinates is not None else None),
+                column_index=(table_coordinates[2] if table_coordinates is not None else None),
             )
 
-        raise RagOperationalError(
-            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-        )
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
     except RagOperationalError:
         raise
     except (TypeError, ValueError, AttributeError):
-        raise RagOperationalError(
-            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-        ) from None
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED) from None
 
 
 def _validate_evidence_provenance_safe(
@@ -585,10 +547,8 @@ def _validate_evidence_provenance(
             str,
         )
         or not evidence.document_title.strip()
-        or evidence.generation_id
-        != output.generation_id
-        or evidence.content_revision
-        != output.content_revision
+        or evidence.generation_id != output.generation_id
+        or evidence.content_revision != output.content_revision
         or not isinstance(
             evidence.source_spans,
             tuple,
@@ -600,16 +560,10 @@ def _validate_evidence_provenance(
         or not isinstance(evidence.token_count, int)
         or isinstance(evidence.token_count, bool)
         or evidence.token_count <= 0
-        or (
-            evidence.dense_rank is None
-            and evidence.lexical_rank is None
-        )
-        or evidence.provenance_mode
-        not in {"PAGE", "STRUCTURE"}
+        or (evidence.dense_rank is None and evidence.lexical_rank is None)
+        or evidence.provenance_mode not in {"PAGE", "STRUCTURE"}
     ):
-        raise RagOperationalError(
-            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-        )
+        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
     if evidence.provenance_mode == "PAGE":
         previous_page = 0
@@ -619,9 +573,7 @@ def _validate_evidence_provenance(
                 span,
                 RagChunkSourceSpanValue,
             ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             if (
                 isinstance(
@@ -643,17 +595,12 @@ def _validate_evidence_provenance(
                 )
                 or span.page_number <= 0
                 or span.page_number < previous_page
-                or span.source_char_end
-                <= span.source_char_start
-                or span.chunk_char_end
-                <= span.chunk_char_start
+                or span.source_char_end <= span.source_char_start
+                or span.chunk_char_end <= span.chunk_char_start
                 or span.chunk_char_start < 0
-                or span.chunk_char_end
-                > len(evidence.exact_text)
+                or span.chunk_char_end > len(evidence.exact_text)
             ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             previous_page = span.page_number
 
@@ -666,9 +613,7 @@ def _validate_evidence_provenance(
             span,
             RagChunkStructureSourceSpanValue,
         ):
-            raise RagOperationalError(
-                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-            )
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         if (
             isinstance(
@@ -690,17 +635,12 @@ def _validate_evidence_provenance(
                 "PARAGRAPH",
                 "TABLE_CELL",
             }
-            or span.source_char_end
-            <= span.source_char_start
-            or span.chunk_char_end
-            <= span.chunk_char_start
+            or span.source_char_end <= span.source_char_start
+            or span.chunk_char_end <= span.chunk_char_start
             or span.chunk_char_start < 0
-            or span.chunk_char_end
-            > len(evidence.exact_text)
+            or span.chunk_char_end > len(evidence.exact_text)
         ):
-            raise RagOperationalError(
-                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-            )
+            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         if span.kind == "HEADING":
             if (
@@ -713,9 +653,7 @@ def _validate_evidence_provenance(
                     span.heading_level,
                     int,
                 )
-                or not 1
-                <= span.heading_level
-                <= 9
+                or not 1 <= span.heading_level <= 9
                 or any(
                     value is not None
                     for value in (
@@ -725,45 +663,30 @@ def _validate_evidence_provenance(
                     )
                 )
             ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         elif span.kind == "PARAGRAPH":
-            if (
-                span.heading_level is not None
-                or any(
-                    value is not None
-                    for value in (
-                        span.table_index,
-                        span.row_index,
-                        span.column_index,
-                    )
+            if span.heading_level is not None or any(
+                value is not None
+                for value in (
+                    span.table_index,
+                    span.row_index,
+                    span.column_index,
                 )
             ):
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         else:
             if span.heading_level is not None:
-                raise RagOperationalError(
-                    RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                )
+                raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
             for value in (
                 span.table_index,
                 span.row_index,
                 span.column_index,
             ):
-                if (
-                    isinstance(value, bool)
-                    or not isinstance(value, int)
-                    or value < 0
-                ):
-                    raise RagOperationalError(
-                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                    )
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
         previous_unit = span.unit_ordinal
 
@@ -834,12 +757,8 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
         if answer.citations:
             lines.append("")
             for citation in answer.citations:
-                claim_id = _safe_render_label(
-                    citation.claim_id
-                )
-                document_title = _safe_render_label(
-                    citation.document_title
-                )
+                claim_id = _safe_render_label(citation.claim_id)
+                document_title = _safe_render_label(citation.document_title)
 
                 if isinstance(citation, Citation):
                     if (
@@ -860,75 +779,41 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
                             citation.page_end,
                             int,
                         )
-                        or citation.page_end
-                        < citation.page_start
-                        or citation.provenance_kind
-                        is ProvenanceKind.STRUCTURAL_DOCUMENT
+                        or citation.page_end < citation.page_start
+                        or citation.provenance_kind is ProvenanceKind.STRUCTURAL_DOCUMENT
                     ):
-                        raise RagOperationalError(
-                            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                        )
+                        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-                    if (
-                        citation.page_start
-                        == citation.page_end
-                    ):
-                        location = (
-                            f"page {citation.page_start}"
-                        )
+                    if citation.page_start == citation.page_end:
+                        location = f"page {citation.page_start}"
                     else:
-                        location = (
-                            "pages "
-                            f"{citation.page_start}-"
-                            f"{citation.page_end}"
-                        )
+                        location = f"pages {citation.page_start}-{citation.page_end}"
 
                 elif isinstance(
                     citation,
                     StructuralCitation,
                 ):
                     if (
-                        citation.provenance_kind
-                        is not ProvenanceKind.STRUCTURAL_DOCUMENT
+                        citation.provenance_kind is not ProvenanceKind.STRUCTURAL_DOCUMENT
                         or citation.unit_start <= 0
-                        or citation.unit_end
-                        < citation.unit_start
+                        or citation.unit_end < citation.unit_start
                     ):
-                        raise RagOperationalError(
-                            RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                        )
+                        raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-                    if (
-                        citation.unit_start
-                        == citation.unit_end
-                    ):
-                        parts = [
-                            f"unit {citation.unit_start}"
-                        ]
+                    if citation.unit_start == citation.unit_end:
+                        parts = [f"unit {citation.unit_start}"]
                     else:
-                        parts = [
-                            "units "
-                            f"{citation.unit_start}-"
-                            f"{citation.unit_end}"
-                        ]
+                        parts = [f"units {citation.unit_start}-{citation.unit_end}"]
 
                     if citation.heading is not None:
-                        parts.append(
-                            "heading "
-                            + _safe_render_label(
-                                citation.heading
-                            )
-                        )
+                        parts.append("heading " + _safe_render_label(citation.heading))
 
                     coordinates = (
                         citation.table_index,
                         citation.row_index,
                         citation.column_index,
                     )
-                    if any(
-                        value is not None
-                        for value in coordinates
-                    ):
+                    if any(value is not None for value in coordinates):
                         if not all(
                             isinstance(value, int)
                             and not isinstance(
@@ -938,9 +823,7 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
                             and value >= 0
                             for value in coordinates
                         ):
-                            raise RagOperationalError(
-                                RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                            )
+                            raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
                         table_index = citation.table_index
                         row_index = citation.row_index
@@ -962,15 +845,9 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
                     location = "; ".join(parts)
 
                 else:
-                    raise RagOperationalError(
-                        RagErrorCode.PROVENANCE_RESOLUTION_FAILED
-                    )
+                    raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-                lines.append(
-                    f"[{claim_id}] "
-                    f"{document_title} "
-                    f"({location})"
-                )
+                lines.append(f"[{claim_id}] {document_title} ({location})")
         return RenderedRagResponse(answer=answer, rendered_text="\n".join(lines))
     except RagOperationalError:
         raise

@@ -261,17 +261,10 @@ class RagStructuralCitation(BaseModel):
         self,
     ) -> "RagStructuralCitation":
         if self.unit_end < self.unit_start:
-            raise ValueError(
-                "unit_end must not precede unit_start"
-            )
+            raise ValueError("unit_end must not precede unit_start")
 
-        if (
-            self.heading is not None
-            and not self.heading.strip()
-        ):
-            raise ValueError(
-                "heading must contain text"
-            )
+        if self.heading is not None and not self.heading.strip():
+            raise ValueError("heading must contain text")
 
         coordinates = (
             self.table_index,
@@ -279,17 +272,10 @@ class RagStructuralCitation(BaseModel):
             self.column_index,
         )
 
-        if any(
-            value is None
-            for value in coordinates
-        ) and not all(
-            value is None
-            for value in coordinates
+        if any(value is None for value in coordinates) and not all(
+            value is None for value in coordinates
         ):
-            raise ValueError(
-                "table coordinates must be all present "
-                "or all absent"
-            )
+            raise ValueError("table coordinates must be all present or all absent")
 
         return self
 

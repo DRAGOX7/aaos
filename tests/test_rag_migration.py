@@ -259,10 +259,7 @@ def test_phase4_schema_enforces_named_constraints_indexes_and_foreign_keys(tmp_p
             "ck_rag_document_indexes_searchable_page_count",
             "ck_rag_document_indexes_chunk_count",
         }
-        rag_chunk_checks = {
-            item["name"]
-            for item in inspector.get_check_constraints("rag_chunks")
-        }
+        rag_chunk_checks = {item["name"] for item in inspector.get_check_constraints("rag_chunks")}
         assert rag_chunk_checks >= {
             "ck_rag_chunks_ordinal",
             "ck_rag_chunks_token_count",
@@ -556,6 +553,7 @@ def test_phase4_downgrade_to_phase3_removes_rag_tables_and_fts5(tmp_path: Path) 
             assert "rag_chunks_fts" not in sqlite_master_names(connection)
     finally:
         engine.dispose()
+
 
 def test_rag_structural_migration_preserves_existing_pdf_chunk_provenance(
     tmp_path: Path,

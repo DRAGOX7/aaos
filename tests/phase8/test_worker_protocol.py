@@ -25,9 +25,7 @@ def _request() -> ComputationRequest:
     return ComputationRequest(
         request_id="request-1",
         code="1 + 1",
-        inputs=(
-            ComputationInput("input-1", "text/plain", sha256(content).hexdigest(), content),
-        ),
+        inputs=(ComputationInput("input-1", "text/plain", sha256(content).hexdigest(), content),),
         limits=ComputationLimits(5, 5, 64 * 1024 * 1024, 4096, 2, 4096),
         contract_version=COMPUTATION_CONTRACT_VERSION,
     )

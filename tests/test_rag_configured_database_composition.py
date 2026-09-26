@@ -42,9 +42,7 @@ def test_cli_configured_runtime_validates_database_and_injects_existing_only_eng
         validated_paths.append(database_path)
 
     def existing_only_engine_factory(database_path: Path) -> object:
-        raise AssertionError(
-            f"fake runtime must not actually open database {database_path}"
-        )
+        raise AssertionError(f"fake runtime must not actually open database {database_path}")
 
     def fake_gateway(*args: object, **kwargs: object) -> FakeGateway:
         calls.append("gateway")
@@ -76,10 +74,7 @@ def test_cli_configured_runtime_validates_database_and_injects_existing_only_eng
     try:
         assert calls[:3] == ["validate", "gateway", "build"]
         assert validated_paths == [captured["paths"].database_path]
-        assert (
-            captured.get("database_engine_factory")
-            is existing_only_engine_factory
-        )
+        assert captured.get("database_engine_factory") is existing_only_engine_factory
     finally:
         configured.close()
 
@@ -101,9 +96,7 @@ def test_shared_factory_validates_database_and_injects_existing_only_engine(
         validated_paths.append(database_path)
 
     def existing_only_engine_factory(database_path: Path) -> object:
-        raise AssertionError(
-            f"fake runtime must not actually open database {database_path}"
-        )
+        raise AssertionError(f"fake runtime must not actually open database {database_path}")
 
     def fake_gateway(*args: object, **kwargs: object) -> FakeGateway:
         calls.append("gateway")
@@ -137,9 +130,6 @@ def test_shared_factory_validates_database_and_injects_existing_only_engine(
     try:
         assert calls[:3] == ["validate", "gateway", "build"]
         assert validated_paths == [captured["paths"].database_path]
-        assert (
-            captured.get("database_engine_factory")
-            is existing_only_engine_factory
-        )
+        assert captured.get("database_engine_factory") is existing_only_engine_factory
     finally:
         configured.close()

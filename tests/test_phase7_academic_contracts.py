@@ -136,9 +136,7 @@ def test_document_list_response_is_a_tuple_of_safe_documents() -> None:
     assert isinstance(response.documents, tuple)
 
     with pytest.raises(ValidationError):
-        DocumentListResponse.model_validate(
-            {"documents": (document,), "permission": "READ_ONLY"}
-        )
+        DocumentListResponse.model_validate({"documents": (document,), "permission": "READ_ONLY"})
 
     with pytest.raises(ValidationError):
         response.documents = ()

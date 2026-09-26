@@ -30,8 +30,7 @@ def test_phase7d_boundary_remains_closed_after_later_phase_additions() -> None:
 
     current_routes = (ROOT / "src/aaos/web/routes.py").read_text(encoding="utf-8")
     observed_routes = {
-        (method.upper(), path)
-        for method, path in _ROUTE_DECORATOR.findall(current_routes)
+        (method.upper(), path) for method, path in _ROUTE_DECORATOR.findall(current_routes)
     }
     assert observed_routes == {
         ("GET", "/activity"),

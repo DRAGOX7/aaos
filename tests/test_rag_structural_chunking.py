@@ -84,21 +84,14 @@ def assert_source_mapping(
     chunk: Any,
     units: tuple[Any, ...],
 ) -> None:
-    by_id = {
-        item.document_structure_unit_id: item
-        for item in units
-    }
+    by_id = {item.document_structure_unit_id: item for item in units}
 
     for span in chunk.source_spans:
         source = by_id[span.document_structure_unit_id]
 
         assert (
-            source.text[
-                span.source_char_start : span.source_char_end
-            ]
-            == chunk.text[
-                span.chunk_char_start : span.chunk_char_end
-            ]
+            source.text[span.source_char_start : span.source_char_end]
+            == chunk.text[span.chunk_char_start : span.chunk_char_end]
         )
 
 
@@ -181,19 +174,14 @@ def test_heading_and_paragraphs_render_with_exact_unit_provenance() -> None:
 
     chunk = chunks[0]
     assert chunk.text == (
-        "Neural Networks\n\n"
-        "A neural network learns patterns.\n\n"
-        "Hidden layers transform features."
+        "Neural Networks\n\nA neural network learns patterns.\n\nHidden layers transform features."
     )
     assert chunk.heading == "Neural Networks"
     assert chunk.provenance_mode == "STRUCTURE"
     assert chunk.page_start is None
     assert chunk.page_end is None
 
-    assert [
-        span.document_structure_unit_id
-        for span in chunk.source_spans
-    ] == [101, 102, 103]
+    assert [span.document_structure_unit_id for span in chunk.source_spans] == [101, 102, 103]
 
     assert_source_mapping(chunk, units)
 
@@ -307,10 +295,12 @@ def test_table_cells_preserve_row_major_structure_and_unit_spans() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].text == "A\tB\nC\tD"
-    assert [
-        span.document_structure_unit_id
-        for span in chunks[0].source_spans
-    ] == [101, 102, 103, 104]
+    assert [span.document_structure_unit_id for span in chunks[0].source_spans] == [
+        101,
+        102,
+        103,
+        104,
+    ]
 
     assert_source_mapping(chunks[0], units)
 
@@ -331,28 +321,14 @@ def test_long_structural_unit_uses_bounded_overlap_only_when_split() -> None:
     chunks = chunk_structure(7, units, config)
 
     assert len(chunks) >= 3
-    assert all(
-        chunk.token_count <= config.chunk_hard_max_tokens
-        for chunk in chunks
-    )
-    assert all(
-        chunk.token_count == count_tokens(chunk.text)
-        for chunk in chunks
-    )
+    assert all(chunk.token_count <= config.chunk_hard_max_tokens for chunk in chunks)
+    assert all(chunk.token_count == count_tokens(chunk.text) for chunk in chunks)
 
     for previous, current in zip(chunks, chunks[1:]):
-        assert set(previous.text.split()) & set(
-            current.text.split()
-        )
+        assert set(previous.text.split()) & set(current.text.split())
 
-    assert (
-        chunks[0].source_spans[0].source_char_start
-        == 0
-    )
-    assert (
-        chunks[-1].source_spans[-1].source_char_end
-        == len(text)
-    )
+    assert chunks[0].source_spans[0].source_char_start == 0
+    assert chunks[-1].source_spans[-1].source_char_end == len(text)
     assert chunks == chunk_structure(7, units, config)
 
     for chunk in chunks:
@@ -402,9 +378,7 @@ def test_blank_structure_units_are_skipped_with_deterministic_coverage() -> None
     )
 
     assert result.coverage is ChunkCoverage.PARTIAL
-    assert [chunk.text for chunk in result.chunks] == [
-        "usable text"
-    ]
+    assert [chunk.text for chunk in result.chunks] == ["usable text"]
 
     assert empty_result.coverage is ChunkCoverage.NONE
     assert empty_result.chunks == ()

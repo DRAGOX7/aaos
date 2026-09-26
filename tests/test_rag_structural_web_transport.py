@@ -85,9 +85,7 @@ def test_web_projection_projects_structural_citation_without_pages() -> None:
     service = object.__new__(RagReadService)
     service._sessions = _sessions  # type: ignore[attr-defined]
 
-    projected = service._project_citations(
-        (_citation(),)
-    )
+    projected = service._project_citations((_citation(),))
 
     assert len(projected) == 1
 

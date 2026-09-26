@@ -29,53 +29,37 @@ def _sqlite_fk_rebuild_window() -> Iterator[None]:
     with op.get_context().autocommit_block():
         connection = op.get_bind()
 
-        enabled = connection.exec_driver_sql(
-            "PRAGMA foreign_keys"
-        ).scalar_one()
+        enabled = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
         if enabled != 1:
             raise RuntimeError(
                 "SQLite foreign key enforcement must be enabled "
                 "before RAG structural provenance migration"
             )
 
-        existing_violation = connection.exec_driver_sql(
-            "PRAGMA foreign_key_check"
-        ).first()
+        existing_violation = connection.exec_driver_sql("PRAGMA foreign_key_check").first()
         if existing_violation is not None:
             raise RuntimeError(
-                "Cannot migrate RAG structural provenance with "
-                "existing foreign key violations"
+                "Cannot migrate RAG structural provenance with existing foreign key violations"
             )
 
         connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
-        disabled = connection.exec_driver_sql(
-            "PRAGMA foreign_keys"
-        ).scalar_one()
+        disabled = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
         if disabled != 0:
-            raise RuntimeError(
-                "Cannot safely suspend SQLite foreign key enforcement"
-            )
+            raise RuntimeError("Cannot safely suspend SQLite foreign key enforcement")
 
         try:
             yield
 
-            violation = connection.exec_driver_sql(
-                "PRAGMA foreign_key_check"
-            ).first()
+            violation = connection.exec_driver_sql("PRAGMA foreign_key_check").first()
             if violation is not None:
                 raise RuntimeError(
-                    "RAG structural provenance migration produced "
-                    "a foreign key violation"
+                    "RAG structural provenance migration produced a foreign key violation"
                 )
         finally:
             connection.exec_driver_sql("PRAGMA foreign_keys = ON")
-            restored = connection.exec_driver_sql(
-                "PRAGMA foreign_keys"
-            ).scalar_one()
+            restored = connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
             if restored != 1:
-                raise RuntimeError(
-                    "SQLite foreign key enforcement was not restored"
-                )
+                raise RuntimeError("SQLite foreign key enforcement was not restored")
 
 
 def upgrade() -> None:
@@ -161,10 +145,7 @@ def upgrade() -> None:
             sa.UniqueConstraint(
                 "rag_chunk_id",
                 "ordinal",
-                name=(
-                    "uq_rag_chunk_structure_source_spans_"
-                    "chunk_ordinal"
-                ),
+                name=("uq_rag_chunk_structure_source_spans_chunk_ordinal"),
             ),
             sa.CheckConstraint(
                 "id > 0",
@@ -172,40 +153,23 @@ def upgrade() -> None:
             ),
             sa.CheckConstraint(
                 "rag_chunk_id > 0",
-                name=(
-                    "ck_rag_chunk_structure_source_spans_"
-                    "chunk_id"
-                ),
+                name=("ck_rag_chunk_structure_source_spans_chunk_id"),
             ),
             sa.CheckConstraint(
                 "document_structure_unit_id > 0",
-                name=(
-                    "ck_rag_chunk_structure_source_spans_"
-                    "unit_id"
-                ),
+                name=("ck_rag_chunk_structure_source_spans_unit_id"),
             ),
             sa.CheckConstraint(
                 "ordinal > 0",
-                name=(
-                    "ck_rag_chunk_structure_source_spans_"
-                    "ordinal"
-                ),
+                name=("ck_rag_chunk_structure_source_spans_ordinal"),
             ),
             sa.CheckConstraint(
-                "source_char_start >= 0 "
-                "AND source_char_end > source_char_start",
-                name=(
-                    "ck_rag_chunk_structure_source_spans_"
-                    "source_bounds"
-                ),
+                "source_char_start >= 0 AND source_char_end > source_char_start",
+                name=("ck_rag_chunk_structure_source_spans_source_bounds"),
             ),
             sa.CheckConstraint(
-                "chunk_char_start >= 0 "
-                "AND chunk_char_end > chunk_char_start",
-                name=(
-                    "ck_rag_chunk_structure_source_spans_"
-                    "chunk_bounds"
-                ),
+                "chunk_char_start >= 0 AND chunk_char_end > chunk_char_start",
+                name=("ck_rag_chunk_structure_source_spans_chunk_bounds"),
             ),
         )
 
@@ -244,8 +208,7 @@ def _assert_downgrade_compatible() -> None:
 
     if structural_chunk is not None or structural_span is not None:
         raise RuntimeError(
-            "Cannot downgrade RAG structural provenance while "
-            "STRUCTURE chunk data exists"
+            "Cannot downgrade RAG structural provenance while STRUCTURE chunk data exists"
         )
 
 

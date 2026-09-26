@@ -172,12 +172,14 @@ class ComputationLimits:
     max_processes: int
     max_input_bytes: int
 
+
 @dataclass(frozen=True)
 class ComputationInput:
     input_id: str
     media_type: Literal["text/plain", "application/json", "image/png"]
     content_sha256: str
     bounded_bytes: bytes
+
 
 @dataclass(frozen=True)
 class ComputationRequest:
@@ -186,6 +188,7 @@ class ComputationRequest:
     inputs: tuple[ComputationInput, ...]
     limits: ComputationLimits
     contract_version: str
+
 
 @dataclass(frozen=True)
 class ComputationResult:
@@ -291,6 +294,7 @@ class RenderedPage:
     content_sha256: str
     content_bytes: bytes
 
+
 @dataclass(frozen=True)
 class VisualAnalysis:
     document_version_id: int
@@ -302,6 +306,7 @@ class VisualAnalysis:
     status: Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "UNAVAILABLE"]
     elements: tuple[VisualElement, ...]
     analysis_sha256: str | None
+
 
 @dataclass(frozen=True)
 class VisualElement:

@@ -16,13 +16,17 @@ class Phase7dFixtureManifest:
 
 
 def fixture_answer(status: RagAnswerStatus) -> RagAnswerResponse:
-    citations = () if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE else (
-        RagCitation(
-            document_id=7,
-            document_title="Synthetic course notes",
-            page_start=1,
-            page_end=2,
-        ),
+    citations = (
+        ()
+        if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+        else (
+            RagCitation(
+                document_id=7,
+                document_title="Synthetic course notes",
+                page_start=1,
+                page_end=2,
+            ),
+        )
     )
     return RagAnswerResponse(
         status=RagAnswerStatusView(status.value),

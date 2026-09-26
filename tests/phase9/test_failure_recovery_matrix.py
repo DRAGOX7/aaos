@@ -22,8 +22,7 @@ def test_failure_matrix_is_complete_and_bounded() -> None:
 
 def test_each_failure_has_explicit_safe_recovery_and_no_leaky_result() -> None:
     results = tuple(
-        run_failure_scenario(scenario, fakes=FailureFakes())
-        for scenario in PHASE9_FAILURE_MATRIX
+        run_failure_scenario(scenario, fakes=FailureFakes()) for scenario in PHASE9_FAILURE_MATRIX
     )
     assert all(isinstance(result, FailureResult) for result in results)
     assert all(result.external_provider_calls == 0 for result in results)

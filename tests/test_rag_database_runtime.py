@@ -49,12 +49,10 @@ def test_unknown_revision_is_rejected(tmp_path: Path) -> None:
     try:
         with engine.begin() as connection:
             connection.exec_driver_sql(
-                "CREATE TABLE alembic_version "
-                "(version_num VARCHAR(64) NOT NULL PRIMARY KEY)"
+                "CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL PRIMARY KEY)"
             )
             connection.exec_driver_sql(
-                "INSERT INTO alembic_version(version_num) "
-                "VALUES ('not-a-real-aaos-revision')"
+                "INSERT INTO alembic_version(version_num) VALUES ('not-a-real-aaos-revision')"
             )
     finally:
         engine.dispose()

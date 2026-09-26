@@ -127,14 +127,8 @@ def _citation_payload(citation: object) -> dict[str, object]:
         else:
             raise ValueError("citation is malformed")
     else:
-        has_page = all(
-            hasattr(citation, field)
-            for field in ("page_start", "page_end")
-        )
-        has_structure = all(
-            hasattr(citation, field)
-            for field in ("unit_start", "unit_end")
-        )
+        has_page = all(hasattr(citation, field) for field in ("page_start", "page_end"))
+        has_structure = all(hasattr(citation, field) for field in ("unit_start", "unit_end"))
 
         if has_page == has_structure:
             raise ValueError("citation is malformed")
@@ -186,10 +180,7 @@ def _citation_payload(citation: object) -> dict[str, object]:
         raise ValueError("citation unit range is invalid")
 
     heading = read("heading")
-    if heading is not None and (
-        not isinstance(heading, str)
-        or not heading.strip()
-    ):
+    if heading is not None and (not isinstance(heading, str) or not heading.strip()):
         raise ValueError("heading must contain text")
 
     coordinates: list[int | None] = []
@@ -202,22 +193,14 @@ def _citation_payload(citation: object) -> dict[str, object]:
         if value is None:
             coordinates.append(None)
             continue
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, int)
-            or value < 0
-        ):
-            raise ValueError(
-                f"{field} must be a nonnegative integer or None"
-            )
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{field} must be a nonnegative integer or None")
         coordinates.append(value)
 
     if any(value is None for value in coordinates) and not all(
         value is None for value in coordinates
     ):
-        raise ValueError(
-            "structural table coordinates must be all present or all absent"
-        )
+        raise ValueError("structural table coordinates must be all present or all absent")
 
     return {
         "claim_id": claim_id,

@@ -986,6 +986,8 @@ def test_blob_is_referenced_reports_exact_global_reference_state(tmp_path: Path)
 
         assert repository.blob_is_referenced(sha256="a" * 64) is True
         assert repository.blob_is_referenced(sha256="b" * 64) is False
+
+
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
@@ -1070,9 +1072,7 @@ def test_persist_structural_success_creates_structure_provenance(
             assert document_row.ingestion_status == IngestionStatus.READY.value
 
             version_row = session.scalar(
-                select(DocumentVersionORM).where(
-                    DocumentVersionORM.document_id == document_row.id
-                )
+                select(DocumentVersionORM).where(DocumentVersionORM.document_id == document_row.id)
             )
             assert version_row is not None
             assert version_row.source_filename == "lecture.docx"
@@ -1087,9 +1087,7 @@ def test_persist_structural_success_creates_structure_provenance(
 
             structure_rows = session.scalars(
                 select(DocumentStructureUnitORM)
-                .where(
-                    DocumentStructureUnitORM.document_version_id == version_row.id
-                )
+                .where(DocumentStructureUnitORM.document_version_id == version_row.id)
                 .order_by(DocumentStructureUnitORM.ordinal)
             ).all()
 
@@ -1155,16 +1153,8 @@ def test_structural_same_document_sha_is_unchanged_without_duplicate_units(
         assert second.content_blob_created is False
 
         with sessions() as session:
-            assert (
-                session.scalar(select(func.count()).select_from(DocumentVersionORM))
-                == 1
-            )
-            assert (
-                session.scalar(
-                    select(func.count()).select_from(DocumentStructureUnitORM)
-                )
-                == 3
-            )
+            assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 1
+            assert session.scalar(select(func.count()).select_from(DocumentStructureUnitORM)) == 3
 
 
 def test_structural_blob_deduplicates_globally_without_merging_documents(
@@ -1208,20 +1198,9 @@ def test_structural_blob_deduplicates_globally_without_merging_documents(
         assert second.content_blob_created is False
 
         with sessions() as session:
-            assert (
-                session.scalar(select(func.count()).select_from(ContentBlobORM))
-                == 1
-            )
-            assert (
-                session.scalar(select(func.count()).select_from(DocumentVersionORM))
-                == 2
-            )
-            assert (
-                session.scalar(
-                    select(func.count()).select_from(DocumentStructureUnitORM)
-                )
-                == 6
-            )
+            assert session.scalar(select(func.count()).select_from(ContentBlobORM)) == 1
+            assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 2
+            assert session.scalar(select(func.count()).select_from(DocumentStructureUnitORM)) == 6
 
 
 def test_structural_persistence_rolls_back_invalid_units_and_document_state(
@@ -1255,12 +1234,9 @@ def test_structural_persistence_rolls_back_invalid_units_and_document_state(
             assert session.scalar(select(func.count()).select_from(ContentBlobORM)) == 0
             assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 0
             assert session.scalar(select(func.count()).select_from(DocumentPageORM)) == 0
-            assert (
-                session.scalar(
-                    select(func.count()).select_from(DocumentStructureUnitORM)
-                )
-                == 0
-            )
+            assert session.scalar(select(func.count()).select_from(DocumentStructureUnitORM)) == 0
+
+
 def test_cross_media_sha_reuse_fails_closed(tmp_path: Path) -> None:
     with repository_database(tmp_path) as (repository, sessions):
         first_id, second_id = seed_remote_files(
@@ -1299,20 +1275,11 @@ def test_cross_media_sha_reuse_fails_closed(tmp_path: Path) -> None:
         assert caught.value.code is IngestionErrorCode.PERSISTENCE_FAILED
 
         with sessions() as session:
-            assert (
-                session.scalar(select(func.count()).select_from(ContentBlobORM))
-                == 1
-            )
-            assert (
-                session.scalar(select(func.count()).select_from(DocumentVersionORM))
-                == 1
-            )
-            assert (
-                session.scalar(
-                    select(func.count()).select_from(DocumentStructureUnitORM)
-                )
-                == 0
-            )
+            assert session.scalar(select(func.count()).select_from(ContentBlobORM)) == 1
+            assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 1
+            assert session.scalar(select(func.count()).select_from(DocumentStructureUnitORM)) == 0
+
+
 def test_existing_sha_lookup_is_provenance_aware(tmp_path: Path) -> None:
     with repository_database(tmp_path) as (repository, sessions):
         pdf_id, docx_id = seed_remote_files(

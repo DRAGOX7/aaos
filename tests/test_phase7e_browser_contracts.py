@@ -60,7 +60,14 @@ def test_task_request_rejects_authority_fields_and_coerced_values() -> None:
         description=None,
         location=None,
     )
-    assert set(request.model_dump()) == {"summary", "start", "end", "timezone", "description", "location"}
+    assert set(request.model_dump()) == {
+        "summary",
+        "start",
+        "end",
+        "timezone",
+        "description",
+        "location",
+    }
     with pytest.raises(ValidationError):
         CalendarCreateTaskRequest(**request.model_dump(), approver_identity="attacker")
     with pytest.raises(ValidationError):

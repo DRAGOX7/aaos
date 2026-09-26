@@ -95,9 +95,7 @@ def guard_normal_paths(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @dataclass
 class FakeAuthorizedFetcher(BrowserAuthenticatedFetcher):
-    outcomes: dict[int, list[FetchedPdf | FetchedDocx]] = field(
-        default_factory=dict
-    )
+    outcomes: dict[int, list[FetchedPdf | FetchedDocx]] = field(default_factory=dict)
     calls: list[int] = field(default_factory=list)
 
     def fetch(
@@ -215,8 +213,7 @@ def fetched_docx(
         body=body,
         source_filename=filename,
         advisory_media_type=(
-            "application/vnd.openxmlformats-officedocument."
-            "wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ),
     )
 
@@ -502,6 +499,7 @@ def test_persistence_failure_compensates_new_blob_but_preserves_shared_blob(
             assert session.scalar(select(func.count()).select_from(DocumentVersionORM)) == 1
         assert_no_temporary_artifacts(test.content_root)
 
+
 def test_docx_ingestion_persists_structural_provenance_without_pages(
     tmp_path: Path,
 ) -> None:
@@ -509,9 +507,7 @@ def test_docx_ingestion_persists_structural_provenance_without_pages(
 
     with integration_harness(tmp_path) as test:
         remote_file_id = sync_remote_files(test.sessions, (601,))[601]
-        test.fetcher.outcomes[remote_file_id] = [
-            fetched_docx(body)
-        ]
+        test.fetcher.outcomes[remote_file_id] = [fetched_docx(body)]
 
         result = test.service.run(
             mode=IngestionMode.INGEST_NEW,
@@ -533,17 +529,13 @@ def test_docx_ingestion_persists_structural_provenance_without_pages(
 
         with test.sessions() as session:
             document = session.scalar(
-                select(DocumentORM).where(
-                    DocumentORM.remote_file_id == remote_file_id
-                )
+                select(DocumentORM).where(DocumentORM.remote_file_id == remote_file_id)
             )
             assert document is not None
             assert document.ingestion_status == IngestionStatus.READY
 
             version = session.scalar(
-                select(DocumentVersionORM).where(
-                    DocumentVersionORM.document_id == document.id
-                )
+                select(DocumentVersionORM).where(DocumentVersionORM.document_id == document.id)
             )
             assert version is not None
             assert version.provenance_mode == "STRUCTURE"
@@ -558,42 +550,31 @@ def test_docx_ingestion_persists_structural_provenance_without_pages(
             assert blob is not None
             assert blob.sha256 == digest
             assert blob.media_type == (
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
             assert blob.storage_key == expected_key
 
             units = tuple(
                 session.scalars(
                     select(DocumentStructureUnitORM)
-                    .where(
-                        DocumentStructureUnitORM.document_version_id
-                        == version.id
-                    )
+                    .where(DocumentStructureUnitORM.document_version_id == version.id)
                     .order_by(DocumentStructureUnitORM.ordinal)
                 )
             )
             pages = tuple(
                 session.scalars(
-                    select(DocumentPageORM).where(
-                        DocumentPageORM.document_version_id
-                        == version.id
-                    )
+                    select(DocumentPageORM).where(DocumentPageORM.document_version_id == version.id)
                 )
             )
 
             assert len(units) == 10
-            assert [unit.ordinal for unit in units] == list(
-                range(1, 11)
-            )
+            assert [unit.ordinal for unit in units] == list(range(1, 11))
             assert units[0].kind == "HEADING"
             assert units[0].text == "Course Overview"
             assert units[0].heading_level == 1
 
             assert units[1].kind == "PARAGRAPH"
-            assert units[1].text == (
-                "تعلم الآلة — Machine Learning"
-            )
+            assert units[1].text == ("تعلم الآلة — Machine Learning")
 
             assert units[2].kind == "TABLE_CELL"
             assert (
@@ -608,11 +589,6 @@ def test_docx_ingestion_persists_structural_provenance_without_pages(
 
             assert pages == ()
 
-        stored_path = (
-            test.content_root
-            / "sha256"
-            / digest[:2]
-            / f"{digest}.docx"
-        )
+        stored_path = test.content_root / "sha256" / digest[:2] / f"{digest}.docx"
         assert stored_path.read_bytes() == body
         assert_no_temporary_artifacts(test.content_root)

@@ -104,7 +104,12 @@ def canonical_manifest_bytes(manifest: Phase9ReleaseManifest) -> bytes:
     if not isinstance(manifest, Phase9ReleaseManifest):
         raise TypeError("manifest must be a Phase9ReleaseManifest")
     return (
-        json.dumps(manifest.as_dict(include_hash=False), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        json.dumps(
+            manifest.as_dict(include_hash=False),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         + "\n"
     ).encode("utf-8")
 
@@ -172,7 +177,9 @@ def _migration_head(repo_root: Path) -> str:
     versions = sorted((repo_root / "migrations" / "versions").glob("*.py"))
     if not versions:
         raise ValueError("migration versions are absent")
-    matches = [path.stem for path in versions if path.stem.startswith("0007_phase8_visual_provenance")]
+    matches = [
+        path.stem for path in versions if path.stem.startswith("0007_phase8_visual_provenance")
+    ]
     if matches != [EXPECTED_MIGRATION_HEAD]:
         raise ValueError("expected Phase 8 migration head is absent")
     return EXPECTED_MIGRATION_HEAD
@@ -217,7 +224,9 @@ def build_release_manifest(
     """Build a baseline from explicit repository facts and bounded artifacts."""
 
     root = repo_root.resolve()
-    resolved_tags = phase_tags or (("phase-08-passed", _git(root, "rev-parse", "phase-08-passed^{}")),)
+    resolved_tags = phase_tags or (
+        ("phase-08-passed", _git(root, "rev-parse", "phase-08-passed^{}")),
+    )
     resolved_migration = migration_head or _migration_head(root)
     artifacts = tuple(_hash_artifact(root, path) for path in artifact_paths)
     facts = repository_facts or (("tracked_clean", "NOT_CHECKED"),)

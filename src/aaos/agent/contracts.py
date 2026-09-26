@@ -919,9 +919,7 @@ class GroundedRagResponse:
                     "citation.page_end",
                 )
                 if citation["page_end"] < citation["page_start"]:
-                    raise ValueError(
-                        "grounded RAG citation page range is invalid"
-                    )
+                    raise ValueError("grounded RAG citation page range is invalid")
                 continue
 
             if citation_fields != structure_fields:
@@ -936,9 +934,7 @@ class GroundedRagResponse:
                 "citation.unit_end",
             )
             if citation["unit_end"] < citation["unit_start"]:
-                raise ValueError(
-                    "grounded RAG citation unit range is invalid"
-                )
+                raise ValueError("grounded RAG citation unit range is invalid")
 
             heading = citation["heading"]
             if heading is not None:
@@ -958,8 +954,7 @@ class GroundedRagResponse:
 
             if any(value is None for value in coordinates):
                 raise ValueError(
-                    "grounded RAG structural citation coordinates "
-                    "must be all present or all absent"
+                    "grounded RAG structural citation coordinates must be all present or all absent"
                 )
 
             for coordinate_field, value in zip(

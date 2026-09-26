@@ -44,9 +44,7 @@ def test_approval_commands_use_server_approver_and_empty_browser_body() -> None:
     source = inspect.getsource(aaos.main.create_app)
     assert "principal_provider" in source
     assert "approver=_approver()" in (
-        Path(REPOSITORY_ROOT / "src" / "aaos" / "web" / "routes.py").read_text(
-            encoding="utf-8"
-        )
+        Path(REPOSITORY_ROOT / "src" / "aaos" / "web" / "routes.py").read_text(encoding="utf-8")
     )
 
 

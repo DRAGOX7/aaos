@@ -615,9 +615,7 @@ def _sanitize_citations(
                 limit,
                 truncate=False,
             ),
-            "document_version_id": _positive_int(
-                item.get("document_version_id")
-            ),
+            "document_version_id": _positive_int(item.get("document_version_id")),
             "document_title": _sanitize_text(
                 title,
                 limit,
@@ -626,12 +624,8 @@ def _sanitize_citations(
         }
 
         if fields == page_fields:
-            page_start = _positive_int(
-                item.get("page_start")
-            )
-            page_end = _positive_int(
-                item.get("page_end")
-            )
+            page_start = _positive_int(item.get("page_start"))
+            page_end = _positive_int(item.get("page_end"))
             if page_end < page_start:
                 raise ObservationSanitizationError()
 
@@ -644,12 +638,8 @@ def _sanitize_citations(
             )
             continue
 
-        unit_start = _positive_int(
-            item.get("unit_start")
-        )
-        unit_end = _positive_int(
-            item.get("unit_end")
-        )
+        unit_start = _positive_int(item.get("unit_start"))
+        unit_end = _positive_int(item.get("unit_end"))
         if unit_end < unit_start:
             raise ObservationSanitizationError()
 
@@ -673,20 +663,12 @@ def _sanitize_citations(
             if coordinate is None:
                 coordinate_values.append(None)
                 continue
-            if (
-                isinstance(coordinate, bool)
-                or not isinstance(coordinate, int)
-                or coordinate < 0
-            ):
+            if isinstance(coordinate, bool) or not isinstance(coordinate, int) or coordinate < 0:
                 raise ObservationSanitizationError()
             coordinate_values.append(coordinate)
 
-        if any(
-            coordinate is None
-            for coordinate in coordinate_values
-        ) and not all(
-            coordinate is None
-            for coordinate in coordinate_values
+        if any(coordinate is None for coordinate in coordinate_values) and not all(
+            coordinate is None for coordinate in coordinate_values
         ):
             raise ObservationSanitizationError()
 

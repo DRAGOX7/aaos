@@ -330,9 +330,7 @@ class RagChunkStructureSourceSpanValue:
             "PARAGRAPH",
             "TABLE_CELL",
         }:
-            raise ValueError(
-                "kind must be HEADING, PARAGRAPH, or TABLE_CELL"
-            )
+            raise ValueError("kind must be HEADING, PARAGRAPH, or TABLE_CELL")
 
         for name in (
             "source_char_start",
@@ -346,13 +344,9 @@ class RagChunkStructureSourceSpanValue:
             )
 
         if self.source_char_end <= self.source_char_start:
-            raise ValueError(
-                "source_char span must be monotonic and non-empty"
-            )
+            raise ValueError("source_char span must be monotonic and non-empty")
         if self.chunk_char_end <= self.chunk_char_start:
-            raise ValueError(
-                "chunk_char span must be monotonic and non-empty"
-            )
+            raise ValueError("chunk_char span must be monotonic and non-empty")
 
         if self.kind == "HEADING":
             if (
@@ -361,9 +355,7 @@ class RagChunkStructureSourceSpanValue:
                 or not isinstance(self.heading_level, int)
                 or not 1 <= self.heading_level <= 9
             ):
-                raise ValueError(
-                    "HEADING requires heading_level between 1 and 9"
-                )
+                raise ValueError("HEADING requires heading_level between 1 and 9")
             if any(
                 value is not None
                 for value in (
@@ -372,15 +364,11 @@ class RagChunkStructureSourceSpanValue:
                     self.column_index,
                 )
             ):
-                raise ValueError(
-                    "HEADING cannot carry table coordinates"
-                )
+                raise ValueError("HEADING cannot carry table coordinates")
             return
 
         if self.heading_level is not None:
-            raise ValueError(
-                "non-heading structural spans cannot carry heading_level"
-            )
+            raise ValueError("non-heading structural spans cannot carry heading_level")
 
         if self.kind == "PARAGRAPH":
             if any(
@@ -391,9 +379,7 @@ class RagChunkStructureSourceSpanValue:
                     self.column_index,
                 )
             ):
-                raise ValueError(
-                    "PARAGRAPH cannot carry table coordinates"
-                )
+                raise ValueError("PARAGRAPH cannot carry table coordinates")
             return
 
         for name in (
@@ -402,15 +388,8 @@ class RagChunkStructureSourceSpanValue:
             "column_index",
         ):
             value = getattr(self, name)
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < 0
-            ):
-                raise ValueError(
-                    f"{name} must be a non-negative integer "
-                    "for TABLE_CELL"
-                )
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer for TABLE_CELL")
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,8 +402,7 @@ class RetrievedEvidence:
     document_title: str
     course_id: int
     source_spans: tuple[
-        RagChunkSourceSpanValue
-        | RagChunkStructureSourceSpanValue,
+        RagChunkSourceSpanValue | RagChunkStructureSourceSpanValue,
         ...,
     ]
     dense_rank: int | None
@@ -455,13 +433,8 @@ class RetrievedEvidence:
             raise ValueError("source_spans must be a non-empty tuple")
 
         if self.provenance_mode == "PAGE":
-            if not all(
-                isinstance(span, RagChunkSourceSpanValue)
-                for span in self.source_spans
-            ):
-                raise ValueError(
-                    "PAGE evidence requires page source spans"
-                )
+            if not all(isinstance(span, RagChunkSourceSpanValue) for span in self.source_spans):
+                raise ValueError("PAGE evidence requires page source spans")
         elif self.provenance_mode == "STRUCTURE":
             if not all(
                 isinstance(
@@ -470,14 +443,9 @@ class RetrievedEvidence:
                 )
                 for span in self.source_spans
             ):
-                raise ValueError(
-                    "STRUCTURE evidence requires structural "
-                    "source spans"
-                )
+                raise ValueError("STRUCTURE evidence requires structural source spans")
         else:
-            raise ValueError(
-                "provenance_mode must be PAGE or STRUCTURE"
-            )
+            raise ValueError("provenance_mode must be PAGE or STRUCTURE")
         for name in ("dense_rank", "lexical_rank"):
             rank = getattr(self, name)
             if rank is not None:
@@ -1047,9 +1015,7 @@ class Citation:
             ProvenanceKind.EMBEDDED_PDF,
             ProvenanceKind.DERIVED_VISUAL_EVIDENCE,
         }:
-            raise ValueError(
-                "page citation requires page-based provenance"
-            )
+            raise ValueError("page citation requires page-based provenance")
         object.__setattr__(self, "provenance_kind", kind)
 
 
@@ -1066,9 +1032,7 @@ class StructuralCitation:
     table_index: int | None
     row_index: int | None
     column_index: int | None
-    provenance_kind: ProvenanceKind = (
-        ProvenanceKind.STRUCTURAL_DOCUMENT
-    )
+    provenance_kind: ProvenanceKind = ProvenanceKind.STRUCTURAL_DOCUMENT
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1100,9 +1064,7 @@ class StructuralCitation:
             "unit_end",
         )
         if self.unit_end < self.unit_start:
-            raise ValueError(
-                "unit_end must not precede unit_start"
-            )
+            raise ValueError("unit_end must not precede unit_start")
 
         if self.heading is not None:
             object.__setattr__(
@@ -1119,15 +1081,9 @@ class StructuralCitation:
             self.row_index,
             self.column_index,
         )
-        present = tuple(
-            value is not None
-            for value in coordinates
-        )
+        present = tuple(value is not None for value in coordinates)
         if any(present) and not all(present):
-            raise ValueError(
-                "table coordinates must be all present "
-                "or all absent"
-            )
+            raise ValueError("table coordinates must be all present or all absent")
 
         if all(present):
             for name in (
@@ -1146,15 +1102,10 @@ class StructuralCitation:
                 self.provenance_kind,
                 ProvenanceKind,
             )
-            else ProvenanceKind(
-                self.provenance_kind
-            )
+            else ProvenanceKind(self.provenance_kind)
         )
         if kind is not ProvenanceKind.STRUCTURAL_DOCUMENT:
-            raise ValueError(
-                "structural citation requires "
-                "STRUCTURAL_DOCUMENT provenance"
-            )
+            raise ValueError("structural citation requires STRUCTURAL_DOCUMENT provenance")
         object.__setattr__(
             self,
             "provenance_kind",
@@ -1192,9 +1143,7 @@ class RagAnswer:
             )
             for citation in self.citations
         ):
-            raise ValueError(
-                "citations must contain trusted citation values"
-            )
+            raise ValueError("citations must contain trusted citation values")
         claim_ids = {claim.claim_id for claim in self.claims}
         citation_claim_ids = {citation.claim_id for citation in self.citations}
         if self.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:

@@ -147,18 +147,18 @@ class TaskRepository:
             result = cast(
                 CursorResult[Any],
                 session.execute(
-                update(TaskRecordORM)
-                .where(
-                    TaskRecordORM.task_id == task_id,
-                    TaskRecordORM.creation_state == expected.value,
-                )
-                .values(
-                    creation_state=target.value,
-                    action_id=action_id.value if action_id else None,
-                    failure_code=failure_code,
-                    updated_at=now,
+                    update(TaskRecordORM)
+                    .where(
+                        TaskRecordORM.task_id == task_id,
+                        TaskRecordORM.creation_state == expected.value,
+                    )
+                    .values(
+                        creation_state=target.value,
+                        action_id=action_id.value if action_id else None,
+                        failure_code=failure_code,
+                        updated_at=now,
+                    ),
                 ),
-            )
             )
             if result.rowcount != 1:
                 raise ValueError("task creation state CAS failed")

@@ -293,9 +293,7 @@ def test_docx_filename_fallback_and_storage_key_use_exact_docx_suffix(
 
     assert install.storage_key.endswith(".docx")
     assert not install.storage_key.endswith(".pdf")
-    assert (root / Path(*install.storage_key.split("/"))).read_bytes() == (
-        b"docx-storage-body"
-    )
+    assert (root / Path(*install.storage_key.split("/"))).read_bytes() == (b"docx-storage-body")
 
 
 def test_storage_rejects_any_suffix_other_than_pdf_or_docx(
