@@ -74,6 +74,7 @@ EXPECTED_PACKAGING_VERSION = "25.0"
 EXPECTED_RAGAS_VERSION = "0.4.3"
 EXPECTED_LANGCHAIN_COMMUNITY_VERSION = "0.3.27"
 DEPENDENCY_IMPORT_TIMEOUT_SECONDS = 90
+FLAGEMBEDDING_IMPORT_TIMEOUT_SECONDS = 180
 PROHIBITED_DISTRIBUTIONS = ("PyMuPDF", "pytesseract", "easyocr", "ocrmypdf")
 PRODUCTION_FORBIDDEN_MODULES = (
     "anthropic",
@@ -301,9 +302,13 @@ print("IMPORT_SAFE_OFFLINE")
         capture_output=True,
         text=True,
         check=False,
-        # FlagEmbedding took 50.64s in isolation and exceeded 60s under full-suite load.
-        # Keep each safety probe bounded without treating cold import speed as its contract.
-        timeout=DEPENDENCY_IMPORT_TIMEOUT_SECONDS,
+        # The focused import took 57.83s but exceeded 90s under full-suite load.
+        # Keep this safety probe bounded; it is not a startup latency target.
+        timeout=(
+            FLAGEMBEDDING_IMPORT_TIMEOUT_SECONDS
+            if dependency_import == "import FlagEmbedding"
+            else DEPENDENCY_IMPORT_TIMEOUT_SECONDS
+        ),
     )
 
     assert completed.returncode == 0, completed.stderr
