@@ -732,8 +732,7 @@ def score_v4_evaluation(
         trace = by_id[case.case_id]
         assert case.expected_action is not None
         action_correct = trace.observed_action is case.expected_action
-        if action_correct:
-            routing_correct += 1
+        route_correct = action_correct
         if case.expected_action is V2ExpectedAction.RETRIEVE:
             retrieve_total += 1
         else:
@@ -744,9 +743,12 @@ def score_v4_evaluation(
                     trace.observed_terminal_kind is case.expected_terminal_kind
                 )
             terminal_correct += int(terminal_ok)
+            route_correct = terminal_ok
+        if route_correct:
+            routing_correct += 1
         key = f"{case.language.value}/{case.expected_action.value}"
         stratum_totals[key] += 1
-        stratum_correct[key] += int(action_correct)
+        stratum_correct[key] += int(route_correct)
 
     trusted_cases = manifest.trusted_cases
     trusted_correct = sum(
