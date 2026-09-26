@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -325,6 +327,61 @@ def test_postsemantic_crash_leaves_consumed_state(tmp_path: Path) -> None:
     assert status.state is HeldoutState.CONSUMED
     assert status.execution_count == 1
     assert SECRET not in str(status.to_dict())
+
+
+def test_process_exit_after_executor_start_leaves_consumed_state(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    ledger_path = tmp_path / "ledger.json"
+    report_root = tmp_path / "reports"
+    execution_marker = tmp_path / "synthetic-execution-started.txt"
+    child_script = tmp_path / "crash_after_consumption.py"
+    child_script.write_text(
+        f"""
+import os
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(repo_root / "src")!r})
+sys.path.insert(0, {str(repo_root / "tests")!r})
+from test_agent_evaluation_v4_runner import CANDIDATE_SHA, _manifest, _traces
+from aaos.agent.evaluation.contracts import EvaluationSplit
+from aaos.agent.evaluation.v4 import score_v4_evaluation
+from aaos.agent.evaluation.v4_ledger import V4HeldoutLedger
+from aaos.agent.evaluation.v4_runner import V4SealedRunner
+calibration = _manifest(EvaluationSplit.CALIBRATION, "child-cal")
+heldout = _manifest(EvaluationSplit.FINAL_HELDOUT, "child-heldout")
+def terminate_after_synthetic_start(manifest):
+    Path({str(execution_marker)!r}).write_text("started", encoding="utf-8")
+    os._exit(23)
+runner = V4SealedRunner(
+    manifest_factory=lambda: (calibration, heldout),
+    scorer=score_v4_evaluation,
+    executor=terminate_after_synthetic_start,
+    candidate_sha=CANDIDATE_SHA,
+    ledger=V4HeldoutLedger(Path({str(ledger_path)!r})),
+    report_root=Path({str(report_root)!r}),
+)
+runner.evaluate_heldout()
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(child_script)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    status = V4HeldoutLedger(ledger_path).status()
+    assert result.returncode == 23
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert execution_marker.read_text(encoding="utf-8") == "started"
+    assert status.state is HeldoutState.CONSUMED
+    assert status.execution_count == 1
+    assert status.completion_status == "running"
 
 
 def test_stale_reserved_state_fails_closed(tmp_path: Path) -> None:
