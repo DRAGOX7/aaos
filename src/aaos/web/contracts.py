@@ -3,6 +3,7 @@
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, cast
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -78,11 +79,12 @@ class AcademicAskStatusView(StrEnum):
 
 
 class AcademicAskRequest(BaseModel):
-    """Closed request contract for one self-contained academic question."""
+    """Closed request contract for one bounded academic conversation turn."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     question: str = Field(min_length=1, max_length=4096)
+    conversation_id: UUID | None = Field(default=None, strict=False)
 
     @field_validator("question")
     @classmethod
@@ -104,6 +106,8 @@ class AcademicAskSource(BaseModel):
     course_id: int | None = None
     title: str | None = Field(default=None, max_length=2048)
     query_filter: str | None = Field(default=None, max_length=4096)
+    source_ref: str | None = Field(default=None, max_length=16)
+    source_turn: int | None = Field(default=None, ge=1, le=8)
 
 
 class AcademicAskResponse(BaseModel):
@@ -116,6 +120,8 @@ class AcademicAskResponse(BaseModel):
     failure_code: str | None = Field(default=None, max_length=64)
     failure_message: str | None = Field(default=None, max_length=1024)
     refusal_code: str | None = Field(default=None, max_length=64)
+    context_sources: tuple[AcademicAskSource, ...] = ()
+    conversation_id: UUID | None = None
     sources: tuple[AcademicAskSource, ...] = ()
     rag_provenance: dict[str, object] | None = None
     step_count: int = Field(ge=0, le=8)
@@ -201,6 +207,7 @@ class DocumentSummary(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     id: int
+    document_version_id: int | None = Field(default=None, gt=0, exclude=True)
     course_id: int
     title: str
     ingestion_status: DocumentIngestionStatusView

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import StreamingResponse
@@ -150,6 +151,8 @@ class AcademicAskService(Protocol):
         self,
         question: str,
         cancel_event: asyncio.Event | None = None,
+        *,
+        conversation_id: UUID | None = None,
     ) -> AcademicAskResult: ...
 
 
@@ -302,7 +305,13 @@ def create_api_v1_router(
             body: AcademicAskRequest,
         ) -> AcademicAskResponse:
             cancellation = asyncio.Event()
-            ask_task = asyncio.create_task(ask_service.ask(body.question, cancellation))
+            ask_task = asyncio.create_task(
+                ask_service.ask(
+                    body.question,
+                    cancellation,
+                    conversation_id=body.conversation_id,
+                )
+            )
 
             async def monitor_disconnect() -> None:
                 while not ask_task.done():
@@ -336,11 +345,27 @@ def create_api_v1_router(
                         course_id=source.course_id,
                         title=source.title,
                         query_filter=source.query_filter,
+                        source_ref=source.source_ref,
+                        source_turn=source.source_turn,
                     )
                     for source in result.sources
                 ),
+                context_sources=tuple(
+                    AcademicAskSource(
+                        tool_name=source.tool_name,
+                        entity_kind=source.entity_kind,
+                        entity_id=source.entity_id,
+                        course_id=source.course_id,
+                        title=source.title,
+                        query_filter=source.query_filter,
+                        source_ref=source.source_ref,
+                        source_turn=source.source_turn,
+                    )
+                    for source in result.context_sources
+                ),
                 rag_provenance=_json_compatible_mapping(result.rag_provenance),
                 step_count=result.step_count,
+                conversation_id=result.conversation_id,
             )
 
     if task_reader is not None:

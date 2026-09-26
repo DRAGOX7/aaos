@@ -8,6 +8,7 @@ from math import isfinite
 from typing import Protocol, TypeAlias
 
 MAX_RAG_TEXT_CHARACTERS = 16_384
+MAX_RAG_CONTEXT_HINT_CHARACTERS = 256
 _RAG_ANSWER_VALIDATION_MARKER = object()
 
 
@@ -168,6 +169,7 @@ class RagQuery:
     question: str
     scope: RagScope
     answer_language: str | None = None
+    context_hint: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "question", _nonblank_text(self.question, "question"))
@@ -177,6 +179,21 @@ class RagQuery:
             object.__setattr__(
                 self, "answer_language", _nonblank_text(self.answer_language, "answer_language")
             )
+        if self.context_hint is not None:
+            object.__setattr__(
+                self, "context_hint", _nonblank_text(self.context_hint, "context_hint")
+            )
+            if len(self.context_hint) > MAX_RAG_CONTEXT_HINT_CHARACTERS:
+                raise ValueError("context_hint exceeds its character bound")
+            if len(self.retrieval_question) > MAX_RAG_TEXT_CHARACTERS:
+                raise ValueError("retrieval question exceeds its character bound")
+
+    @property
+    def retrieval_question(self) -> str:
+        """Include inert topic metadata only in retrieval ranking input."""
+        if self.context_hint is None:
+            return self.question
+        return f"{self.question}\n{self.context_hint}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -753,6 +770,7 @@ class GroundedAnswerRequest:
     unsupported_aspects: tuple[str, ...] = ()
     requirement_coverage: RequirementCoverageDecision | None = None
     validated_requirement_spans: tuple[RequirementEvidenceSpans, ...] = ()
+    context_hint: str | None = None
 
     @classmethod
     def from_query(
@@ -820,6 +838,7 @@ class GroundedAnswerRequest:
             ),
             requirement_coverage=requirement_coverage,
             validated_requirement_spans=validated_requirement_spans,
+            context_hint=query.context_hint,
         )
 
     def __post_init__(self) -> None:
@@ -836,6 +855,12 @@ class GroundedAnswerRequest:
             "policy_version",
             _nonblank_text(self.policy_version, "policy_version"),
         )
+        if self.context_hint is not None:
+            object.__setattr__(
+                self, "context_hint", _nonblank_text(self.context_hint, "context_hint")
+            )
+            if len(self.context_hint) > MAX_RAG_CONTEXT_HINT_CHARACTERS:
+                raise ValueError("context_hint exceeds its character bound")
         if not isinstance(self.evidence, tuple) or not all(
             isinstance(item, RetrievedEvidence) for item in self.evidence
         ):

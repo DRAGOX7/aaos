@@ -479,6 +479,7 @@ def test_no_active_generation_and_invalid_resolver_input_are_safe(tmp_path: Path
 class _EmbeddingStub:
     def __init__(self) -> None:
         self.released = False
+        self.query_texts: list[str] = []
 
     def model_metadata(self) -> EmbeddingModelMetadata:
         return EmbeddingModelMetadata("model", "revision", 3, "cpu")
@@ -487,6 +488,7 @@ class _EmbeddingStub:
         return tuple((1.0, 0.0, 0.0) for _ in texts)
 
     def embed_query(self, text: str) -> tuple[float, ...]:
+        self.query_texts.append(text)
         return (1.0, 0.0, 0.0)
 
     def release_model(self) -> None:
@@ -579,14 +581,18 @@ def test_hybrid_candidate_search_receives_frozen_snapshot_allowlist(tmp_path: Pa
             dense_factory,
             lexical_search=lexical_search,  # type: ignore[arg-type]
         )
-        candidates = retriever.retrieve_candidates(
-            RagQuery("course", CourseScope(seeded["courses"][0]))  # type: ignore[index]
+        query = RagQuery(
+            "course",
+            CourseScope(seeded["courses"][0]),  # type: ignore[index]
+            context_hint="Lecture 1",
         )
+        candidates = retriever.retrieve_candidates(query)
 
         assert isinstance(candidates, RetrievalCandidateSet)
         assert dense_factory.opened == [generation.identity]
         assert dense.allowed == (versions["course0_v1"],)
-        assert lexical_calls == [("course", (versions["course0_v1"],), 30)]
+        assert lexical_calls == [("course lecture 1", (versions["course0_v1"],), 30)]
+        assert embedding.query_texts == ["course\nLecture 1"]
         assert embedding.released is True
         assert candidates.embedding_release_verified is True
         assert dense.closed == 1

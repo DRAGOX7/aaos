@@ -194,6 +194,7 @@ def test_list_documents_projects_document_without_latest_version(
     assert result[0].index_readiness is None
     assert result[0].index_coverage is None
     assert result[0].ingestion_status is DocumentIngestionStatusView.NEVER_ATTEMPTED
+    assert result[0].document_version_id is None
 
 
 @pytest.mark.parametrize(
@@ -234,6 +235,7 @@ def test_latest_version_wins_for_page_count_and_extraction(
 
     assert result.extraction_status is DocumentExtractionStatusView.PARTIAL
     assert result.page_count == 7
+    assert result.document_version_id == 302
 
 
 @pytest.mark.parametrize(

@@ -61,7 +61,7 @@ class QuerySnapshotResolver:
     def resolve(self, query: RagQuery) -> QuerySnapshot:
         if not isinstance(query, RagQuery):
             raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
-        normalized = normalize_query(query.question)
+        normalized = normalize_query(query.retrieval_question)
         return self._repository.pin_query_snapshot(
             query.scope,
             normalized_query=normalized,
@@ -903,7 +903,7 @@ class HybridRetriever:
         dense_hits: tuple[DenseSearchHit, ...] = ()
         try:
             try:
-                vector = self._embedding_service.embed_query(query.question)
+                vector = self._embedding_service.embed_query(query.retrieval_question)
             except RagOperationalError:
                 raise
             except Exception:

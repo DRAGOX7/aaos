@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
+from uuid import UUID
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -222,8 +223,14 @@ class _LazyDefaultAcademicAskService:
         self,
         question: str,
         cancel_event: asyncio.Event | None = None,
+        *,
+        conversation_id: UUID | None = None,
     ) -> AcademicAskResult:
-        return await self._ensure_assistant().ask(question, cancel_event)
+        return await self._ensure_assistant().ask(
+            question,
+            cancel_event,
+            conversation_id=conversation_id,
+        )
 
     async def dispose(self) -> None:
         if self._gateway is not None:

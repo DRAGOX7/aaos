@@ -78,7 +78,7 @@ def _parse_query(arguments: ValidatedToolArguments) -> RagQuery:
     if not isinstance(arguments, ValidatedToolArguments) or arguments.schema_name != "rag_query":
         raise ValueError("arguments are not validated for rag_query")
     values = arguments.to_mapping()
-    allowed = {"question", "scope", "answer_language"}
+    allowed = {"question", "scope", "answer_language", "context_hint"}
     if set(values) - allowed:
         raise ValueError("rag query contains unknown fields")
     question = _bounded_question(values.get("question"))
@@ -90,7 +90,10 @@ def _parse_query(arguments: ValidatedToolArguments) -> RagQuery:
         ):
             raise ValueError("answer_language must be en or ar")
         answer_language = answer_language.strip().casefold()
-    return RagQuery(question, scope, answer_language)
+    context_hint = values.get("context_hint")
+    if context_hint is not None and not isinstance(context_hint, str):
+        raise ValueError("context_hint must be text or None")
+    return RagQuery(question, scope, answer_language, context_hint)
 
 
 def _citation_payload(citation: object) -> dict[str, object]:

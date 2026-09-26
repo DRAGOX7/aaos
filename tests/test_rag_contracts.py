@@ -134,6 +134,18 @@ def test_public_records_are_validated_immutable_and_slot_backed() -> None:
         query.question = "Changed"  # type: ignore[misc]
 
 
+def test_rag_context_hint_is_bounded_and_kept_separate_from_the_question() -> None:
+    query = RagQuery(
+        question="Explain it",
+        scope=HistoricalScope((12,)),
+        context_hint="Lecture 4",
+    )
+
+    assert query.question == "Explain it"
+    assert query.context_hint == "Lecture 4"
+    assert query.retrieval_question == "Explain it\nLecture 4"
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
@@ -164,6 +176,10 @@ def test_invalid_contract_values_are_rejected(factory: object, message: str) -> 
         (
             lambda: RagQuery("x" * (MAX_RAG_TEXT_CHARACTERS + 1), GlobalScope()),
             "question",
+        ),
+        (
+            lambda: RagQuery("x", GlobalScope(), context_hint="x" * 257),
+            "context_hint",
         ),
         (
             lambda: EmbeddingModelMetadata("x" * (MAX_RAG_TEXT_CHARACTERS + 1), "v1", 1, "cpu"),

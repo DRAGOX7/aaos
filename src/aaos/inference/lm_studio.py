@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from math import ceil
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import httpx2
 
@@ -224,6 +224,25 @@ _ACADEMIC_DECISION_RESPONSE_FORMAT: dict[str, object] = {
         },
     },
 }
+_CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT = cast(
+    dict[str, Any], deepcopy(_ACADEMIC_DECISION_RESPONSE_FORMAT)
+)
+_contextual_academic_json_schema = _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT["json_schema"][
+    "schema"
+]
+for _contextual_branch in _contextual_academic_json_schema["oneOf"]:
+    _contextual_action = _contextual_branch.get("properties", {}).get("action", {}).get("enum")
+    if _contextual_action == ["CALL_TOOL"]:
+        _contextual_arguments = _contextual_branch["properties"]["arguments"]
+        _contextual_arguments["properties"]["context_ref"] = {
+            "type": "string",
+            "enum": ["ctx-1"],
+            "maxLength": 5,
+        }
+        _contextual_arguments["required"].append("context_ref")
+_CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT["json_schema"]["name"] = (
+    "aaos_read_only_academic_decision_contextual_v1"
+)
 
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
@@ -365,6 +384,7 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "agent_proposal_transport": _AGENT_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "least_authority_proposal_transport": _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "read_only_academic_decision": _ACADEMIC_DECISION_RESPONSE_FORMAT,
+    "read_only_academic_decision_contextual": _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT,
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

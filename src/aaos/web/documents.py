@@ -213,6 +213,7 @@ class DocumentReadService:
 
         return DocumentSummary(
             id=document.id,
+            document_version_id=version.id if version is not None else None,
             course_id=remote_file.course_id,
             title=remote_file.title,
             ingestion_status=ingestion_status,
