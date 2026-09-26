@@ -6,8 +6,6 @@ import json
 from datetime import datetime
 from typing import AsyncIterator, Awaitable, Callable, Protocol
 
-from fastapi import Request
-
 from aaos.web.activity import ActivityCursor, ActivityEvent, encode_activity_cursor
 
 _BATCH_SIZE = 50
@@ -17,6 +15,10 @@ _HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 class ActivityReplayUnavailable(RuntimeError):
     """The requested cursor is no longer available for a safe replay."""
+
+
+class _DisconnectChecker(Protocol):
+    async def is_disconnected(self) -> bool: ...
 
 
 class ActivityStreamService(Protocol):
@@ -43,7 +45,7 @@ def _event_frame(event: ActivityEvent, cursor: ActivityCursor) -> bytes:
 
 
 async def iter_activity_sse(
-    request: Request,
+    request: _DisconnectChecker,
     service: ActivityStreamService,
     *,
     after: ActivityCursor | None,

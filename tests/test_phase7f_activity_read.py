@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from aaos.web.activity import (
     ActivityCategory,
+    ActivityCursor,
     ActivityEventCode,
     ActivitySourceRow,
     ActivityStatus,
@@ -15,7 +16,9 @@ class FakeActivityRepository:
     def __init__(self, rows: tuple[ActivitySourceRow, ...]) -> None:
         self.rows = rows
 
-    def list_source_rows(self, *, before, after, limit):
+    def list_source_rows(
+        self, *, before: ActivityCursor | None, after: ActivityCursor | None, limit: int
+    ) -> tuple[ActivitySourceRow, ...]:
         rows = sorted(
             self.rows,
             key=lambda item: (
@@ -40,14 +43,14 @@ class FakeActivityRepository:
             )[:limit]
         return tuple(reversed(rows[-limit:]))
 
-    def current_high_watermark(self):
+    def current_high_watermark(self) -> ActivityCursor | None:
         if not self.rows:
             return None
         row = max(
             self.rows,
             key=lambda item: (item.occurred_at, item.stable_source_id, item.source_sequence),
         )
-        return (
+        return ActivityCursor(
             row.occurred_at,
             1 if row.source_kind == "ACTION_EVENT" else 0,
             row.stable_source_id,
@@ -116,6 +119,7 @@ def test_activity_history_uses_strict_before_cursor() -> None:
     service = ActivityReadService(repository)
     first = service.list_history(limit=1)
 
+    assert first.next_cursor is not None
     second = service.list_history(limit=1, before=decode_activity_cursor(first.next_cursor))
 
     assert [event.event_code for event in second.events] == [ActivityEventCode.ACTION_PREPARED]
@@ -145,4 +149,6 @@ def test_cursor_is_stable_for_same_projected_event() -> None:
 
     response = service.list_history(limit=1)
 
-    assert response.next_cursor == encode_activity_cursor((timestamp, 1, "event-a", 1))
+    assert response.next_cursor == encode_activity_cursor(
+        ActivityCursor(timestamp, 1, "event-a", 1)
+    )

@@ -3,44 +3,57 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from aaos.web.activity import ActivityCursor, encode_activity_cursor
+from aaos.web.activity import (
+    ActivityCursor,
+    ActivityEvent,
+    ActivityHistoryResponse,
+    ActivitySourceRow,
+    encode_activity_cursor,
+)
 from aaos.web.activity_read import ActivityReadService, ActivityReplayUnavailable
+from aaos.web.contracts import CourseSummary
 from aaos.web.errors import install_error_boundary
 from aaos.web.routes import create_api_v1_router
 
 
 class EmptyCourseReader:
-    def list_courses(self):
+    def list_courses(self) -> tuple[CourseSummary, ...]:
         return ()
 
 
 class EmptyActivityRepository:
-    def list_source_rows(self, *, before, after, limit):
+    def list_source_rows(
+        self, *, before: ActivityCursor | None, after: ActivityCursor | None, limit: int
+    ) -> tuple[ActivitySourceRow, ...]:
         del before, after, limit
         return ()
 
-    def current_high_watermark(self):
+    def current_high_watermark(self) -> ActivityCursor | None:
         return None
 
 
 class RecoveryActivityReader:
     def __init__(self) -> None:
-        self.after = None
+        self.after: ActivityCursor | None = None
 
-    def list_history(self, *, limit, before):
+    def list_history(
+        self, *, limit: int, before: ActivityCursor | None = None
+    ) -> ActivityHistoryResponse:
         del limit, before
         raise AssertionError("history is not used by the stream test")
 
-    def tail(self, *, after, limit):
+    def tail(self, *, after: ActivityCursor | None, limit: int) -> tuple[ActivityEvent, ...]:
         del after, limit
         return ()
 
-    def tail_with_cursors(self, *, after, limit):
+    def tail_with_cursors(
+        self, *, after: ActivityCursor | None, limit: int
+    ) -> tuple[tuple[ActivityEvent, ActivityCursor], ...]:
         self.after = after
         assert limit == 50
         raise ActivityReplayUnavailable
 
-    def current_high_watermark(self):
+    def current_high_watermark(self) -> ActivityCursor | None:
         return None
 
 

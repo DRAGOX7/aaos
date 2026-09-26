@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aaos.web.contracts import CourseSummary
 from aaos.web.errors import install_error_boundary
 from aaos.web.health import (
     HealthComponent,
@@ -15,12 +16,12 @@ from aaos.web.routes import create_api_v1_router
 
 
 class EmptyCourseReader:
-    def list_courses(self):
+    def list_courses(self) -> tuple[CourseSummary, ...]:
         return ()
 
 
 class FakeHealthReader:
-    def check(self, *, now):
+    def check(self, *, now: datetime) -> SystemHealthResponse:
         assert now.tzinfo is not None
         return SystemHealthResponse(
             schema_version="phase7-health-v1",

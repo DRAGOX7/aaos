@@ -6,6 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 from aaos.web.activity import (
     ActivityCategory,
     ActivityContext,
+    ActivityCursor,
     ActivityEvent,
     ActivityEventCode,
     ActivityHistoryResponse,
@@ -55,7 +56,7 @@ def test_activity_event_has_closed_browser_safe_shape() -> None:
 
 
 def test_activity_context_is_a_closed_union() -> None:
-    adapter = TypeAdapter(ActivityContext)
+    adapter: TypeAdapter[ActivityContext] = TypeAdapter(ActivityContext)
     assert isinstance(
         adapter.validate_python({"kind": "TASK", "task_id": "task-1"}), TaskActivityContext
     )
@@ -84,7 +85,7 @@ def test_activity_history_uses_immutable_tuple_projection() -> None:
 
 def test_cursor_round_trips_without_internal_payload() -> None:
     value = encode_activity_cursor(
-        (
+        ActivityCursor(
             datetime(2026, 9, 18, tzinfo=timezone.utc),
             1,
             "event-1",

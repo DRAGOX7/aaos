@@ -40,12 +40,14 @@ class FakeRequest:
 
 class FakeStreamService:
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[tuple[ActivityCursor | None, int]] = []
 
-    def current_high_watermark(self):
+    def current_high_watermark(self) -> ActivityCursor | None:
         return None
 
-    def tail_with_cursors(self, *, after, limit):
+    def tail_with_cursors(
+        self, *, after: ActivityCursor | None, limit: int
+    ) -> tuple[tuple[ActivityEvent, ActivityCursor], ...]:
         self.calls.append((after, limit))
         if len(self.calls) == 1:
             return (
@@ -107,7 +109,7 @@ def test_sse_uses_bounded_batches_and_no_domain_mutation() -> None:
             return datetime(2026, 9, 18, tzinfo=timezone.utc)
 
         async for _ in iter_activity_sse(
-            request, service, after="cursor-0", sleep=sleep, clock=clock
+            request, service, after=_cursor("cursor-0"), sleep=sleep, clock=clock
         ):
             raise AssertionError("disconnected stream must not poll")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import Engine
@@ -24,6 +25,9 @@ from aaos.web.contracts import (
     DocumentIngestionStatusView,
 )
 from aaos.web.errors import Phase7ApiError
+
+if TYPE_CHECKING:
+    from aaos.web.documents import DocumentReadService
 
 NOW = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
 
@@ -167,7 +171,7 @@ def _seed_document(
             )
 
 
-def _service(sessions: sessionmaker[Session]):
+def _service(sessions: sessionmaker[Session]) -> DocumentReadService:
     from aaos.web.documents import DocumentReadService
 
     return DocumentReadService(sessions)
