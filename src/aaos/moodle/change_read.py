@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_
@@ -33,6 +33,12 @@ MAX_CHANGE_PAGE_SIZE = 15
 MAX_CHANGE_OFFSET = 200
 
 
+@dataclass(frozen=True, slots=True)
+class _SnapshotPair:
+    previous: MoodleSyncSnapshotORM
+    current: MoodleSyncSnapshotORM
+
+
 class MoodleChangeReadService:
     """Compare safe persisted states and preserve local entity provenance."""
 
@@ -55,177 +61,13 @@ class MoodleChangeReadService:
         boundary = _utc(since, "since") if since is not None else None
         session = self._session_factory()
         try:
-            source_system, scoped_course_id, source_error = self._resolve_source(session, course_id)
-            if source_system is None:
-                return MoodleChangeSet.unavailable(
-                    source_error or ComparisonUnavailableReason.NO_BASELINE,
-                    offset=offset,
-                    limit=limit,
-                )
-
-            latest_attempt = (
-                session.query(MoodleSyncSnapshotORM)
-                .filter_by(source_system=source_system)
-                .order_by(MoodleSyncSnapshotORM.id.desc())
-                .first()
-            )
-            if latest_attempt is None:
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.NO_BASELINE,
-                    offset=offset,
-                    limit=limit,
-                )
-            if latest_attempt.status != "COMPLETE":
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.LATEST_SYNC_INCOMPLETE,
-                    offset=offset,
-                    limit=limit,
-                )
-            if boundary is not None:
-                boundary_attempt = (
-                    session.query(MoodleSyncSnapshotORM)
-                    .filter(
-                        MoodleSyncSnapshotORM.source_system == source_system,
-                        or_(
-                            MoodleSyncSnapshotORM.finished_at <= boundary,
-                            and_(
-                                MoodleSyncSnapshotORM.status == "RUNNING",
-                                MoodleSyncSnapshotORM.started_at <= boundary,
-                            ),
-                        ),
-                    )
-                    .order_by(MoodleSyncSnapshotORM.id.desc())
-                    .first()
-                )
-                if boundary_attempt is not None and boundary_attempt.status != "COMPLETE":
-                    return MoodleChangeSet.unavailable(
-                        ComparisonUnavailableReason.LATEST_SYNC_INCOMPLETE,
-                        offset=offset,
-                        limit=limit,
-                    )
-
-            complete_runs = (
-                session.query(MoodleSyncSnapshotORM)
-                .filter_by(source_system=source_system, status="COMPLETE")
-                .order_by(MoodleSyncSnapshotORM.id.desc())
-                .limit(2)
-                .all()
-            )
-            current = complete_runs[0] if complete_runs else None
-            if current is None or current.finished_at is None:
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.NO_BASELINE,
-                    offset=offset,
-                    limit=limit,
-                )
-            if boundary is None:
-                previous = complete_runs[1] if len(complete_runs) > 1 else None
-            else:
-                previous = (
-                    session.query(MoodleSyncSnapshotORM)
-                    .filter(
-                        MoodleSyncSnapshotORM.source_system == source_system,
-                        MoodleSyncSnapshotORM.status == "COMPLETE",
-                        MoodleSyncSnapshotORM.finished_at <= boundary,
-                    )
-                    .order_by(
-                        MoodleSyncSnapshotORM.finished_at.desc(),
-                        MoodleSyncSnapshotORM.id.desc(),
-                    )
-                    .first()
-                )
-            if previous is None or previous.finished_at is None:
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.NO_BASELINE,
-                    offset=offset,
-                    limit=limit,
-                )
-
-            try:
-                previous_state = _stored_state(previous)
-                current_state = _stored_state(current)
-            except (TypeError, ValueError):
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.HISTORY_INVALID,
-                    offset=offset,
-                    limit=limit,
-                )
-            if (
-                previous.snapshot_version != 1
-                or current.snapshot_version != 1
-                or previous_state.source_system != source_system
-                or current_state.source_system != source_system
-            ):
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.HISTORY_INVALID,
-                    offset=offset,
-                    limit=limit,
-                )
-
-            if previous.id == current.id:
-                all_changes: tuple[MoodleChange, ...] = ()
-            else:
-                ids = {
-                    item.source_id for item in (*previous_state.documents, *current_state.documents)
-                }
-                before_versions = _document_versions(
-                    session,
-                    source_system=source_system,
-                    source_ids=ids,
-                    as_of=boundary or previous.finished_at,
-                )
-                after_versions = _document_versions(
-                    session,
-                    source_system=source_system,
-                    source_ids=ids,
-                    as_of=query_time,
-                )
-                try:
-                    all_changes = diff_moodle_snapshots(
-                        previous_state,
-                        current_state,
-                        from_snapshot_id=previous.id,
-                        to_snapshot_id=current.id,
-                        detected_at=current.finished_at,
-                        before_document_versions=before_versions,
-                        after_document_versions=after_versions,
-                    )
-                except (TypeError, ValueError):
-                    return MoodleChangeSet.unavailable(
-                        ComparisonUnavailableReason.HISTORY_INVALID,
-                        offset=offset,
-                        limit=limit,
-                    )
-            if scoped_course_id is not None:
-                all_changes = tuple(
-                    change for change in all_changes if change.course_source_id == scoped_course_id
-                )
-            try:
-                changes = self._with_entity_references(session, source_system, all_changes)
-            except ValueError:
-                return MoodleChangeSet.unavailable(
-                    ComparisonUnavailableReason.HISTORY_INVALID,
-                    offset=offset,
-                    limit=limit,
-                )
-            added_count = sum(change.change_kind.value == "ADDED" for change in changes)
-            removed_count = sum(change.change_kind.value == "REMOVED" for change in changes)
-            modified_count = sum(change.change_kind.value == "MODIFIED" for change in changes)
-            page = changes[offset : offset + limit]
-            return MoodleChangeSet(
-                comparison_status=ComparisonStatus.AVAILABLE,
-                unavailable_reason=None,
-                from_snapshot_id=previous.id,
-                to_snapshot_id=current.id,
-                changed_courses_count=len({change.course_source_id for change in changes}),
-                added_count=added_count,
-                removed_count=removed_count,
-                modified_count=modified_count,
-                total_change_count=len(changes),
-                records=page,
-                offset=offset,
+            return _list_changes_in_session(
+                session,
+                course_id=course_id,
+                boundary=boundary,
+                query_time=query_time,
                 limit=limit,
-                has_more=offset + limit < len(changes),
+                offset=offset,
             )
         finally:
             session.close()
@@ -303,6 +145,258 @@ class MoodleChangeReadService:
                 )
             )
         return tuple(enriched)
+
+
+def _list_changes_in_session(
+    session: Session,
+    *,
+    course_id: int | None,
+    boundary: datetime | None,
+    query_time: datetime,
+    limit: int,
+    offset: int,
+) -> MoodleChangeSet:
+    source_system, scoped_course_id, source_error = MoodleChangeReadService._resolve_source(
+        session, course_id
+    )
+    if source_system is None:
+        return _unavailable(
+            source_error or ComparisonUnavailableReason.NO_BASELINE, offset=offset, limit=limit
+        )
+
+    pair = _resolve_snapshot_pair(
+        session, source_system, boundary=boundary, offset=offset, limit=limit
+    )
+    if isinstance(pair, MoodleChangeSet):
+        return pair
+    states = _load_snapshot_states(pair, source_system)
+    if states is None:
+        return _unavailable(ComparisonUnavailableReason.HISTORY_INVALID, offset=offset, limit=limit)
+    previous_state, current_state = states
+    changes = _diff_snapshot_pair(
+        session,
+        pair,
+        previous_state,
+        current_state,
+        source_system=source_system,
+        boundary=boundary,
+        query_time=query_time,
+        offset=offset,
+        limit=limit,
+    )
+    if isinstance(changes, MoodleChangeSet):
+        return changes
+    return _page_changes(
+        session,
+        source_system=source_system,
+        scoped_course_id=scoped_course_id,
+        pair=pair,
+        changes=changes,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _resolve_snapshot_pair(
+    session: Session,
+    source_system: str,
+    *,
+    boundary: datetime | None,
+    offset: int,
+    limit: int,
+) -> _SnapshotPair | MoodleChangeSet:
+    issue = _latest_attempt_issue(
+        session, source_system, boundary=boundary, offset=offset, limit=limit
+    )
+    if issue is not None:
+        return issue
+
+    complete_runs = (
+        session.query(MoodleSyncSnapshotORM)
+        .filter_by(source_system=source_system, status="COMPLETE")
+        .order_by(MoodleSyncSnapshotORM.id.desc())
+        .limit(2)
+        .all()
+    )
+    current = complete_runs[0] if complete_runs else None
+    if current is None or current.finished_at is None:
+        return _unavailable(ComparisonUnavailableReason.NO_BASELINE, offset=offset, limit=limit)
+
+    if boundary is None:
+        previous = complete_runs[1] if len(complete_runs) > 1 else None
+    else:
+        previous = (
+            session.query(MoodleSyncSnapshotORM)
+            .filter(
+                MoodleSyncSnapshotORM.source_system == source_system,
+                MoodleSyncSnapshotORM.status == "COMPLETE",
+                MoodleSyncSnapshotORM.finished_at <= boundary,
+            )
+            .order_by(
+                MoodleSyncSnapshotORM.finished_at.desc(),
+                MoodleSyncSnapshotORM.id.desc(),
+            )
+            .first()
+        )
+    if previous is None or previous.finished_at is None:
+        return _unavailable(ComparisonUnavailableReason.NO_BASELINE, offset=offset, limit=limit)
+    return _SnapshotPair(previous=previous, current=current)
+
+
+def _latest_attempt_issue(
+    session: Session,
+    source_system: str,
+    *,
+    boundary: datetime | None,
+    offset: int,
+    limit: int,
+) -> MoodleChangeSet | None:
+    latest_attempt = (
+        session.query(MoodleSyncSnapshotORM)
+        .filter_by(source_system=source_system)
+        .order_by(MoodleSyncSnapshotORM.id.desc())
+        .first()
+    )
+    if latest_attempt is None:
+        return _unavailable(ComparisonUnavailableReason.NO_BASELINE, offset=offset, limit=limit)
+    if latest_attempt.status != "COMPLETE":
+        return _unavailable(
+            ComparisonUnavailableReason.LATEST_SYNC_INCOMPLETE, offset=offset, limit=limit
+        )
+    if boundary is None:
+        return None
+
+    boundary_attempt = (
+        session.query(MoodleSyncSnapshotORM)
+        .filter(
+            MoodleSyncSnapshotORM.source_system == source_system,
+            or_(
+                MoodleSyncSnapshotORM.finished_at <= boundary,
+                and_(
+                    MoodleSyncSnapshotORM.status == "RUNNING",
+                    MoodleSyncSnapshotORM.started_at <= boundary,
+                ),
+            ),
+        )
+        .order_by(MoodleSyncSnapshotORM.id.desc())
+        .first()
+    )
+    if boundary_attempt is not None and boundary_attempt.status != "COMPLETE":
+        return _unavailable(
+            ComparisonUnavailableReason.LATEST_SYNC_INCOMPLETE, offset=offset, limit=limit
+        )
+    return None
+
+
+def _load_snapshot_states(
+    pair: _SnapshotPair,
+    source_system: str,
+) -> tuple[NormalizedMoodleState, NormalizedMoodleState] | None:
+    try:
+        previous_state = _stored_state(pair.previous)
+        current_state = _stored_state(pair.current)
+    except (TypeError, ValueError):
+        return None
+    if (
+        pair.previous.snapshot_version != 1
+        or pair.current.snapshot_version != 1
+        or previous_state.source_system != source_system
+        or current_state.source_system != source_system
+    ):
+        return None
+    return previous_state, current_state
+
+
+def _diff_snapshot_pair(
+    session: Session,
+    pair: _SnapshotPair,
+    previous_state: NormalizedMoodleState,
+    current_state: NormalizedMoodleState,
+    *,
+    source_system: str,
+    boundary: datetime | None,
+    query_time: datetime,
+    offset: int,
+    limit: int,
+) -> tuple[MoodleChange, ...] | MoodleChangeSet:
+    previous_finished_at = pair.previous.finished_at
+    current_finished_at = pair.current.finished_at
+    if previous_finished_at is None or current_finished_at is None:
+        return _unavailable(ComparisonUnavailableReason.HISTORY_INVALID, offset=offset, limit=limit)
+    if pair.previous.id == pair.current.id:
+        return ()
+
+    source_ids = {item.source_id for item in (*previous_state.documents, *current_state.documents)}
+    before_versions = _document_versions(
+        session,
+        source_system=source_system,
+        source_ids=source_ids,
+        as_of=boundary or previous_finished_at,
+    )
+    after_versions = _document_versions(
+        session,
+        source_system=source_system,
+        source_ids=source_ids,
+        as_of=query_time,
+    )
+    try:
+        return diff_moodle_snapshots(
+            previous_state,
+            current_state,
+            from_snapshot_id=pair.previous.id,
+            to_snapshot_id=pair.current.id,
+            detected_at=current_finished_at,
+            before_document_versions=before_versions,
+            after_document_versions=after_versions,
+        )
+    except (TypeError, ValueError):
+        return _unavailable(ComparisonUnavailableReason.HISTORY_INVALID, offset=offset, limit=limit)
+
+
+def _page_changes(
+    session: Session,
+    *,
+    source_system: str,
+    scoped_course_id: str | None,
+    pair: _SnapshotPair,
+    changes: tuple[MoodleChange, ...],
+    offset: int,
+    limit: int,
+) -> MoodleChangeSet:
+    if scoped_course_id is not None:
+        changes = tuple(change for change in changes if change.course_source_id == scoped_course_id)
+    try:
+        records = MoodleChangeReadService._with_entity_references(session, source_system, changes)
+    except ValueError:
+        return _unavailable(ComparisonUnavailableReason.HISTORY_INVALID, offset=offset, limit=limit)
+
+    added_count = sum(change.change_kind.value == "ADDED" for change in changes)
+    removed_count = sum(change.change_kind.value == "REMOVED" for change in changes)
+    modified_count = sum(change.change_kind.value == "MODIFIED" for change in changes)
+    return MoodleChangeSet(
+        comparison_status=ComparisonStatus.AVAILABLE,
+        unavailable_reason=None,
+        from_snapshot_id=pair.previous.id,
+        to_snapshot_id=pair.current.id,
+        changed_courses_count=len({change.course_source_id for change in changes}),
+        added_count=added_count,
+        removed_count=removed_count,
+        modified_count=modified_count,
+        total_change_count=len(changes),
+        records=records[offset : offset + limit],
+        offset=offset,
+        limit=limit,
+        has_more=offset + limit < len(changes),
+    )
+
+
+def _unavailable(
+    reason: ComparisonUnavailableReason,
+    *,
+    offset: int,
+    limit: int,
+) -> MoodleChangeSet:
+    return MoodleChangeSet.unavailable(reason, offset=offset, limit=limit)
 
 
 def _stored_state(row: MoodleSyncSnapshotORM) -> NormalizedMoodleState:

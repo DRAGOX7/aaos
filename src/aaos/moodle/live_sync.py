@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
@@ -37,6 +38,8 @@ from aaos.persistence.database import (
     create_session_factory,
     resolve_database_path,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _database_is_present(database_path: Path) -> None:
@@ -142,6 +145,13 @@ def run_configured_moodle_sync() -> int:
             return _render_failure("BROWSER")
         except (OSError, RuntimeError, TypeError, ValueError):
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
+            return _render_failure("COLLECTION")
+        except Exception as error:
+            history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
+            _LOGGER.error(
+                "Moodle collection failed with unexpected exception type %s",
+                type(error).__name__,
+            )
             return _render_failure("COLLECTION")
 
         if isinstance(collection, SourceCollectionFailure) or not isinstance(

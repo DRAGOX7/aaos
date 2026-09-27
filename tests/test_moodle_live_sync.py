@@ -383,7 +383,10 @@ def test_missing_database_fails_before_collection_or_engine(
 
 
 def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from aaos.moodle import live_sync
 
@@ -397,7 +400,7 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
     def collect(_environment: RuntimeMoodleEnvironment) -> SourceCollectionFailure:
         nonlocal calls
         calls += 1
-        raise RuntimeError("secret-token-and-private-html")
+        raise LookupError("secret-token-and-private-html")
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
@@ -416,6 +419,8 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
     ]
     output = capsys.readouterr()
     assert "secret-token-and-private-html" not in output.out
+    assert "LookupError" in caplog.text
+    assert "secret-token-and-private-html" not in caplog.text
     assert output.out == "MOODLE_SYNC_FAILED\nFAILURE_STAGE=COLLECTION\n"
 
 

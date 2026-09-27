@@ -68,6 +68,9 @@ The pure diff indexes each entity set by canonical identity and compares maps
 in O(n) expected time. It returns a stable sort by course identity, entity
 type, entity identity, and kind. Read results are limited to 15 records per
 page with total counts and `has_more`; the agent may request a bounded offset.
+The renderer reports the total and whether more changes are available.
+Only a zero total is rendered as no changes; an empty page at a nonzero
+offset remains distinct from an empty comparison.
 
 ## Agent and provenance
 

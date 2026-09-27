@@ -3375,84 +3375,111 @@ def _terminal_to_ask_result(
     )
 
 
+def _render_moodle_change_evidence(output: Mapping[str, object]) -> str:
+    from .observations import sanitize_tool_result
+
+    observation = sanitize_tool_result(
+        ToolResult.success(dict(output)),
+        tool_name=ToolName.MOODLE_LIST_CHANGES,
+    )
+    projected = dict(observation.fields)
+    status = projected.get("comparison_status")
+    if status == ComparisonStatus.UNAVAILABLE.value:
+        reason = projected.get("unavailable_reason")
+        safe_reason = (
+            str(reason).casefold().replace("_", " ")
+            if isinstance(reason, str)
+            else "unknown reason"
+        )
+        return f"Moodle change comparison is unavailable ({safe_reason})."
+
+    rows = projected.get("records")
+    total = projected.get("total_change_count")
+    offset = projected.get("offset")
+    has_more = projected.get("has_more")
+    if (
+        not isinstance(rows, tuple)
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+        or total < 0
+        or isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or offset < 0
+        or not isinstance(has_more, bool)
+    ):
+        raise ValueError("validated Moodle change evidence is invalid")
+    from_snapshot_id = projected.get("from_snapshot_id")
+    to_snapshot_id = projected.get("to_snapshot_id")
+    if total == 0:
+        return (
+            "No Moodle changes were found between snapshots "
+            f"{from_snapshot_id} and {to_snapshot_id}."
+        )
+
+    if rows:
+        page_description = f"showing {offset + 1}–{offset + len(rows)} of {total} changes"
+    else:
+        page_description = f"no records on the page starting at {offset + 1}; {total} total changes"
+    continuation = "more changes are available" if has_more else "no further changes are available"
+    heading = (
+        f"Moodle changes between snapshots {from_snapshot_id} and {to_snapshot_id} "
+        f"({page_description}; {continuation})."
+    )
+    if not rows:
+        return heading
+    lines = [_render_moodle_change_record(row) for row in rows]
+    return heading + "\n" + "\n".join(lines)
+
+
+def _render_moodle_change_record(raw_row: object) -> str:
+    if not isinstance(raw_row, Mapping):
+        raise ValueError("validated Moodle change record is invalid")
+    entity_type = str(raw_row["entity_type"]).casefold()
+    change_kind = str(raw_row["change_kind"]).casefold()
+    title = str(raw_row["title"])
+    course_title = str(raw_row["course_title"])
+    line = f"- {change_kind} {entity_type}: {title} ({course_title})"
+    fields = raw_row.get("changed_fields")
+    if (
+        change_kind == ChangeKind.MODIFIED.value.casefold()
+        and isinstance(fields, tuple)
+        and ChangeField.TITLE.value in fields
+    ):
+        line += f"; title {raw_row.get('before_title')} → {raw_row.get('after_title')}"
+    if isinstance(fields, tuple) and ChangeField.DUE_AT.value in fields:
+        line += (
+            "; due date "
+            f"{raw_row.get('before_due_at') or 'unset'} → "
+            f"{raw_row.get('after_due_at') or 'unset'}"
+        )
+    if isinstance(fields, tuple) and ChangeField.DOCUMENT_VERSION.value in fields:
+        before_version = raw_row.get("before_document_version") or "unset"
+        after_version = raw_row.get("after_document_version") or "unset"
+        line += f"; document version {before_version} → {after_version}"
+    if isinstance(fields, tuple) and ChangeField.COURSE_CODE.value in fields:
+        line += (
+            "; course code "
+            f"{raw_row.get('before_course_code') or 'unset'} → "
+            f"{raw_row.get('after_course_code') or 'unset'}"
+        )
+    if isinstance(fields, tuple) and ChangeField.PUBLISHED_AT.value in fields:
+        line += (
+            "; publication date "
+            f"{raw_row.get('before_published_at') or 'unset'} → "
+            f"{raw_row.get('after_published_at') or 'unset'}"
+        )
+    if isinstance(fields, tuple) and ChangeField.PARENT_COURSE.value in fields:
+        line += "; parent course changed"
+    return line
+
+
 def _render_academic_evidence(
     values: list[tuple[ToolName, Mapping[str, object]]],
 ) -> str:
     sections: list[str] = []
     for name, output in values:
         if name is ToolName.MOODLE_LIST_CHANGES:
-            from .observations import sanitize_tool_result
-
-            observation = sanitize_tool_result(
-                ToolResult.success(dict(output)),
-                tool_name=ToolName.MOODLE_LIST_CHANGES,
-            )
-            projected = dict(observation.fields)
-            status = projected.get("comparison_status")
-            if status == ComparisonStatus.UNAVAILABLE.value:
-                reason = projected.get("unavailable_reason")
-                safe_reason = (
-                    str(reason).casefold().replace("_", " ")
-                    if isinstance(reason, str)
-                    else "unknown reason"
-                )
-                sections.append(f"Moodle change comparison is unavailable ({safe_reason}).")
-                continue
-            rows = projected.get("records")
-            if not isinstance(rows, tuple):
-                raise ValueError("validated Moodle change evidence is invalid")
-            if not rows:
-                sections.append(
-                    "No Moodle changes were found between snapshots "
-                    f"{projected.get('from_snapshot_id')} and {projected.get('to_snapshot_id')}."
-                )
-                continue
-            lines: list[str] = []
-            for raw_row in rows:
-                if not isinstance(raw_row, Mapping):
-                    raise ValueError("validated Moodle change record is invalid")
-                entity_type = str(raw_row["entity_type"]).casefold()
-                change_kind = str(raw_row["change_kind"]).casefold()
-                title = str(raw_row["title"])
-                course_title = str(raw_row["course_title"])
-                line = f"- {change_kind} {entity_type}: {title} ({course_title})"
-                fields = raw_row.get("changed_fields")
-                if (
-                    change_kind == ChangeKind.MODIFIED.value.casefold()
-                    and isinstance(fields, tuple)
-                    and ChangeField.TITLE.value in fields
-                ):
-                    line += f"; title {raw_row.get('before_title')} → {raw_row.get('after_title')}"
-                if isinstance(fields, tuple) and ChangeField.DUE_AT.value in fields:
-                    line += (
-                        "; due date "
-                        f"{raw_row.get('before_due_at') or 'unset'} → "
-                        f"{raw_row.get('after_due_at') or 'unset'}"
-                    )
-                if isinstance(fields, tuple) and ChangeField.DOCUMENT_VERSION.value in fields:
-                    before_version = raw_row.get("before_document_version") or "unset"
-                    after_version = raw_row.get("after_document_version") or "unset"
-                    line += f"; document version {before_version} → {after_version}"
-                if isinstance(fields, tuple) and ChangeField.COURSE_CODE.value in fields:
-                    line += (
-                        "; course code "
-                        f"{raw_row.get('before_course_code') or 'unset'} → "
-                        f"{raw_row.get('after_course_code') or 'unset'}"
-                    )
-                if isinstance(fields, tuple) and ChangeField.PUBLISHED_AT.value in fields:
-                    line += (
-                        "; publication date "
-                        f"{raw_row.get('before_published_at') or 'unset'} → "
-                        f"{raw_row.get('after_published_at') or 'unset'}"
-                    )
-                if isinstance(fields, tuple) and ChangeField.PARENT_COURSE.value in fields:
-                    line += "; parent course changed"
-                lines.append(line)
-            sections.append(
-                "Moodle changes between snapshots "
-                f"{projected.get('from_snapshot_id')} and {projected.get('to_snapshot_id')}:\n"
-                + "\n".join(lines)
-            )
+            sections.append(_render_moodle_change_evidence(output))
             continue
         records = output.get("records")
         if not isinstance(records, (tuple, list)):

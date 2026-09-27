@@ -356,6 +356,12 @@ def test_only_one_running_attempt_per_source_is_allowed(tmp_path: Path) -> None:
             MoodleSyncFailureCode.COLLECTION_INCOMPLETE,
             finished_at=now + timedelta(seconds=2),
         )
+        next_attempt_id = history.begin(SOURCE, started_at=now + timedelta(seconds=3))
+        history.fail(
+            next_attempt_id,
+            MoodleSyncFailureCode.COLLECTION_INCOMPLETE,
+            finished_at=now + timedelta(seconds=4),
+        )
     finally:
         engine.dispose()
 

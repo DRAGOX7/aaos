@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -387,6 +388,41 @@ def test_hostile_moodle_title_cannot_expand_registry_or_trigger_study_task_write
     assert malicious_title in visible_observation
     assert "provider-assignment-1" not in visible_observation
     assert "provider-course-1" not in visible_observation
+
+
+def test_change_pages_report_totals_continuation_and_empty_page_safely() -> None:
+    page_with_more = replace(
+        change_set(),
+        modified_count=17,
+        total_change_count=17,
+        has_more=True,
+    )
+    first_gateway = FakeGateway(_tool(), _answer())
+    first_page = asyncio.run(
+        build_assistant(first_gateway, FakeMoodleChangeReader(page_with_more)).ask(
+            "What changed in Moodle?"
+        )
+    )
+    assert "showing 1–1 of 17 changes" in (first_page.answer_text or "")
+    assert "more changes are available" in (first_page.answer_text or "")
+
+    empty_later_page = replace(
+        change_set(),
+        modified_count=17,
+        total_change_count=17,
+        records=(),
+        offset=20,
+        has_more=False,
+    )
+    later_gateway = FakeGateway(_tool(), _answer())
+    later_page = asyncio.run(
+        build_assistant(later_gateway, FakeMoodleChangeReader(empty_later_page)).ask(
+            "What changed in Moodle?"
+        )
+    )
+    assert "17 total changes" in (later_page.answer_text or "")
+    assert "page starting at 21" in (later_page.answer_text or "")
+    assert "No Moodle changes were found" not in (later_page.answer_text or "")
 
 
 def test_no_changes_and_unknown_shell_http_sql_calls_have_safe_outcomes() -> None:
