@@ -23,7 +23,8 @@ CONVERSATION_SESSION_TTL_SECONDS = 30 * 60
 
 _SOURCE_REFERENCE = re.compile(r"^read-[1-8]$")
 _SOURCE_TOOL = re.compile(
-    r"^academic\.(?:list_courses|get_course|list_assignments|get_assignment|list_documents)$"
+    r"^(?:academic\.(?:list_courses|get_course|list_assignments|get_assignment|list_documents)"
+    r"|study_task\.(?:list|get|create|update|complete))$"
 )
 _ORDINALS = {
     "first": 1,
@@ -39,10 +40,12 @@ _ORDINALS = {
 }
 _ORDINAL_REFERENCE = re.compile(
     r"\b(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)"
-    r"\s+(?:(one)|(course|assignment|document))\b"
+    r"\s+(?:(one)|(course|assignment|document|task))\b"
 )
-_ENTITY_ID_REFERENCE = re.compile(r"\b(course|assignment|document)\s*#?\s*([1-9][0-9]{0,8})\b")
-_TYPED_REFERENCE = re.compile(r"\bthat\s+(course|assignment|document)\b|\bthis\s+course\b")
+_ENTITY_ID_REFERENCE = re.compile(r"\b(course|assignment|document|task)\s*#?\s*([1-9][0-9]{0,8})\b")
+_TYPED_REFERENCE = re.compile(
+    r"\bthat\s+(course|assignment|document|task)\b|\bthis\s+(course|task)\b"
+)
 _GENERIC_REFERENCE = re.compile(
     r"\b(?:"
     r"(?:about|for|to|with|on|from|in|regarding)\s+(?:it|that)"
@@ -52,6 +55,8 @@ _GENERIC_REFERENCE = re.compile(
     r"|(?:what|when|where|why|how|is|are|was|were|does|did|can|could|should|would|will|has|have)"
     r"\s+(?:it|that)"
     r"|(?:it|that)(?=\s*[?.!,;:]|$)"
+    r"|(?:mark|complete|rename|update|change|set|reprioritize)\s+(?:it|that|this)\b"
+    r"|(?:change|set)\s+its\s+(?:priority|title|name)\b"
     r")\b"
 )
 
@@ -60,6 +65,7 @@ class ContextEntityKind(StrEnum):
     COURSE = "course"
     ASSIGNMENT = "assignment"
     DOCUMENT = "document"
+    STUDY_TASK = "study_task"
 
 
 class ContextResolutionStatus(StrEnum):
@@ -410,7 +416,11 @@ class ContextReferenceResolver:
             kind_text = ordinal.group(3)
             collection = snapshot.last_collection
             if kind_text is not None:
-                expected_kind = ContextEntityKind(kind_text)
+                expected_kind = (
+                    ContextEntityKind.STUDY_TASK
+                    if kind_text == "task"
+                    else ContextEntityKind(kind_text)
+                )
                 collection = tuple(entity for entity in collection if entity.kind is expected_kind)
             if position >= len(collection):
                 return ContextResolution(ContextResolutionStatus.MISSING)
@@ -418,7 +428,11 @@ class ContextReferenceResolver:
 
         explicit_id = _ENTITY_ID_REFERENCE.search(normalized)
         if explicit_id is not None:
-            kind = ContextEntityKind(explicit_id.group(1))
+            kind = (
+                ContextEntityKind.STUDY_TASK
+                if explicit_id.group(1) == "task"
+                else ContextEntityKind(explicit_id.group(1))
+            )
             entity_id = int(explicit_id.group(2))
             matches = tuple(
                 entity
@@ -431,9 +445,13 @@ class ContextReferenceResolver:
         if typed is not None:
             if normalized.find("this course") >= 0:
                 return _choose(_course_entities(snapshot))
-            kind_text = typed.group(1)
+            kind_text = typed.group(1) or typed.group(2)
             if kind_text is not None:
-                kind = ContextEntityKind(kind_text)
+                kind = (
+                    ContextEntityKind.STUDY_TASK
+                    if kind_text == "task"
+                    else ContextEntityKind(kind_text)
+                )
                 return _choose(
                     tuple(entity for entity in _all_entities(snapshot) if entity.kind is kind)
                 )

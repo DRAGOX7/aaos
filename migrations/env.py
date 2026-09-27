@@ -12,6 +12,7 @@ from aaos.persistence import (
     approval_models,  # noqa: F401
     document_models,  # noqa: F401
     rag_models,  # noqa: F401
+    study_task_models,  # noqa: F401
     task_models,  # noqa: F401
 )
 from aaos.persistence.academic_models import Base

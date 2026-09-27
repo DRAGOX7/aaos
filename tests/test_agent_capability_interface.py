@@ -82,7 +82,12 @@ def test_model_sees_only_executable_registered_tools() -> None:
 def test_disabled_tools_remain_registered_but_are_not_advertised() -> None:
     registry = build_read_tool_registry(_Service())
 
-    assert set(registry.names) == set(ToolName)
+    assert set(registry.names) == {
+        ToolName.RAG_QUERY,
+        ToolName.READ_TASK_STATE,
+        ToolName.WRITE_TASK_STATE,
+        ToolName.COMPLETE_TASK,
+    }
     request = _request_with_capabilities()
     assert _visible_tools(request) == []
 

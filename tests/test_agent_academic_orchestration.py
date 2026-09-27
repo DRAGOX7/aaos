@@ -1032,3 +1032,20 @@ def test_api_ask_route_returns_structured_provenance_from_injected_assistant() -
     assert follow_up_payload["status"] == "REFUSED"
     assert follow_up_payload["refusal_code"] == "AMBIGUOUS_REFERENCE"
     assert follow_up_payload["conversation_id"] == payload["conversation_id"]
+
+
+def test_api_ask_echoes_caller_request_id_for_mutation_replay() -> None:
+    request_id = "00000000-0000-4000-8000-000000000099"
+    gateway = FakeGateway(_refuse("UNSUPPORTED_CAPABILITY"))
+    assistant, academic, _documents, _rag = _assistant(gateway)
+    application = FastAPI()
+    application.include_router(create_api_v1_router(academic, ask_service=assistant))
+
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/v1/ask",
+            json={"question": "Create a study task", "request_id": request_id},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["request_id"] == request_id

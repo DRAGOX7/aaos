@@ -244,6 +244,166 @@ _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT["json_schema"]["name"] = (
     "aaos_read_only_academic_decision_contextual_v1"
 )
 
+
+def _study_task_decision_response_format(
+    *,
+    provider_name: str,
+    include_writes: bool,
+    contextual: bool,
+    task_context: bool = False,
+) -> dict[str, Any]:
+    response_format = cast(dict[str, Any], deepcopy(_ACADEMIC_DECISION_RESPONSE_FORMAT))
+    json_schema = response_format["json_schema"]
+    json_schema["name"] = provider_name
+    branches = json_schema["schema"]["oneOf"]
+    branches.extend(
+        (
+            _academic_call_schema(
+                "study_task.list",
+                {
+                    "status": {
+                        "type": ["string", "null"],
+                        "enum": ["OPEN", "COMPLETED", None],
+                    },
+                    "course_name": _ACADEMIC_COURSE_NAME,
+                    "limit": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 50,
+                    },
+                },
+                ["status", "course_name", "limit"],
+            ),
+            _academic_call_schema(
+                "study_task.get",
+                {
+                    "task_title": {
+                        "type": ["string", "null"],
+                        "minLength": 1,
+                        "maxLength": 500,
+                    }
+                },
+                ["task_title"],
+            ),
+        )
+    )
+    if include_writes:
+        branches.extend(
+            (
+                _academic_call_schema(
+                    "study_task.create",
+                    {
+                        "title": {
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 500,
+                        },
+                        "assignment_title": {
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 512,
+                        },
+                        "course_name": _ACADEMIC_COURSE_NAME,
+                        "assignment_ref": {
+                            "type": ["string", "null"],
+                            "pattern": "^read-[1-8]$",
+                            "maxLength": 6,
+                        },
+                        "assignment_index": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                        "priority": {
+                            "type": ["string", "null"],
+                            "enum": ["LOW", "NORMAL", "HIGH", None],
+                        },
+                    },
+                    [
+                        "title",
+                        "assignment_title",
+                        "course_name",
+                        "assignment_ref",
+                        "assignment_index",
+                        "priority",
+                    ],
+                ),
+                _academic_call_schema(
+                    "study_task.update",
+                    {
+                        "task_title": {
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 500,
+                        },
+                        "title": {
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 500,
+                        },
+                        "priority": {
+                            "type": ["string", "null"],
+                            "enum": ["LOW", "NORMAL", "HIGH", None],
+                        },
+                    },
+                    ["task_title", "title", "priority"],
+                ),
+                _academic_call_schema(
+                    "study_task.complete",
+                    {
+                        "task_title": {
+                            "type": ["string", "null"],
+                            "minLength": 1,
+                            "maxLength": 500,
+                        }
+                    },
+                    ["task_title"],
+                ),
+            )
+        )
+    if contextual:
+        for branch in branches:
+            if branch.get("properties", {}).get("action", {}).get("enum") == ["CALL_TOOL"]:
+                tool_name = branch.get("properties", {}).get("tool_name", {}).get("enum")
+                if task_context and tool_name == ["study_task.create"]:
+                    continue
+                arguments = branch["properties"]["arguments"]
+                arguments["properties"]["context_ref"] = {
+                    "type": "string",
+                    "enum": ["ctx-1"],
+                    "maxLength": 5,
+                }
+                arguments["required"].append("context_ref")
+    return response_format
+
+
+_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT = _study_task_decision_response_format(
+    provider_name="aaos_study_task_read_decision_v1",
+    include_writes=False,
+    contextual=False,
+)
+_STUDY_TASK_READ_DECISION_CONTEXTUAL_RESPONSE_FORMAT = _study_task_decision_response_format(
+    provider_name="aaos_study_task_read_decision_contextual_v1",
+    include_writes=False,
+    contextual=True,
+)
+_STUDY_TASK_WRITE_DECISION_RESPONSE_FORMAT = _study_task_decision_response_format(
+    provider_name="aaos_study_task_write_decision_v1",
+    include_writes=True,
+    contextual=False,
+)
+_STUDY_TASK_WRITE_DECISION_CONTEXTUAL_RESPONSE_FORMAT = _study_task_decision_response_format(
+    provider_name="aaos_study_task_write_decision_contextual_v1",
+    include_writes=True,
+    contextual=True,
+)
+_STUDY_TASK_WRITE_DECISION_TASK_CONTEXTUAL_RESPONSE_FORMAT = _study_task_decision_response_format(
+    provider_name="aaos_study_task_write_decision_task_contextual_v1",
+    include_writes=True,
+    contextual=True,
+    task_context=True,
+)
+
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "json_schema": {
@@ -385,6 +545,13 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "least_authority_proposal_transport": _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "read_only_academic_decision": _ACADEMIC_DECISION_RESPONSE_FORMAT,
     "read_only_academic_decision_contextual": _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT,
+    "study_task_read_decision": _STUDY_TASK_READ_DECISION_RESPONSE_FORMAT,
+    "study_task_read_decision_contextual": _STUDY_TASK_READ_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
+    "study_task_write_decision": _STUDY_TASK_WRITE_DECISION_RESPONSE_FORMAT,
+    "study_task_write_decision_contextual": _STUDY_TASK_WRITE_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
+    "study_task_write_decision_task_contextual": (
+        _STUDY_TASK_WRITE_DECISION_TASK_CONTEXTUAL_RESPONSE_FORMAT
+    ),
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

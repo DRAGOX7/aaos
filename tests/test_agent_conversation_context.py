@@ -46,7 +46,11 @@ def _entity(
         title=title,
         course_id=course_id,
         course_title=course_title,
-        source_tool=f"academic.list_{kind.value}s",
+        source_tool=(
+            "study_task.list"
+            if kind is ContextEntityKind.STUDY_TASK
+            else f"academic.list_{kind.value}s"
+        ),
         source_ref=source_ref,
         source_turn=turn,
     )
@@ -116,6 +120,7 @@ def test_first_document_and_active_course_resolve_from_trusted_context() -> None
     assert first_document.status is ContextResolutionStatus.RESOLVED
     assert first_document.entity == documents[0]
     assert course.status is ContextResolutionStatus.RESOLVED
+    assert course.entity is not None
     assert course.entity.kind is ContextEntityKind.COURSE
     assert course.entity.entity_id == 7
     assert course.entity.title == "Deep Learning"
@@ -159,6 +164,23 @@ def test_ambiguous_pronoun_and_missing_ordinal_do_not_guess() -> None:
     assert pronoun.entity is None
     assert missing.status is ContextResolutionStatus.MISSING
     assert missing.entity is None
+
+
+@pytest.mark.parametrize(
+    "question",
+    ("Mark it complete", "Rename it", "Change its priority"),
+)
+def test_task_action_language_resolves_only_the_active_trusted_reference(
+    question: str,
+) -> None:
+    task = _entity(ContextEntityKind.ASSIGNMENT, 21, "Proof set", course_id=7)
+    store, conversation_id = _store_with_context((task,), active_entity=task)
+    snapshot = store.begin_turn(conversation_id).snapshot
+
+    resolved = ContextReferenceResolver().resolve(question, snapshot)
+
+    assert resolved.status is ContextResolutionStatus.RESOLVED
+    assert resolved.entity == task
 
 
 def test_stale_expired_and_cross_session_context_fail_closed() -> None:
@@ -245,6 +267,18 @@ def test_generic_referential_phrasing_resolves_active_entity() -> None:
 
     assert resolution.status is ContextResolutionStatus.RESOLVED
     assert resolution.entity == course
+
+
+@pytest.mark.parametrize("question", ("Mark this task complete", "Rename that task"))
+def test_typed_study_task_references_resolve_active_task(question: str) -> None:
+    task = _entity(ContextEntityKind.STUDY_TASK, 27, "Review chapter 5", course_id=7)
+    store, conversation_id = _store_with_context((task,), active_entity=task)
+    snapshot = store.begin_turn(conversation_id).snapshot
+
+    resolution = ContextReferenceResolver().resolve(question, snapshot)
+
+    assert resolution.status is ContextResolutionStatus.RESOLVED
+    assert resolution.entity == task
 
 
 def test_short_entity_title_requires_phrase_boundaries() -> None:

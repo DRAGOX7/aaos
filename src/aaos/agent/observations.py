@@ -353,7 +353,9 @@ class ObservationSanitizer:
             if normalized_name == ToolName.RAG_QUERY.value:
                 observation = self._rag_observation(result)
                 truncated = False
-            elif normalized_name.startswith("academic.") and result.ok:
+            elif (
+                normalized_name.startswith("academic.") or normalized_name.startswith("study_task.")
+            ) and result.ok:
                 observation, truncated = self._academic_observation(result, normalized_name)
             elif result.ok:
                 observation, truncated = self._generic_observation(result, normalized_name)
@@ -420,6 +422,18 @@ class ObservationSanitizer:
                 "page_count",
                 "index_readiness",
                 "index_coverage",
+            }
+        elif tool_name.startswith("study_task."):
+            allowed_fields = {
+                "id",
+                "title",
+                "status",
+                "priority",
+                "course_id",
+                "course_title",
+                "assignment_id",
+                "assignment_title",
+                "due_at",
             }
         else:
             raise ObservationSanitizationError()

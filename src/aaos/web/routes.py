@@ -153,6 +153,7 @@ class AcademicAskService(Protocol):
         cancel_event: asyncio.Event | None = None,
         *,
         conversation_id: UUID | None = None,
+        request_id: UUID | None = None,
     ) -> AcademicAskResult: ...
 
 
@@ -310,6 +311,7 @@ def create_api_v1_router(
                     body.question,
                     cancellation,
                     conversation_id=body.conversation_id,
+                    request_id=body.request_id,
                 )
             )
 
@@ -366,6 +368,7 @@ def create_api_v1_router(
                 rag_provenance=_json_compatible_mapping(result.rag_provenance),
                 step_count=result.step_count,
                 conversation_id=result.conversation_id,
+                request_id=body.request_id,
             )
 
     if task_reader is not None:

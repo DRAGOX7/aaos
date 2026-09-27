@@ -431,6 +431,94 @@ def test_generate_serializes_requirement_json_schema_contract(
     assert schema_body["properties"]["requirements"]["items"]["required"] == item_required
 
 
+@pytest.mark.parametrize(
+    ("schema", "provider_name", "task_tools"),
+    (
+        (
+            "study_task_read_decision",
+            "aaos_study_task_read_decision_v1",
+            {"study_task.list", "study_task.get"},
+        ),
+        (
+            "study_task_read_decision_contextual",
+            "aaos_study_task_read_decision_contextual_v1",
+            {"study_task.list", "study_task.get"},
+        ),
+        (
+            "study_task_write_decision",
+            "aaos_study_task_write_decision_v1",
+            {
+                "study_task.list",
+                "study_task.get",
+                "study_task.create",
+                "study_task.update",
+                "study_task.complete",
+            },
+        ),
+        (
+            "study_task_write_decision_contextual",
+            "aaos_study_task_write_decision_contextual_v1",
+            {
+                "study_task.list",
+                "study_task.get",
+                "study_task.create",
+                "study_task.update",
+                "study_task.complete",
+            },
+        ),
+        (
+            "study_task_write_decision_task_contextual",
+            "aaos_study_task_write_decision_task_contextual_v1",
+            {
+                "study_task.list",
+                "study_task.get",
+                "study_task.create",
+                "study_task.update",
+                "study_task.complete",
+            },
+        ),
+    ),
+)
+def test_generate_serializes_closed_study_task_decision_contract(
+    schema: StructuredOutputSchema,
+    provider_name: str,
+    task_tools: set[str],
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "model": "qwen/qwen3.5-4b",
+                "choices": [{"message": {"role": "assistant", "content": "{}"}}],
+            },
+        )
+
+    _generate(
+        ChatRequest(
+            messages=(ChatMessage(role="user", content="Manage study tasks."),),
+            structured_output="json_schema",
+            structured_output_schema=schema,
+        ),
+        handler,
+    )
+
+    response_format = json.loads(requests[0].content)["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["name"] == provider_name
+    branches = response_format["json_schema"]["schema"]["oneOf"]
+    actual_task_tools = {
+        branch["properties"]["tool_name"]["enum"][0]
+        for branch in branches
+        if branch.get("properties", {}).get("action", {}).get("enum") == ["CALL_TOOL"]
+        and branch["properties"]["tool_name"]["enum"][0].startswith("study_task.")
+    }
+    assert actual_task_tools == task_tools
+
+
 def test_generate_serializes_bounded_atomic_requirement_candidate_contract() -> None:
     requests: list[httpx2.Request] = []
 

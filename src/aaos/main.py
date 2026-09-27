@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
 from aaos.web.contracts import (
     ApprovalDetail,
@@ -45,11 +46,13 @@ if TYPE_CHECKING:
         AcademicDocumentPort,
         AcademicReadPort,
         ReadOnlyAcademicAssistant,
+        StudyTaskPort,
     )
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
     from aaos.inference.lm_studio import LMStudioGateway
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
+    from aaos.study_tasks.service import StudyTaskService
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
     from aaos.web.activity_read import ActivityReadService
@@ -186,7 +189,7 @@ class _DefaultAgentRagReadService:
 
 
 class _LazyDefaultAcademicAskService:
-    """Own one lazy local gateway and the bounded read-only assistant."""
+    """Own one lazy local gateway and the bounded academic assistant."""
 
     def __init__(
         self,
@@ -194,11 +197,13 @@ class _LazyDefaultAcademicAskService:
         academic_reader: AcademicReadPort,
         document_reader: AcademicDocumentPort,
         rag_service: LocalRagService,
+        study_task_service: StudyTaskPort,
     ) -> None:
         self._settings = settings
         self._academic_reader = academic_reader
         self._document_reader = document_reader
         self._rag_service = rag_service
+        self._study_task_service = study_task_service
         self._gateway: LMStudioGateway | None = None
         self._assistant: ReadOnlyAcademicAssistant | None = None
 
@@ -215,6 +220,7 @@ class _LazyDefaultAcademicAskService:
                 self._academic_reader,
                 self._document_reader,
                 self._rag_service,
+                study_task_service=self._study_task_service,
             )
         assert self._assistant is not None
         return self._assistant
@@ -225,16 +231,89 @@ class _LazyDefaultAcademicAskService:
         cancel_event: asyncio.Event | None = None,
         *,
         conversation_id: UUID | None = None,
+        request_id: UUID | None = None,
     ) -> AcademicAskResult:
         return await self._ensure_assistant().ask(
             question,
             cancel_event,
             conversation_id=conversation_id,
+            request_id=request_id,
         )
 
     async def dispose(self) -> None:
         if self._gateway is not None:
             await self._gateway.aclose()
+
+
+class _LazyDefaultStudyTaskService:
+    """Create local StudyTask persistence only when an ask uses task tools."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: StudyTaskService | None = None
+
+    def _ensure_delegate(self) -> StudyTaskService:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.study_tasks.repository import StudyTaskRepository
+            from aaos.study_tasks.service import StudyTaskService
+
+            self._engine = create_database_engine()
+            self._delegate = StudyTaskService(
+                StudyTaskRepository(create_session_factory(self._engine))
+            )
+        return self._delegate
+
+    def list(
+        self,
+        *,
+        status: StudyTaskStatus | None = None,
+        course_id: int | None = None,
+        limit: int = 50,
+    ) -> tuple[StudyTask, ...]:
+        return self._ensure_delegate().list(status=status, course_id=course_id, limit=limit)
+
+    def get(self, task_id: int) -> StudyTask:
+        return self._ensure_delegate().get(task_id)
+
+    def create(
+        self,
+        *,
+        request_id: UUID,
+        title: str | None = None,
+        course_id: int | None = None,
+        assignment_id: int | None = None,
+        priority: StudyTaskPriority = StudyTaskPriority.NORMAL,
+    ) -> StudyTask:
+        return self._ensure_delegate().create(
+            request_id=request_id,
+            title=title,
+            course_id=course_id,
+            assignment_id=assignment_id,
+            priority=priority,
+        )
+
+    def update(
+        self,
+        task_id: int,
+        *,
+        request_id: UUID,
+        title: str | None = None,
+        priority: StudyTaskPriority | None = None,
+    ) -> StudyTask:
+        return self._ensure_delegate().update(
+            task_id,
+            request_id=request_id,
+            title=title,
+            priority=priority,
+        )
+
+    def complete(self, task_id: int, *, request_id: UUID) -> StudyTask:
+        return self._ensure_delegate().complete(task_id, request_id=request_id)
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
 
 
 class _LazyDefaultTaskReader:
@@ -400,6 +479,7 @@ def create_app(
     activity_reader: ActivityReader | None = None,
     system_health_reader: SystemHealthReader | None = None,
     ask_service: AcademicAskService | None = None,
+    study_task_service: StudyTaskPort | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -420,6 +500,7 @@ def create_app(
     resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
     resolved_ask_service = ask_service
+    resolved_study_task_service = study_task_service
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
@@ -434,6 +515,10 @@ def create_app(
         resolved_system_health_reader = lazy_system_health_reader
         lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
         resolved_task_commands = lazy_task_commands
+        if resolved_study_task_service is None:
+            lazy_study_tasks = _LazyDefaultStudyTaskService()
+            resolved_study_task_service = lazy_study_tasks
+            application.router.add_event_handler("shutdown", lazy_study_tasks.dispose)
 
         application.router.add_event_handler(
             "shutdown",
@@ -454,6 +539,8 @@ def create_app(
         academic_reader = AcademicReadService(session_factory)
         course_reader = academic_reader
         document_reader = DocumentReadService(session_factory)
+        from aaos.study_tasks.repository import StudyTaskRepository
+        from aaos.study_tasks.service import StudyTaskService
         from aaos.tasks.read_service import TaskReadService
         from aaos.tasks.service import TaskApprovalService
 
@@ -474,6 +561,8 @@ def create_app(
             ApprovalRepository(session_factory),
             task_reader,
         )
+        if resolved_study_task_service is None:
+            resolved_study_task_service = StudyTaskService(StudyTaskRepository(session_factory))
 
     if resolved_rag_reader is None:
         lazy_rag_reader = _LazyDefaultRagReader(session_factory)
@@ -491,6 +580,7 @@ def create_app(
             academic_reader,
             document_reader,
             _DefaultAgentRagReadService(agent_rag_reader),
+            resolved_study_task_service,
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 

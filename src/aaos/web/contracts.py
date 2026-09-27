@@ -85,6 +85,7 @@ class AcademicAskRequest(BaseModel):
 
     question: str = Field(min_length=1, max_length=4096)
     conversation_id: UUID | None = Field(default=None, strict=False)
+    request_id: UUID | None = Field(default=None, strict=False)
 
     @field_validator("question")
     @classmethod
@@ -125,6 +126,7 @@ class AcademicAskResponse(BaseModel):
     sources: tuple[AcademicAskSource, ...] = ()
     rag_provenance: dict[str, object] | None = None
     step_count: int = Field(ge=0, le=8)
+    request_id: UUID | None = None
 
 
 class CourseSummary(BaseModel):

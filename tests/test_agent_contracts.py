@@ -91,6 +91,17 @@ def test_limits_reject_non_positive_or_non_finite_values(field: str, value: obje
 def test_tool_name_is_a_closed_logical_allowlist() -> None:
     assert {member.value for member in ToolName} == {
         "rag_query",
+        "academic.list_courses",
+        "academic.get_course",
+        "academic.list_assignments",
+        "academic.get_assignment",
+        "academic.list_documents",
+        "rag.answer",
+        "study_task.list",
+        "study_task.get",
+        "study_task.create",
+        "study_task.update",
+        "study_task.complete",
         "read_task_state",
         "write_task_state",
         "complete_task",
