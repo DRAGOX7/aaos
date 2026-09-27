@@ -483,6 +483,43 @@ def test_document_version_history_uses_immutable_versions_by_provider_identity(
         engine.dispose()
 
 
+def test_latest_sync_comparison_ignores_versions_ingested_after_its_endpoint(
+    tmp_path: Path,
+) -> None:
+    engine, factory = service_for(tmp_path / "phase-e.db")
+    now = datetime.now(UTC)
+    previous_finished_at = now - timedelta(days=3)
+    current_finished_at = now - timedelta(days=2)
+    first_version_at = previous_finished_at - timedelta(hours=1)
+    post_sync_version_at = current_finished_at + timedelta(hours=1)
+    try:
+        resource = RawRemoteFile("resource-cm:91", "course-1", "Lecture.pdf")
+        collection = build_snapshot(documents=(resource,))
+        sync_at(factory, collection, previous_finished_at)
+        sync_at(factory, collection, current_finished_at)
+        with factory() as session:
+            remote_file_id = session.query(RemoteFileORM).one().id
+        add_document_version(
+            factory,
+            remote_file_id=remote_file_id,
+            version_number=1,
+            ingested_at=first_version_at,
+        )
+        add_document_version(
+            factory,
+            remote_file_id=remote_file_id,
+            version_number=2,
+            ingested_at=post_sync_version_at,
+        )
+
+        result = MoodleChangeReadService(factory).list_changes(query_time=now)
+
+        assert result.comparison_status is ComparisonStatus.AVAILABLE
+        assert result.total_change_count == 0
+    finally:
+        engine.dispose()
+
+
 def test_document_version_change_is_detected_between_queries_on_same_sync(
     tmp_path: Path,
 ) -> None:

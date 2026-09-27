@@ -330,11 +330,12 @@ def _diff_snapshot_pair(
         source_ids=source_ids,
         as_of=boundary or previous_finished_at,
     )
+    current_version_endpoint = query_time if boundary is not None else current_finished_at
     after_versions = _document_versions(
         session,
         source_system=source_system,
         source_ids=source_ids,
-        as_of=query_time,
+        as_of=current_version_endpoint,
     )
     try:
         return diff_moodle_snapshots(
