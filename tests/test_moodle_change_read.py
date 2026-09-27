@@ -24,6 +24,7 @@ from aaos.moodle.changes import (
     ChangeKind,
     ComparisonStatus,
     ComparisonUnavailableReason,
+    NormalizedMoodleState,
 )
 from aaos.moodle.integration import (
     MoodleSyncPreconditionError,
@@ -33,6 +34,7 @@ from aaos.moodle.integration import (
 from aaos.moodle.sync_history import (
     MoodleSyncAlreadyRunning,
     MoodleSyncFailureCode,
+    MoodleSyncHistoryError,
     MoodleSyncHistoryRepository,
 )
 from aaos.persistence.academic_models import (
@@ -354,6 +356,34 @@ def test_only_one_running_attempt_per_source_is_allowed(tmp_path: Path) -> None:
             MoodleSyncFailureCode.COLLECTION_INCOMPLETE,
             finished_at=now + timedelta(seconds=2),
         )
+    finally:
+        engine.dispose()
+
+
+def test_hand_built_normalized_state_cannot_complete_sync_history(tmp_path: Path) -> None:
+    engine, factory = service_for(tmp_path / "phase-e.db")
+    history = MoodleSyncHistoryRepository(factory)
+    now = datetime.now(UTC)
+    try:
+        attempt_id = history.begin(SOURCE, started_at=now)
+        state = NormalizedMoodleState(SOURCE, (), (), (), ())
+        session = factory()
+        try:
+            with session.begin(), pytest.raises(MoodleSyncHistoryError):
+                history.complete_in_session(
+                    session,
+                    attempt_id,
+                    state,
+                    finished_at=now + timedelta(seconds=1),
+                )
+        finally:
+            session.close()
+
+        with factory() as session:
+            attempt = session.get(MoodleSyncSnapshotORM, attempt_id)
+            assert attempt is not None
+            assert attempt.status == "RUNNING"
+            assert attempt.snapshot_state is None
     finally:
         engine.dispose()
 

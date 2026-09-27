@@ -566,6 +566,9 @@ class _AcademicToolRuntime:
         return self._context_resolution.entity
 
     def build_registry(self) -> ToolRegistry:
+        if self._moodle_change_requested:
+            return ToolRegistry((self._moodle_change_definition(),))
+
         definitions: tuple[ToolDefinition, ...] = (
             self._definition(
                 ToolName.ACADEMIC_LIST_COURSES,
@@ -670,8 +673,6 @@ class _AcademicToolRuntime:
                 *definitions,
                 *self._study_task_definitions(include_writes=not self._calendar_mutation_requested),
             )
-        if self._moodle_change_requested and self._moodle_change_reader is not None:
-            definitions = (*definitions, self._moodle_change_definition())
         if (
             not self._moodle_change_requested
             and self._calendar_intent
@@ -2002,7 +2003,7 @@ class AcademicDecisionAdapter:
         expected.add(task_read_surface | _STUDY_TASK_WRITE_TOOLS)
         expected.add(ACADEMIC_TOOL_NAMES | _CALENDAR_PROPOSAL_TOOLS)
         expected.add(task_read_surface | _CALENDAR_PROPOSAL_TOOLS)
-        expected.add(ACADEMIC_TOOL_NAMES | _MOODLE_CHANGE_TOOLS)
+        expected.add(_MOODLE_CHANGE_TOOLS)
         if names not in expected:
             raise ValueError("academic registry must match one closed supported capability surface")
         for definition in registry.definitions:
@@ -2870,7 +2871,7 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         return _invalid_output()
     if not result.ok:
         return result if result.error is not None else _invalid_output()
-    output = result.output
+
     expected_fields = {
         "comparison_status",
         "unavailable_reason",
@@ -2888,8 +2889,18 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         "filter",
         "source_ref",
     }
-    if not isinstance(output, Mapping) or set(output) != expected_fields:
+    output = result.output
+    if (
+        not isinstance(output, Mapping)
+        or set(output) != expected_fields
+        or not _moodle_change_envelope_is_valid(output)
+        or not _moodle_change_records_are_valid(output.get("records"))
+    ):
         return _invalid_output()
+    return result
+
+
+def _moodle_change_envelope_is_valid(output: Mapping[str, object]) -> bool:
     reference = output.get("source_ref")
     records = output.get("records")
     filters = output.get("filter")
@@ -2926,7 +2937,7 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         )
         or any(
             isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in (*counts[:6],)
+            for value in counts[:6]
         )
         or isinstance(counts[6], bool)
         or not isinstance(counts[6], int)
@@ -2942,32 +2953,54 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
             and not _positive_id(output.get("to_snapshot_id"))
         )
     ):
-        return _invalid_output()
+        return False
+
+    return _moodle_change_counts_match_status(output, status, reason, counts)
+
+
+def _moodle_change_counts_match_status(
+    output: Mapping[str, object],
+    status: str,
+    reason: object,
+    counts: tuple[object, ...],
+) -> bool:
     changed_courses, added, removed, modified, total, offset, limit = cast(
         tuple[int, int, int, int, int, int, int], counts
     )
+    records = output.get("records")
+    if not isinstance(records, (tuple, list)):
+        return False
     if status == ComparisonStatus.UNAVAILABLE.value:
-        if (
-            reason is None
-            or output.get("from_snapshot_id") is not None
-            or output.get("to_snapshot_id") is not None
-            or any((changed_courses, added, removed, modified, total))
-            or records
-            or output.get("has_more")
-        ):
-            return _invalid_output()
-    elif (
-        reason is not None
-        or output.get("from_snapshot_id") is None
-        or output.get("to_snapshot_id") is None
-        or output["from_snapshot_id"] > output["to_snapshot_id"]
-        or total != added + removed + modified
-        or changed_courses > total
-        or len(records) > total
-        or output.get("has_more") != (offset + limit < total)
-    ):
-        return _invalid_output()
+        return (
+            reason is not None
+            and output.get("from_snapshot_id") is None
+            and output.get("to_snapshot_id") is None
+            and not any((changed_courses, added, removed, modified, total))
+            and not records
+            and output.get("has_more") is False
+        )
 
+    from_snapshot_id = output.get("from_snapshot_id")
+    to_snapshot_id = output.get("to_snapshot_id")
+    return (
+        reason is None
+        and isinstance(from_snapshot_id, int)
+        and isinstance(to_snapshot_id, int)
+        and from_snapshot_id <= to_snapshot_id
+        and total == added + removed + modified
+        and changed_courses <= total
+        and len(records) <= total
+        and output.get("has_more") == (offset + limit < total)
+    )
+
+
+def _moodle_change_records_are_valid(records: object) -> bool:
+    if not isinstance(records, (tuple, list)):
+        return False
+    return all(_moodle_change_record_is_valid(record) for record in records)
+
+
+def _moodle_change_record_is_valid(record: object) -> bool:
     record_fields = {
         "change_id",
         "entity_type",
@@ -2989,6 +3022,10 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         "after_document_version",
         "detected_at",
     }
+    if not isinstance(record, Mapping) or set(record) != record_fields:
+        return False
+
+    entity_type = record.get("entity_type")
     allowed_fields = {
         EntityType.COURSE.value: {ChangeField.TITLE.value, ChangeField.COURSE_CODE.value},
         EntityType.ASSIGNMENT.value: {
@@ -3007,66 +3044,70 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
             ChangeField.DOCUMENT_VERSION.value,
         },
     }
-    for record in records:
-        if not isinstance(record, Mapping) or set(record) != record_fields:
-            return _invalid_output()
-        entity_type = record.get("entity_type")
-        change_kind = record.get("change_kind")
-        changed_fields = record.get("changed_fields")
-        before_title = record.get("before_title")
-        after_title = record.get("after_title")
-        if (
-            not _bounded_text_value(record.get("change_id"), 64)
-            or not isinstance(entity_type, str)
-            or entity_type not in allowed_fields
-            or not isinstance(change_kind, str)
-            or change_kind not in {item.value for item in ChangeKind}
-            or not _positive_id(record.get("id"))
-            or not _positive_id(record.get("course_id"))
-            or not _bounded_text_value(record.get("course_title"), 500)
-            or not _bounded_text_value(record.get("title"), 500)
-            or (before_title is not None and not _bounded_text_value(before_title, 500))
-            or (after_title is not None and not _bounded_text_value(after_title, 500))
-            or not (before_title or after_title)
-            or not isinstance(changed_fields, (tuple, list))
-            or not changed_fields
-            or any(
-                not isinstance(field, str) or field not in allowed_fields[entity_type]
-                for field in changed_fields
+    if not isinstance(entity_type, str) or entity_type not in allowed_fields:
+        return False
+
+    return _moodle_change_record_shape_is_valid(record, allowed_fields[entity_type]) and (
+        _moodle_change_record_values_are_valid(record)
+    )
+
+
+def _moodle_change_record_shape_is_valid(
+    record: Mapping[str, object],
+    allowed_fields: set[str],
+) -> bool:
+    change_kind = record.get("change_kind")
+    changed_fields = record.get("changed_fields")
+    before_title = record.get("before_title")
+    after_title = record.get("after_title")
+    if (
+        not isinstance(change_kind, str)
+        or change_kind not in {item.value for item in ChangeKind}
+        or not isinstance(changed_fields, (tuple, list))
+        or not changed_fields
+        or any(
+            not isinstance(field, str) or field not in allowed_fields for field in changed_fields
+        )
+        or not (before_title or after_title)
+    ):
+        return False
+    if change_kind == ChangeKind.ADDED.value:
+        return before_title is None and after_title is not None
+    if change_kind == ChangeKind.REMOVED.value:
+        return before_title is not None and after_title is None
+    return before_title is not None and after_title is not None
+
+
+def _moodle_change_record_values_are_valid(record: Mapping[str, object]) -> bool:
+    return (
+        _bounded_text_value(record.get("change_id"), 64)
+        and _positive_id(record.get("id"))
+        and _positive_id(record.get("course_id"))
+        and _bounded_text_value(record.get("course_title"), 500)
+        and _bounded_text_value(record.get("title"), 500)
+        and all(
+            record.get(key) is None or _positive_id(record.get(key))
+            for key in ("before_document_version", "after_document_version")
+        )
+        and all(
+            record.get(key) is None or _bounded_text_value(record.get(key), 500)
+            for key in ("before_title", "after_title")
+        )
+        and all(
+            record.get(key) is None or _bounded_text_value(record.get(key), 100)
+            for key in ("before_course_code", "after_course_code")
+        )
+        and all(
+            record.get(key) is None or _bounded_iso_datetime(record.get(key))
+            for key in (
+                "before_due_at",
+                "after_due_at",
+                "before_published_at",
+                "after_published_at",
+                "detected_at",
             )
-            or (
-                change_kind == ChangeKind.ADDED.value
-                and (before_title is not None or after_title is None)
-            )
-            or (
-                change_kind == ChangeKind.REMOVED.value
-                and (before_title is None or after_title is not None)
-            )
-            or (
-                change_kind == ChangeKind.MODIFIED.value
-                and (before_title is None or after_title is None)
-            )
-            or any(
-                record.get(key) is not None and not _bounded_text_value(record.get(key), 100)
-                for key in ("before_course_code", "after_course_code")
-            )
-            or any(
-                record.get(key) is not None and not _bounded_iso_datetime(record.get(key))
-                for key in (
-                    "before_due_at",
-                    "after_due_at",
-                    "before_published_at",
-                    "after_published_at",
-                    "detected_at",
-                )
-            )
-            or any(
-                record.get(key) is not None and not _positive_id(record.get(key))
-                for key in ("before_document_version", "after_document_version")
-            )
-        ):
-            return _invalid_output()
-    return result
+        )
+    )
 
 
 def _calendar_proposal_tool_output(result: ToolResult) -> ToolResult:
@@ -3389,11 +3430,9 @@ def _render_academic_evidence(
                         f"{raw_row.get('after_due_at') or 'unset'}"
                     )
                 if isinstance(fields, tuple) and ChangeField.DOCUMENT_VERSION.value in fields:
-                    line += (
-                        "; document version "
-                        f"{raw_row.get('before_document_version')} → "
-                        f"{raw_row.get('after_document_version')}"
-                    )
+                    before_version = raw_row.get("before_document_version") or "unset"
+                    after_version = raw_row.get("after_document_version") or "unset"
+                    line += f"; document version {before_version} → {after_version}"
                 if isinstance(fields, tuple) and ChangeField.COURSE_CODE.value in fields:
                     line += (
                         "; course code "

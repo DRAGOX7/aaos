@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Mapping, TypeAlias
@@ -86,6 +86,7 @@ class NormalizedMoodleState:
     assignments: tuple[AssignmentState, ...]
     announcements: tuple[AnnouncementState, ...]
     documents: tuple[DocumentState, ...]
+    _validation_token: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _safe_text(self.source_system, "source_system", maximum=100)
@@ -259,6 +260,7 @@ _RECORD_ORDER = {
     EntityType.DOCUMENT: 3,
 }
 _FIELD_ORDER = {field: index for index, field in enumerate(ChangeField)}
+_NORMALIZED_MOODLE_STATE_TOKEN = object()
 
 
 def canonical_state(snapshot: CanonicalSnapshot) -> NormalizedMoodleState:
@@ -289,6 +291,7 @@ def canonical_state(snapshot: CanonicalSnapshot) -> NormalizedMoodleState:
             DocumentState(record.source_id, record.course_source_id, record.title)
             for record in snapshot.remote_files
         ),
+        _validation_token=_NORMALIZED_MOODLE_STATE_TOKEN,
     )
 
 
@@ -575,6 +578,10 @@ def _changed_fields(
         if entity_type is EntityType.ANNOUNCEMENT and isinstance(record, AnnouncementState):
             if record.published_at is not None:
                 values.append(ChangeField.PUBLISHED_AT)
+        if entity_type is EntityType.DOCUMENT and _version_number(
+            before_version
+        ) != _version_number(after_version):
+            values.append(ChangeField.DOCUMENT_VERSION)
         return tuple(sorted(values, key=_FIELD_ORDER.__getitem__))
 
     if _record_title(before) != _record_title(after):

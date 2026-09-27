@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from aaos.agent.academic_orchestrator import (
     AcademicAskStatus,
@@ -12,7 +13,7 @@ from aaos.agent.academic_orchestrator import (
 )
 from aaos.agent.contracts import AgentErrorCode, ToolName
 from aaos.agent.conversation_context import ConversationContextStore
-from aaos.inference import ChatResponse, TokenUsage
+from aaos.inference import ChatResponse, ModelAvailability, TokenUsage
 from aaos.inference.lm_studio import _STRUCTURED_RESPONSE_FORMATS
 from aaos.moodle.changes import (
     ChangeField,
@@ -23,6 +24,8 @@ from aaos.moodle.changes import (
     MoodleChange,
     MoodleChangeSet,
 )
+from aaos.rag.contracts import RagQuery, RenderedRagResponse
+from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.contracts import AssignmentSummary, CourseSummary, DocumentSummary
 
 NOW = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
@@ -42,7 +45,7 @@ class FakeGateway:
             usage=TokenUsage(input_tokens=5, output_tokens=3, total_tokens=8),
         )
 
-    async def check_availability(self) -> None:
+    async def check_availability(self) -> ModelAvailability:
         raise AssertionError("availability is not part of an ask request")
 
 
@@ -103,7 +106,7 @@ class FakeDocumentReader:
 
 
 class UnusedRagService:
-    async def ask(self, _query: object) -> object:
+    async def ask(self, _query: RagQuery) -> RenderedRagResponse:
         raise AssertionError("RAG is not part of a Moodle change comparison")
 
 
@@ -121,21 +124,46 @@ class FakeStudyTaskService:
     def __init__(self) -> None:
         self.write_calls: list[str] = []
 
-    def list(self, **_kwargs: object) -> tuple[()]:
+    def list(
+        self,
+        *,
+        status: StudyTaskStatus | None = None,
+        course_id: int | None = None,
+        limit: int = 50,
+    ) -> tuple[StudyTask, ...]:
+        del status, course_id, limit
         return ()
 
-    def get(self, _task_id: int) -> object:
+    def get(self, _task_id: int) -> StudyTask:
         raise AssertionError("StudyTask reads are suppressed for change requests")
 
-    def create(self, **_kwargs: object) -> object:
+    def create(
+        self,
+        *,
+        request_id: UUID,
+        title: str | None = None,
+        course_id: int | None = None,
+        assignment_id: int | None = None,
+        priority: StudyTaskPriority = StudyTaskPriority.NORMAL,
+    ) -> StudyTask:
+        del request_id, title, course_id, assignment_id, priority
         self.write_calls.append("create")
         raise AssertionError("change titles cannot create a StudyTask")
 
-    def update(self, *_args: object, **_kwargs: object) -> object:
+    def update(
+        self,
+        _task_id: int,
+        *,
+        request_id: UUID,
+        title: str | None = None,
+        priority: StudyTaskPriority | None = None,
+    ) -> StudyTask:
+        del request_id, title, priority
         self.write_calls.append("update")
         raise AssertionError("change titles cannot update a StudyTask")
 
-    def complete(self, *_args: object, **_kwargs: object) -> object:
+    def complete(self, _task_id: int, *, request_id: UUID) -> StudyTask:
+        del request_id
         self.write_calls.append("complete")
         raise AssertionError("change titles cannot complete a StudyTask")
 
@@ -245,6 +273,8 @@ def test_change_request_uses_rolling_yesterday_window_and_read_only_registry() -
     metadata = gateway.requests[0].messages[0].content
     registered = metadata.split("REGISTERED_CAPABILITIES_JSON=", maxsplit=1)[1]
     assert '"moodle.list_changes"' in registered
+    assert "academic." not in registered
+    assert "rag.answer" not in registered
     assert "study_task.create" not in registered
     assert "calendar.propose_create_event" not in registered
     assert gateway.requests[0].structured_output_schema == "moodle_change_decision"
@@ -367,7 +397,13 @@ def test_no_changes_and_unknown_shell_http_sql_calls_have_safe_outcomes() -> Non
     )
     assert "No Moodle changes were found" in (no_change.answer_text or "")
 
-    for forbidden_name in ("shell.exec", "http.request", "sql.query"):
+    for forbidden_name in (
+        "shell.exec",
+        "http.request",
+        "sql.query",
+        "academic.list_assignments",
+        "rag.answer",
+    ):
         gateway = FakeGateway(
             json.dumps(
                 {
@@ -392,11 +428,18 @@ def test_registry_and_local_response_schemas_expose_only_fixed_change_read() -> 
         request_text="What changed in Moodle?",
         moodle_change_reader=reader,
     )
-    assert ToolName.MOODLE_LIST_CHANGES in registry.names
-    assert not any(name.value.startswith(("study_task.", "calendar.")) for name in registry.names)
+    assert set(registry.names) == {ToolName.MOODLE_LIST_CHANGES}
     assert all(
         definition.required_permission.value == "READ_ONLY" for definition in registry.definitions
     )
+
+    unavailable_registry = build_read_only_academic_registry(
+        FakeAcademicReader(),
+        FakeDocumentReader(),
+        UnusedRagService(),
+        request_text="What changed in Moodle?",
+    )
+    assert set(unavailable_registry.names) == {ToolName.MOODLE_LIST_CHANGES}
 
     for name, contextual in (
         ("moodle_change_decision", False),

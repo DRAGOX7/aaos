@@ -9,7 +9,11 @@ from typing import Callable
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from aaos.moodle.changes import NormalizedMoodleState, serialize_state
+from aaos.moodle.changes import (
+    _NORMALIZED_MOODLE_STATE_TOKEN,
+    NormalizedMoodleState,
+    serialize_state,
+)
 from aaos.persistence.moodle_sync_models import MoodleSyncSnapshotORM
 
 
@@ -99,6 +103,8 @@ class MoodleSyncHistoryRepository:
         snapshot_id = _positive_id(snapshot_id)
         if not isinstance(state, NormalizedMoodleState):
             raise TypeError("state must be a NormalizedMoodleState")
+        if state._validation_token is not _NORMALIZED_MOODLE_STATE_TOKEN:
+            raise MoodleSyncHistoryError("state was not produced by complete source normalization")
         finished_at = _utc(finished_at, "finished_at")
         row = session.get(MoodleSyncSnapshotORM, snapshot_id)
         if row is None or row.status != "RUNNING":

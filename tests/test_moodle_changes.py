@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
+from aaos.academic.models import CanonicalSnapshot
 from aaos.academic.normalization import normalize_collection
 from aaos.academic.source import (
     CompleteSourceSnapshot,
@@ -15,6 +17,7 @@ from aaos.moodle.changes import (
     ChangeKind,
     DocumentVersionObservation,
     EntityType,
+    MoodleChange,
     canonical_state,
     deserialize_state,
     diff_moodle_snapshots,
@@ -30,7 +33,7 @@ def snapshot(
     assignments: tuple[RawAssignment, ...] = (),
     announcements: tuple[RawAnnouncement, ...] = (),
     documents: tuple[RawRemoteFile, ...] = (),
-) -> object:
+) -> CanonicalSnapshot:
     return normalize_collection(
         CompleteSourceSnapshot(
             source_system="moodle:fixture",
@@ -55,14 +58,21 @@ def document(source_id: str = "resource-cm:91", *, title: str = "Lecture.pdf") -
     return RawRemoteFile(source_id, "c1", title)
 
 
-def changes(previous: object, current: object, **kwargs: object) -> tuple[object, ...]:
+def changes(
+    previous: CanonicalSnapshot,
+    current: CanonicalSnapshot,
+    *,
+    before_document_versions: Mapping[str, DocumentVersionObservation] | None = None,
+    after_document_versions: Mapping[str, DocumentVersionObservation] | None = None,
+) -> tuple[MoodleChange, ...]:
     return diff_moodle_snapshots(
         canonical_state(previous),
         canonical_state(current),
         from_snapshot_id=10,
         to_snapshot_id=11,
         detected_at=NOW,
-        **kwargs,
+        before_document_versions=before_document_versions,
+        after_document_versions=after_document_versions,
     )
 
 
@@ -105,8 +115,18 @@ def test_course_added_and_removed_by_provider_identity() -> None:
 def test_assignment_added_removed_title_and_deadline_changes_are_distinct() -> None:
     empty = snapshot()
     original = snapshot(assignments=(assignment(),))
-    added = changes(empty, original)
-    removed = changes(original, empty)
+    added = changes(
+        empty,
+        original,
+        after_document_versions={"resource-cm:91": DocumentVersionObservation(1, NOW)},
+    )
+    removed = changes(
+        original,
+        empty,
+        before_document_versions={
+            "resource-cm:91": DocumentVersionObservation(1, NOW - timedelta(days=1))
+        },
+    )
     title_changed = changes(
         original, snapshot(assignments=(assignment(title="Assignment 1 revised"),))
     )
@@ -128,8 +148,18 @@ def test_documents_added_removed_renamed_and_version_changed() -> None:
     empty = snapshot()
     original = snapshot(documents=(document(),))
 
-    added = changes(empty, original)
-    removed = changes(original, empty)
+    added = changes(
+        empty,
+        original,
+        after_document_versions={"resource-cm:91": DocumentVersionObservation(1, NOW)},
+    )
+    removed = changes(
+        original,
+        empty,
+        before_document_versions={
+            "resource-cm:91": DocumentVersionObservation(1, NOW - timedelta(days=1))
+        },
+    )
     renamed = changes(original, snapshot(documents=(document(title="Lecture revised.pdf"),)))
     versioned = changes(
         original,
@@ -144,7 +174,15 @@ def test_documents_added_removed_renamed_and_version_changed() -> None:
 
     assert added[0].entity_type is EntityType.DOCUMENT
     assert added[0].change_kind is ChangeKind.ADDED
+    assert added[0].changed_fields == (
+        ChangeField.TITLE,
+        ChangeField.PARENT_COURSE,
+        ChangeField.DOCUMENT_VERSION,
+    )
+    assert (added[0].before_document_version, added[0].after_document_version) == (None, 1)
     assert removed[0].change_kind is ChangeKind.REMOVED
+    assert ChangeField.DOCUMENT_VERSION in removed[0].changed_fields
+    assert (removed[0].before_document_version, removed[0].after_document_version) == (1, None)
     assert renamed[0].changed_fields == (ChangeField.TITLE,)
     assert versioned[0].change_kind is ChangeKind.MODIFIED
     assert versioned[0].changed_fields == (ChangeField.DOCUMENT_VERSION,)
@@ -167,6 +205,7 @@ def test_new_document_with_first_version_is_one_addition() -> None:
 
     assert len(result) == 1
     assert result[0].change_kind is ChangeKind.ADDED
+    assert ChangeField.DOCUMENT_VERSION in result[0].changed_fields
     assert result[0].after_document_version == 1
 
 
