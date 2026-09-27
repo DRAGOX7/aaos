@@ -53,7 +53,7 @@ def test_study_task_migration_preserves_existing_data_and_downgrades(tmp_path: P
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, STUDY_TASK_REVISION)
 
     assert _revision(path) == STUDY_TASK_REVISION
     engine = create_database_engine(path)

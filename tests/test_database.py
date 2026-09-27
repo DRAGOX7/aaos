@@ -156,6 +156,8 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "operation_records",
             "action_event_counters",
             "action_events",
+            "study_tasks",
+            "study_task_mutations",
             "task_records",
             "visual_analysis_runs",
             "visual_elements",

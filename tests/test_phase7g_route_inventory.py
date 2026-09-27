@@ -3,6 +3,7 @@ from __future__ import annotations
 from aaos.main import create_app
 
 EXPECTED_API_PATHS = {
+    "/api/v1/ask",
     "/api/v1/courses",
     "/api/v1/courses/{course_id}",
     "/api/v1/assignments",
@@ -40,6 +41,7 @@ def test_phase7_mutation_inventory_is_closed() -> None:
 
     assert mutation_paths == {
         ("/api/v1/rag/queries", "POST"),
+        ("/api/v1/ask", "POST"),
         ("/api/v1/approvals/{approval_id}/approve", "POST"),
         ("/api/v1/approvals/{approval_id}/reject", "POST"),
     }
