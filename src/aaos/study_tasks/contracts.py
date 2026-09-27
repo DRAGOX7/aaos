@@ -24,6 +24,7 @@ class StudyTaskErrorCode(StrEnum):
     ASSIGNMENT_NOT_FOUND = "ASSIGNMENT_NOT_FOUND"
     INVALID_MUTATION = "INVALID_MUTATION"
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+    STALE_CHANGE = "STALE_CHANGE"
     PERSISTENCE_FAILURE = "PERSISTENCE_FAILURE"
 
 
@@ -58,6 +59,11 @@ class StudyTaskValidationError(StudyTaskError):
 class StudyTaskIdempotencyConflict(StudyTaskError):
     def __init__(self) -> None:
         super().__init__(StudyTaskErrorCode.IDEMPOTENCY_CONFLICT)
+
+
+class StudyTaskStaleChangeError(StudyTaskError):
+    def __init__(self) -> None:
+        super().__init__(StudyTaskErrorCode.STALE_CHANGE)
 
 
 class StudyTaskPersistenceError(StudyTaskError):
@@ -126,6 +132,7 @@ __all__ = [
     "StudyTaskNotFoundError",
     "StudyTaskPersistenceError",
     "StudyTaskPriority",
+    "StudyTaskStaleChangeError",
     "StudyTaskReferenceNotFoundError",
     "StudyTaskStatus",
     "StudyTaskValidationError",

@@ -701,7 +701,10 @@ def test_unsupported_calendar_action_does_not_offer_study_task_write() -> None:
         )
     )
 
-    assert result.status is AcademicAskStatus.FAILED
+    assert result.status is AcademicAskStatus.REFUSED
+    assert result.refusal_code is not None
+    assert "not supported" in (result.answer_text or "")
+    assert gateway.requests == []
     assert calendar.calls == []
     assert calendar.provider_write_count == 0
 

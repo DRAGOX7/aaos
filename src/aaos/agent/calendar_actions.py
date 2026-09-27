@@ -219,6 +219,14 @@ def has_calendar_action_reference(
     )
 
 
+def has_unsupported_calendar_operation(question: str) -> bool:
+    """Recognize Calendar update/move/delete requests that cannot create safely."""
+
+    if not isinstance(question, str) or not question.strip():
+        return False
+    return bool(_UNSUPPORTED_CALENDAR_OPERATION.search(question))
+
+
 def build_calendar_event_plan(
     question: str,
     *,

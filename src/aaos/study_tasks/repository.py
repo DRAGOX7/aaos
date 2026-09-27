@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from aaos.persistence.academic_models import AssignmentORM, CourseORM
+from aaos.persistence.moodle_sync_models import MoodleSyncSnapshotORM
 from aaos.persistence.study_task_models import StudyTaskMutationORM, StudyTaskORM
 
 from .contracts import (
@@ -22,6 +23,7 @@ from .contracts import (
     StudyTaskNotFoundError,
     StudyTaskPriority,
     StudyTaskReferenceNotFoundError,
+    StudyTaskStaleChangeError,
     StudyTaskStatus,
 )
 
@@ -168,6 +170,83 @@ class StudyTaskRepository:
             mutation=update_task,
         )
 
+    def apply_moodle_deadline_change_idempotent(
+        self,
+        task_id: int,
+        *,
+        request_id: UUID,
+        fingerprint: str,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+        now: datetime,
+    ) -> StudyTask:
+        def apply_change(session: Session) -> int:
+            task = session.get(StudyTaskORM, task_id)
+            if task is None:
+                raise StudyTaskNotFoundError()
+            if task.status != StudyTaskStatus.OPEN.value or task.assignment_id != assignment_id:
+                raise StudyTaskStaleChangeError()
+
+            assignment = session.get(AssignmentORM, assignment_id)
+            if (
+                assignment is None
+                or not assignment.is_active
+                or assignment.due_at != expected_due_at
+            ):
+                raise StudyTaskStaleChangeError()
+            course = session.get(CourseORM, assignment.course_id)
+            if course is None or not course.is_active:
+                raise StudyTaskStaleChangeError()
+
+            source_snapshots = tuple(
+                session.scalars(
+                    select(MoodleSyncSnapshotORM)
+                    .where(
+                        MoodleSyncSnapshotORM.id.in_(
+                            (source_from_snapshot_id, source_to_snapshot_id)
+                        )
+                    )
+                    .order_by(MoodleSyncSnapshotORM.id.asc())
+                ).all()
+            )
+            latest_snapshot = session.scalar(
+                select(MoodleSyncSnapshotORM)
+                .where(MoodleSyncSnapshotORM.source_system == assignment.source_system)
+                .order_by(MoodleSyncSnapshotORM.id.desc())
+                .limit(1)
+            )
+            if (
+                len(source_snapshots) != 2
+                or source_snapshots[0].id != source_from_snapshot_id
+                or source_snapshots[1].id != source_to_snapshot_id
+                or any(
+                    item.source_system != assignment.source_system or item.status != "COMPLETE"
+                    for item in source_snapshots
+                )
+                or latest_snapshot is None
+                or latest_snapshot.status != "COMPLETE"
+            ):
+                raise StudyTaskStaleChangeError()
+
+            task.updated_at = max(now, task.updated_at)
+            session.flush()
+            return task.id
+
+        return self._idempotent_mutation(
+            request_id=request_id,
+            operation="APPLY_CHANGE",
+            fingerprint=fingerprint,
+            now=now,
+            mutation=apply_change,
+            source_change_id=source_change_id,
+            source_from_snapshot_id=source_from_snapshot_id,
+            source_to_snapshot_id=source_to_snapshot_id,
+            source_changed_field="due_at",
+        )
+
     def complete_idempotent(
         self,
         task_id: int,
@@ -237,6 +316,10 @@ class StudyTaskRepository:
         fingerprint: str,
         now: datetime,
         mutation: _Mutation,
+        source_change_id: str | None = None,
+        source_from_snapshot_id: int | None = None,
+        source_to_snapshot_id: int | None = None,
+        source_changed_field: str | None = None,
     ) -> StudyTask:
         try:
             with _transaction(self._session_factory) as session:
@@ -251,6 +334,10 @@ class StudyTaskRepository:
                         request_fingerprint=fingerprint,
                         study_task_id=task_id,
                         created_at=now,
+                        source_change_id=source_change_id,
+                        source_from_snapshot_id=source_from_snapshot_id,
+                        source_to_snapshot_id=source_to_snapshot_id,
+                        source_changed_field=source_changed_field,
                     )
                 )
                 session.flush()

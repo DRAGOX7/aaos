@@ -231,6 +231,7 @@ _SAFE_ERROR_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.INVALID_PROPOSAL: "agent proposal was invalid",
     AgentErrorCode.INVALID_TOOL_ARGUMENTS: "tool arguments were invalid",
     AgentErrorCode.PERMISSION_DENIED: "tool permission was denied",
+    AgentErrorCode.STALE_CONTEXT: "trusted context is stale; no action was applied",
     AgentErrorCode.UNKNOWN_TOOL: "requested tool is not available",
     AgentErrorCode.TOOL_NOT_EXECUTABLE: "requested tool is not executable",
     AgentErrorCode.TOOL_TIMEOUT: "tool execution timed out",

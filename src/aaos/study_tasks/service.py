@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Callable
 from uuid import UUID
@@ -151,6 +152,64 @@ class StudyTaskService:
                 title=normalized_title,
                 priority=priority,
                 now=self._now(),
+            )
+        except SQLAlchemyError:
+            raise StudyTaskPersistenceError() from None
+
+    def apply_moodle_deadline_change(
+        self,
+        task_id: int,
+        *,
+        request_id: UUID,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+    ) -> StudyTask:
+        """Acknowledge a current assignment deadline change on one linked task."""
+
+        self._validate_request_id(request_id)
+        self._validate_task_id(task_id)
+        self._validate_link_id(assignment_id)
+        if (
+            not isinstance(expected_due_at, datetime)
+            or expected_due_at.tzinfo is None
+            or expected_due_at.utcoffset() is None
+            or not isinstance(source_change_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}", source_change_id)
+        ):
+            raise StudyTaskValidationError()
+        self._validate_task_id(source_from_snapshot_id)
+        self._validate_task_id(source_to_snapshot_id)
+        if source_from_snapshot_id >= source_to_snapshot_id:
+            raise StudyTaskValidationError()
+
+        normalized_due_at = expected_due_at.astimezone(timezone.utc)
+        now = self._now()
+        fingerprint = _fingerprint(
+            "APPLY_CHANGE",
+            {
+                "assignment_id": assignment_id,
+                "expected_due_at": normalized_due_at.isoformat(),
+                "source_change_id": source_change_id,
+                "source_changed_field": "due_at",
+                "source_from_snapshot_id": source_from_snapshot_id,
+                "source_to_snapshot_id": source_to_snapshot_id,
+                "task_id": task_id,
+            },
+        )
+        try:
+            return self._repository.apply_moodle_deadline_change_idempotent(
+                task_id,
+                request_id=request_id,
+                fingerprint=fingerprint,
+                assignment_id=assignment_id,
+                expected_due_at=normalized_due_at,
+                source_change_id=source_change_id,
+                source_from_snapshot_id=source_from_snapshot_id,
+                source_to_snapshot_id=source_to_snapshot_id,
+                now=now,
             )
         except SQLAlchemyError:
             raise StudyTaskPersistenceError() from None

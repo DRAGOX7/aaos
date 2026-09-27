@@ -363,6 +363,10 @@ def create_api_v1_router(
                         query_filter=source.query_filter,
                         source_ref=source.source_ref,
                         source_turn=source.source_turn,
+                        change_id=source.change_id,
+                        from_snapshot_id=source.from_snapshot_id,
+                        to_snapshot_id=source.to_snapshot_id,
+                        changed_fields=source.changed_fields,
                     )
                     for source in result.sources
                 ),
@@ -376,6 +380,10 @@ def create_api_v1_router(
                         query_filter=source.query_filter,
                         source_ref=source.source_ref,
                         source_turn=source.source_turn,
+                        change_id=source.change_id,
+                        from_snapshot_id=source.from_snapshot_id,
+                        to_snapshot_id=source.to_snapshot_id,
+                        changed_fields=source.changed_fields,
                     )
                     for source in result.context_sources
                 ),

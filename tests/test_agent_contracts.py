@@ -103,6 +103,7 @@ def test_tool_name_is_a_closed_logical_allowlist() -> None:
         "study_task.create",
         "study_task.update",
         "study_task.complete",
+        "study_task.acknowledge_deadline_change",
         "calendar.propose_create_event",
         "read_task_state",
         "write_task_state",

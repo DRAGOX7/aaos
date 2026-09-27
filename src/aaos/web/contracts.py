@@ -110,6 +110,10 @@ class AcademicAskSource(BaseModel):
     query_filter: str | None = Field(default=None, max_length=4096)
     source_ref: str | None = Field(default=None, max_length=16)
     source_turn: int | None = Field(default=None, ge=1, le=8)
+    change_id: str | None = Field(default=None, max_length=255)
+    from_snapshot_id: int | None = Field(default=None, gt=0)
+    to_snapshot_id: int | None = Field(default=None, gt=0)
+    changed_fields: tuple[str, ...] = Field(default=(), max_length=6)
 
 
 class CalendarProposalView(BaseModel):

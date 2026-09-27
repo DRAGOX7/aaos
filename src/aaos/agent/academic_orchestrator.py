@@ -61,6 +61,7 @@ from .calendar_actions import (
     calendar_proposal_from_task,
     has_calendar_action_reference,
     has_explicit_calendar_create_intent,
+    has_unsupported_calendar_operation,
 )
 from .contracts import (
     MAX_AGENT_TEXT_CHARACTERS,
@@ -92,6 +93,7 @@ from .conversation_context import (
     ConversationContextStoreError,
     ConversationContextUpdate,
     TrustedContextEntity,
+    TrustedMoodleChangeContext,
     serialize_context_hint,
 )
 from .orchestrator import AgentOrchestrator
@@ -159,14 +161,43 @@ CONTEXTUAL_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_SCHEMA: Final[
 TASK_CONTEXTUAL_STUDY_TASK_WRITE_DECISION_SCHEMA: Final[
     Literal["study_task_write_decision_task_contextual"]
 ] = "study_task_write_decision_task_contextual"
+STUDY_TASK_CHANGE_DECISION_SCHEMA: Final[Literal["study_task_change_decision_contextual"]] = (
+    "study_task_change_decision_contextual"
+)
 _READ_REFERENCE = re.compile(r"^read-[1-8]$")
 _SAFE_COURSE_NAME = re.compile(r"^[^\r\n]{1,512}$")
 _STUDY_TASK_READ_TOOLS = frozenset({ToolName.STUDY_TASK_LIST, ToolName.STUDY_TASK_GET})
 _STUDY_TASK_WRITE_TOOLS = frozenset(
     {ToolName.STUDY_TASK_CREATE, ToolName.STUDY_TASK_UPDATE, ToolName.STUDY_TASK_COMPLETE}
 )
+_STUDY_TASK_CHANGE_TOOLS = frozenset({ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE})
+_STUDY_TASK_MUTATION_TOOLS = _STUDY_TASK_WRITE_TOOLS | _STUDY_TASK_CHANGE_TOOLS
 _CALENDAR_PROPOSAL_TOOLS = frozenset({ToolName.CALENDAR_PROPOSE_CREATE_EVENT})
 _MOODLE_CHANGE_TOOLS = frozenset({ToolName.MOODLE_LIST_CHANGES})
+_CHANGE_EXPLANATION_INTENT = re.compile(
+    r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
+    re.IGNORECASE,
+)
+_STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
+    r"\b(?:update|change|adjust|set)\b.{0,100}\b(?:study\s+)?task\b"
+    r".{0,80}\b(?:deadline|due\s+date)\b|"
+    r"\b(?:deadline|due\s+date)\b.{0,80}\b(?:study\s+)?task\b.{0,80}"
+    r"\b(?:update|change|adjust|set)\b|"
+    r"\b(?:update|change|adjust|set)\b.{0,100}\b(?:study\s+)?task\b"
+    r".{0,80}\bto\s+(?:match|reflect)\s+(?:it|this|that|the\s+change)\b",
+    re.IGNORECASE,
+)
+_OLD_DEADLINE_VALUE_ASK = re.compile(
+    r"\b(?:old|previous|before|earlier)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
+    r"\b(?:deadline|due(?:\s+date)?)\b.{0,48}\b(?:old|previous|before|earlier)\b",
+    re.IGNORECASE,
+)
+_CURRENT_DEADLINE_VALUE_ASK = re.compile(
+    r"\b(?:new|current|now|after|latest)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
+    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:now|currently|today)\b|"
+    r"\bwhen\b.{0,40}\b(?:is|are)\s+(?:it|this|that|the assignment)\s+due\b",
+    re.IGNORECASE,
+)
 
 ACADEMIC_TOOL_NAMES = frozenset(
     {
@@ -308,6 +339,10 @@ class AcademicSourceReference:
     query_filter: str | None = None
     source_ref: str | None = None
     source_turn: int | None = None
+    change_id: str | None = None
+    from_snapshot_id: int | None = None
+    to_snapshot_id: int | None = None
+    changed_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,6 +462,18 @@ class StudyTaskPort(Protocol):
         priority: StudyTaskPriority | None = None,
     ) -> StudyTask: ...
 
+    def apply_moodle_deadline_change(
+        self,
+        task_id: int,
+        *,
+        request_id: UUID,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+    ) -> StudyTask: ...
+
     def complete(self, task_id: int, *, request_id: UUID) -> StudyTask: ...
 
 
@@ -519,7 +566,36 @@ class _AcademicToolRuntime:
         self._calendar_intent = calendar_intent
         self._calendar_mutation_requested = calendar_mutation_requested
         self._moodle_change_reader = moodle_change_reader
-        self._moodle_change_requested = is_moodle_change_request(request_text)
+        context = (
+            context_resolution.entity
+            if context_resolution is not None
+            and context_resolution.status is ContextResolutionStatus.RESOLVED
+            else None
+        )
+        self._change_explanation_requested = (
+            context is not None
+            and context.kind is ContextEntityKind.MOODLE_CHANGE
+            and _CHANGE_EXPLANATION_INTENT.search(request_text) is not None
+        )
+        self._study_task_change_requested = (
+            context is not None
+            and context.kind is ContextEntityKind.MOODLE_CHANGE
+            and _is_trusted_assignment_deadline_change(context)
+            and _STUDY_TASK_DEADLINE_CHANGE_INTENT.search(request_text) is not None
+        )
+        self._calendar_change_create_requested = (
+            context is not None
+            and context.kind is ContextEntityKind.MOODLE_CHANGE
+            and _is_trusted_assignment_deadline_change(context)
+            and calendar_intent
+        )
+        self._moodle_change_requested = is_moodle_change_request(request_text) and not any(
+            (
+                self._change_explanation_requested,
+                self._study_task_change_requested,
+                self._calendar_change_create_requested,
+            )
+        )
         self.calendar_proposal: CalendarProposalResult | None = None
         self.calendar_duration_note: str | None = None
         self._rag_adapter = RagQueryAdapter(rag)
@@ -568,6 +644,12 @@ class _AcademicToolRuntime:
     def build_registry(self) -> ToolRegistry:
         if self._moodle_change_requested:
             return ToolRegistry((self._moodle_change_definition(),))
+        if self._change_explanation_requested:
+            return ToolRegistry((self._rag_answer_definition(),))
+        if self._study_task_change_requested:
+            return ToolRegistry((self._study_task_change_definition(),))
+        if self._calendar_change_create_requested:
+            return ToolRegistry((self._calendar_proposal_definition(),))
 
         definitions: tuple[ToolDefinition, ...] = (
             self._definition(
@@ -644,29 +726,7 @@ class _AcademicToolRuntime:
                 _document_output,
                 5,
             ),
-            ToolDefinition(
-                name=ToolName.RAG_ANSWER,
-                description="Answer the original question from local academic documents with Phase 4 citations",
-                input_schema=self._schema(
-                    (
-                        ToolField(
-                            "course_name", ToolValueType.STRING, required=False, max_length=512
-                        ),
-                    ),
-                    "rag_answer",
-                ),
-                required_permission=PermissionClass.READ_ONLY,
-                side_effect=SideEffectClass.READ_ONLY,
-                timeout_seconds=120,
-                handler=_AcademicRagAnswer(self),
-                observation_kind="rag_answer",
-                result_schema="rag_query_result",
-                sanitization_policy="rag_safe_summary",
-                audit_version="agentic-read-only-v1",
-                output_validator=_validate_rag_tool_result,
-                observation_projector=_rag_observation_projector,
-                contract_version="agentic-read-only-v1",
-            ),
+            self._rag_answer_definition(),
         )
         if self._study_task_service is not None and not self._moodle_change_requested:
             definitions = (
@@ -698,6 +758,40 @@ class _AcademicToolRuntime:
             self._list_moodle_changes,
             _moodle_change_output,
             5,
+        )
+
+    def _rag_answer_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=ToolName.RAG_ANSWER,
+            description=(
+                "Explain the trusted academic change from local documents with Phase 4 citations"
+            ),
+            input_schema=self._schema(
+                (ToolField("course_name", ToolValueType.STRING, required=False, max_length=512),),
+                "rag_answer",
+            ),
+            required_permission=PermissionClass.READ_ONLY,
+            side_effect=SideEffectClass.READ_ONLY,
+            timeout_seconds=120,
+            handler=_AcademicRagAnswer(self),
+            observation_kind="rag_answer",
+            result_schema="rag_query_result",
+            sanitization_policy="rag_safe_summary",
+            audit_version="agentic-read-only-v1",
+            output_validator=_validate_rag_tool_result,
+            observation_projector=_rag_observation_projector,
+            contract_version="agentic-read-only-v1",
+        )
+
+    def _study_task_change_definition(self) -> ToolDefinition:
+        return self._definition(
+            ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE,
+            "Acknowledge the current trusted assignment deadline on its linked local StudyTask",
+            self._schema((), "study_task_acknowledge_deadline_change"),
+            self._apply_study_task_change,
+            _study_task_output,
+            5,
+            permission=PermissionClass.LOCAL_STATE_WRITE,
         )
 
     def _list_moodle_changes(self, arguments: ValidatedToolArguments) -> ToolResult:
@@ -1006,13 +1100,24 @@ class _AcademicToolRuntime:
             source_id: int
             expected_title: str | None
             expected_course_id: int | None
+            expected_due_at: datetime | None = None
             if context is not None:
                 if source_ref is not None or source_index is not None:
                     return _task_argument_error()
-                source_kind = context.kind
-                source_id = context.entity_id
-                expected_title = context.title
-                expected_course_id = context.course_id
+                if context.kind is ContextEntityKind.MOODLE_CHANGE:
+                    if not _is_trusted_assignment_deadline_change(context):
+                        return _task_argument_error()
+                    assert context.change is not None
+                    source_kind = ContextEntityKind.ASSIGNMENT
+                    source_id = context.entity_id
+                    expected_title = context.title
+                    expected_course_id = context.course_id
+                    expected_due_at = context.change.after_due_at
+                else:
+                    source_kind = context.kind
+                    source_id = context.entity_id
+                    expected_title = context.title
+                    expected_course_id = context.course_id
             else:
                 if not isinstance(source_ref, str):
                     return _task_argument_error()
@@ -1077,6 +1182,11 @@ class _AcademicToolRuntime:
                     )
                 ):
                     return _task_argument_error()
+                if expected_due_at is not None and assignment.due_at != expected_due_at:
+                    return _tool_error(
+                        AgentErrorCode.STALE_CONTEXT,
+                        "the assignment deadline changed; no Calendar proposal was created",
+                    )
             elif source_kind is ContextEntityKind.STUDY_TASK:
                 study_task = self._task_service().get(source_id)
                 if (
@@ -1675,6 +1785,91 @@ class _AcademicToolRuntime:
         except StudyTaskError as error:
             return _study_task_error(error)
 
+    def _apply_study_task_change(self, arguments: ValidatedToolArguments) -> ToolResult:
+        if (
+            self._request_id is None
+            or not self._study_task_change_requested
+            or self._study_task_service is None
+        ):
+            return _tool_error(
+                AgentErrorCode.PERMISSION_DENIED,
+                "explicit StudyTask deadline updates are unavailable for this request",
+            )
+        try:
+            context = self._context_entity(arguments)
+            if (
+                context is None
+                or context.kind is not ContextEntityKind.MOODLE_CHANGE
+                or not _is_trusted_assignment_deadline_change(context)
+                or context.change is None
+                or context.change.after_due_at is None
+            ):
+                return _task_argument_error()
+            tasks = self._task_service().list(
+                status=StudyTaskStatus.OPEN,
+                course_id=context.course_id,
+                limit=MAX_ACADEMIC_RECORDS,
+            )
+            if not isinstance(tasks, tuple) or any(
+                not isinstance(task, StudyTask) for task in tasks
+            ):
+                return _invalid_output()
+            matches = tuple(task for task in tasks if task.assignment_id == context.entity_id)
+            if not matches:
+                return _tool_error(
+                    AgentErrorCode.STUDY_TASK_NOT_FOUND,
+                    "no open StudyTask is linked to the changed assignment",
+                )
+            if len(matches) != 1:
+                return _tool_error(
+                    AgentErrorCode.AMBIGUOUS_STUDY_TASK,
+                    "more than one open StudyTask is linked to the changed assignment",
+                )
+            change = context.change
+            apply_change = getattr(self._study_task_service, "apply_moodle_deadline_change", None)
+            if not callable(apply_change):
+                return _tool_error(
+                    AgentErrorCode.PERMISSION_DENIED,
+                    "change-aware StudyTask updates are unavailable",
+                )
+            task = apply_change(
+                matches[0].id,
+                request_id=self._request_id,
+                assignment_id=context.entity_id,
+                expected_due_at=change.after_due_at,
+                source_change_id=change.change_id,
+                source_from_snapshot_id=change.from_snapshot_id,
+                source_to_snapshot_id=change.to_snapshot_id,
+            )
+            if (
+                not isinstance(task, StudyTask)
+                or task.assignment_id != context.entity_id
+                or task.due_at != change.after_due_at
+            ):
+                return _invalid_output()
+            return self._structured_result(
+                ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE,
+                (_study_task_record(task),),
+                {
+                    "operation": "APPLY_CHANGE",
+                    "study_task_id": task.id,
+                    "change_id": change.change_id,
+                    "from_snapshot_id": change.from_snapshot_id,
+                    "to_snapshot_id": change.to_snapshot_id,
+                    "changed_fields": tuple(field.value for field in change.changed_fields),
+                },
+            )
+        except _LookupFailure as error:
+            return _lookup_tool_error(error.code)
+        except _InvalidContextReference:
+            return _task_argument_error()
+        except _InvalidReadOutput:
+            return _invalid_output()
+        except _ReadOperationFailed:
+            return _tool_error(AgentErrorCode.TOOL_FAILED, "linked StudyTask resolution failed")
+        except StudyTaskError as error:
+            return _study_task_error(error)
+
     def _complete_study_task(self, arguments: ValidatedToolArguments) -> ToolResult:
         if self._request_id is None:
             return _tool_error(
@@ -1866,6 +2061,40 @@ class _AcademicToolRuntime:
                         "the referenced document has no trusted version",
                     )
                 scope = HistoricalScope((context.document_version_id,))
+            elif (
+                context is not None
+                and context.kind is ContextEntityKind.MOODLE_CHANGE
+                and context.change is not None
+                and context.change.entity_type is EntityType.DOCUMENT
+            ):
+                documents = cast(
+                    tuple[DocumentSummary, ...],
+                    self._read(
+                        self._documents.list_documents,
+                        context.course_id,
+                        limit=MAX_ACADEMIC_RECORDS + 1,
+                    ),
+                )
+                if not isinstance(documents, tuple) or any(
+                    not isinstance(document, DocumentSummary) for document in documents
+                ):
+                    return _invalid_output()
+                if len(documents) > MAX_ACADEMIC_RECORDS:
+                    return _tool_error(
+                        AgentErrorCode.RESULT_TOO_LARGE,
+                        "document scope is too large for a change explanation",
+                    )
+                matches = tuple(
+                    document
+                    for document in documents
+                    if document.id == context.entity_id and document.course_id == context.course_id
+                )
+                if len(matches) != 1 or matches[0].document_version_id is None:
+                    return _tool_error(
+                        AgentErrorCode.RAG_QUERY_FAILED,
+                        "the changed document has no current indexed version",
+                    )
+                scope = HistoricalScope((matches[0].document_version_id,))
             elif context is not None:
                 course_id = (
                     context.entity_id
@@ -1885,6 +2114,10 @@ class _AcademicToolRuntime:
                 )
         except _LookupFailure as error:
             return _lookup_tool_error(error.code)
+        except _InvalidReadOutput:
+            return _invalid_output()
+        except _ReadOperationFailed:
+            return _tool_error(AgentErrorCode.TOOL_FAILED, "changed document metadata read failed")
         trusted_scope = TrustedTaskScope(scope)
         if isinstance(scope, CourseScope):
             scope_value: dict[str, object] = {"kind": "course", "course_id": scope.course_id}
@@ -1968,6 +2201,7 @@ class AcademicDecisionAdapter:
         self._tool_metadata: tuple[dict[str, object], ...] = ()
         self._study_task_reads_enabled = False
         self._study_task_writes_enabled = False
+        self._study_task_change_enabled = False
         self._calendar_proposals_enabled = False
         self._moodle_change_enabled = False
         self._last_decision: AcademicDecision | None = None
@@ -2004,12 +2238,15 @@ class AcademicDecisionAdapter:
         expected.add(ACADEMIC_TOOL_NAMES | _CALENDAR_PROPOSAL_TOOLS)
         expected.add(task_read_surface | _CALENDAR_PROPOSAL_TOOLS)
         expected.add(_MOODLE_CHANGE_TOOLS)
+        expected.add(_STUDY_TASK_CHANGE_TOOLS)
+        expected.add(_CALENDAR_PROPOSAL_TOOLS)
+        expected.add(frozenset({ToolName.RAG_ANSWER}))
         if names not in expected:
             raise ValueError("academic registry must match one closed supported capability surface")
         for definition in registry.definitions:
             expected_permission = (
                 PermissionClass.LOCAL_STATE_WRITE
-                if definition.name in _STUDY_TASK_WRITE_TOOLS | _CALENDAR_PROPOSAL_TOOLS
+                if definition.name in _STUDY_TASK_MUTATION_TOOLS | _CALENDAR_PROPOSAL_TOOLS
                 else PermissionClass.READ_ONLY
             )
             expected_effect = (
@@ -2026,7 +2263,10 @@ class AcademicDecisionAdapter:
         self._registry = registry
         self._tool_metadata = registry.model_visible_metadata()
         self._study_task_reads_enabled = _STUDY_TASK_READ_TOOLS <= names
-        self._study_task_writes_enabled = _STUDY_TASK_WRITE_TOOLS <= names
+        self._study_task_writes_enabled = bool(
+            _STUDY_TASK_WRITE_TOOLS <= names or _STUDY_TASK_CHANGE_TOOLS <= names
+        )
+        self._study_task_change_enabled = _STUDY_TASK_CHANGE_TOOLS <= names
         self._calendar_proposals_enabled = _CALENDAR_PROPOSAL_TOOLS <= names
         self._moodle_change_enabled = _MOODLE_CHANGE_TOOLS <= names
 
@@ -2074,6 +2314,8 @@ class AcademicDecisionAdapter:
                 if self._context_resolution is not None
                 else MOODLE_CHANGE_DECISION_SCHEMA
             )
+        elif self._study_task_change_enabled:
+            structured_schema = STUDY_TASK_CHANGE_DECISION_SCHEMA
         elif self._calendar_proposals_enabled:
             structured_schema = (
                 CONTEXTUAL_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_SCHEMA
@@ -2311,11 +2553,55 @@ class ReadOnlyAcademicAssistant:
             context_resolution = (
                 resolution if resolution.status is ContextResolutionStatus.RESOLVED else None
             )
-            source_entity_kind = (
-                context_resolution.entity.kind.value
-                if context_resolution is not None and context_resolution.entity is not None
-                else None
+            context_entity = context_resolution.entity if context_resolution is not None else None
+            context_sources = (
+                (_source_for_context_entity(context_entity),) if context_entity is not None else ()
             )
+
+            def direct_refusal(message: str) -> AcademicAskResult:
+                nonlocal lease_active
+                refusal = AcademicAskResult(
+                    AcademicAskStatus.REFUSED,
+                    answer_text=message,
+                    refusal_code=AcademicRefusalReason.READ_ONLY_ACTION_UNSUPPORTED,
+                    context_sources=context_sources,
+                    conversation_id=lease.conversation_id,
+                )
+                self._context_store.finish_turn(
+                    lease,
+                    ConversationContextUpdate(
+                        active_entity=lease.snapshot.active_entity,
+                        active_course=lease.snapshot.active_course,
+                    ),
+                )
+                lease_active = False
+                return refusal
+
+            def direct_answer(message: str) -> AcademicAskResult:
+                nonlocal lease_active
+                answer = AcademicAskResult(
+                    AcademicAskStatus.ANSWERED,
+                    answer_text=message,
+                    context_sources=context_sources,
+                    conversation_id=lease.conversation_id,
+                )
+                self._context_store.finish_turn(
+                    lease,
+                    ConversationContextUpdate(
+                        active_entity=lease.snapshot.active_entity,
+                        active_course=lease.snapshot.active_course,
+                    ),
+                )
+                lease_active = False
+                return answer
+
+            if has_unsupported_calendar_operation(question.strip()):
+                return direct_refusal(
+                    "Calendar updates, moves, and deletions are not supported. "
+                    "No Calendar event was created."
+                )
+
+            source_entity_kind = context_entity.kind.value if context_entity is not None else None
             calendar_intent = has_explicit_calendar_create_intent(
                 question.strip(),
                 source_entity_kind=source_entity_kind,
@@ -2324,13 +2610,69 @@ class ReadOnlyAcademicAssistant:
                 question.strip(),
                 source_entity_kind=source_entity_kind,
             )
+            task_change_intent = (
+                context_entity is not None
+                and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
+                and _STUDY_TASK_DEADLINE_CHANGE_INTENT.search(question.strip()) is not None
+            )
+            calendar_change_intent = (
+                context_entity is not None
+                and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
+                and calendar_intent
+            )
+            if task_change_intent and not _is_trusted_assignment_deadline_change(context_entity):
+                return direct_refusal(
+                    "This change does not contain a current assignment deadline that can be "
+                    "applied to a linked StudyTask."
+                )
+            if calendar_change_intent and not _is_trusted_assignment_deadline_change(
+                context_entity
+            ):
+                return direct_refusal(
+                    "Calendar creation from this change needs one trusted assignment deadline."
+                )
+            task_change_available = (
+                task_change_intent
+                and request_id is not None
+                and self._study_task_service is not None
+                and callable(
+                    getattr(self._study_task_service, "apply_moodle_deadline_change", None)
+                )
+            )
+            if task_change_intent and not task_change_available:
+                return direct_refusal(
+                    "A linked StudyTask deadline update needs an idempotent request ID and the "
+                    "change-aware local task service."
+                )
+            if (
+                context_entity is not None
+                and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
+                and context_entity.change is not None
+                and ChangeField.DUE_AT in context_entity.change.changed_fields
+                and not task_change_intent
+                and not calendar_intent
+            ):
+                change = context_entity.change
+                if _OLD_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
+                    previous = _format_trusted_deadline(change.before_due_at)
+                    return direct_answer(f"The previous deadline was {previous}.")
+                if _CURRENT_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
+                    current = _format_trusted_deadline(change.after_due_at)
+                    return direct_answer(
+                        f"The retained Moodle change set the deadline to {current}."
+                    )
             calendar_enabled = (
-                not is_moodle_change_request(question.strip())
+                (not is_moodle_change_request(question.strip()) or calendar_change_intent)
                 and calendar_intent
                 and request_id is not None
                 and self._calendar_task_service is not None
                 and self._calendar_timezone is not None
             )
+            if calendar_change_intent and not calendar_enabled:
+                return direct_refusal(
+                    "Creating a Calendar proposal from this change needs an idempotent request "
+                    "ID and the configured Calendar proposal service."
+                )
             evidence = _EvidenceStore()
             runtime = _AcademicToolRuntime(
                 self._academic,
@@ -2363,6 +2705,7 @@ class ReadOnlyAcademicAssistant:
                         *(
                             {PermissionClass.LOCAL_STATE_WRITE}
                             if calendar_enabled
+                            or task_change_available
                             or (
                                 not is_moodle_change_request(question.strip())
                                 and request_id is not None
@@ -2390,11 +2733,6 @@ class ReadOnlyAcademicAssistant:
                     runtime.calendar_duration_note,
                     step_count=result.step_count,
                 )
-            context_sources = (
-                (_source_for_context_entity(context_resolution.entity),)
-                if context_resolution is not None and context_resolution.entity is not None
-                else ()
-            )
             if result.status in {AcademicAskStatus.CANCELLED, AcademicAskStatus.TIMED_OUT}:
                 response = replace(
                     result,
@@ -2596,6 +2934,28 @@ def _normalized(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def _is_trusted_assignment_deadline_change(entity: TrustedContextEntity | None) -> bool:
+    if (
+        entity is None
+        or entity.kind is not ContextEntityKind.MOODLE_CHANGE
+        or entity.change is None
+    ):
+        return False
+    change: TrustedMoodleChangeContext = entity.change
+    return (
+        change.entity_type is EntityType.ASSIGNMENT
+        and change.change_kind is ChangeKind.MODIFIED
+        and ChangeField.DUE_AT in change.changed_fields
+        and change.after_due_at is not None
+    )
+
+
+def _format_trusted_deadline(value: datetime | None) -> str:
+    if value is None:
+        return "no deadline was set"
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _required_text(arguments: ValidatedToolArguments, key: str) -> str:
     value = arguments.to_mapping().get(key)
     if not isinstance(value, str) or not value.strip():
@@ -2794,7 +3154,17 @@ def _study_task_output(result: ToolResult) -> ToolResult:
     source_ref = output.get("source_ref")
     records = output.get("records")
     filters = output.get("filter")
-    allowed_filter_keys = {"course_id", "limit", "status", "operation", "study_task_id"}
+    allowed_filter_keys = {
+        "course_id",
+        "limit",
+        "status",
+        "operation",
+        "study_task_id",
+        "change_id",
+        "from_snapshot_id",
+        "to_snapshot_id",
+        "changed_fields",
+    }
     if (
         not isinstance(source_ref, str)
         or not _READ_REFERENCE.fullmatch(source_ref)
@@ -2809,6 +3179,10 @@ def _study_task_output(result: ToolResult) -> ToolResult:
     status = filters.get("status")
     operation = filters.get("operation")
     study_task_id = filters.get("study_task_id")
+    change_id = filters.get("change_id")
+    from_snapshot_id = filters.get("from_snapshot_id")
+    to_snapshot_id = filters.get("to_snapshot_id")
+    changed_fields = filters.get("changed_fields")
     if (
         course_id is not None
         and not _positive_id(course_id)
@@ -2821,9 +3195,29 @@ def _study_task_output(result: ToolResult) -> ToolResult:
         or status is not None
         and status not in {item.value for item in StudyTaskStatus}
         or operation is not None
-        and operation not in {"CREATE", "UPDATE", "COMPLETE"}
+        and operation not in {"CREATE", "UPDATE", "COMPLETE", "APPLY_CHANGE"}
         or study_task_id is not None
         and not _positive_id(study_task_id)
+        or operation == "APPLY_CHANGE"
+        and (
+            not isinstance(change_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}", change_id)
+            or not _positive_id(from_snapshot_id)
+            or not _positive_id(to_snapshot_id)
+            or cast(int, from_snapshot_id) >= cast(int, to_snapshot_id)
+            or not isinstance(changed_fields, (tuple, list))
+            or not changed_fields
+            or any(
+                not isinstance(field, str) or field not in {item.value for item in ChangeField}
+                for field in changed_fields
+            )
+            or ChangeField.DUE_AT.value not in changed_fields
+        )
+        or operation != "APPLY_CHANGE"
+        and any(
+            value is not None
+            for value in (change_id, from_snapshot_id, to_snapshot_id, changed_fields)
+        )
     ):
         return _invalid_output()
     required_fields = {
@@ -3153,6 +3547,11 @@ def _study_task_error(error: StudyTaskError) -> ToolResult:
         return _tool_error(
             AgentErrorCode.STUDY_TASK_IDEMPOTENCY_CONFLICT,
             "request identifier was already used for a different local task action",
+        )
+    if error.code is StudyTaskErrorCode.STALE_CHANGE:
+        return _tool_error(
+            AgentErrorCode.STALE_CONTEXT,
+            "the assignment deadline or completed Moodle snapshot changed; no task update was applied",
         )
     if error.code is StudyTaskErrorCode.INVALID_MUTATION:
         return _task_argument_error()
@@ -3538,6 +3937,7 @@ def _render_academic_evidence(
             ToolName.STUDY_TASK_CREATE,
             ToolName.STUDY_TASK_UPDATE,
             ToolName.STUDY_TASK_COMPLETE,
+            ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE,
         }:
             if not rows:
                 sections.append("No local study tasks were found.")
@@ -3548,6 +3948,10 @@ def _render_academic_evidence(
                 heading = "Updated local study task:"
             elif name is ToolName.STUDY_TASK_COMPLETE:
                 heading = "Marked local study task complete:"
+            elif name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE:
+                heading = (
+                    "Recorded acknowledgement of the current Moodle deadline on local study task:"
+                )
             elif name is ToolName.STUDY_TASK_GET:
                 heading = "Local study task:"
             else:
@@ -3618,7 +4022,7 @@ def _sources_for_evidence(
                 kind = "course"
             elif name in {ToolName.ACADEMIC_LIST_ASSIGNMENTS, ToolName.ACADEMIC_GET_ASSIGNMENT}:
                 kind = "assignment"
-            elif name in _STUDY_TASK_READ_TOOLS | _STUDY_TASK_WRITE_TOOLS:
+            elif name in _STUDY_TASK_READ_TOOLS | _STUDY_TASK_MUTATION_TOOLS:
                 kind = "study_task"
             else:
                 kind = "document"
@@ -3629,6 +4033,31 @@ def _sources_for_evidence(
             if key in seen:
                 continue
             seen.add(key)
+            raw_from_snapshot_id = (
+                output.get("from_snapshot_id")
+                if name is ToolName.MOODLE_LIST_CHANGES
+                else filters.get("from_snapshot_id")
+                if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
+                else None
+            )
+            from_snapshot_id = (
+                raw_from_snapshot_id
+                if isinstance(raw_from_snapshot_id, int)
+                and not isinstance(raw_from_snapshot_id, bool)
+                else None
+            )
+            raw_to_snapshot_id = (
+                output.get("to_snapshot_id")
+                if name is ToolName.MOODLE_LIST_CHANGES
+                else filters.get("to_snapshot_id")
+                if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
+                else None
+            )
+            to_snapshot_id = (
+                raw_to_snapshot_id
+                if isinstance(raw_to_snapshot_id, int) and not isinstance(raw_to_snapshot_id, bool)
+                else None
+            )
             sources.append(
                 AcademicSourceReference(
                     name.value,
@@ -3646,12 +4075,40 @@ def _sources_for_evidence(
                     ),
                     source_ref=source_ref,
                     source_turn=source_turn,
+                    change_id=(
+                        raw_record.get("change_id")
+                        if name is ToolName.MOODLE_LIST_CHANGES
+                        and isinstance(raw_record.get("change_id"), str)
+                        else filters.get("change_id")
+                        if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
+                        and isinstance(filters.get("change_id"), str)
+                        else None
+                    ),
+                    from_snapshot_id=from_snapshot_id,
+                    to_snapshot_id=to_snapshot_id,
+                    changed_fields=(
+                        tuple(
+                            value
+                            for value in raw_record.get("changed_fields", ())
+                            if isinstance(value, str)
+                        )
+                        if name is ToolName.MOODLE_LIST_CHANGES
+                        else tuple(
+                            value
+                            for value in filters.get("changed_fields", ())
+                            if isinstance(value, str)
+                        )
+                        if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
+                        and isinstance(filters.get("changed_fields"), (tuple, list))
+                        else ()
+                    ),
                 )
             )
     return tuple(sources)
 
 
 def _source_for_context_entity(entity: TrustedContextEntity) -> AcademicSourceReference:
+    change = entity.change
     return AcademicSourceReference(
         tool_name=entity.source_tool,
         entity_kind=entity.kind.value,
@@ -3662,6 +4119,12 @@ def _source_for_context_entity(entity: TrustedContextEntity) -> AcademicSourceRe
         title=entity.title,
         source_ref=entity.source_ref,
         source_turn=entity.source_turn,
+        change_id=change.change_id if change is not None else None,
+        from_snapshot_id=change.from_snapshot_id if change is not None else None,
+        to_snapshot_id=change.to_snapshot_id if change is not None else None,
+        changed_fields=(
+            tuple(field.value for field in change.changed_fields) if change is not None else ()
+        ),
     )
 
 
@@ -3678,11 +4141,12 @@ def _context_update_from_evidence(
         ToolName.ACADEMIC_LIST_ASSIGNMENTS,
         ToolName.ACADEMIC_LIST_DOCUMENTS,
         ToolName.STUDY_TASK_LIST,
+        ToolName.MOODLE_LIST_CHANGES,
     }
-    task_action_tools = _STUDY_TASK_WRITE_TOOLS | {ToolName.STUDY_TASK_GET}
+    task_action_tools = _STUDY_TASK_MUTATION_TOOLS | {ToolName.STUDY_TASK_GET}
     latest_task_action: TrustedContextEntity | None = None
     for source_ref, name, output in values:
-        if name in {ToolName.RAG_ANSWER, ToolName.MOODLE_LIST_CHANGES}:
+        if name is ToolName.RAG_ANSWER:
             continue
         records = output.get("records")
         if not isinstance(records, (tuple, list)):
@@ -3691,7 +4155,9 @@ def _context_update_from_evidence(
             kind = ContextEntityKind.COURSE
         elif name in {ToolName.ACADEMIC_LIST_ASSIGNMENTS, ToolName.ACADEMIC_GET_ASSIGNMENT}:
             kind = ContextEntityKind.ASSIGNMENT
-        elif name in _STUDY_TASK_READ_TOOLS | _STUDY_TASK_WRITE_TOOLS:
+        elif name is ToolName.MOODLE_LIST_CHANGES:
+            kind = ContextEntityKind.MOODLE_CHANGE
+        elif name in _STUDY_TASK_READ_TOOLS | _STUDY_TASK_MUTATION_TOOLS:
             kind = ContextEntityKind.STUDY_TASK
         else:
             kind = ContextEntityKind.DOCUMENT
@@ -3715,6 +4181,13 @@ def _context_update_from_evidence(
                 if kind is ContextEntityKind.COURSE and isinstance(title, str)
                 else raw_record.get("course_title")
             )
+            change = (
+                _trusted_moodle_change_context(output, raw_record)
+                if kind is ContextEntityKind.MOODLE_CHANGE
+                else None
+            )
+            if kind is ContextEntityKind.MOODLE_CHANGE and change is None:
+                continue
             entity = TrustedContextEntity(
                 kind=kind,
                 entity_id=entity_id,
@@ -3729,6 +4202,7 @@ def _context_update_from_evidence(
                     if kind is ContextEntityKind.DOCUMENT
                     else None
                 ),
+                change=change,
             )
             entities.append(entity)
             current.append(entity)
@@ -3769,6 +4243,73 @@ def _context_update_from_evidence(
         active_entity=active_entity,
         active_course=active_course,
     )
+
+
+def _trusted_moodle_change_context(
+    output: Mapping[str, object],
+    record: Mapping[str, object],
+) -> TrustedMoodleChangeContext | None:
+    try:
+        fields = record.get("changed_fields")
+        if not isinstance(fields, (tuple, list)):
+            return None
+        detected_at = _parse_trusted_datetime(record.get("detected_at"))
+        from_snapshot_id = output.get("from_snapshot_id")
+        to_snapshot_id = output.get("to_snapshot_id")
+        if (
+            detected_at is None
+            or not _positive_id(from_snapshot_id)
+            or not _positive_id(to_snapshot_id)
+        ):
+            return None
+        return TrustedMoodleChangeContext(
+            change_id=cast(str, record.get("change_id")),
+            from_snapshot_id=cast(int, from_snapshot_id),
+            to_snapshot_id=cast(int, to_snapshot_id),
+            entity_type=EntityType(cast(str, record.get("entity_type"))),
+            change_kind=ChangeKind(cast(str, record.get("change_kind"))),
+            changed_fields=tuple(ChangeField(cast(str, field)) for field in fields),
+            before_title=(
+                cast(str | None, record.get("before_title"))
+                if isinstance(record.get("before_title"), str)
+                else None
+            ),
+            after_title=(
+                cast(str | None, record.get("after_title"))
+                if isinstance(record.get("after_title"), str)
+                else None
+            ),
+            before_course_code=(
+                cast(str | None, record.get("before_course_code"))
+                if isinstance(record.get("before_course_code"), str)
+                else None
+            ),
+            after_course_code=(
+                cast(str | None, record.get("after_course_code"))
+                if isinstance(record.get("after_course_code"), str)
+                else None
+            ),
+            before_due_at=_parse_trusted_datetime(record.get("before_due_at")),
+            after_due_at=_parse_trusted_datetime(record.get("after_due_at")),
+            before_published_at=_parse_trusted_datetime(record.get("before_published_at")),
+            after_published_at=_parse_trusted_datetime(record.get("after_published_at")),
+            before_document_version=cast(int | None, record.get("before_document_version")),
+            after_document_version=cast(int | None, record.get("after_document_version")),
+            detected_at=detected_at,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_trusted_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("trusted date is malformed")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("trusted date must include a timezone")
+    return parsed.astimezone(timezone.utc)
 
 
 def _course_context_from_entity(entity: TrustedContextEntity) -> TrustedContextEntity:

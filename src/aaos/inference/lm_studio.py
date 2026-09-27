@@ -423,6 +423,44 @@ def _study_task_decision_response_format(
     return response_format
 
 
+def _study_task_change_decision_response_format() -> dict[str, Any]:
+    response_format = cast(dict[str, Any], deepcopy(_ACADEMIC_DECISION_RESPONSE_FORMAT))
+    json_schema = response_format["json_schema"]
+    json_schema["name"] = "aaos_study_task_change_decision_contextual_v1"
+    branches = json_schema["schema"]["oneOf"]
+    refusal_branch = next(
+        branch
+        for branch in branches
+        if branch.get("properties", {}).get("action", {}).get("enum") == ["REFUSE"]
+    )
+    answer_branch = next(
+        branch
+        for branch in branches
+        if branch.get("properties", {}).get("action", {}).get("enum") == ["ANSWER"]
+    )
+    json_schema["schema"]["oneOf"] = [
+        _academic_call_schema(
+            "study_task.acknowledge_deadline_change",
+            {
+                "context_ref": {
+                    "type": "string",
+                    "enum": ["ctx-1"],
+                    "maxLength": 5,
+                }
+            },
+            ["context_ref"],
+        ),
+        answer_branch,
+        refusal_branch,
+    ]
+    return response_format
+
+
+_STUDY_TASK_CHANGE_DECISION_CONTEXTUAL_RESPONSE_FORMAT = (
+    _study_task_change_decision_response_format()
+)
+
+
 _STUDY_TASK_READ_DECISION_RESPONSE_FORMAT = _study_task_decision_response_format(
     provider_name="aaos_study_task_read_decision_v1",
     include_writes=False,
@@ -676,6 +714,7 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "study_task_write_decision_task_contextual": (
         _STUDY_TASK_WRITE_DECISION_TASK_CONTEXTUAL_RESPONSE_FORMAT
     ),
+    "study_task_change_decision_contextual": _STUDY_TASK_CHANGE_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
     "calendar_proposal_decision": _CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT,
     "calendar_proposal_decision_contextual": (
         _CONTEXTUAL_CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT

@@ -9,9 +9,12 @@ import threading
 import time
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Callable
 from uuid import UUID, uuid4
+
+from aaos.moodle.changes import ChangeField, ChangeKind, EntityType
 
 MAX_CONVERSATION_TURNS = 8
 MAX_CONTEXT_ENTITIES = 16
@@ -24,7 +27,8 @@ CONVERSATION_SESSION_TTL_SECONDS = 30 * 60
 _SOURCE_REFERENCE = re.compile(r"^read-[1-8]$")
 _SOURCE_TOOL = re.compile(
     r"^(?:academic\.(?:list_courses|get_course|list_assignments|get_assignment|list_documents)"
-    r"|study_task\.(?:list|get|create|update|complete))$"
+    r"|study_task\.(?:list|get|create|update|complete|acknowledge_deadline_change)"
+    r"|moodle\.list_changes)$"
 )
 _ORDINALS = {
     "first": 1,
@@ -40,11 +44,12 @@ _ORDINALS = {
 }
 _ORDINAL_REFERENCE = re.compile(
     r"\b(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)"
-    r"\s+(?:(one)|(course|assignment|document|task))\b"
+    r"\s+(?:(one)|(course|assignment|document|task|change))\b"
 )
 _ENTITY_ID_REFERENCE = re.compile(r"\b(course|assignment|document|task)\s*#?\s*([1-9][0-9]{0,8})\b")
 _TYPED_REFERENCE = re.compile(
-    r"\bthat\s+(course|assignment|document|task)\b|\bthis\s+(course|assignment|task)\b"
+    r"\bthat\s+(course|assignment|document|task|change)\b|"
+    r"\bthis\s+(course|assignment|task|change)\b"
 )
 _GENERIC_REFERENCE = re.compile(
     r"\b(?:"
@@ -56,8 +61,22 @@ _GENERIC_REFERENCE = re.compile(
     r"\s+(?:it|that)"
     r"|(?:it|that)(?=\s*[?.!,;:]|$)"
     r"|(?:mark|complete|rename|update|change|set|reprioritize|schedule)\s+(?:it|that|this)\b"
+    r"|(?:match|reflect|apply)\s+(?:it|that)\b"
     r"|(?:change|set)\s+its\s+(?:priority|title|name)\b"
     r")\b"
+)
+_CHANGE_REFERENCE = re.compile(
+    r"\b(?:that|this|the)\s+"
+    r"(?:(deadline|due\s+date|document|assignment|course|moodle)\s+)?change\b"
+)
+_CHANGE_VALUE_REFERENCE = re.compile(
+    r"\b(deadline|due(?:\s+date)?|publication\s+date|document\s+version|course\s+code)\b"
+)
+_NEW_DOCUMENT_REFERENCE = re.compile(
+    r"\b(?:new|latest|updated)\s+(?:document|version)\b|\bnew\s+version\b"
+)
+_CHANGED_ENTITY_REFERENCE = re.compile(
+    r"\b(?:the\s+)?(assignment|document|course)\s+(?:that\s+)?changed\b"
 )
 
 
@@ -66,6 +85,7 @@ class ContextEntityKind(StrEnum):
     ASSIGNMENT = "assignment"
     DOCUMENT = "document"
     STUDY_TASK = "study_task"
+    MOODLE_CHANGE = "moodle_change"
 
 
 class ContextResolutionStatus(StrEnum):
@@ -85,6 +105,100 @@ class ConversationContextErrorCode(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class TrustedMoodleChangeContext:
+    """Validated, bounded Phase E change facts retained for one conversation."""
+
+    change_id: str
+    from_snapshot_id: int
+    to_snapshot_id: int
+    entity_type: EntityType
+    change_kind: ChangeKind
+    changed_fields: tuple[ChangeField, ...]
+    before_title: str | None
+    after_title: str | None
+    before_course_code: str | None
+    after_course_code: str | None
+    before_due_at: datetime | None
+    after_due_at: datetime | None
+    before_published_at: datetime | None
+    after_published_at: datetime | None
+    before_document_version: int | None
+    after_document_version: int | None
+    detected_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.change_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}", self.change_id
+        ):
+            raise ValueError("change_id must be a bounded trusted identifier")
+        for name, snapshot_id in (
+            ("from_snapshot_id", self.from_snapshot_id),
+            ("to_snapshot_id", self.to_snapshot_id),
+        ):
+            if (
+                isinstance(snapshot_id, bool)
+                or not isinstance(snapshot_id, int)
+                or snapshot_id <= 0
+            ):
+                raise ValueError(f"{name} must be a positive integer")
+        if not isinstance(self.entity_type, EntityType) or not isinstance(
+            self.change_kind, ChangeKind
+        ):
+            raise TypeError("change entity and kind must use closed Moodle enums")
+        if (
+            not isinstance(self.changed_fields, tuple)
+            or not self.changed_fields
+            or len(self.changed_fields) > len(ChangeField)
+            or any(not isinstance(field, ChangeField) for field in self.changed_fields)
+            or len(set(self.changed_fields)) != len(self.changed_fields)
+        ):
+            raise ValueError("changed_fields must be a bounded tuple of unique Moodle fields")
+        if self.from_snapshot_id > self.to_snapshot_id or (
+            self.from_snapshot_id == self.to_snapshot_id
+            and not (
+                self.entity_type is EntityType.DOCUMENT
+                and ChangeField.DOCUMENT_VERSION in self.changed_fields
+            )
+        ):
+            raise ValueError("change snapshots must be ordered except for document-version changes")
+        for name, title_value in (
+            ("before_title", self.before_title),
+            ("after_title", self.after_title),
+            ("before_course_code", self.before_course_code),
+            ("after_course_code", self.after_course_code),
+        ):
+            if title_value is not None and (
+                not isinstance(title_value, str) or len(title_value) > 2048
+            ):
+                raise ValueError(f"{name} must be bounded text or None")
+        for name, timestamp_value in (
+            ("before_due_at", self.before_due_at),
+            ("after_due_at", self.after_due_at),
+            ("before_published_at", self.before_published_at),
+            ("after_published_at", self.after_published_at),
+            ("detected_at", self.detected_at),
+        ):
+            if timestamp_value is not None and (
+                not isinstance(timestamp_value, datetime)
+                or timestamp_value.tzinfo is None
+                or timestamp_value.utcoffset() is None
+            ):
+                raise ValueError(f"{name} must be timezone-aware")
+            if timestamp_value is not None:
+                object.__setattr__(self, name, timestamp_value.astimezone(timezone.utc))
+        for name, document_version in (
+            ("before_document_version", self.before_document_version),
+            ("after_document_version", self.after_document_version),
+        ):
+            if document_version is not None and (
+                isinstance(document_version, bool)
+                or not isinstance(document_version, int)
+                or document_version <= 0
+            ):
+                raise ValueError(f"{name} must be a positive integer or None")
+
+
+@dataclass(frozen=True, slots=True)
 class TrustedContextEntity:
     """Canonical identity and provenance copied only from validated tool output."""
 
@@ -97,6 +211,7 @@ class TrustedContextEntity:
     source_ref: str
     source_turn: int
     document_version_id: int | None = None
+    change: TrustedMoodleChangeContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ContextEntityKind):
@@ -122,6 +237,15 @@ class TrustedContextEntity:
             or self.kind is not ContextEntityKind.DOCUMENT
         ):
             raise ValueError("document_version_id must be positive and belong to a document")
+        if self.kind is ContextEntityKind.MOODLE_CHANGE:
+            if not isinstance(self.change, TrustedMoodleChangeContext) or self.course_id is None:
+                raise ValueError(
+                    "Moodle change context requires typed change and course references"
+                )
+            if self.source_tool != "moodle.list_changes":
+                raise ValueError("Moodle change context must come from the change reader")
+        elif self.change is not None:
+            raise ValueError("change details may only accompany a Moodle change context")
         for name, value in (("title", self.title), ("course_title", self.course_title)):
             if value is not None and (
                 not isinstance(value, str) or len(value) > MAX_CONTEXT_ENTITY_TITLE_CHARACTERS
@@ -419,6 +543,8 @@ class ContextReferenceResolver:
                 expected_kind = (
                     ContextEntityKind.STUDY_TASK
                     if kind_text == "task"
+                    else ContextEntityKind.MOODLE_CHANGE
+                    if kind_text == "change"
                     else ContextEntityKind(kind_text)
                 )
                 collection = tuple(entity for entity in collection if entity.kind is expected_kind)
@@ -441,6 +567,50 @@ class ContextReferenceResolver:
             )
             return _choose(matches)
 
+        if _NEW_DOCUMENT_REFERENCE.search(normalized) is not None:
+            return _choose(
+                tuple(
+                    entity
+                    for entity in _unique_entities(_all_entities(snapshot))
+                    if entity.kind is ContextEntityKind.MOODLE_CHANGE
+                    and entity.change is not None
+                    and entity.change.entity_type is EntityType.DOCUMENT
+                    and entity.change.after_document_version is not None
+                )
+            )
+
+        changed_entity = _CHANGED_ENTITY_REFERENCE.search(normalized)
+        if changed_entity is not None:
+            changed_entity_type = EntityType(changed_entity.group(1).upper())
+            return _choose(
+                tuple(
+                    entity
+                    for entity in _unique_entities(_all_entities(snapshot))
+                    if entity.kind is ContextEntityKind.MOODLE_CHANGE
+                    and entity.change is not None
+                    and entity.change.entity_type is changed_entity_type
+                )
+            )
+
+        change_reference = _CHANGE_REFERENCE.search(normalized)
+        if change_reference is not None:
+            qualifier = change_reference.group(1)
+            field = ChangeField.DUE_AT if qualifier in {"deadline", "due date"} else None
+            change_entity_type = (
+                EntityType(qualifier.upper())
+                if qualifier in {"document", "assignment", "course"}
+                else None
+            )
+            changes = tuple(
+                entity
+                for entity in _unique_entities(_all_entities(snapshot))
+                if entity.kind is ContextEntityKind.MOODLE_CHANGE
+                and entity.change is not None
+                and (change_entity_type is None or entity.change.entity_type is change_entity_type)
+                and (field is None or field in entity.change.changed_fields)
+            )
+            return _choose(changes)
+
         typed = _TYPED_REFERENCE.search(normalized)
         if typed is not None:
             if normalized.find("this course") >= 0:
@@ -450,11 +620,63 @@ class ContextReferenceResolver:
                 kind = (
                     ContextEntityKind.STUDY_TASK
                     if kind_text == "task"
+                    else ContextEntityKind.MOODLE_CHANGE
+                    if kind_text == "change"
                     else ContextEntityKind(kind_text)
                 )
-                return _choose(
-                    tuple(entity for entity in _all_entities(snapshot) if entity.kind is kind)
+                if kind in {ContextEntityKind.ASSIGNMENT, ContextEntityKind.DOCUMENT}:
+                    expected_entity_type = EntityType(kind.value.upper())
+                    recent_changes = tuple(
+                        entity
+                        for entity in snapshot.last_collection
+                        if entity.kind is ContextEntityKind.MOODLE_CHANGE
+                        and entity.change is not None
+                        and entity.change.entity_type is expected_entity_type
+                    )
+                    if recent_changes:
+                        return _choose(_unique_entities(recent_changes))
+                entities = tuple(
+                    entity for entity in _all_entities(snapshot) if entity.kind is kind
                 )
+                if entities:
+                    return _choose(entities)
+                if kind in {ContextEntityKind.ASSIGNMENT, ContextEntityKind.DOCUMENT}:
+                    entity_type = EntityType(kind.value.upper())
+                    return _choose(
+                        tuple(
+                            entity
+                            for entity in _unique_entities(_all_entities(snapshot))
+                            if entity.kind is ContextEntityKind.MOODLE_CHANGE
+                            and entity.change is not None
+                            and entity.change.entity_type is entity_type
+                        )
+                    )
+                return ContextResolution(ContextResolutionStatus.MISSING)
+
+        value_reference = _CHANGE_VALUE_REFERENCE.search(normalized)
+        if value_reference is not None:
+            referenced_field = {
+                "deadline": ChangeField.DUE_AT,
+                "due": ChangeField.DUE_AT,
+                "due date": ChangeField.DUE_AT,
+                "publication date": ChangeField.PUBLISHED_AT,
+                "document version": ChangeField.DOCUMENT_VERSION,
+                "course code": ChangeField.COURSE_CODE,
+            }[value_reference.group(1)]
+            all_changes = tuple(
+                entity
+                for entity in _unique_entities(_all_entities(snapshot))
+                if entity.kind is ContextEntityKind.MOODLE_CHANGE
+            )
+            changes = tuple(
+                entity
+                for entity in all_changes
+                if entity.change is not None and referenced_field in entity.change.changed_fields
+            )
+            if changes:
+                return _choose(changes)
+            if all_changes:
+                return ContextResolution(ContextResolutionStatus.MISSING)
 
         if _GENERIC_REFERENCE.search(normalized) is not None:
             if snapshot.active_entity is not None:
@@ -482,12 +704,33 @@ def serialize_context_hint(resolution: ContextResolution) -> str:
         return "{}"
     assert resolution.entity is not None and resolution.context_ref is not None
     entity = resolution.entity
-    value = {
+    value: dict[str, object] = {
         "reference": resolution.context_ref,
         "kind": entity.kind.value,
         "title": _preview(entity.title),
         "course_title": _preview(entity.course_title),
     }
+    if entity.change is not None:
+        change = entity.change
+        value["change"] = {
+            "entity_type": change.entity_type.value,
+            "change_kind": change.change_kind.value,
+            "changed_fields": tuple(field.value for field in change.changed_fields),
+            "before_title": _preview(change.before_title),
+            "after_title": _preview(change.after_title),
+            "before_course_code": _preview(change.before_course_code),
+            "after_course_code": _preview(change.after_course_code),
+            "before_due_at": change.before_due_at.isoformat() if change.before_due_at else None,
+            "after_due_at": change.after_due_at.isoformat() if change.after_due_at else None,
+            "before_published_at": (
+                change.before_published_at.isoformat() if change.before_published_at else None
+            ),
+            "after_published_at": (
+                change.after_published_at.isoformat() if change.after_published_at else None
+            ),
+            "before_document_version": change.before_document_version,
+            "after_document_version": change.after_document_version,
+        }
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_SERIALIZED_CONTEXT_BYTES:
         value["title"] = None
@@ -564,9 +807,14 @@ def _unique_entities(
     entities: tuple[TrustedContextEntity, ...],
 ) -> tuple[TrustedContextEntity, ...]:
     unique: list[TrustedContextEntity] = []
-    seen: set[tuple[ContextEntityKind, int]] = set()
+    seen: set[tuple[ContextEntityKind, int | str]] = set()
     for entity in entities:
-        key = (entity.kind, entity.entity_id)
+        identity: int | str = (
+            entity.change.change_id
+            if entity.kind is ContextEntityKind.MOODLE_CHANGE and entity.change is not None
+            else entity.entity_id
+        )
+        key = (entity.kind, identity)
         if key not in seen:
             seen.add(key)
             unique.append(entity)
@@ -603,5 +851,6 @@ __all__ = [
     "ConversationContextStoreError",
     "ConversationContextUpdate",
     "TrustedContextEntity",
+    "TrustedMoodleChangeContext",
     "serialize_context_hint",
 ]

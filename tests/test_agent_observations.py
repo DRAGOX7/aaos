@@ -523,6 +523,24 @@ def test_tool_failure_exposes_only_safe_error_metadata() -> None:
     }
 
 
+def test_stale_context_failure_has_a_safe_closed_message() -> None:
+    result = ToolResult.failure(
+        ToolError(AgentErrorCode.STALE_CONTEXT, "database details must stay private")
+    )
+
+    observation = sanitize_tool_result(
+        result, tool_name=ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
+    )
+
+    assert observation.status == "ERROR"
+    assert observation.text == "trusted context is stale; no action was applied"
+    assert "database details" not in observation.text
+    assert dict(observation.fields) == {
+        "error_code": AgentErrorCode.STALE_CONTEXT.value,
+        "retryable": False,
+    }
+
+
 def test_rag_projection_preserves_safe_phase4_fields_but_bounds_text() -> None:
     result = ToolResult.success(
         {

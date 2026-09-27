@@ -142,20 +142,26 @@ def add_document_version(
         session.close()
 
 
-def test_disposable_migration_adds_only_non_destructive_snapshot_history_table(
+def test_disposable_migrations_preserve_snapshot_history_and_change_linkage(
     tmp_path: Path,
 ) -> None:
     engine, _factory = service_for(tmp_path / "phase-e.db")
     try:
         with engine.connect() as connection:
             assert MigrationContext.configure(connection).get_current_revision() == (
-                "0011_moodle_sync_snapshots"
+                "0012_change_aware_study_task_mutations"
             )
         assert "moodle_sync_snapshots" in set(inspect(engine).get_table_names())
         assert {
             "uq_moodle_sync_snapshots_one_running",
             "ix_moodle_sync_snapshots_source_finished",
         } <= {index["name"] for index in inspect(engine).get_indexes("moodle_sync_snapshots")}
+        assert {
+            "source_change_id",
+            "source_from_snapshot_id",
+            "source_to_snapshot_id",
+            "source_changed_field",
+        } <= {column["name"] for column in inspect(engine).get_columns("study_task_mutations")}
     finally:
         engine.dispose()
 

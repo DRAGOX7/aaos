@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 import pytest
@@ -15,8 +16,10 @@ from aaos.agent.conversation_context import (
     ConversationContextStoreError,
     ConversationContextUpdate,
     TrustedContextEntity,
+    TrustedMoodleChangeContext,
     serialize_context_hint,
 )
+from aaos.moodle.changes import ChangeField, ChangeKind, EntityType
 
 
 class FakeClock:
@@ -308,3 +311,212 @@ def test_short_entity_title_requires_phrase_boundaries() -> None:
 
     assert resolution.status is ContextResolutionStatus.NONE
     assert resolution.entity is None
+
+
+def _change_entity(
+    change_id: str,
+    entity_id: int = 20,
+    *,
+    entity_type: EntityType = EntityType.ASSIGNMENT,
+    changed_field: ChangeField = ChangeField.DUE_AT,
+    from_snapshot_id: int = 10,
+    to_snapshot_id: int = 11,
+) -> TrustedContextEntity:
+    return TrustedContextEntity(
+        kind=ContextEntityKind.MOODLE_CHANGE,
+        entity_id=entity_id,
+        title="Neural Networks Report",
+        course_id=7,
+        course_title="Deep Learning",
+        source_tool="moodle.list_changes",
+        source_ref="read-1",
+        source_turn=1,
+        change=TrustedMoodleChangeContext(
+            change_id=change_id,
+            from_snapshot_id=from_snapshot_id,
+            to_snapshot_id=to_snapshot_id,
+            entity_type=entity_type,
+            change_kind=ChangeKind.MODIFIED,
+            changed_fields=(changed_field,),
+            before_title="Neural Networks Report",
+            after_title="Neural Networks Report",
+            before_course_code=None,
+            after_course_code=None,
+            before_due_at=(
+                datetime(2026, 9, 30, 12, tzinfo=timezone.utc)
+                if changed_field is ChangeField.DUE_AT
+                else None
+            ),
+            after_due_at=(
+                datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+                if changed_field is ChangeField.DUE_AT
+                else None
+            ),
+            before_published_at=None,
+            after_published_at=None,
+            before_document_version=(1 if changed_field is ChangeField.DOCUMENT_VERSION else None),
+            after_document_version=(2 if changed_field is ChangeField.DOCUMENT_VERSION else None),
+            detected_at=datetime(2026, 9, 27, 12, tzinfo=timezone.utc),
+        ),
+    )
+
+
+def test_resolver_selects_trusted_moodle_change_and_serializes_safe_deadlines() -> None:
+    store = ConversationContextStore()
+    lease = store.begin_turn()
+    change = _change_entity("10-11-1")
+    store.finish_turn(
+        lease,
+        ConversationContextUpdate(
+            entities=(change,),
+            last_collection=(change,),
+            active_entity=change,
+        ),
+    )
+    followup = store.begin_turn(lease.conversation_id)
+    resolver = ContextReferenceResolver()
+
+    explicit = resolver.resolve("Explain that change", followup.snapshot)
+    ordinal = resolver.resolve("Explain the first change", followup.snapshot)
+    missing = resolver.resolve("Explain the second change", followup.snapshot)
+    hint = serialize_context_hint(explicit)
+
+    assert explicit.status is ContextResolutionStatus.RESOLVED
+    assert explicit.entity == change
+    assert ordinal.entity == change
+    assert missing.status is ContextResolutionStatus.MISSING
+    assert '"before_due_at":"2026-09-30T12:00:00+00:00"' in hint
+    assert '"after_due_at":"2026-10-02T12:00:00+00:00"' in hint
+    assert '"entity_id"' not in hint
+    store.abort_turn(followup)
+
+
+def test_change_resolution_is_ambiguous_without_a_unique_active_change() -> None:
+    first = _change_entity("10-11-1", entity_id=20)
+    second = _change_entity("10-11-2", entity_id=21)
+    store = ConversationContextStore()
+    lease = store.begin_turn()
+    store.finish_turn(
+        lease,
+        ConversationContextUpdate(
+            entities=(first, second),
+            last_collection=(first, second),
+        ),
+    )
+    followup = store.begin_turn(lease.conversation_id)
+
+    result = ContextReferenceResolver().resolve("Explain that change", followup.snapshot)
+
+    assert result.status is ContextResolutionStatus.AMBIGUOUS
+    store.abort_turn(followup)
+
+
+def test_typed_change_references_resolve_by_field_entity_and_result_order() -> None:
+    deadline = _change_entity("10-11-1", entity_id=20)
+    document = _change_entity(
+        "10-11-2",
+        entity_id=30,
+        entity_type=EntityType.DOCUMENT,
+        changed_field=ChangeField.DOCUMENT_VERSION,
+    )
+    store = ConversationContextStore()
+    lease = store.begin_turn()
+    store.finish_turn(
+        lease,
+        ConversationContextUpdate(
+            entities=(deadline, document),
+            last_collection=(deadline, document),
+        ),
+    )
+    followup = store.begin_turn(lease.conversation_id)
+    resolver = ContextReferenceResolver()
+
+    assert resolver.resolve("Explain the first change", followup.snapshot).entity == deadline
+    assert resolver.resolve("Explain the second change", followup.snapshot).entity == document
+    assert resolver.resolve("Explain the deadline change", followup.snapshot).entity == deadline
+    assert resolver.resolve("What was the old deadline?", followup.snapshot).entity == deadline
+    assert resolver.resolve("When is it due now?", followup.snapshot).entity == deadline
+    assert resolver.resolve("Explain the new document", followup.snapshot).entity == document
+    assert resolver.resolve("Explain that assignment", followup.snapshot).entity == deadline
+    assert (
+        resolver.resolve("Explain the assignment that changed", followup.snapshot).entity
+        == deadline
+    )
+    store.abort_turn(followup)
+
+
+def test_change_field_reference_does_not_fall_back_to_an_unrelated_change() -> None:
+    document = _change_entity(
+        "10-11-2",
+        entity_id=30,
+        entity_type=EntityType.DOCUMENT,
+        changed_field=ChangeField.DOCUMENT_VERSION,
+    )
+    store = ConversationContextStore()
+    lease = store.begin_turn()
+    store.finish_turn(
+        lease,
+        ConversationContextUpdate(entities=(document,), last_collection=(document,)),
+    )
+    followup = store.begin_turn(lease.conversation_id)
+
+    result = ContextReferenceResolver().resolve("When is the new deadline?", followup.snapshot)
+
+    assert result.status is ContextResolutionStatus.MISSING
+    store.abort_turn(followup)
+
+
+def test_equal_snapshot_ids_are_only_valid_for_document_version_changes() -> None:
+    document_change = _change_entity(
+        "10-10-1",
+        entity_id=30,
+        entity_type=EntityType.DOCUMENT,
+        changed_field=ChangeField.DOCUMENT_VERSION,
+        from_snapshot_id=10,
+        to_snapshot_id=10,
+    )
+
+    assert document_change.change is not None
+    assert document_change.change.from_snapshot_id == document_change.change.to_snapshot_id
+    with pytest.raises(ValueError, match="change snapshots must be ordered"):
+        _change_entity("10-10-2", from_snapshot_id=10, to_snapshot_id=10)
+
+
+def test_change_context_remains_session_isolated() -> None:
+    store = ConversationContextStore()
+    first = store.begin_turn()
+    change = _change_entity("10-11-1")
+    store.finish_turn(
+        first,
+        ConversationContextUpdate(
+            entities=(change,),
+            last_collection=(change,),
+            active_entity=change,
+        ),
+    )
+    other = store.begin_turn()
+
+    assert (
+        ContextReferenceResolver().resolve("Explain that change", other.snapshot).status
+        is ContextResolutionStatus.MISSING
+    )
+    store.abort_turn(other)
+
+
+def test_expired_change_context_cannot_be_resolved() -> None:
+    clock = FakeClock()
+    store = ConversationContextStore(clock=clock)
+    lease = store.begin_turn()
+    change = _change_entity("10-11-1")
+    store.finish_turn(
+        lease,
+        ConversationContextUpdate(
+            entities=(change,),
+            last_collection=(change,),
+            active_entity=change,
+        ),
+    )
+    clock.advance(store.session_ttl_seconds + 1)
+
+    with pytest.raises(ConversationContextStoreError):
+        store.begin_turn(lease.conversation_id)

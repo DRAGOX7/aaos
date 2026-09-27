@@ -477,6 +477,11 @@ def test_generate_serializes_requirement_json_schema_contract(
                 "study_task.complete",
             },
         ),
+        (
+            "study_task_change_decision_contextual",
+            "aaos_study_task_change_decision_contextual_v1",
+            {"study_task.acknowledge_deadline_change"},
+        ),
     ),
 )
 def test_generate_serializes_closed_study_task_decision_contract(
@@ -517,6 +522,16 @@ def test_generate_serializes_closed_study_task_decision_contract(
         and branch["properties"]["tool_name"]["enum"][0].startswith("study_task.")
     }
     assert actual_task_tools == task_tools
+    if schema == "study_task_change_decision_contextual":
+        call_branch = next(
+            branch
+            for branch in branches
+            if branch.get("properties", {}).get("tool_name", {}).get("enum")
+            == ["study_task.acknowledge_deadline_change"]
+        )
+        arguments = call_branch["properties"]["arguments"]
+        assert arguments["required"] == ["context_ref"]
+        assert set(arguments["properties"]) == {"context_ref"}
 
 
 def test_generate_serializes_bounded_atomic_requirement_candidate_contract() -> None:

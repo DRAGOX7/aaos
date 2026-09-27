@@ -57,12 +57,26 @@ class StudyTaskMutationORM(Base):
     __tablename__ = "study_task_mutations"
     __table_args__ = (
         CheckConstraint(
-            "operation IN ('CREATE', 'UPDATE', 'COMPLETE')",
+            "operation IN ('CREATE', 'UPDATE', 'COMPLETE', 'APPLY_CHANGE')",
             name="ck_study_task_mutations_operation",
         ),
         CheckConstraint(
             "length(request_fingerprint) = 64",
             name="ck_study_task_mutations_fingerprint",
+        ),
+        CheckConstraint(
+            "(operation = 'APPLY_CHANGE' AND "
+            "source_change_id IS NOT NULL AND "
+            "source_from_snapshot_id IS NOT NULL AND "
+            "source_to_snapshot_id IS NOT NULL AND "
+            "source_changed_field = 'due_at' AND "
+            "length(trim(source_change_id)) BETWEEN 1 AND 255) OR "
+            "(operation <> 'APPLY_CHANGE' AND "
+            "source_change_id IS NULL AND "
+            "source_from_snapshot_id IS NULL AND "
+            "source_to_snapshot_id IS NULL AND "
+            "source_changed_field IS NULL)",
+            name="ck_study_task_mutations_change_source",
         ),
         Index("ix_study_task_mutations_task", "study_task_id"),
     )
@@ -74,6 +88,14 @@ class StudyTaskMutationORM(Base):
         ForeignKey("study_tasks.id", ondelete="RESTRICT"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    source_change_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_from_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("moodle_sync_snapshots.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_to_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("moodle_sync_snapshots.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_changed_field: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 __all__ = ["StudyTaskMutationORM", "StudyTaskORM"]
