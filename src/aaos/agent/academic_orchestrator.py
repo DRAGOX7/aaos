@@ -2635,6 +2635,18 @@ class ReadOnlyAcademicAssistant:
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
                 and calendar_intent
             )
+            change_explanation_intent = (
+                context_entity is not None
+                and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
+                and _CHANGE_EXPLANATION_INTENT.search(question.strip()) is not None
+            )
+            if (change_explanation_intent and (task_change_intent or calendar_intent)) or (
+                task_change_intent and calendar_intent
+            ):
+                return direct_refusal(
+                    "Please ask to explain the Moodle change and request each supported action "
+                    "separately. No StudyTask update or Calendar proposal was made."
+                )
             if task_change_intent and not _is_trusted_assignment_deadline_change(context_entity):
                 return direct_refusal(
                     "This change does not contain a current assignment deadline that can be "
@@ -2672,10 +2684,32 @@ class ReadOnlyAcademicAssistant:
                     previous = _format_trusted_deadline(change.before_due_at)
                     return direct_answer(f"The previous deadline was {previous}.")
                 if _CURRENT_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
-                    current = _format_trusted_deadline(change.after_due_at)
-                    return direct_answer(
-                        f"The retained Moodle change set the deadline to {current}."
-                    )
+                    try:
+                        assignment = self._academic.get_assignment(context_entity.entity_id)
+                    except Exception:
+                        return direct_refusal(
+                            "I couldn't verify the current assignment deadline from local "
+                            "academic records."
+                        )
+                    if (
+                        not isinstance(assignment, AssignmentSummary)
+                        or assignment.id != context_entity.entity_id
+                        or (
+                            assignment.due_at is not None
+                            and (
+                                assignment.due_at.tzinfo is None
+                                or assignment.due_at.utcoffset() is None
+                            )
+                        )
+                    ):
+                        return direct_refusal(
+                            "I couldn't verify the current assignment deadline from local "
+                            "academic records."
+                        )
+                    if assignment.due_at is None:
+                        return direct_answer("There is currently no assignment deadline.")
+                    current = _format_trusted_deadline(assignment.due_at)
+                    return direct_answer(f"The current assignment deadline is {current}.")
             calendar_enabled = (
                 (not is_moodle_change_request(question.strip()) or calendar_change_intent)
                 and calendar_intent

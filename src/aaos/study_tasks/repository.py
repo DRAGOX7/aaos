@@ -247,7 +247,6 @@ class StudyTaskRepository:
                     select(StudyTaskORM)
                     .where(
                         StudyTaskORM.assignment_id == assignment_id,
-                        StudyTaskORM.status == StudyTaskStatus.OPEN.value,
                     )
                     .order_by(StudyTaskORM.id.asc())
                     .limit(2)
@@ -258,6 +257,8 @@ class StudyTaskRepository:
             if len(linked_tasks) > 1:
                 raise StudyTaskAmbiguousAssignmentError()
             task = linked_tasks[0]
+            if task.status != StudyTaskStatus.OPEN.value:
+                raise StudyTaskNotFoundError()
 
             assignment = session.get(AssignmentORM, assignment_id)
             if (

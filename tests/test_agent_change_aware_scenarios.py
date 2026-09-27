@@ -140,6 +140,7 @@ def _assistant(
     gateway: FakeGateway,
     change_reader: FakeMoodleChangeReader,
     *,
+    academic_reader: ScenarioAcademicReader | None = None,
     context_store: ConversationContextStore | None = None,
     document_reader: ScenarioDocumentReader | None = None,
     rag_service: RecordingRagService | None = None,
@@ -148,7 +149,7 @@ def _assistant(
 ) -> ReadOnlyAcademicAssistant:
     return ReadOnlyAcademicAssistant(
         gateway,
-        ScenarioAcademicReader(),
+        academic_reader or ScenarioAcademicReader(),
         document_reader or ScenarioDocumentReader(),
         rag_service or RecordingRagService(rag_response()),
         clock=lambda: NOW,
@@ -247,14 +248,110 @@ def test_old_and_current_deadline_followups_use_trusted_values_without_a_model_c
     assert old.status is AcademicAskStatus.ANSWERED
     assert old.answer_text == "The previous deadline was 2026-09-30 12:00 UTC."
     assert current.status is AcademicAskStatus.ANSWERED
-    assert (
-        current.answer_text
-        == "The retained Moodle change set the deadline to 2026-09-29 12:00 UTC."
-    )
+    assert current.answer_text == "The current assignment deadline is 2026-09-29 12:00 UTC."
     assert old_gateway.requests == []
     assert current_gateway.requests == []
     assert old.context_sources[0].change_id == "1-2-1"
     assert current.context_sources[0].changed_fields == ("due_at",)
+
+
+def test_current_deadline_followup_reads_the_canonical_assignment_after_a_later_sync() -> None:
+    context_store = ConversationContextStore()
+    reader = FakeMoodleChangeReader(change_set())
+    first = _query_changes(context_store, reader)
+    academic = ScenarioAcademicReader()
+    academic.assignment = academic.assignment.model_copy(update={"due_at": NOW + timedelta(days=6)})
+    gateway = FakeGateway()
+
+    current = asyncio.run(
+        _assistant(
+            gateway,
+            reader,
+            academic_reader=academic,
+            context_store=context_store,
+        ).ask("When is it due now?", conversation_id=first.conversation_id)
+    )
+
+    assert current.status is AcademicAskStatus.ANSWERED
+    assert current.answer_text == "The current assignment deadline is 2026-10-03 12:00 UTC."
+    assert academic.calls == [("get_assignment", 20)]
+    assert gateway.requests == []
+
+
+def test_current_deadline_followup_refuses_when_the_canonical_read_fails() -> None:
+    class UnavailableAcademicReader(ScenarioAcademicReader):
+        def get_assignment(self, assignment_id: int) -> AssignmentSummary:
+            del assignment_id
+            raise RuntimeError("local assignment read unavailable")
+
+    context_store = ConversationContextStore()
+    reader = FakeMoodleChangeReader(change_set())
+    first = _query_changes(context_store, reader)
+    gateway = FakeGateway()
+
+    current = asyncio.run(
+        _assistant(
+            gateway,
+            reader,
+            academic_reader=UnavailableAcademicReader(),
+            context_store=context_store,
+        ).ask("When is it due now?", conversation_id=first.conversation_id)
+    )
+
+    assert current.status is AcademicAskStatus.REFUSED
+    assert current.answer_text is not None
+    assert "couldn't verify the current assignment deadline" in current.answer_text
+    assert "2026-09-29" not in current.answer_text
+    assert gateway.requests == []
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    (
+        "Explain that change and update my study task deadline to match it.",
+        "Explain that change and create a calendar event for the new deadline.",
+        "Update my study task deadline to match it and create a calendar event for it.",
+    ),
+)
+def test_combined_change_explanation_or_action_requests_are_refused_before_execution(
+    tmp_path: Path,
+    request_text: str,
+) -> None:
+    service, session_factory, engine, _clock = _task_database(tmp_path)
+    task = service.create(request_id=REQUEST_ID, assignment_id=20)
+    calendar = FakeCalendarProposalService()
+    store = ConversationContextStore()
+    reader = FakeMoodleChangeReader(change_set())
+    first = _query_changes(
+        store,
+        reader,
+        task_service=service,
+        calendar_service=calendar,
+    )
+    gateway = FakeGateway()
+
+    result = asyncio.run(
+        _assistant(
+            gateway,
+            reader,
+            context_store=store,
+            task_service=service,
+            calendar_service=calendar,
+        ).ask(
+            request_text,
+            conversation_id=first.conversation_id,
+            request_id=TASK_ACTION_ID,
+        )
+    )
+
+    assert result.status is AcademicAskStatus.REFUSED
+    assert gateway.requests == []
+    assert service.get(task.id) == task
+    assert calendar.calls == []
+    assert calendar.provider_write_count == 0
+    with session_factory() as session:
+        assert session.query(StudyTaskMutationORM).filter_by(operation="APPLY_CHANGE").count() == 0
+    engine.dispose()
 
 
 def test_no_change_result_cannot_invent_a_trusted_deadline() -> None:
@@ -609,6 +706,11 @@ def test_multiple_linked_study_tasks_prevent_ambiguous_deadline_acknowledgement(
 ) -> None:
     service, session_factory, engine, clock = _task_database(tmp_path)
     first_task = service.create(request_id=REQUEST_ID, assignment_id=20)
+    completed_first_task = service.complete(
+        first_task.id,
+        request_id=UUID("a0000000-0000-4000-8000-000000000007"),
+    )
+    assert completed_first_task.status.value == "COMPLETED"
     distractor_created = NOW
     with engine.begin() as connection:
         for index in range(49):
@@ -643,7 +745,7 @@ def test_multiple_linked_study_tasks_prevent_ambiguous_deadline_acknowledgement(
     assert result.status is AcademicAskStatus.FAILED
     assert result.failure_code is not None
     assert result.failure_code.value == "AMBIGUOUS_STUDY_TASK"
-    assert service.get(first_task.id).updated_at == first_task.updated_at
+    assert service.get(first_task.id) == completed_first_task
     assert service.get(second_task.id).updated_at == second_task.updated_at
     with session_factory() as session:
         assert session.query(StudyTaskMutationORM).filter_by(operation="APPLY_CHANGE").count() == 0
