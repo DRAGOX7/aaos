@@ -182,6 +182,7 @@ _CHANGE_EXPLANATION_INTENT = re.compile(
     r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
     re.IGNORECASE,
 )
+_CHANGE_DISCUSSION_INTENT = re.compile(r"\btell\s+me\s+about\b", re.IGNORECASE)
 _STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
     r"\b(?:update|change|adjust|set)\b.{0,100}\b(?:study\s+)?task\b"
     r".{0,80}\b(?:deadline|due\s+date)\b|"
@@ -2654,6 +2655,7 @@ class ReadOnlyAcademicAssistant:
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
                 and (
                     _CHANGE_EXPLANATION_INTENT.search(question.strip()) is not None
+                    or _CHANGE_DISCUSSION_INTENT.search(question.strip()) is not None
                     or is_moodle_change_query(question.strip())
                 )
             )
