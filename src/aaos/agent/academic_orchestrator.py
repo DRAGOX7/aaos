@@ -207,18 +207,18 @@ _STUDY_TASK_CHANGE_ADVISORY = re.compile(
     re.IGNORECASE,
 )
 _OLD_DEADLINE_VALUE_ASK = re.compile(
-    r"\b(?:old|previous|before|earlier)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
-    r"\b(?:deadline|due(?:\s+date)?)\b.{0,48}\b(?:old|previous|before|earlier)\b",
+    r"\b(?:old|previous|before|earlier)\b.{0,48}\b(?:deadlines?|due(?:\s+dates?)?)\b|"
+    r"\b(?:deadlines?|due(?:\s+dates?)?)\b.{0,48}\b(?:old|previous|before|earlier)\b",
     re.IGNORECASE,
 )
 _CHANGE_AFTER_DEADLINE_VALUE_ASK = re.compile(
-    r"\b(?:new|after)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
-    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:new|after)\b",
+    r"\b(?:new|after)\b.{0,48}\b(?:deadlines?|due(?:\s+dates?)?)\b|"
+    r"\b(?:deadlines?|due(?:\s+dates?)?)\b.{0,32}\b(?:new|after)\b",
     re.IGNORECASE,
 )
 _CURRENT_DEADLINE_VALUE_ASK = re.compile(
-    r"\b(?:current|now|currently|today|latest)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
-    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:now|currently|today|latest)\b|"
+    r"\b(?:current|now|currently|today|latest)\b.{0,48}\b(?:deadlines?|due(?:\s+dates?)?)\b|"
+    r"\b(?:deadlines?|due(?:\s+dates?)?)\b.{0,32}\b(?:now|currently|today|latest)\b|"
     r"\bwhen\b.{0,40}\b(?:is|are)\s+(?:it|this|that|the assignment)\s+due\b",
     re.IGNORECASE,
 )
@@ -2690,54 +2690,64 @@ class ReadOnlyAcademicAssistant:
                 and not calendar_intent
             ):
                 change = context_entity.change
-                if _OLD_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
-                    previous = _format_trusted_deadline(change.before_due_at)
-                    return direct_answer(f"The previous deadline was {previous}.")
-                if _CURRENT_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
-                    try:
-                        assignment = self._academic.get_assignment(context_entity.entity_id)
-                    except Exception:
-                        return direct_refusal(
-                            "I couldn't verify the current assignment deadline from local "
-                            "academic records."
+                asks_old_deadline = _OLD_DEADLINE_VALUE_ASK.search(question.strip()) is not None
+                asks_current_deadline = (
+                    _CURRENT_DEADLINE_VALUE_ASK.search(question.strip()) is not None
+                )
+                asks_change_after_deadline = (
+                    _CHANGE_AFTER_DEADLINE_VALUE_ASK.search(question.strip()) is not None
+                )
+                if asks_old_deadline or asks_current_deadline or asks_change_after_deadline:
+                    answer_parts: list[str] = []
+                    answer_sources: tuple[AcademicSourceReference, ...] = ()
+                    if asks_old_deadline:
+                        previous = _format_trusted_deadline(change.before_due_at)
+                        answer_parts.append(f"The previous deadline was {previous}.")
+                    if asks_change_after_deadline:
+                        after = _format_trusted_deadline(change.after_due_at)
+                        answer_parts.append(
+                            f"The deadline recorded by that Moodle change was {after}."
                         )
-                    if (
-                        not isinstance(assignment, AssignmentSummary)
-                        or assignment.id != context_entity.entity_id
-                        or assignment.course_id != context_entity.course_id
-                        or (
-                            assignment.due_at is not None
-                            and (
-                                assignment.due_at.tzinfo is None
-                                or assignment.due_at.utcoffset() is None
+                    if asks_current_deadline:
+                        try:
+                            assignment = self._academic.get_assignment(context_entity.entity_id)
+                        except Exception:
+                            return direct_refusal(
+                                "I couldn't verify the current assignment deadline from local "
+                                "academic records."
                             )
+                        if (
+                            not isinstance(assignment, AssignmentSummary)
+                            or assignment.id != context_entity.entity_id
+                            or assignment.course_id != context_entity.course_id
+                            or (
+                                assignment.due_at is not None
+                                and (
+                                    assignment.due_at.tzinfo is None
+                                    or assignment.due_at.utcoffset() is None
+                                )
+                            )
+                        ):
+                            return direct_refusal(
+                                "I couldn't verify the current assignment deadline from local "
+                                "academic records."
+                            )
+                        assignment_source = AcademicSourceReference(
+                            tool_name=ToolName.ACADEMIC_GET_ASSIGNMENT.value,
+                            entity_kind=ContextEntityKind.ASSIGNMENT.value,
+                            entity_id=assignment.id,
+                            course_id=assignment.course_id,
+                            source_turn=lease.turn_number,
                         )
-                    ):
-                        return direct_refusal(
-                            "I couldn't verify the current assignment deadline from local "
-                            "academic records."
-                        )
-                    assignment_source = AcademicSourceReference(
-                        tool_name=ToolName.ACADEMIC_GET_ASSIGNMENT.value,
-                        entity_kind=ContextEntityKind.ASSIGNMENT.value,
-                        entity_id=assignment.id,
-                        course_id=assignment.course_id,
-                        source_turn=lease.turn_number,
-                    )
-                    if assignment.due_at is None:
-                        return direct_answer(
-                            "There is currently no assignment deadline.",
-                            sources=(assignment_source,),
-                        )
-                    current = _format_trusted_deadline(assignment.due_at)
+                        answer_sources = (assignment_source,)
+                        if assignment.due_at is None:
+                            answer_parts.append("There is currently no assignment deadline.")
+                        else:
+                            current = _format_trusted_deadline(assignment.due_at)
+                            answer_parts.append(f"The current assignment deadline is {current}.")
                     return direct_answer(
-                        f"The current assignment deadline is {current}.",
-                        sources=(assignment_source,),
-                    )
-                if _CHANGE_AFTER_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
-                    after = _format_trusted_deadline(change.after_due_at)
-                    return direct_answer(
-                        f"The deadline recorded by that Moodle change was {after}."
+                        " ".join(answer_parts),
+                        sources=answer_sources,
                     )
             calendar_enabled = (
                 (not is_moodle_change_request(question.strip()) or calendar_change_intent)

@@ -70,7 +70,7 @@ _CHANGE_REFERENCE = re.compile(
     r"(?:(deadline|due\s+date|document|assignment|course|moodle)\s+)?change\b"
 )
 _CHANGE_VALUE_REFERENCE = re.compile(
-    r"\b(deadline|due(?:\s+date)?|publication\s+date|document\s+version|course\s+code)\b"
+    r"\b(deadlines?|due(?:\s+dates?)?|publication\s+date|document\s+version|course\s+code)\b"
 )
 _NEW_DOCUMENT_REFERENCE = re.compile(
     r"\b(?:new|latest|updated)\s+(?:document|version)\b|\bnew\s+version\b"
@@ -657,8 +657,10 @@ class ContextReferenceResolver:
         if value_reference is not None:
             referenced_field = {
                 "deadline": ChangeField.DUE_AT,
+                "deadlines": ChangeField.DUE_AT,
                 "due": ChangeField.DUE_AT,
                 "due date": ChangeField.DUE_AT,
+                "due dates": ChangeField.DUE_AT,
                 "publication date": ChangeField.PUBLISHED_AT,
                 "document version": ChangeField.DOCUMENT_VERSION,
                 "course code": ChangeField.COURSE_CODE,

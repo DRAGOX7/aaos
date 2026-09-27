@@ -332,6 +332,57 @@ def test_current_deadline_followup_refuses_when_the_canonical_read_fails() -> No
 
 
 @pytest.mark.parametrize(
+    ("request_text", "expected", "expects_live_source"),
+    (
+        (
+            "What were the old and new deadlines?",
+            "The previous deadline was 2026-09-30 12:00 UTC. "
+            "The deadline recorded by that Moodle change was 2026-09-29 12:00 UTC.",
+            False,
+        ),
+        (
+            "What was the old deadline and what is it now?",
+            "The previous deadline was 2026-09-30 12:00 UTC. "
+            "The current assignment deadline is 2026-10-03 12:00 UTC.",
+            True,
+        ),
+    ),
+)
+def test_combined_deadline_questions_return_each_requested_value_with_sources(
+    request_text: str,
+    expected: str,
+    expects_live_source: bool,
+) -> None:
+    context_store = ConversationContextStore()
+    reader = FakeMoodleChangeReader(change_set())
+    first = _query_changes(context_store, reader)
+    academic = ScenarioAcademicReader()
+    academic.assignment = academic.assignment.model_copy(update={"due_at": NOW + timedelta(days=6)})
+    gateway = FakeGateway()
+
+    result = asyncio.run(
+        _assistant(
+            gateway,
+            reader,
+            academic_reader=academic,
+            context_store=context_store,
+        ).ask(request_text, conversation_id=first.conversation_id)
+    )
+
+    assert result.status is AcademicAskStatus.ANSWERED
+    assert result.answer_text == expected
+    assert result.context_sources[0].change_id == "1-2-1"
+    if expects_live_source:
+        assert len(result.sources) == 1
+        assert result.sources[0].entity_id == 20
+        assert academic.calls == [("get_assignment", 20)]
+    else:
+        assert result.sources == ()
+        assert academic.calls == []
+    assert gateway.requests == []
+
+
+@pytest.mark.parametrize(
     "request_text",
     (
         "Explain that change and update my study task deadline to match it.",

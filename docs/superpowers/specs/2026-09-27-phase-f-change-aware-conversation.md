@@ -34,7 +34,9 @@ model context hint; canonical database IDs remain application-side.
 Before/after deadline questions report the selected change's retained values.
 Questions asking for the current, now, today, or latest deadline re-read the
 canonical Assignment through its trusted context ID, attach that read as an
-Ask source, and refuse if the current value cannot be verified.
+Ask source, and refuse if the current value cannot be verified. A question
+asking for multiple deadline states returns each requested value with its
+corresponding source.
 
 ## Follow-up composition
 
