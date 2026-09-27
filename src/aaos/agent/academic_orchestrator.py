@@ -182,7 +182,13 @@ _CHANGE_EXPLANATION_INTENT = re.compile(
     r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
     re.IGNORECASE,
 )
-_CHANGE_DISCUSSION_INTENT = re.compile(r"\btell\s+me\s+about\b", re.IGNORECASE)
+# Combined-action preflight only; keep this separate from RAG routing intent.
+_CHANGE_DISCUSSION_INTENT = re.compile(
+    r"\b(?:tell|give|provide|share|show)\s+(?:me|us)\b|"
+    r"\b(?:details?|information|context|background|overview|summary)\b|"
+    r"\b(?:want|need|would\s+like)\s+to\s+know\b",
+    re.IGNORECASE,
+)
 _STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
     r"\b(?:update|change|adjust|set)\b.{0,100}\b(?:study\s+)?task\b"
     r".{0,80}\b(?:deadline|due\s+date)\b|"

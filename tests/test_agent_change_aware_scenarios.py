@@ -392,6 +392,7 @@ def test_combined_deadline_questions_return_each_requested_value_with_sources(
         "Which assignments changed? Update my study task deadline to match that change.",
         "Was there a change to the deadline? Update my study task deadline to match that change.",
         "Tell me about the change to the deadline, then update my study task to match that change.",
+        "Give me details of that change, then update my study task to match that change.",
         "Update my study task deadline to match it and create a calendar event for it.",
     ),
 )
