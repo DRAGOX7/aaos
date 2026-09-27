@@ -184,7 +184,11 @@ _CHANGE_EXPLANATION_INTENT = re.compile(
 )
 # Combined-action preflight only; keep this separate from RAG routing intent.
 _CHANGE_DISCUSSION_INTENT = re.compile(
-    r"\b(?:tell|give|provide|share|show)\s+(?:me|us)\b|"
+    r"\btell\s+(?:me|us)\s+about\b|"
+    r"\b(?:walk|take)\s+(?:me|us)\s+through\b|"
+    r"\b(?:give|provide|share|show)\s+(?:me|us)\b.{0,40}"
+    r"\b(?:details?|information|context|background|overview|summary)\b|"
+    r"\b(?:want|need|would\s+like)\b.{0,32}"
     r"\b(?:details?|information|context|background|overview|summary)\b|"
     r"\b(?:want|need|would\s+like)\s+to\s+know\b",
     re.IGNORECASE,

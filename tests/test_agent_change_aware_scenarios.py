@@ -393,6 +393,7 @@ def test_combined_deadline_questions_return_each_requested_value_with_sources(
         "Was there a change to the deadline? Update my study task deadline to match that change.",
         "Tell me about the change to the deadline, then update my study task to match that change.",
         "Give me details of that change, then update my study task to match that change.",
+        "Walk me through that change, then update my study task to match it.",
         "Update my study task deadline to match it and create a calendar event for it.",
     ),
 )
@@ -588,8 +589,17 @@ def test_negated_or_advisory_change_wording_exposes_no_task_mutations(
     engine.dispose()
 
 
+@pytest.mark.parametrize(
+    "request_text",
+    (
+        "Update my study task to match it.",
+        "Update my study task deadline to match that change using the latest Moodle information.",
+        "Update my study task deadline to match that change using the context from that change.",
+    ),
+)
 def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
     tmp_path: Path,
+    request_text: str,
 ) -> None:
     service, session_factory, engine, clock = _task_database(tmp_path)
     task = service.create(request_id=REQUEST_ID, assignment_id=20)
@@ -605,7 +615,7 @@ def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
 
     applied = asyncio.run(
         _assistant(gateway, reader, context_store=store, task_service=service).ask(
-            "Update my study task to match it.",
+            request_text,
             conversation_id=first.conversation_id,
             request_id=TASK_ACTION_ID,
         )
