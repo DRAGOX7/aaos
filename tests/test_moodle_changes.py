@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from aaos.academic.models import CanonicalSnapshot
 from aaos.academic.normalization import normalize_collection
 from aaos.academic.source import (
@@ -187,6 +189,37 @@ def test_documents_added_removed_renamed_and_version_changed() -> None:
     assert versioned[0].change_kind is ChangeKind.MODIFIED
     assert versioned[0].changed_fields == (ChangeField.DOCUMENT_VERSION,)
     assert (versioned[0].before_document_version, versioned[0].after_document_version) == (1, 2)
+
+
+def test_equal_snapshot_ids_allow_only_temporal_document_version_changes() -> None:
+    state = canonical_state(snapshot(documents=(document(),)))
+    versioned = diff_moodle_snapshots(
+        state,
+        state,
+        from_snapshot_id=10,
+        to_snapshot_id=10,
+        detected_at=NOW,
+        before_document_versions={
+            "resource-cm:91": DocumentVersionObservation(1, NOW - timedelta(days=1))
+        },
+        after_document_versions={
+            "resource-cm:91": DocumentVersionObservation(2, NOW - timedelta(hours=1))
+        },
+    )
+
+    assert len(versioned) == 1
+    assert versioned[0].change_id == "10-10-1"
+    assert versioned[0].changed_fields == (ChangeField.DOCUMENT_VERSION,)
+
+    different_state = canonical_state(snapshot(documents=(document(title="Revised.pdf"),)))
+    with pytest.raises(ValueError, match="equal snapshot IDs must describe identical"):
+        diff_moodle_snapshots(
+            state,
+            different_state,
+            from_snapshot_id=10,
+            to_snapshot_id=10,
+            detected_at=NOW,
+        )
 
 
 def test_new_document_with_first_version_is_one_addition() -> None:

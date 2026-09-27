@@ -403,8 +403,10 @@ def diff_moodle_snapshots(
         raise ValueError("Moodle snapshots from different source namespaces are incomparable")
     _positive_id(from_snapshot_id, "from_snapshot_id")
     _positive_id(to_snapshot_id, "to_snapshot_id")
-    if from_snapshot_id >= to_snapshot_id:
+    if from_snapshot_id > to_snapshot_id:
         raise ValueError("current snapshot ID must follow previous snapshot ID")
+    if from_snapshot_id == to_snapshot_id and previous != current:
+        raise ValueError("equal snapshot IDs must describe identical normalized states")
     detected_at = _aware_utc(detected_at, "detected_at")
     before_versions = before_document_versions or {}
     after_versions = after_document_versions or {}

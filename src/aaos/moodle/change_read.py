@@ -323,9 +323,6 @@ def _diff_snapshot_pair(
     current_finished_at = pair.current.finished_at
     if previous_finished_at is None or current_finished_at is None:
         return _unavailable(ComparisonUnavailableReason.HISTORY_INVALID, offset=offset, limit=limit)
-    if pair.previous.id == pair.current.id:
-        return ()
-
     source_ids = {item.source_id for item in (*previous_state.documents, *current_state.documents)}
     before_versions = _document_versions(
         session,

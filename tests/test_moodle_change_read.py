@@ -481,3 +481,48 @@ def test_document_version_history_uses_immutable_versions_by_provider_identity(
         assert (change.before_document_version, change.after_document_version) == (1, 2)
     finally:
         engine.dispose()
+
+
+def test_document_version_change_is_detected_between_queries_on_same_sync(
+    tmp_path: Path,
+) -> None:
+    engine, factory = service_for(tmp_path / "phase-e.db")
+    now = datetime.now(UTC)
+    sync_finished_at = now - timedelta(hours=6)
+    first_version_at = now - timedelta(hours=5)
+    boundary = now - timedelta(hours=2)
+    second_version_at = now - timedelta(hours=1)
+    try:
+        resource = RawRemoteFile("resource-cm:91", "course-1", "Lecture.pdf")
+        sync_at(factory, build_snapshot(documents=(resource,)), sync_finished_at)
+        with factory() as session:
+            remote_file_id = session.query(RemoteFileORM).one().id
+        add_document_version(
+            factory,
+            remote_file_id=remote_file_id,
+            version_number=1,
+            ingested_at=first_version_at,
+        )
+        add_document_version(
+            factory,
+            remote_file_id=remote_file_id,
+            version_number=2,
+            ingested_at=second_version_at,
+        )
+
+        result = MoodleChangeReadService(factory).list_changes(
+            since=boundary,
+            query_time=now,
+        )
+
+        assert result.comparison_status is ComparisonStatus.AVAILABLE
+        assert result.from_snapshot_id == result.to_snapshot_id
+        assert result.total_change_count == 1
+        change = result.records[0]
+        assert change.entity_type.value == "DOCUMENT"
+        assert change.change_kind is ChangeKind.MODIFIED
+        assert change.changed_fields == (ChangeField.DOCUMENT_VERSION,)
+        assert (change.before_document_version, change.after_document_version) == (1, 2)
+        assert change.detected_at == second_version_at
+    finally:
+        engine.dispose()
