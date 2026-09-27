@@ -16,6 +16,9 @@ _CHANGE_QUERY_PATTERNS = tuple(
         r"\b(?:what|any|anything|show|list)\b.{0,48}\bchanges?\b",
         r"\bwhich\s+courses?\s+(?:have\s+)?changed\b",
         r"\b(?:did|has|have)\b.{0,64}\b(?:deadline|due\s+date)\b.{0,48}\b(?:change|changed|move|moved|update|updated)\b",
+        r"\b(?:is|are|was|were|did|does|do|has|have)\b.{0,64}"
+        r"\b(?:change|changed|move|moved|update|updated)\b.{0,48}"
+        r"\b(?:deadline|due\s+date)\b",
         r"\b(?:new|added|removed|uploaded|upload)\b.{0,48}\b(?:assignments?|documents?|files?|resources?|courses?)\b",
         r"\b(?:assignments?|documents?|files?|resources?|courses?)\b.{0,48}\b(?:new|added|removed|uploaded|changed|updated)\b",
         r"\b(?:what|anything|any|which)\b.{0,64}\b(?:new|added|removed|uploaded|changed)\b",

@@ -31,6 +31,7 @@ def test_only_change_questions_or_explicit_since_requests_enable_change_intent(
 
 def test_query_classifier_covers_assignment_change_reads_without_action_intent() -> None:
     assert is_moodle_change_query("Which assignments changed?")
+    assert is_moodle_change_query("Was there a change to the deadline?")
     action_text = "Update my study task deadline to match that change."
     assert not is_moodle_change_query(action_text)
     assert is_moodle_change_request(action_text)
