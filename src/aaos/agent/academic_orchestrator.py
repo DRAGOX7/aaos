@@ -178,6 +178,15 @@ _CHANGE_EXPLANATION_INTENT = re.compile(
     r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
     re.IGNORECASE,
 )
+_CHANGE_QUERY_INTENT = re.compile(
+    r"\bwhat\s+(?:has\s+)?changed\b|"
+    r"\b(?:anything|any|what)\b.{0,64}\b(?:changed|updated)\b|"
+    r"\b(?:what|any|anything|show|list)\b.{0,48}\bchanges?\b|"
+    r"\bwhich\s+courses?\s+(?:have\s+)?changed\b|"
+    r"\b(?:did|has|have)\b.{0,64}\b(?:deadline|due\s+date)\b.{0,48}"
+    r"\b(?:change|changed|move|moved|update|updated)\b",
+    re.IGNORECASE,
+)
 _STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
     r"\b(?:update|change|adjust|set)\b.{0,100}\b(?:study\s+)?task\b"
     r".{0,80}\b(?:deadline|due\s+date)\b|"
@@ -2648,7 +2657,10 @@ class ReadOnlyAcademicAssistant:
             change_explanation_intent = (
                 context_entity is not None
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
-                and _CHANGE_EXPLANATION_INTENT.search(question.strip()) is not None
+                and (
+                    _CHANGE_EXPLANATION_INTENT.search(question.strip()) is not None
+                    or _CHANGE_QUERY_INTENT.search(question.strip()) is not None
+                )
             )
             if (change_explanation_intent and (task_change_intent or calendar_intent)) or (
                 task_change_intent and calendar_intent
