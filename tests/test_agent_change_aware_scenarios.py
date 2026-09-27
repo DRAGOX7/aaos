@@ -693,12 +693,67 @@ def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
         )
     )
     assert replay.status is AcademicAskStatus.ANSWERED
+    assert "Recorded acknowledgement of the Moodle deadline change" in (replay.answer_text or "")
+    assert "Moodle deadline at acknowledgement" in (replay.answer_text or "")
+    assert "current Moodle deadline" not in (replay.answer_text or "")
+    assert later_due.isoformat() not in (replay.answer_text or "")
     assert service.get(task.id).updated_at == NOW + timedelta(hours=2)
     with session_factory() as session:
         rows = session.query(StudyTaskMutationORM).filter_by(operation="APPLY_CHANGE").all()
     assert len(rows) == 1
     assert service.get(task.id).status.value == "COMPLETED"
     assert service.get(task.id).due_at == later_due
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    (
+        "Explain the changes.",
+        "Update my study task to match the changes.",
+    ),
+)
+def test_plural_change_reference_refuses_when_multiple_changes_are_retained(
+    tmp_path: Path,
+    request_text: str,
+) -> None:
+    service, session_factory, engine, _clock = _task_database(tmp_path)
+    task = service.create(request_id=REQUEST_ID, assignment_id=20)
+    changes = change_set()
+    second_change = replace(
+        changes.records[0],
+        change_id="1-2-2",
+        entity_source_id="provider-assignment-2",
+        before_title="Other Neural Networks Report",
+        after_title="Other Neural Networks Report",
+        entity_id=21,
+    )
+    reader = FakeMoodleChangeReader(
+        replace(
+            changes,
+            modified_count=2,
+            total_change_count=2,
+            records=(changes.records[0], second_change),
+        )
+    )
+    store = ConversationContextStore()
+    first = _query_changes(store, reader, task_service=service)
+    gateway = FakeGateway()
+
+    result = asyncio.run(
+        _assistant(gateway, reader, context_store=store, task_service=service).ask(
+            request_text,
+            conversation_id=first.conversation_id,
+            request_id=TASK_ACTION_ID,
+        )
+    )
+
+    assert result.status is AcademicAskStatus.REFUSED
+    assert result.refusal_code is AcademicRefusalReason.AMBIGUOUS_REFERENCE
+    assert gateway.requests == []
+    assert service.get(task.id).updated_at == task.updated_at
+    with session_factory() as session:
+        assert session.query(StudyTaskMutationORM).filter_by(operation="APPLY_CHANGE").count() == 0
     engine.dispose()
 
 

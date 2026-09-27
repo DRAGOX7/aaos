@@ -4037,16 +4037,30 @@ def _render_academic_evidence(
             if not rows:
                 sections.append("No local study tasks were found.")
                 continue
+            if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE:
+                acknowledged_rows = []
+                for row in rows:
+                    line = f"- {row['title']}"
+                    if row.get("course_title"):
+                        line += f" — {row['course_title']}"
+                    due_at = row.get("due_at")
+                    line += (
+                        f"; Moodle deadline at acknowledgement {due_at}"
+                        if due_at
+                        else "; no Moodle deadline was set at acknowledgement"
+                    )
+                    acknowledged_rows.append(line)
+                sections.append(
+                    "Recorded acknowledgement of the Moodle deadline change:\n"
+                    + "\n".join(acknowledged_rows)
+                )
+                continue
             if name is ToolName.STUDY_TASK_CREATE:
                 heading = "Created local study task:"
             elif name is ToolName.STUDY_TASK_UPDATE:
                 heading = "Updated local study task:"
             elif name is ToolName.STUDY_TASK_COMPLETE:
                 heading = "Marked local study task complete:"
-            elif name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE:
-                heading = (
-                    "Recorded acknowledgement of the current Moodle deadline on local study task:"
-                )
             elif name is ToolName.STUDY_TASK_GET:
                 heading = "Local study task:"
             else:

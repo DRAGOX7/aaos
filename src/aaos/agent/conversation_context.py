@@ -67,7 +67,7 @@ _GENERIC_REFERENCE = re.compile(
 )
 _CHANGE_REFERENCE = re.compile(
     r"\b(?:that|this|the)\s+"
-    r"(?:(deadline|due\s+date|document|assignment|course|moodle)\s+)?change\b"
+    r"(?:(deadline|due\s+date|document|assignment|course|moodle)\s+)?changes?\b"
 )
 _CHANGE_VALUE_REFERENCE = re.compile(
     r"\b(deadlines?|due(?:\s+dates?)?|publication\s+date|document\s+version|course\s+code)\b"

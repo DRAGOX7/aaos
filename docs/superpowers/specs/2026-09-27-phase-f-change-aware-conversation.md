@@ -27,7 +27,8 @@ from model arguments or user-supplied IDs.
 
 The resolver supports explicit `this/that change`, bounded ordinals such as
 `the second change`, and an unambiguous generic reference to the active change.
-Missing and ambiguous references use the existing deterministic refusal path.
+Plural `the changes` uses the same bounded candidate selection; missing and
+ambiguous references use the existing deterministic refusal path.
 Only the bounded, safe facts needed for a follow-up are serialized into the
 model context hint; canonical database IDs remain application-side.
 
