@@ -389,6 +389,7 @@ def test_combined_deadline_questions_return_each_requested_value_with_sources(
         "Explain that change and create a calendar event for the new deadline.",
         "What changed and update my study task deadline to match that change.",
         "Show me what changed and add that deadline to my calendar.",
+        "Which assignments changed? Update my study task deadline to match that change.",
         "Update my study task deadline to match it and create a calendar event for it.",
     ),
 )

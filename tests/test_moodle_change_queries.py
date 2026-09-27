@@ -4,7 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aaos.moodle.change_queries import is_moodle_change_request, resolve_change_time_window
+from aaos.moodle.change_queries import (
+    is_moodle_change_query,
+    is_moodle_change_request,
+    resolve_change_time_window,
+)
 from aaos.moodle.changes import ComparisonUnavailableReason
 
 NOW = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
@@ -23,6 +27,13 @@ def test_only_change_questions_or_explicit_since_requests_enable_change_intent(
     question: str,
 ) -> None:
     assert is_moodle_change_request(question)
+
+
+def test_query_classifier_covers_assignment_change_reads_without_action_intent() -> None:
+    assert is_moodle_change_query("Which assignments changed?")
+    action_text = "Update my study task deadline to match that change."
+    assert not is_moodle_change_query(action_text)
+    assert is_moodle_change_request(action_text)
 
 
 def test_unrelated_academic_question_does_not_enable_change_intent() -> None:

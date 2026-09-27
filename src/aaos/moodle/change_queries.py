@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from aaos.moodle.changes import ComparisonUnavailableReason
 
-_CHANGE_INTENT_PATTERNS = tuple(
+_CHANGE_QUERY_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
         r"\bwhat\s+(?:has\s+)?changed\b",
@@ -16,11 +16,14 @@ _CHANGE_INTENT_PATTERNS = tuple(
         r"\b(?:what|any|anything|show|list)\b.{0,48}\bchanges?\b",
         r"\bwhich\s+courses?\s+(?:have\s+)?changed\b",
         r"\b(?:did|has|have)\b.{0,64}\b(?:deadline|due\s+date)\b.{0,48}\b(?:change|changed|move|moved|update|updated)\b",
-        r"\b(?:change|changed|move|moved|update|updated)\b.{0,48}\b(?:deadline|due\s+date)\b",
         r"\b(?:new|added|removed|uploaded|upload)\b.{0,48}\b(?:assignments?|documents?|files?|resources?|courses?)\b",
         r"\b(?:assignments?|documents?|files?|resources?|courses?)\b.{0,48}\b(?:new|added|removed|uploaded|changed|updated)\b",
         r"\b(?:what|anything|any|which)\b.{0,64}\b(?:new|added|removed|uploaded|changed)\b",
     )
+)
+_CHANGE_DEADLINE_ACTION_PATTERN = re.compile(
+    r"\b(?:change|changed|move|moved|update|updated)\b.{0,48}\b(?:deadline|due\s+date)\b",
+    re.IGNORECASE,
 )
 _SINCE_ANY = re.compile(r"\bsince\b", re.IGNORECASE)
 _SINCE_YESTERDAY = re.compile(r"\bsince\s+(?:the\s+)?yesterday\b", re.IGNORECASE)
@@ -54,11 +57,18 @@ class ChangeTimeWindow:
             raise ValueError("time window boundary must be timezone-aware")
 
 
-def is_moodle_change_request(text: str) -> bool:
-    """Recognize supported change questions from original user text only."""
+def is_moodle_change_query(text: str) -> bool:
+    """Recognize supported change queries, excluding action-shaped deadline wording."""
     if not isinstance(text, str):
         return False
-    return any(pattern.search(text) for pattern in _CHANGE_INTENT_PATTERNS)
+    return any(pattern.search(text) for pattern in _CHANGE_QUERY_PATTERNS)
+
+
+def is_moodle_change_request(text: str) -> bool:
+    """Recognize supported change intent from original user text only."""
+    return is_moodle_change_query(text) or (
+        isinstance(text, str) and _CHANGE_DEADLINE_ACTION_PATTERN.search(text) is not None
+    )
 
 
 def resolve_change_time_window(text: str, *, now: datetime) -> ChangeTimeWindow:
@@ -104,4 +114,9 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-__all__ = ["ChangeTimeWindow", "is_moodle_change_request", "resolve_change_time_window"]
+__all__ = [
+    "ChangeTimeWindow",
+    "is_moodle_change_query",
+    "is_moodle_change_request",
+    "resolve_change_time_window",
+]

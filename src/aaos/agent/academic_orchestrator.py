@@ -26,7 +26,11 @@ from aaos.inference import (
     StructuredOutputSchema,
 )
 from aaos.integrations.google_calendar.contracts import CalendarCreateRequest
-from aaos.moodle.change_queries import is_moodle_change_request, resolve_change_time_window
+from aaos.moodle.change_queries import (
+    is_moodle_change_query,
+    is_moodle_change_request,
+    resolve_change_time_window,
+)
 from aaos.moodle.changes import (
     ChangeField,
     ChangeKind,
@@ -176,15 +180,6 @@ _CALENDAR_PROPOSAL_TOOLS = frozenset({ToolName.CALENDAR_PROPOSE_CREATE_EVENT})
 _MOODLE_CHANGE_TOOLS = frozenset({ToolName.MOODLE_LIST_CHANGES})
 _CHANGE_EXPLANATION_INTENT = re.compile(
     r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
-    re.IGNORECASE,
-)
-_CHANGE_QUERY_INTENT = re.compile(
-    r"\bwhat\s+(?:has\s+)?changed\b|"
-    r"\b(?:anything|any|what)\b.{0,64}\b(?:changed|updated)\b|"
-    r"\b(?:what|any|anything|show|list)\b.{0,48}\bchanges?\b|"
-    r"\bwhich\s+courses?\s+(?:have\s+)?changed\b|"
-    r"\b(?:did|has|have)\b.{0,64}\b(?:deadline|due\s+date)\b.{0,48}"
-    r"\b(?:change|changed|move|moved|update|updated)\b",
     re.IGNORECASE,
 )
 _STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
@@ -2654,15 +2649,15 @@ class ReadOnlyAcademicAssistant:
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
                 and calendar_intent
             )
-            change_explanation_intent = (
+            change_read_intent = (
                 context_entity is not None
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
                 and (
                     _CHANGE_EXPLANATION_INTENT.search(question.strip()) is not None
-                    or _CHANGE_QUERY_INTENT.search(question.strip()) is not None
+                    or is_moodle_change_query(question.strip())
                 )
             )
-            if (change_explanation_intent and (task_change_intent or calendar_intent)) or (
+            if (change_read_intent and (task_change_intent or calendar_intent)) or (
                 task_change_intent and calendar_intent
             ):
                 return direct_refusal(
