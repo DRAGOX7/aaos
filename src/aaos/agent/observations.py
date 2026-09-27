@@ -354,7 +354,9 @@ class ObservationSanitizer:
                 observation = self._rag_observation(result)
                 truncated = False
             elif (
-                normalized_name.startswith("academic.") or normalized_name.startswith("study_task.")
+                normalized_name.startswith("academic.")
+                or normalized_name.startswith("study_task.")
+                or normalized_name.startswith("moodle.")
             ) and result.ok:
                 observation, truncated = self._academic_observation(result, normalized_name)
             elif result.ok:
@@ -396,6 +398,9 @@ class ObservationSanitizer:
             or len(records) > 50
         ):
             raise ObservationSanitizationError()
+
+        if tool_name == ToolName.MOODLE_LIST_CHANGES.value:
+            return self._moodle_change_observation(output, records, source_ref)
 
         if tool_name in {
             ToolName.ACADEMIC_LIST_COURSES.value,
@@ -461,6 +466,87 @@ class ObservationSanitizer:
             ),
         )
         return observation, False
+
+    def _moodle_change_observation(
+        self,
+        output: Mapping[str, object],
+        records: tuple[object, ...] | list[object],
+        source_ref: str,
+    ) -> tuple[ToolObservation, bool]:
+        metadata_keys = (
+            "comparison_status",
+            "unavailable_reason",
+            "from_snapshot_id",
+            "to_snapshot_id",
+            "changed_courses_count",
+            "added_count",
+            "removed_count",
+            "modified_count",
+            "total_change_count",
+            "offset",
+            "limit",
+            "has_more",
+        )
+        record_keys = {
+            "change_id",
+            "entity_type",
+            "change_kind",
+            "changed_fields",
+            "id",
+            "course_id",
+            "course_title",
+            "title",
+            "before_title",
+            "after_title",
+            "before_course_code",
+            "after_course_code",
+            "before_due_at",
+            "after_due_at",
+            "before_published_at",
+            "after_published_at",
+            "before_document_version",
+            "after_document_version",
+            "detected_at",
+        }
+        fields: list[tuple[str, object]] = []
+        for key in metadata_keys:
+            if key not in output:
+                raise ObservationSanitizationError()
+            value = output[key]
+            if isinstance(value, str):
+                fields.append((key, _sanitize_text(value, 128, truncate=True)))
+            elif value is None or isinstance(value, bool):
+                fields.append((key, value))
+            elif isinstance(value, int):
+                fields.append((key, value))
+            else:
+                raise ObservationSanitizationError()
+        safe_records: list[dict[str, object]] = []
+        if len(records) > 5:
+            raise ObservationSanitizationError()
+        for record in records:
+            if not isinstance(record, Mapping) or set(record) != record_keys:
+                raise ObservationSanitizationError()
+            safe_record: dict[str, object] = {}
+            for key in sorted(record_keys):
+                value = record[key]
+                if isinstance(value, str):
+                    safe_record[key] = _sanitize_text(
+                        value, min(self._max_text_size, 500), truncate=True
+                    )
+                elif isinstance(value, (tuple, list)) and key == "changed_fields":
+                    if any(not isinstance(item, str) for item in value):
+                        raise ObservationSanitizationError()
+                    safe_record[key] = tuple(_safe_scalar_text(item, 64) for item in value)
+                elif value is None or (isinstance(value, int) and not isinstance(value, bool)):
+                    safe_record[key] = value
+                else:
+                    raise ObservationSanitizationError()
+            safe_records.append(safe_record)
+        fields.extend((("records", tuple(safe_records)), ("source_ref", source_ref)))
+        return ToolObservation(
+            kind=ToolName.MOODLE_LIST_CHANGES.value, status="OK", fields=tuple(fields)
+        ), False
 
     def _rag_observation(self, result: ToolResult) -> ToolObservation:
         # Slice 3 owns the trusted Phase 4 response schema.  Reuse that

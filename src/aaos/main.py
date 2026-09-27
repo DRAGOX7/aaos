@@ -46,11 +46,13 @@ if TYPE_CHECKING:
         AcademicDocumentPort,
         AcademicReadPort,
         CalendarTaskProposalPort,
+        MoodleChangeReadPort,
         ReadOnlyAcademicAssistant,
         StudyTaskPort,
     )
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
     from aaos.inference.lm_studio import LMStudioGateway
+    from aaos.moodle.changes import MoodleChangeSet
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
     from aaos.study_tasks.service import StudyTaskService
@@ -81,6 +83,7 @@ class _LazyDefaultCourseReader:
         self._delegate: AcademicReadPort | None = None
         self._document_delegate: _AcademicDocumentReadDelegate | None = None
         self._engine: Engine | None = None
+        self._sessions: sessionmaker[Session] | None = None
 
     def _ensure_delegate(self) -> AcademicReadPort:
         if self._delegate is None:
@@ -95,6 +98,7 @@ class _LazyDefaultCourseReader:
             sessions = create_session_factory(engine)
 
             self._engine = engine
+            self._sessions = sessions
             self._delegate = AcademicReadService(sessions)
             self._document_delegate = DocumentReadService(sessions)
 
@@ -133,9 +137,46 @@ class _LazyDefaultCourseReader:
     def get_document(self, document_id: int) -> DocumentSummary:
         return self._ensure_document_delegate().get_document(document_id)
 
+    def session_factory(self) -> sessionmaker[Session]:
+        self._ensure_delegate()
+        assert self._sessions is not None
+        return self._sessions
+
     def dispose(self) -> None:
         if self._engine is not None:
             self._engine.dispose()
+
+
+class _LazyDefaultMoodleChangeReader:
+    """Use the academic reader's existing lazy database lifecycle for history reads."""
+
+    def __init__(self, academic_reader: _LazyDefaultCourseReader) -> None:
+        self._academic_reader = academic_reader
+        self._delegate: MoodleChangeReadPort | None = None
+
+    def _ensure_delegate(self) -> MoodleChangeReadPort:
+        if self._delegate is None:
+            from aaos.moodle.change_read import MoodleChangeReadService
+
+            self._delegate = MoodleChangeReadService(self._academic_reader.session_factory())
+        return self._delegate
+
+    def list_changes(
+        self,
+        *,
+        course_id: int | None = None,
+        since: datetime | None = None,
+        limit: int = 15,
+        offset: int = 0,
+        query_time: datetime | None = None,
+    ) -> MoodleChangeSet:
+        return self._ensure_delegate().list_changes(
+            course_id=course_id,
+            since=since,
+            limit=limit,
+            offset=offset,
+            query_time=query_time,
+        )
 
 
 class _LazyDefaultRagReader:
@@ -201,6 +242,7 @@ class _LazyDefaultAcademicAskService:
         study_task_service: StudyTaskPort,
         calendar_task_service: CalendarTaskProposalPort | None,
         calendar_timezone: str | None,
+        moodle_change_reader: MoodleChangeReadPort | None,
     ) -> None:
         self._settings = settings
         self._academic_reader = academic_reader
@@ -209,6 +251,7 @@ class _LazyDefaultAcademicAskService:
         self._study_task_service = study_task_service
         self._calendar_task_service = calendar_task_service
         self._calendar_timezone = calendar_timezone
+        self._moodle_change_reader = moodle_change_reader
         self._gateway: LMStudioGateway | None = None
         self._assistant: ReadOnlyAcademicAssistant | None = None
 
@@ -228,6 +271,7 @@ class _LazyDefaultAcademicAskService:
                 study_task_service=self._study_task_service,
                 calendar_task_service=self._calendar_task_service,
                 calendar_timezone=self._calendar_timezone,
+                moodle_change_reader=self._moodle_change_reader,
             )
         assert self._assistant is not None
         return self._assistant
@@ -486,6 +530,7 @@ def create_app(
     activity_reader: ActivityReader | None = None,
     system_health_reader: SystemHealthReader | None = None,
     ask_service: AcademicAskService | None = None,
+    moodle_change_reader: MoodleChangeReadPort | None = None,
     study_task_service: StudyTaskPort | None = None,
     calendar_task_service: CalendarTaskProposalPort | None = None,
     calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
@@ -512,6 +557,7 @@ def create_app(
     resolved_principal_provider = principal_provider or _LazyDefaultPrincipalProvider(settings)
     resolved_rag_reader = rag_reader
     resolved_ask_service = ask_service
+    resolved_moodle_change_reader = moodle_change_reader
     resolved_study_task_service = study_task_service
 
     if session_factory is None:
@@ -519,6 +565,8 @@ def create_app(
         course_reader = lazy_course_reader
         academic_reader = lazy_course_reader
         document_reader = lazy_course_reader
+        if resolved_moodle_change_reader is None:
+            resolved_moodle_change_reader = _LazyDefaultMoodleChangeReader(lazy_course_reader)
         lazy_task_reader = _LazyDefaultTaskReader()
         task_reader = lazy_task_reader
         lazy_activity_reader = _LazyDefaultActivityReader()
@@ -546,6 +594,11 @@ def create_app(
         from aaos.web.academic import AcademicReadService
         from aaos.web.activity_read import ActivityReadRepository, ActivityReadService
         from aaos.web.documents import DocumentReadService
+
+        if resolved_moodle_change_reader is None:
+            from aaos.moodle.change_read import MoodleChangeReadService
+
+            resolved_moodle_change_reader = MoodleChangeReadService(session_factory)
         from aaos.web.health_read import SqlitePassiveRagIndexReader, SystemHealthService
 
         academic_reader = AcademicReadService(session_factory)
@@ -595,6 +648,7 @@ def create_app(
             resolved_study_task_service,
             calendar_task_service,
             settings.calendar_timezone,
+            resolved_moodle_change_reader,
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 

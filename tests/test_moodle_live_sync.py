@@ -80,6 +80,23 @@ def _patch_database_path(monkeypatch: pytest.MonkeyPatch, database_path: Path) -
     )
 
 
+def _patch_sync_history(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+    from aaos.moodle import live_sync
+
+    class FakeHistory:
+        def __init__(self, _session_factory: object) -> None:
+            pass
+
+        def begin(self, source_system: str) -> int:
+            events.append(f"begin:{source_system}")
+            return 1
+
+        def fail(self, attempt_id: int, failure_code: object) -> None:
+            events.append(f"fail:{attempt_id}:{failure_code}")
+
+    monkeypatch.setattr(live_sync, "MoodleSyncHistoryRepository", FakeHistory)
+
+
 def test_configured_snapshot_derives_browser_mode_without_changing_source_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -124,14 +141,20 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
     alternate_database_path.parent.mkdir(parents=True)
     alternate_database_path.write_bytes(b"moodle-runtime-database")
     persistence_calls: list[object] = []
+    events: list[str] = []
 
     def collect(_environment: RuntimeMoodleEnvironment) -> CompleteSourceSnapshot:
+        events.append("collect")
         database_path.unlink()
         return _complete_snapshot()
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_sync_history(monkeypatch, events)
     _patch_database_path(monkeypatch, database_path)
+    engine = type("EngineProbe", (), {"dispose": lambda self: events.append("dispose")})()
+    monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
+    monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
     monkeypatch.setattr(
         live_sync,
         "sync_moodle_snapshot",
@@ -139,6 +162,11 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
     )
 
     assert live_sync.run_configured_moodle_sync() == 1
+    assert events == [
+        "begin:moodle:fixture:live-sync",
+        "collect",
+        "dispose",
+    ]
     assert database_path.exists() is False
     assert persistence_calls == []
     assert alternate_database_path.exists() is True
@@ -215,22 +243,30 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_sync_history(monkeypatch, events)
     _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", make_engine)
     monkeypatch.setattr(live_sync, "create_session_factory", make_session_factory)
 
-    def persist(collection: object, *, session_factory: object) -> None:
+    def persist(
+        collection: object,
+        *,
+        session_factory: object,
+        sync_attempt_id: int,
+    ) -> None:
         assert isinstance(collection, CompleteSourceSnapshot)
         assert callable(session_factory)
+        assert sync_attempt_id == 1
         events.append("persist")
 
     monkeypatch.setattr(live_sync, "sync_moodle_snapshot", persist)
 
     assert live_sync.run_configured_moodle_sync() == 0
     assert events == [
-        "collect",
         f"engine:{database_path.resolve()}",
         "session-factory",
+        "begin:moodle:fixture:live-sync",
+        "collect",
         "persist",
         "dispose",
     ]
@@ -276,7 +312,7 @@ def test_missing_normal_database_does_not_select_moodle_runtime_database(
     assert normal_database_path.exists() is False
 
 
-def test_incomplete_collection_blocks_engine_and_persistence(
+def test_incomplete_collection_is_recorded_and_blocks_persistence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     from aaos.moodle import live_sync
@@ -293,21 +329,29 @@ def test_incomplete_collection_blocks_engine_and_persistence(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_sync_history(monkeypatch, events)
     _patch_database_path(monkeypatch, database_path)
 
-    def forbidden_engine(_path: Path) -> object:
+    def make_engine(_path: Path) -> object:
         events.append("engine")
-        raise AssertionError("engine must not be created")
+        return type("EngineProbe", (), {"dispose": lambda self: events.append("dispose")})()
 
     def forbidden_persist(*_args: object, **_kwargs: object) -> None:
         events.append("persist")
         raise AssertionError("persistence must not run")
 
-    monkeypatch.setattr(live_sync, "_create_existing_database_engine", forbidden_engine)
+    monkeypatch.setattr(live_sync, "_create_existing_database_engine", make_engine)
+    monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
     monkeypatch.setattr(live_sync, "sync_moodle_snapshot", forbidden_persist)
 
     assert live_sync.run_configured_moodle_sync() == 1
-    assert events == ["collect"]
+    assert events == [
+        "engine",
+        "begin:moodle:fixture:live-sync",
+        "collect",
+        "fail:1:COLLECTION_INCOMPLETE",
+        "dispose",
+    ]
     assert capsys.readouterr().out == "MOODLE_SYNC_FAILED\nFAILURE_STAGE=COLLECTION\n"
 
 
@@ -348,6 +392,7 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
     database_path.write_bytes(b"already-migrated")
     environment = _environment(tmp_path)
     calls = 0
+    events: list[str] = []
 
     def collect(_environment: RuntimeMoodleEnvironment) -> SourceCollectionFailure:
         nonlocal calls
@@ -356,10 +401,19 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_sync_history(monkeypatch, events)
     _patch_database_path(monkeypatch, database_path)
+    engine = type("EngineProbe", (), {"dispose": lambda self: events.append("dispose")})()
+    monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
+    monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
 
     assert live_sync.run_configured_moodle_sync() == 1
     assert calls == 1
+    assert events == [
+        "begin:moodle:fixture:live-sync",
+        "fail:1:COLLECTION_INCOMPLETE",
+        "dispose",
+    ]
     output = capsys.readouterr()
     assert "secret-token-and-private-html" not in output.out
     assert output.out == "MOODLE_SYNC_FAILED\nFAILURE_STAGE=COLLECTION\n"
@@ -461,6 +515,7 @@ def test_no_alembic_upgrade_is_called_by_sync_command(
     database_path.write_bytes(b"already-migrated")
     environment = _environment(tmp_path)
     upgrades: list[object] = []
+    events: list[str] = []
     engine = type("EngineProbe", (), {"dispose": lambda self: None})()
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
@@ -469,11 +524,13 @@ def test_no_alembic_upgrade_is_called_by_sync_command(
     )
     _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
+    _patch_sync_history(monkeypatch, events)
     monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
     monkeypatch.setattr(live_sync, "sync_moodle_snapshot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(command, "upgrade", lambda *args, **kwargs: upgrades.append((args, kwargs)))
 
     assert live_sync.run_configured_moodle_sync() == 0
+    assert events == ["begin:moodle:fixture:live-sync"]
     assert upgrades == []
 
 

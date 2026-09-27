@@ -245,6 +245,52 @@ _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT["json_schema"]["name"] = (
 )
 
 
+def _moodle_change_decision_response_format(
+    *,
+    provider_name: str,
+    contextual: bool,
+) -> dict[str, Any]:
+    response_format = cast(
+        dict[str, Any],
+        deepcopy(_ACADEMIC_DECISION_RESPONSE_FORMAT),
+    )
+    json_schema = response_format["json_schema"]
+    json_schema["name"] = provider_name
+    branches = json_schema["schema"]["oneOf"]
+    branches.append(
+        _academic_call_schema(
+            "moodle.list_changes",
+            {
+                "course_name": _ACADEMIC_COURSE_NAME,
+                "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                "offset": {"type": ["integer", "null"], "minimum": 0, "maximum": 200},
+            },
+            ["course_name", "limit", "offset"],
+        )
+    )
+    if contextual:
+        for branch in branches:
+            if branch.get("properties", {}).get("action", {}).get("enum") == ["CALL_TOOL"]:
+                arguments = branch["properties"]["arguments"]
+                arguments["properties"]["context_ref"] = {
+                    "type": "string",
+                    "enum": ["ctx-1"],
+                    "maxLength": 5,
+                }
+                arguments["required"].append("context_ref")
+    return response_format
+
+
+_MOODLE_CHANGE_DECISION_RESPONSE_FORMAT = _moodle_change_decision_response_format(
+    provider_name="aaos_moodle_change_decision_v1",
+    contextual=False,
+)
+_MOODLE_CHANGE_DECISION_CONTEXTUAL_RESPONSE_FORMAT = _moodle_change_decision_response_format(
+    provider_name="aaos_moodle_change_decision_contextual_v1",
+    contextual=True,
+)
+
+
 def _study_task_decision_response_format(
     *,
     provider_name: str,
@@ -621,6 +667,8 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "least_authority_proposal_transport": _LEAST_AUTHORITY_PROPOSAL_TRANSPORT_RESPONSE_FORMAT,
     "read_only_academic_decision": _ACADEMIC_DECISION_RESPONSE_FORMAT,
     "read_only_academic_decision_contextual": _CONTEXTUAL_ACADEMIC_DECISION_RESPONSE_FORMAT,
+    "moodle_change_decision": _MOODLE_CHANGE_DECISION_RESPONSE_FORMAT,
+    "moodle_change_decision_contextual": _MOODLE_CHANGE_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
     "study_task_read_decision": _STUDY_TASK_READ_DECISION_RESPONSE_FORMAT,
     "study_task_read_decision_contextual": _STUDY_TASK_READ_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
     "study_task_write_decision": _STUDY_TASK_WRITE_DECISION_RESPONSE_FORMAT,

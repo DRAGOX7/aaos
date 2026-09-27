@@ -159,6 +159,7 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
             "task_records",
             "visual_analysis_runs",
             "visual_elements",
+            "moodle_sync_snapshots",
         }
     finally:
         engine.dispose()

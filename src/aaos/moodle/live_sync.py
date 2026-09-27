@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from sqlalchemy import Engine, event
 from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from aaos.academic.source import (
     CompleteSourceSnapshot,
@@ -25,6 +27,10 @@ from aaos.moodle.receiver import (
     ReceiverError,
     RuntimeMoodleEnvironment,
     load_runtime_moodle_environment,
+)
+from aaos.moodle.sync_history import (
+    MoodleSyncFailureCode,
+    MoodleSyncHistoryRepository,
 )
 from aaos.persistence.database import (
     DEFAULT_DATABASE_PATH,
@@ -82,15 +88,17 @@ def collect_configured_snapshot(environment: RuntimeMoodleEnvironment) -> Source
     )
 
 
-def _persist_snapshot(collection: CompleteSourceSnapshot, database_path: Path) -> None:
-    engine: Engine | None = None
-    try:
-        engine = _create_existing_database_engine(database_path)
-        session_factory = create_session_factory(engine)
-        sync_moodle_snapshot(collection, session_factory=session_factory)
-    finally:
-        if engine is not None:
-            engine.dispose()
+def _persist_snapshot(
+    collection: CompleteSourceSnapshot,
+    *,
+    session_factory: Callable[[], Session],
+    sync_attempt_id: int,
+) -> None:
+    sync_moodle_snapshot(
+        collection,
+        session_factory=session_factory,
+        sync_attempt_id=sync_attempt_id,
+    )
 
 
 def _render_failure(stage: str) -> int:
@@ -111,36 +119,63 @@ def run_configured_moodle_sync() -> int:
     except ValueError:
         return _render_failure("DATABASE")
 
+    engine: Engine | None = None
     try:
-        collection = collect_configured_snapshot(environment)
-    except BrowserSmokeFailure:
-        return _render_failure("BROWSER")
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return _render_failure("COLLECTION")
+        try:
+            engine = _create_existing_database_engine(database_path)
+            session_factory = create_session_factory(engine)
+            history = MoodleSyncHistoryRepository(session_factory)
+            sync_attempt_id = history.begin(environment.settings.source_system)
+        except (
+            OSError,
+            RuntimeError,
+            SQLAlchemyError,
+            TypeError,
+            ValueError,
+        ):
+            return _render_failure("PERSISTENCE")
 
-    if isinstance(collection, SourceCollectionFailure) or not isinstance(
-        collection, CompleteSourceSnapshot
-    ):
-        return _render_failure("COLLECTION")
+        try:
+            collection = collect_configured_snapshot(environment)
+        except BrowserSmokeFailure:
+            history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
+            return _render_failure("BROWSER")
+        except (OSError, RuntimeError, TypeError, ValueError):
+            history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
+            return _render_failure("COLLECTION")
 
-    try:
-        _persist_snapshot(collection, database_path)
-    except (
-        MoodleSyncPreconditionError,
-        OSError,
-        RuntimeError,
-        SQLAlchemyError,
-        TypeError,
-        ValueError,
-    ):
-        return _render_failure("PERSISTENCE")
+        if isinstance(collection, SourceCollectionFailure) or not isinstance(
+            collection, CompleteSourceSnapshot
+        ):
+            history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
+            return _render_failure("COLLECTION")
 
-    print("MOODLE_SYNC_PASS")
-    print(f"COURSE_COUNT={len(collection.courses)}")
-    print(f"ASSIGNMENT_COUNT={len(collection.assignments)}")
-    print(f"ANNOUNCEMENT_COUNT={len(collection.announcements)}")
-    print(f"REMOTE_FILE_COUNT={len(collection.remote_files)}")
-    return 0
+        try:
+            _database_is_present(database_path)
+            _persist_snapshot(
+                collection,
+                session_factory=session_factory,
+                sync_attempt_id=sync_attempt_id,
+            )
+        except (
+            MoodleSyncPreconditionError,
+            OSError,
+            RuntimeError,
+            SQLAlchemyError,
+            TypeError,
+            ValueError,
+        ):
+            return _render_failure("PERSISTENCE")
+
+        print("MOODLE_SYNC_PASS")
+        print(f"COURSE_COUNT={len(collection.courses)}")
+        print(f"ASSIGNMENT_COUNT={len(collection.assignments)}")
+        print(f"ANNOUNCEMENT_COUNT={len(collection.announcements)}")
+        print(f"REMOTE_FILE_COUNT={len(collection.remote_files)}")
+        return 0
+    finally:
+        if engine is not None:
+            engine.dispose()
 
 
 __all__ = ["collect_configured_snapshot", "run_configured_moodle_sync"]

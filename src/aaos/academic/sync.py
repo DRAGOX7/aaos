@@ -43,11 +43,7 @@ class AcademicSyncService:
         session = self._session_factory()
         try:
             with session.begin():
-                self._deactivate_namespace(session, snapshot.source_system)
-                courses = self._upsert_courses(session, snapshot)
-                self._upsert_assignments(session, snapshot, courses)
-                self._upsert_announcements(session, snapshot, courses)
-                self._upsert_remote_files(session, snapshot, courses)
+                self.sync_in_session(session, snapshot)
         except SynchronizationConflict:
             session.rollback()
             raise
@@ -58,6 +54,20 @@ class AcademicSyncService:
             ) from None
         finally:
             session.close()
+
+    def sync_in_session(self, session: Session, snapshot: CanonicalSnapshot) -> None:
+        """Apply a normalized snapshot inside a caller-owned transaction."""
+        if not isinstance(session, Session):
+            raise TypeError("session must be a SQLAlchemy Session")
+        if snapshot._validation_token is not _NORMALIZED_SNAPSHOT_TOKEN:
+            raise SynchronizationValidationError(
+                "snapshot was not produced by complete source normalization"
+            )
+        self._deactivate_namespace(session, snapshot.source_system)
+        courses = self._upsert_courses(session, snapshot)
+        self._upsert_assignments(session, snapshot, courses)
+        self._upsert_announcements(session, snapshot, courses)
+        self._upsert_remote_files(session, snapshot, courses)
 
     @staticmethod
     def _deactivate_namespace(session: Session, source_system: str) -> None:

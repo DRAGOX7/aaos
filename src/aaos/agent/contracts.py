@@ -51,6 +51,7 @@ class ToolName(StrEnum):
     ACADEMIC_LIST_ASSIGNMENTS = "academic.list_assignments"
     ACADEMIC_GET_ASSIGNMENT = "academic.get_assignment"
     ACADEMIC_LIST_DOCUMENTS = "academic.list_documents"
+    MOODLE_LIST_CHANGES = "moodle.list_changes"
     RAG_ANSWER = "rag.answer"
     STUDY_TASK_LIST = "study_task.list"
     STUDY_TASK_GET = "study_task.get"
