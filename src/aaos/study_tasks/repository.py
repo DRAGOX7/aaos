@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -18,6 +19,7 @@ from aaos.persistence.study_task_models import StudyTaskMutationORM, StudyTaskOR
 
 from .contracts import (
     StudyTask,
+    StudyTaskAmbiguousAssignmentError,
     StudyTaskErrorCode,
     StudyTaskIdempotencyConflict,
     StudyTaskNotFoundError,
@@ -71,6 +73,63 @@ def _project(row: Any) -> StudyTask:
         created_at=task_row.created_at,
         updated_at=task_row.updated_at,
     )
+
+
+def _task_result_snapshot(task: StudyTask) -> str:
+    return json.dumps(
+        {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status.value,
+            "priority": task.priority.value,
+            "course_id": task.course_id,
+            "course_title": task.course_title,
+            "assignment_id": task.assignment_id,
+            "assignment_title": task.assignment_title,
+            "due_at": task.due_at.isoformat() if task.due_at is not None else None,
+            "created_at": task.created_at.isoformat(),
+            "updated_at": task.updated_at.isoformat(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _restore_task_result_snapshot(snapshot: str) -> StudyTask:
+    expected = {
+        "id",
+        "title",
+        "status",
+        "priority",
+        "course_id",
+        "course_title",
+        "assignment_id",
+        "assignment_title",
+        "due_at",
+        "created_at",
+        "updated_at",
+    }
+    try:
+        payload = json.loads(snapshot)
+        if not isinstance(payload, dict) or set(payload) != expected:
+            raise ValueError("invalid StudyTask result snapshot fields")
+        due_at = payload["due_at"]
+        return StudyTask(
+            id=payload["id"],
+            title=payload["title"],
+            status=StudyTaskStatus(payload["status"]),
+            priority=StudyTaskPriority(payload["priority"]),
+            course_id=payload["course_id"],
+            course_title=payload["course_title"],
+            assignment_id=payload["assignment_id"],
+            assignment_title=payload["assignment_title"],
+            due_at=datetime.fromisoformat(due_at) if due_at is not None else None,
+            created_at=datetime.fromisoformat(payload["created_at"]),
+            updated_at=datetime.fromisoformat(payload["updated_at"]),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError("StudyTask mutation contains an invalid saved result") from error
 
 
 class StudyTaskRepository:
@@ -172,7 +231,6 @@ class StudyTaskRepository:
 
     def apply_moodle_deadline_change_idempotent(
         self,
-        task_id: int,
         *,
         request_id: UUID,
         fingerprint: str,
@@ -184,11 +242,22 @@ class StudyTaskRepository:
         now: datetime,
     ) -> StudyTask:
         def apply_change(session: Session) -> int:
-            task = session.get(StudyTaskORM, task_id)
-            if task is None:
+            linked_tasks = tuple(
+                session.scalars(
+                    select(StudyTaskORM)
+                    .where(
+                        StudyTaskORM.assignment_id == assignment_id,
+                        StudyTaskORM.status == StudyTaskStatus.OPEN.value,
+                    )
+                    .order_by(StudyTaskORM.id.asc())
+                    .limit(2)
+                ).all()
+            )
+            if not linked_tasks:
                 raise StudyTaskNotFoundError()
-            if task.status != StudyTaskStatus.OPEN.value or task.assignment_id != assignment_id:
-                raise StudyTaskStaleChangeError()
+            if len(linked_tasks) > 1:
+                raise StudyTaskAmbiguousAssignmentError()
+            task = linked_tasks[0]
 
             assignment = session.get(AssignmentORM, assignment_id)
             if (
@@ -327,6 +396,7 @@ class StudyTaskRepository:
                 if existing is not None:
                     return self._replay(session, existing, operation, fingerprint)
                 task_id = mutation(session)
+                result = self._load(session, task_id)
                 session.add(
                     StudyTaskMutationORM(
                         request_id=str(request_id),
@@ -338,10 +408,13 @@ class StudyTaskRepository:
                         source_from_snapshot_id=source_from_snapshot_id,
                         source_to_snapshot_id=source_to_snapshot_id,
                         source_changed_field=source_changed_field,
+                        result_snapshot=(
+                            _task_result_snapshot(result) if operation == "APPLY_CHANGE" else None
+                        ),
                     )
                 )
                 session.flush()
-                return self._load(session, task_id)
+                return result
         except IntegrityError:
             with self._session_factory() as session:
                 existing = session.get(StudyTaskMutationORM, str(request_id))
@@ -358,6 +431,10 @@ class StudyTaskRepository:
     ) -> StudyTask:
         if mutation.operation != operation or mutation.request_fingerprint != fingerprint:
             raise StudyTaskIdempotencyConflict()
+        if operation == "APPLY_CHANGE":
+            if mutation.result_snapshot is None:
+                raise RuntimeError("StudyTask mutation is missing its saved result")
+            return _restore_task_result_snapshot(mutation.result_snapshot)
         return self._load(session, mutation.study_task_id)
 
     @staticmethod

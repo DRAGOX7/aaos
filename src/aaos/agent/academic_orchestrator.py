@@ -187,6 +187,25 @@ _STUDY_TASK_DEADLINE_CHANGE_INTENT = re.compile(
     r".{0,80}\bto\s+(?:match|reflect)\s+(?:it|this|that|the\s+change)\b",
     re.IGNORECASE,
 )
+_STUDY_TASK_CHANGE_DENIAL = re.compile(
+    r"\b(?:don't|do\s+not|never|should\s+not|must\s+not|need\s+not)\b"
+    r".{0,80}\b(?:update|change|adjust|set)\b",
+    re.IGNORECASE,
+)
+_STUDY_TASK_CHANGE_ADVISORY = re.compile(
+    r"\bshould\s+(?:i|we|you)\s+(?:update|change|adjust|set)\b|"
+    r"\b(?:i|we)\s+(?:should|would|could|might|may|will|can)\s+"
+    r"(?:update|change|adjust|set)\b|"
+    r"\b(?:can|could|may|might|would)\s+i\s+(?:update|change|adjust|set)\b|"
+    r"\b(?:do|would)\s+you\s+think\s+(?:i|we)\s+should\s+"
+    r"(?:update|change|adjust|set)\b|"
+    r"\b(?:do|would)\s+you\s+recommend\s+(?:that\s+)?i\s+(?:update|change|adjust|set)\b|"
+    r"\b(?:is|would)\s+it\s+(?:a\s+good\s+idea|better|wise|okay|safe)\b"
+    r".{0,60}\b(?:update|change|adjust|set)\b|"
+    r"\bwhat\s+if\s+i\s+(?:update|change|adjust|set)\b|"
+    r"\bhow\s+(?:should|could|can)\s+i\s+(?:update|change|adjust|set)\b",
+    re.IGNORECASE,
+)
 _OLD_DEADLINE_VALUE_ASK = re.compile(
     r"\b(?:old|previous|before|earlier)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
     r"\b(?:deadline|due(?:\s+date)?)\b.{0,48}\b(?:old|previous|before|earlier)\b",
@@ -198,6 +217,16 @@ _CURRENT_DEADLINE_VALUE_ASK = re.compile(
     r"\bwhen\b.{0,40}\b(?:is|are)\s+(?:it|this|that|the assignment)\s+due\b",
     re.IGNORECASE,
 )
+
+
+def _is_explicit_study_task_deadline_change_intent(request_text: str) -> bool:
+    normalized = request_text.replace("’", "'")
+    return (
+        _STUDY_TASK_DEADLINE_CHANGE_INTENT.search(normalized) is not None
+        and _STUDY_TASK_CHANGE_DENIAL.search(normalized) is None
+        and _STUDY_TASK_CHANGE_ADVISORY.search(normalized) is None
+    )
+
 
 ACADEMIC_TOOL_NAMES = frozenset(
     {
@@ -464,7 +493,6 @@ class StudyTaskPort(Protocol):
 
     def apply_moodle_deadline_change(
         self,
-        task_id: int,
         *,
         request_id: UUID,
         assignment_id: int,
@@ -551,6 +579,7 @@ class _AcademicToolRuntime:
         calendar_intent: bool = False,
         calendar_mutation_requested: bool = False,
         moodle_change_reader: MoodleChangeReadPort | None = None,
+        block_study_task_mutations: bool = False,
     ) -> None:
         self._academic = academic
         self._documents = documents
@@ -566,6 +595,7 @@ class _AcademicToolRuntime:
         self._calendar_intent = calendar_intent
         self._calendar_mutation_requested = calendar_mutation_requested
         self._moodle_change_reader = moodle_change_reader
+        self._block_study_task_mutations = block_study_task_mutations
         context = (
             context_resolution.entity
             if context_resolution is not None
@@ -581,7 +611,7 @@ class _AcademicToolRuntime:
             context is not None
             and context.kind is ContextEntityKind.MOODLE_CHANGE
             and _is_trusted_assignment_deadline_change(context)
-            and _STUDY_TASK_DEADLINE_CHANGE_INTENT.search(request_text) is not None
+            and _is_explicit_study_task_deadline_change_intent(request_text)
         )
         self._calendar_change_create_requested = (
             context is not None
@@ -731,7 +761,12 @@ class _AcademicToolRuntime:
         if self._study_task_service is not None and not self._moodle_change_requested:
             definitions = (
                 *definitions,
-                *self._study_task_definitions(include_writes=not self._calendar_mutation_requested),
+                *self._study_task_definitions(
+                    include_writes=(
+                        not self._calendar_mutation_requested
+                        and not self._block_study_task_mutations
+                    )
+                ),
             )
         if (
             not self._moodle_change_requested
@@ -1805,26 +1840,6 @@ class _AcademicToolRuntime:
                 or context.change.after_due_at is None
             ):
                 return _task_argument_error()
-            tasks = self._task_service().list(
-                status=StudyTaskStatus.OPEN,
-                course_id=context.course_id,
-                limit=MAX_ACADEMIC_RECORDS,
-            )
-            if not isinstance(tasks, tuple) or any(
-                not isinstance(task, StudyTask) for task in tasks
-            ):
-                return _invalid_output()
-            matches = tuple(task for task in tasks if task.assignment_id == context.entity_id)
-            if not matches:
-                return _tool_error(
-                    AgentErrorCode.STUDY_TASK_NOT_FOUND,
-                    "no open StudyTask is linked to the changed assignment",
-                )
-            if len(matches) != 1:
-                return _tool_error(
-                    AgentErrorCode.AMBIGUOUS_STUDY_TASK,
-                    "more than one open StudyTask is linked to the changed assignment",
-                )
             change = context.change
             apply_change = getattr(self._study_task_service, "apply_moodle_deadline_change", None)
             if not callable(apply_change):
@@ -1833,7 +1848,6 @@ class _AcademicToolRuntime:
                     "change-aware StudyTask updates are unavailable",
                 )
             task = apply_change(
-                matches[0].id,
                 request_id=self._request_id,
                 assignment_id=context.entity_id,
                 expected_due_at=change.after_due_at,
@@ -1841,11 +1855,7 @@ class _AcademicToolRuntime:
                 source_from_snapshot_id=change.from_snapshot_id,
                 source_to_snapshot_id=change.to_snapshot_id,
             )
-            if (
-                not isinstance(task, StudyTask)
-                or task.assignment_id != context.entity_id
-                or task.due_at != change.after_due_at
-            ):
+            if not isinstance(task, StudyTask) or task.assignment_id != context.entity_id:
                 return _invalid_output()
             return self._structured_result(
                 ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE,
@@ -2610,11 +2620,16 @@ class ReadOnlyAcademicAssistant:
                 question.strip(),
                 source_entity_kind=source_entity_kind,
             )
-            task_change_intent = (
+            task_change_reference = (
                 context_entity is not None
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
                 and _STUDY_TASK_DEADLINE_CHANGE_INTENT.search(question.strip()) is not None
             )
+            task_change_intent = (
+                task_change_reference
+                and _is_explicit_study_task_deadline_change_intent(question.strip())
+            )
+            task_change_discussion_only = task_change_reference and not task_change_intent
             calendar_change_intent = (
                 context_entity is not None
                 and context_entity.kind is ContextEntityKind.MOODLE_CHANGE
@@ -2689,6 +2704,7 @@ class ReadOnlyAcademicAssistant:
                 calendar_enabled,
                 calendar_action_requested,
                 self._moodle_change_reader,
+                task_change_discussion_only,
             )
             registry = runtime.build_registry()
             adapter = AcademicDecisionAdapter(
@@ -2711,6 +2727,7 @@ class ReadOnlyAcademicAssistant:
                                 and request_id is not None
                                 and self._study_task_service is not None
                                 and not calendar_action_requested
+                                and not task_change_discussion_only
                             )
                             else set()
                         ),
@@ -3542,6 +3559,11 @@ def _study_task_error(error: StudyTaskError) -> ToolResult:
     if error.code is StudyTaskErrorCode.ASSIGNMENT_NOT_FOUND:
         return _tool_error(
             AgentErrorCode.ASSIGNMENT_NOT_FOUND, "canonical assignment was not found"
+        )
+    if error.code is StudyTaskErrorCode.AMBIGUOUS_ASSIGNMENT_TASK:
+        return _tool_error(
+            AgentErrorCode.AMBIGUOUS_STUDY_TASK,
+            "more than one open StudyTask is linked to the changed assignment",
         )
     if error.code is StudyTaskErrorCode.IDEMPOTENCY_CONFLICT:
         return _tool_error(

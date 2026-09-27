@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from test_agent_calendar_actions import FakeCalendarProposalService
@@ -34,7 +35,10 @@ from aaos.moodle.changes import ChangeField
 from aaos.persistence.database import create_database_engine, create_session_factory
 from aaos.persistence.study_task_models import StudyTaskMutationORM
 from aaos.rag import HistoricalScope, RagAnswerStatus, RagQuery
-from aaos.study_tasks.contracts import StudyTaskPersistenceError
+from aaos.study_tasks.contracts import (
+    StudyTaskIdempotencyConflict,
+    StudyTaskPersistenceError,
+)
 from aaos.study_tasks.repository import StudyTaskRepository
 from aaos.study_tasks.service import StudyTaskService
 from aaos.web.contracts import (
@@ -351,6 +355,59 @@ def _apply_deadline_gateway() -> FakeGateway:
     )
 
 
+@pytest.mark.parametrize(
+    "request_text",
+    (
+        "Don't update my study task deadline to match that change.",
+        "Don’t update my study task deadline to match that change.",
+        "Should I update my study task deadline to match that change?",
+    ),
+)
+def test_negated_or_advisory_change_wording_exposes_no_task_mutations(
+    tmp_path: Path,
+    request_text: str,
+) -> None:
+    service, session_factory, engine, _clock = _task_database(tmp_path)
+    task = service.create(request_id=REQUEST_ID, assignment_id=20)
+    store = ConversationContextStore()
+    reader = FakeMoodleChangeReader(change_set())
+    first = _query_changes(store, reader, task_service=service)
+    gateway = FakeGateway(
+        _call_tool(ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE.value, {"context_ref": "ctx-1"}),
+    )
+
+    result = asyncio.run(
+        _assistant(gateway, reader, context_store=store, task_service=service).ask(
+            request_text,
+            conversation_id=first.conversation_id,
+            request_id=TASK_ACTION_ID,
+        )
+    )
+
+    assert result.status is AcademicAskStatus.FAILED
+    registered = (
+        gateway.requests[0]
+        .messages[0]
+        .content.split("REGISTERED_CAPABILITIES_JSON=", maxsplit=1)[1]
+    )
+    for tool_name in (
+        ToolName.STUDY_TASK_CREATE.value,
+        ToolName.STUDY_TASK_UPDATE.value,
+        ToolName.STUDY_TASK_COMPLETE.value,
+        ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE.value,
+    ):
+        assert f'"{tool_name}"' not in registered
+    assert service.get(task.id).updated_at == task.updated_at
+    with session_factory() as session:
+        assert (
+            session.query(StudyTaskMutationORM)
+            .filter(StudyTaskMutationORM.operation.in_(("UPDATE", "COMPLETE", "APPLY_CHANGE")))
+            .count()
+            == 0
+        )
+    engine.dispose()
+
+
 def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
     tmp_path: Path,
 ) -> None:
@@ -387,6 +444,10 @@ def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
     assert mutation.source_from_snapshot_id == 1
     assert mutation.source_to_snapshot_id == 2
     assert mutation.source_changed_field == "due_at"
+    assert mutation.result_snapshot is not None
+    saved_result = json.loads(mutation.result_snapshot)
+    assert saved_result["status"] == "OPEN"
+    assert saved_result["due_at"] == (NOW + timedelta(days=2)).isoformat()
     assert applied.sources[0].change_id == "1-2-1"
     assert applied.sources[0].changed_fields == ("due_at",)
     metadata = (
@@ -398,6 +459,56 @@ def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
     assert "assignment_id" not in metadata
 
     clock["now"] = NOW + timedelta(hours=2)
+    service.complete(
+        task.id,
+        request_id=UUID("a0000000-0000-4000-8000-000000000008"),
+    )
+    service.create(
+        request_id=UUID("a0000000-0000-4000-8000-000000000009"),
+        assignment_id=20,
+    )
+    clock["now"] = NOW + timedelta(hours=3)
+    later_due = NOW + timedelta(days=5)
+    later_sync_started = NOW + timedelta(hours=3)
+    later_sync_finished = later_sync_started + timedelta(minutes=1)
+    state = json.dumps({"source_system": "moodle"})
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE assignments SET due_at = ? WHERE id = 20",
+            (later_due.isoformat().replace("+00:00", "Z"),),
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO moodle_sync_snapshots "
+            "(id, source_system, started_at, finished_at, status, snapshot_version, "
+            "snapshot_state, failure_code) VALUES (3, 'moodle', ?, ?, 'COMPLETE', 1, ?, NULL)",
+            (
+                later_sync_started.isoformat().replace("+00:00", "Z"),
+                later_sync_finished.isoformat().replace("+00:00", "Z"),
+                state,
+            ),
+        )
+    stable_replay = service.apply_moodle_deadline_change(
+        request_id=TASK_ACTION_ID,
+        assignment_id=20,
+        expected_due_at=NOW + timedelta(days=2),
+        source_change_id="1-2-1",
+        source_from_snapshot_id=1,
+        source_to_snapshot_id=2,
+    )
+    assert stable_replay.status.value == "OPEN"
+    assert stable_replay.due_at == NOW + timedelta(days=2)
+    assert stable_replay.updated_at == NOW + timedelta(hours=1)
+    with pytest.raises(StudyTaskIdempotencyConflict):
+        service.apply_moodle_deadline_change(
+            request_id=TASK_ACTION_ID,
+            assignment_id=20,
+            expected_due_at=NOW + timedelta(days=3),
+            source_change_id="different-change",
+            source_from_snapshot_id=1,
+            source_to_snapshot_id=2,
+        )
+
+    clock["now"] = NOW + timedelta(hours=4)
     replay = asyncio.run(
         _assistant(
             _apply_deadline_gateway(), reader, context_store=store, task_service=service
@@ -408,10 +519,12 @@ def test_explicit_task_deadline_change_is_idempotent_and_keeps_change_linkage(
         )
     )
     assert replay.status is AcademicAskStatus.ANSWERED
-    assert service.get(task.id).updated_at == NOW + timedelta(hours=1)
+    assert service.get(task.id).updated_at == NOW + timedelta(hours=2)
     with session_factory() as session:
         rows = session.query(StudyTaskMutationORM).filter_by(operation="APPLY_CHANGE").all()
     assert len(rows) == 1
+    assert service.get(task.id).status.value == "COMPLETED"
+    assert service.get(task.id).due_at == later_due
     engine.dispose()
 
 
@@ -494,11 +607,26 @@ def test_task_persistence_failure_does_not_report_deadline_acknowledgement(
 def test_multiple_linked_study_tasks_prevent_ambiguous_deadline_acknowledgement(
     tmp_path: Path,
 ) -> None:
-    service, session_factory, engine, _clock = _task_database(tmp_path)
+    service, session_factory, engine, clock = _task_database(tmp_path)
     first_task = service.create(request_id=REQUEST_ID, assignment_id=20)
+    distractor_created = NOW
+    with engine.begin() as connection:
+        for index in range(49):
+            title = f"Unlinked task {index}"
+            created = distractor_created.isoformat().replace("+00:00", "Z")
+            connection.exec_driver_sql(
+                "INSERT INTO study_tasks "
+                "(title, status, priority, course_id, assignment_id, created_at, updated_at) "
+                "VALUES (?, 'OPEN', 'NORMAL', 7, NULL, ?, ?)",
+                (title, created, created),
+            )
+    clock["now"] = NOW + timedelta(minutes=1)
     second_task = service.create(
         request_id=UUID("a0000000-0000-4000-8000-000000000006"), assignment_id=20
     )
+    first_page = service.list(course_id=7, limit=50)
+    assert len(first_page) == 50
+    assert sum(task.assignment_id == 20 for task in first_page) == 1
     store = ConversationContextStore()
     reader = FakeMoodleChangeReader(change_set())
     first = _query_changes(store, reader, task_service=service)

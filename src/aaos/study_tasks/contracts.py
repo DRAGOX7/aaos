@@ -22,6 +22,7 @@ class StudyTaskErrorCode(StrEnum):
     TASK_NOT_FOUND = "TASK_NOT_FOUND"
     COURSE_NOT_FOUND = "COURSE_NOT_FOUND"
     ASSIGNMENT_NOT_FOUND = "ASSIGNMENT_NOT_FOUND"
+    AMBIGUOUS_ASSIGNMENT_TASK = "AMBIGUOUS_ASSIGNMENT_TASK"
     INVALID_MUTATION = "INVALID_MUTATION"
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
     STALE_CHANGE = "STALE_CHANGE"
@@ -39,6 +40,11 @@ class StudyTaskError(RuntimeError):
 class StudyTaskNotFoundError(StudyTaskError):
     def __init__(self) -> None:
         super().__init__(StudyTaskErrorCode.TASK_NOT_FOUND)
+
+
+class StudyTaskAmbiguousAssignmentError(StudyTaskError):
+    def __init__(self) -> None:
+        super().__init__(StudyTaskErrorCode.AMBIGUOUS_ASSIGNMENT_TASK)
 
 
 class StudyTaskReferenceNotFoundError(StudyTaskError):
@@ -127,6 +133,7 @@ class StudyTask:
 __all__ = [
     "StudyTask",
     "StudyTaskError",
+    "StudyTaskAmbiguousAssignmentError",
     "StudyTaskErrorCode",
     "StudyTaskIdempotencyConflict",
     "StudyTaskNotFoundError",

@@ -18,6 +18,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("source_from_snapshot_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("source_to_snapshot_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("source_changed_field", sa.String(64), nullable=True))
+        batch.add_column(sa.Column("result_snapshot", sa.Text(), nullable=True))
         batch.create_foreign_key(
             "fk_study_task_mutations_source_from_snapshot",
             "moodle_sync_snapshots",
@@ -50,15 +51,22 @@ def upgrade() -> None:
             "source_to_snapshot_id IS NULL AND "
             "source_changed_field IS NULL)",
         )
+        batch.create_check_constraint(
+            "ck_study_task_mutations_result_snapshot",
+            "(operation = 'APPLY_CHANGE' AND result_snapshot IS NOT NULL) OR "
+            "(operation <> 'APPLY_CHANGE' AND result_snapshot IS NULL)",
+        )
 
 
 def downgrade() -> None:
     with op.batch_alter_table("study_task_mutations") as batch:
         batch.drop_constraint("ck_study_task_mutations_change_source", type_="check")
+        batch.drop_constraint("ck_study_task_mutations_result_snapshot", type_="check")
         batch.drop_constraint("ck_study_task_mutations_operation", type_="check")
         batch.drop_constraint("fk_study_task_mutations_source_from_snapshot", type_="foreignkey")
         batch.drop_constraint("fk_study_task_mutations_source_to_snapshot", type_="foreignkey")
         batch.drop_column("source_changed_field")
+        batch.drop_column("result_snapshot")
         batch.drop_column("source_to_snapshot_id")
         batch.drop_column("source_from_snapshot_id")
         batch.drop_column("source_change_id")

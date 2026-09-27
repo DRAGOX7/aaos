@@ -158,7 +158,6 @@ class StudyTaskService:
 
     def apply_moodle_deadline_change(
         self,
-        task_id: int,
         *,
         request_id: UUID,
         assignment_id: int,
@@ -170,7 +169,6 @@ class StudyTaskService:
         """Acknowledge a current assignment deadline change on one linked task."""
 
         self._validate_request_id(request_id)
-        self._validate_task_id(task_id)
         self._validate_link_id(assignment_id)
         if (
             not isinstance(expected_due_at, datetime)
@@ -196,12 +194,10 @@ class StudyTaskService:
                 "source_changed_field": "due_at",
                 "source_from_snapshot_id": source_from_snapshot_id,
                 "source_to_snapshot_id": source_to_snapshot_id,
-                "task_id": task_id,
             },
         )
         try:
             return self._repository.apply_moodle_deadline_change_idempotent(
-                task_id,
                 request_id=request_id,
                 fingerprint=fingerprint,
                 assignment_id=assignment_id,

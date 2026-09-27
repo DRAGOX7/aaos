@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .academic_models import Base, UTCDateTime
@@ -78,6 +78,11 @@ class StudyTaskMutationORM(Base):
             "source_changed_field IS NULL)",
             name="ck_study_task_mutations_change_source",
         ),
+        CheckConstraint(
+            "(operation = 'APPLY_CHANGE' AND result_snapshot IS NOT NULL) OR "
+            "(operation <> 'APPLY_CHANGE' AND result_snapshot IS NULL)",
+            name="ck_study_task_mutations_result_snapshot",
+        ),
         Index("ix_study_task_mutations_task", "study_task_id"),
     )
 
@@ -96,6 +101,7 @@ class StudyTaskMutationORM(Base):
         ForeignKey("moodle_sync_snapshots.id", ondelete="RESTRICT"), nullable=True
     )
     source_changed_field: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 __all__ = ["StudyTaskMutationORM", "StudyTaskORM"]
