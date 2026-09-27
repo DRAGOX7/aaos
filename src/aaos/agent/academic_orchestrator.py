@@ -211,9 +211,14 @@ _OLD_DEADLINE_VALUE_ASK = re.compile(
     r"\b(?:deadline|due(?:\s+date)?)\b.{0,48}\b(?:old|previous|before|earlier)\b",
     re.IGNORECASE,
 )
+_CHANGE_AFTER_DEADLINE_VALUE_ASK = re.compile(
+    r"\b(?:new|after)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
+    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:new|after)\b",
+    re.IGNORECASE,
+)
 _CURRENT_DEADLINE_VALUE_ASK = re.compile(
-    r"\b(?:new|current|now|after|latest)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
-    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:now|currently|today)\b|"
+    r"\b(?:current|now|currently|today|latest)\b.{0,48}\b(?:deadline|due(?:\s+date)?)\b|"
+    r"\b(?:deadline|due(?:\s+date)?)\b.{0,32}\b(?:now|currently|today|latest)\b|"
     r"\bwhen\b.{0,40}\b(?:is|are)\s+(?:it|this|that|the assignment)\s+due\b",
     re.IGNORECASE,
 )
@@ -2587,11 +2592,16 @@ class ReadOnlyAcademicAssistant:
                 lease_active = False
                 return refusal
 
-            def direct_answer(message: str) -> AcademicAskResult:
+            def direct_answer(
+                message: str,
+                *,
+                sources: tuple[AcademicSourceReference, ...] = (),
+            ) -> AcademicAskResult:
                 nonlocal lease_active
                 answer = AcademicAskResult(
                     AcademicAskStatus.ANSWERED,
                     answer_text=message,
+                    sources=sources,
                     context_sources=context_sources,
                     conversation_id=lease.conversation_id,
                 )
@@ -2694,6 +2704,7 @@ class ReadOnlyAcademicAssistant:
                     if (
                         not isinstance(assignment, AssignmentSummary)
                         or assignment.id != context_entity.entity_id
+                        or assignment.course_id != context_entity.course_id
                         or (
                             assignment.due_at is not None
                             and (
@@ -2706,10 +2717,28 @@ class ReadOnlyAcademicAssistant:
                             "I couldn't verify the current assignment deadline from local "
                             "academic records."
                         )
+                    assignment_source = AcademicSourceReference(
+                        tool_name=ToolName.ACADEMIC_GET_ASSIGNMENT.value,
+                        entity_kind=ContextEntityKind.ASSIGNMENT.value,
+                        entity_id=assignment.id,
+                        course_id=assignment.course_id,
+                        source_turn=lease.turn_number,
+                    )
                     if assignment.due_at is None:
-                        return direct_answer("There is currently no assignment deadline.")
+                        return direct_answer(
+                            "There is currently no assignment deadline.",
+                            sources=(assignment_source,),
+                        )
                     current = _format_trusted_deadline(assignment.due_at)
-                    return direct_answer(f"The current assignment deadline is {current}.")
+                    return direct_answer(
+                        f"The current assignment deadline is {current}.",
+                        sources=(assignment_source,),
+                    )
+                if _CHANGE_AFTER_DEADLINE_VALUE_ASK.search(question.strip()) is not None:
+                    after = _format_trusted_deadline(change.after_due_at)
+                    return direct_answer(
+                        f"The deadline recorded by that Moodle change was {after}."
+                    )
             calendar_enabled = (
                 (not is_moodle_change_request(question.strip()) or calendar_change_intent)
                 and calendar_intent

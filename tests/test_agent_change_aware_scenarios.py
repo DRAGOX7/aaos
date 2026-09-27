@@ -249,6 +249,11 @@ def test_old_and_current_deadline_followups_use_trusted_values_without_a_model_c
     assert old.answer_text == "The previous deadline was 2026-09-30 12:00 UTC."
     assert current.status is AcademicAskStatus.ANSWERED
     assert current.answer_text == "The current assignment deadline is 2026-09-29 12:00 UTC."
+    assert len(current.sources) == 1
+    assert current.sources[0].tool_name == ToolName.ACADEMIC_GET_ASSIGNMENT.value
+    assert current.sources[0].entity_kind == "assignment"
+    assert current.sources[0].entity_id == 20
+    assert current.sources[0].source_turn == 3
     assert old_gateway.requests == []
     assert current_gateway.requests == []
     assert old.context_sources[0].change_id == "1-2-1"
@@ -271,9 +276,30 @@ def test_current_deadline_followup_reads_the_canonical_assignment_after_a_later_
             context_store=context_store,
         ).ask("When is it due now?", conversation_id=first.conversation_id)
     )
+    historical = asyncio.run(
+        _assistant(
+            gateway,
+            reader,
+            academic_reader=academic,
+            context_store=context_store,
+        ).ask(
+            "What was the new deadline after that change?",
+            conversation_id=first.conversation_id,
+        )
+    )
 
     assert current.status is AcademicAskStatus.ANSWERED
     assert current.answer_text == "The current assignment deadline is 2026-10-03 12:00 UTC."
+    assert len(current.sources) == 1
+    assert current.sources[0].entity_id == 20
+    assert current.context_sources[0].change_id == "1-2-1"
+    assert historical.status is AcademicAskStatus.ANSWERED
+    assert (
+        historical.answer_text
+        == "The deadline recorded by that Moodle change was 2026-09-29 12:00 UTC."
+    )
+    assert historical.sources == ()
+    assert historical.context_sources[0].change_id == "1-2-1"
     assert academic.calls == [("get_assignment", 20)]
     assert gateway.requests == []
 

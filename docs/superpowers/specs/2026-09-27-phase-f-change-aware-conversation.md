@@ -31,6 +31,11 @@ Missing and ambiguous references use the existing deterministic refusal path.
 Only the bounded, safe facts needed for a follow-up are serialized into the
 model context hint; canonical database IDs remain application-side.
 
+Before/after deadline questions report the selected change's retained values.
+Questions asking for the current, now, today, or latest deadline re-read the
+canonical Assignment through its trusted context ID, attach that read as an
+Ask source, and refuse if the current value cannot be verified.
+
 ## Follow-up composition
 
 ### Explanation with RAG
