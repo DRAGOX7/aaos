@@ -404,6 +404,82 @@ _STUDY_TASK_WRITE_DECISION_TASK_CONTEXTUAL_RESPONSE_FORMAT = _study_task_decisio
     task_context=True,
 )
 
+
+def _calendar_proposal_decision_response_format(
+    *,
+    provider_name: str,
+    contextual: bool,
+    include_study_task_reads: bool,
+) -> dict[str, Any]:
+    response_format = cast(
+        dict[str, Any],
+        deepcopy(
+            _STUDY_TASK_READ_DECISION_RESPONSE_FORMAT
+            if include_study_task_reads
+            else _ACADEMIC_DECISION_RESPONSE_FORMAT
+        ),
+    )
+    json_schema = response_format["json_schema"]
+    json_schema["name"] = provider_name
+    branches = json_schema["schema"]["oneOf"]
+    branches.append(
+        _academic_call_schema(
+            "calendar.propose_create_event",
+            {
+                "source_ref": {
+                    "type": ["string", "null"],
+                    "enum": [*(f"read-{index}" for index in range(1, 9)), None],
+                    "maxLength": 6,
+                },
+                "source_index": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 50,
+                },
+            },
+            ["source_ref", "source_index"],
+        )
+    )
+    if contextual:
+        for branch in branches:
+            if branch.get("properties", {}).get("action", {}).get("enum") == ["CALL_TOOL"]:
+                arguments = branch["properties"]["arguments"]
+                arguments["properties"]["context_ref"] = {
+                    "type": "string",
+                    "enum": ["ctx-1"],
+                    "maxLength": 5,
+                }
+                arguments["required"].append("context_ref")
+    return response_format
+
+
+_CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT = _calendar_proposal_decision_response_format(
+    provider_name="aaos_calendar_proposal_decision_v1",
+    contextual=False,
+    include_study_task_reads=False,
+)
+_CONTEXTUAL_CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT = (
+    _calendar_proposal_decision_response_format(
+        provider_name="aaos_calendar_proposal_decision_contextual_v1",
+        contextual=True,
+        include_study_task_reads=False,
+    )
+)
+_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT = (
+    _calendar_proposal_decision_response_format(
+        provider_name="aaos_calendar_proposal_study_task_read_decision_v1",
+        contextual=False,
+        include_study_task_reads=True,
+    )
+)
+_CONTEXTUAL_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT = (
+    _calendar_proposal_decision_response_format(
+        provider_name="aaos_calendar_proposal_study_task_read_decision_contextual_v1",
+        contextual=True,
+        include_study_task_reads=True,
+    )
+)
+
 _GROUNDED_RAG_RESPONSE_FORMAT: dict[str, object] = {
     "type": "json_schema",
     "json_schema": {
@@ -551,6 +627,16 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "study_task_write_decision_contextual": _STUDY_TASK_WRITE_DECISION_CONTEXTUAL_RESPONSE_FORMAT,
     "study_task_write_decision_task_contextual": (
         _STUDY_TASK_WRITE_DECISION_TASK_CONTEXTUAL_RESPONSE_FORMAT
+    ),
+    "calendar_proposal_decision": _CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT,
+    "calendar_proposal_decision_contextual": (
+        _CONTEXTUAL_CALENDAR_PROPOSAL_DECISION_RESPONSE_FORMAT
+    ),
+    "calendar_proposal_study_task_read_decision": (
+        _CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT
+    ),
+    "calendar_proposal_study_task_read_decision_contextual": (
+        _CONTEXTUAL_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT
     ),
     "agent_proposal": {
         "type": "json_schema",

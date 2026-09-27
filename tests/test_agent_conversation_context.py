@@ -148,6 +148,24 @@ def test_explicit_prior_entity_name_or_id_resolves_only_known_identity() -> None
     assert unknown_id.status is ContextResolutionStatus.MISSING
 
 
+def test_this_assignment_resolves_only_a_trusted_assignment() -> None:
+    assignment = _entity(
+        ContextEntityKind.ASSIGNMENT,
+        21,
+        "Project Proposal",
+        course_id=7,
+    )
+    store, conversation_id = _store_with_context((assignment,))
+    snapshot = store.begin_turn(conversation_id).snapshot
+
+    resolved = ContextReferenceResolver().resolve(
+        "Put this assignment deadline on my calendar", snapshot
+    )
+
+    assert resolved.status is ContextResolutionStatus.RESOLVED
+    assert resolved.entity == assignment
+
+
 def test_ambiguous_pronoun_and_missing_ordinal_do_not_guess() -> None:
     assignments = (
         _entity(ContextEntityKind.ASSIGNMENT, 20, "First", course_id=7),
@@ -168,7 +186,7 @@ def test_ambiguous_pronoun_and_missing_ordinal_do_not_guess() -> None:
 
 @pytest.mark.parametrize(
     "question",
-    ("Mark it complete", "Rename it", "Change its priority"),
+    ("Mark it complete", "Rename it", "Change its priority", "Schedule it Friday evening"),
 )
 def test_task_action_language_resolves_only_the_active_trusted_reference(
     question: str,

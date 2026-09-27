@@ -44,7 +44,7 @@ _ORDINAL_REFERENCE = re.compile(
 )
 _ENTITY_ID_REFERENCE = re.compile(r"\b(course|assignment|document|task)\s*#?\s*([1-9][0-9]{0,8})\b")
 _TYPED_REFERENCE = re.compile(
-    r"\bthat\s+(course|assignment|document|task)\b|\bthis\s+(course|task)\b"
+    r"\bthat\s+(course|assignment|document|task)\b|\bthis\s+(course|assignment|task)\b"
 )
 _GENERIC_REFERENCE = re.compile(
     r"\b(?:"
@@ -55,7 +55,7 @@ _GENERIC_REFERENCE = re.compile(
     r"|(?:what|when|where|why|how|is|are|was|were|does|did|can|could|should|would|will|has|have)"
     r"\s+(?:it|that)"
     r"|(?:it|that)(?=\s*[?.!,;:]|$)"
-    r"|(?:mark|complete|rename|update|change|set|reprioritize)\s+(?:it|that|this)\b"
+    r"|(?:mark|complete|rename|update|change|set|reprioritize|schedule)\s+(?:it|that|this)\b"
     r"|(?:change|set)\s+its\s+(?:priority|title|name)\b"
     r")\b"
 )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Protocol, cast
 from uuid import uuid4
@@ -81,7 +82,12 @@ class TaskPreparationError(RuntimeError):
         super().__init__(code.value)
 
 
-def _request_fingerprint(request: CalendarCreateRequest, *, now: datetime) -> str:
+def _request_fingerprint(
+    request: CalendarCreateRequest,
+    *,
+    now: datetime,
+    idempotency_scope: str | None = None,
+) -> str:
     try:
         canonical = canonicalize_calendar_request(request, now=now)
         value: object = dict(canonical_event_arguments(canonical))
@@ -94,6 +100,8 @@ def _request_fingerprint(request: CalendarCreateRequest, *, now: datetime) -> st
             "description": request.description,
             "location": request.location,
         }
+    if idempotency_scope is not None:
+        value = {"calendar_request": value, "idempotency_scope": idempotency_scope}
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -169,12 +177,22 @@ class TaskApplicationService:
         *,
         idempotency_key: str,
         now: datetime,
+        idempotency_scope: str | None = None,
     ) -> TaskDetail:
         if not isinstance(request, CalendarCreateRequest):
             raise TypeError("request must be a CalendarCreateRequest")
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError("idempotency_key must be a nonempty string")
-        fingerprint = _request_fingerprint(request, now=now)
+        if idempotency_scope is not None and (
+            not isinstance(idempotency_scope, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", idempotency_scope)
+        ):
+            raise ValueError("idempotency_scope must be a bounded safe identifier")
+        fingerprint = _request_fingerprint(
+            request,
+            now=now,
+            idempotency_scope=idempotency_scope,
+        )
         candidate = TaskRecord(
             task_id=uuid4().hex,
             task_kind=TaskKind.CALENDAR_CREATE_EVENT,
@@ -370,9 +388,18 @@ class TaskApprovalService:
         approver: TrustedApproverContext,
         now: datetime,
     ) -> ApprovalDetail:
-        from aaos.approval.service import approve_approval
+        from aaos.approval.service import Phase6ServiceError, approve_approval
 
-        approve_approval(self._approval_repository, approval_id, approver, now)
+        try:
+            approve_approval(self._approval_repository, approval_id, approver, now)
+        except Phase6ServiceError as error:
+            can_retry = getattr(self._reader, "is_approved_and_unclaimed_by", None)
+            if (
+                error.code.value != "INVALID_STATE_TRANSITION"
+                or not callable(can_retry)
+                or not can_retry(approval_id.value, approver=approver)
+            ):
+                raise
         return self._reader.get_approval(approval_id.value)
 
     def reject(

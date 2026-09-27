@@ -76,6 +76,7 @@ class AcademicAskStatusView(StrEnum):
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     TIMED_OUT = "TIMED_OUT"
+    CALENDAR_PROPOSAL_CREATED = "CALENDAR_PROPOSAL_CREATED"
 
 
 class AcademicAskRequest(BaseModel):
@@ -111,6 +112,25 @@ class AcademicAskSource(BaseModel):
     source_turn: int | None = Field(default=None, ge=1, le=8)
 
 
+class CalendarProposalView(BaseModel):
+    """Safe view of a Calendar proposal and its canonical approval binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    proposal_id: str = Field(min_length=1, max_length=128)
+    approval_id: str = Field(min_length=1, max_length=128)
+    operation: Literal["CREATE_EVENT"]
+    summary: str = Field(min_length=1, max_length=200)
+    start: str = Field(min_length=1, max_length=64)
+    end: str = Field(min_length=1, max_length=64)
+    timezone: str = Field(min_length=1, max_length=128)
+    source_entity_kind: Literal["assignment", "study_task"]
+    source_entity_id: int = Field(gt=0)
+    approval_status: ApprovalState
+    task_status: BrowserTaskState
+    operation_state: OperationState | None
+
+
 class AcademicAskResponse(BaseModel):
     """Bounded answer, refusal, or typed failure from read-only orchestration."""
 
@@ -125,6 +145,7 @@ class AcademicAskResponse(BaseModel):
     conversation_id: UUID | None = None
     sources: tuple[AcademicAskSource, ...] = ()
     rag_provenance: dict[str, object] | None = None
+    calendar_proposal: CalendarProposalView | None = None
     step_count: int = Field(ge=0, le=8)
     request_id: UUID | None = None
 

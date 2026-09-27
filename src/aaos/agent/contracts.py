@@ -57,6 +57,7 @@ class ToolName(StrEnum):
     STUDY_TASK_CREATE = "study_task.create"
     STUDY_TASK_UPDATE = "study_task.update"
     STUDY_TASK_COMPLETE = "study_task.complete"
+    CALENDAR_PROPOSE_CREATE_EVENT = "calendar.propose_create_event"
     READ_TASK_STATE = "read_task_state"
     WRITE_TASK_STATE = "write_task_state"
     COMPLETE_TASK = "complete_task"

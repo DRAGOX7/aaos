@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _LOCAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -23,6 +24,7 @@ class AppSettings:
     lm_studio_request_timeout_seconds: float = 30.0
     local_approver_identity: str | None = None
     local_approver_context_id: str | None = None
+    calendar_timezone: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the fixed local inference profile without contacting LM Studio."""
@@ -84,6 +86,14 @@ class AppSettings:
             from aaos.approval.contracts import TrustedApproverContext
 
             TrustedApproverContext(identity, context_id)
+
+        if self.calendar_timezone is not None:
+            if not isinstance(self.calendar_timezone, str) or not self.calendar_timezone:
+                raise ValueError("calendar_timezone must be a valid IANA name or None")
+            try:
+                ZoneInfo(self.calendar_timezone)
+            except (ZoneInfoNotFoundError, ValueError) as error:
+                raise ValueError("calendar_timezone must be a valid IANA name") from error
 
 
 DEFAULT_SETTINGS = AppSettings()

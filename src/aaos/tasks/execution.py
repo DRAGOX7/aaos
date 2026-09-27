@@ -29,8 +29,9 @@ class TaskExecutionReader(Protocol):
 class TaskExecutionCoordinator:
     """Run one trusted Phase 6 operation for an approved task.
 
-    This is an internal composition point.  No browser route calls it and no
-    branch performs a second adapter execution after an unknown outcome.
+    The trusted approval endpoint may invoke this internal composition point
+    after Phase 6 confirms approval. No branch performs a second adapter
+    execution after an unknown outcome.
     """
 
     def __init__(

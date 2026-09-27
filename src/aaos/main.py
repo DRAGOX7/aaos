@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         AcademicAskResult,
         AcademicDocumentPort,
         AcademicReadPort,
+        CalendarTaskProposalPort,
         ReadOnlyAcademicAssistant,
         StudyTaskPort,
     )
@@ -59,7 +60,7 @@ if TYPE_CHECKING:
     from aaos.web.health_read import SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
-    from aaos.web.routes import AcademicAskService
+    from aaos.web.routes import AcademicAskService, ApprovedCalendarTaskExecutor
 
     class _AcademicDocumentReadDelegate(AcademicDocumentPort, Protocol):
         def get_document(self, document_id: int) -> DocumentSummary: ...
@@ -198,12 +199,16 @@ class _LazyDefaultAcademicAskService:
         document_reader: AcademicDocumentPort,
         rag_service: LocalRagService,
         study_task_service: StudyTaskPort,
+        calendar_task_service: CalendarTaskProposalPort | None,
+        calendar_timezone: str | None,
     ) -> None:
         self._settings = settings
         self._academic_reader = academic_reader
         self._document_reader = document_reader
         self._rag_service = rag_service
         self._study_task_service = study_task_service
+        self._calendar_task_service = calendar_task_service
+        self._calendar_timezone = calendar_timezone
         self._gateway: LMStudioGateway | None = None
         self._assistant: ReadOnlyAcademicAssistant | None = None
 
@@ -221,6 +226,8 @@ class _LazyDefaultAcademicAskService:
                 self._document_reader,
                 self._rag_service,
                 study_task_service=self._study_task_service,
+                calendar_task_service=self._calendar_task_service,
+                calendar_timezone=self._calendar_timezone,
             )
         assert self._assistant is not None
         return self._assistant
@@ -480,8 +487,13 @@ def create_app(
     system_health_reader: SystemHealthReader | None = None,
     ask_service: AcademicAskService | None = None,
     study_task_service: StudyTaskPort | None = None,
+    calendar_task_service: CalendarTaskProposalPort | None = None,
+    calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
+
+    if calendar_task_service is not None and calendar_task_executor is None:
+        raise ValueError("Calendar proposals require execution through the approval endpoint")
 
     application = FastAPI(
         title=settings.application_name,
@@ -581,6 +593,8 @@ def create_app(
             document_reader,
             _DefaultAgentRagReadService(agent_rag_reader),
             resolved_study_task_service,
+            calendar_task_service,
+            settings.calendar_timezone,
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 
@@ -596,6 +610,7 @@ def create_app(
             task_commands=resolved_task_commands,
             principal_provider=resolved_principal_provider,
             ask_service=resolved_ask_service,
+            calendar_task_executor=calendar_task_executor,
         )
     )
 

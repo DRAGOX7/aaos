@@ -14,10 +14,12 @@ from aaos.approval.contracts import (
     ApprovalState,
     OperationState,
     PreparedAction,
+    TrustedApproverContext,
 )
 from aaos.approval.service import _approval_from_orm, _prepared_from_orm
 from aaos.persistence.approval_models import (
     ActionLifecycleORM,
+    ApprovalConsumptionORM,
     ApprovalRecordORM,
     OperationRecordORM,
     PreparedActionORM,
@@ -134,6 +136,64 @@ class TaskReadService:
                 decided_at=approval_row.decided_at,
                 decision_reason=approval_row.reason_code,
             )
+
+    def is_approved_and_unclaimed_by(
+        self,
+        approval_id: str,
+        *,
+        approver: TrustedApproverContext,
+    ) -> bool:
+        """Authorize retry of execution after approval committed but before claim."""
+
+        if not isinstance(approval_id, str) or not approval_id:
+            raise ValueError("approval_id must be nonempty")
+        if not isinstance(approver, TrustedApproverContext):
+            raise TypeError("approver must be a TrustedApproverContext")
+        with self._sessions() as session:
+            row = session.execute(
+                select(
+                    ApprovalRecordORM,
+                    PreparedActionORM,
+                    ActionLifecycleORM,
+                    ApprovalConsumptionORM,
+                    OperationRecordORM,
+                )
+                .join(
+                    PreparedActionORM,
+                    PreparedActionORM.action_id == ApprovalRecordORM.action_id,
+                )
+                .join(
+                    ActionLifecycleORM,
+                    ActionLifecycleORM.action_id == ApprovalRecordORM.action_id,
+                )
+                .outerjoin(
+                    ApprovalConsumptionORM,
+                    ApprovalConsumptionORM.action_id == ApprovalRecordORM.action_id,
+                )
+                .outerjoin(
+                    OperationRecordORM,
+                    OperationRecordORM.action_id == ApprovalRecordORM.action_id,
+                )
+                .where(ApprovalRecordORM.approval_id == approval_id)
+            ).first()
+        if row is None:
+            return False
+        approval_row, prepared_row, lifecycle, consumption, operation = row
+        prepared = _prepared_from_orm(cast(PreparedActionORM, prepared_row))
+        approval = _approval_from_orm(cast(ApprovalRecordORM, approval_row), prepared)
+        try:
+            action_state = ActionState(cast(ActionLifecycleORM, lifecycle).state)
+        except ValueError:
+            raise Phase7ApiError(
+                500, "INTERNAL_ERROR", "AAOS could not complete the request."
+            ) from None
+        return (
+            approval.approver == approver
+            and approval.status is ApprovalState.APPROVED
+            and action_state is ActionState.APPROVED
+            and consumption is None
+            and operation is None
+        )
 
     def _detail(self, record: TaskRecord) -> TaskDetail:
         if record.action_id is None:

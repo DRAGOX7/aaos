@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from aaos.agent.academic_orchestrator import AcademicAskResult
+from aaos.tasks.contracts import BrowserTaskState
 from aaos.web.activity import (
     ActivityCursor,
     ActivityEvent,
@@ -27,13 +28,16 @@ from aaos.web.contracts import (
     ApprovalCommandRequest,
     ApprovalDetail,
     ApprovalListResponse,
+    ApprovalState,
     ApprovalSummary,
     AssignmentListResponse,
     AssignmentSummary,
+    CalendarProposalView,
     CourseListResponse,
     CourseSummary,
     DocumentListResponse,
     DocumentSummary,
+    OperationState,
     RagAnswerResponse,
     RagQueryRequest,
     TaskDetail,
@@ -80,6 +84,12 @@ class TaskApprovalCommands(Protocol):
         approver: TrustedApproverContext,
         now: datetime,
     ) -> ApprovalDetail: ...
+
+
+class ApprovedCalendarTaskExecutor(Protocol):
+    """Execute only a task linked to a trusted approval decision."""
+
+    def execute_approved_task(self, task_id: str, *, now: datetime) -> TaskDetail: ...
 
 
 class CourseReader(Protocol):
@@ -169,10 +179,14 @@ def create_api_v1_router(
     task_commands: TaskApprovalCommands | None = None,
     principal_provider: LocalApproverContextProvider | None = None,
     ask_service: AcademicAskService | None = None,
+    calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
     router = APIRouter(prefix="/api/v1")
+
+    if calendar_task_executor is not None and task_reader is None:
+        raise ValueError("Calendar execution after approval requires a task reader")
 
     if activity_reader is not None:
 
@@ -366,6 +380,28 @@ def create_api_v1_router(
                     for source in result.context_sources
                 ),
                 rag_provenance=_json_compatible_mapping(result.rag_provenance),
+                calendar_proposal=(
+                    CalendarProposalView(
+                        proposal_id=result.calendar_proposal.proposal_id,
+                        approval_id=result.calendar_proposal.approval_id,
+                        operation=result.calendar_proposal.operation,
+                        summary=result.calendar_proposal.summary,
+                        start=result.calendar_proposal.start,
+                        end=result.calendar_proposal.end,
+                        timezone=result.calendar_proposal.timezone,
+                        source_entity_kind=result.calendar_proposal.source_entity_kind,
+                        source_entity_id=result.calendar_proposal.source_entity_id,
+                        approval_status=ApprovalState(result.calendar_proposal.approval_status),
+                        task_status=BrowserTaskState(result.calendar_proposal.task_status),
+                        operation_state=(
+                            OperationState(result.calendar_proposal.operation_state)
+                            if result.calendar_proposal.operation_state is not None
+                            else None
+                        ),
+                    )
+                    if result.calendar_proposal is not None
+                    else None
+                ),
                 step_count=result.step_count,
                 conversation_id=result.conversation_id,
                 request_id=body.request_id,
@@ -463,11 +499,25 @@ def create_api_v1_router(
             try:
                 from aaos.approval.service import Phase6ServiceError
 
-                return task_commands.approve(
+                now = datetime.now(timezone.utc)
+                approval = task_commands.approve(
                     _approval_id(approval_id),
                     approver=_approver(),
-                    now=datetime.now(timezone.utc),
+                    now=now,
                 )
+                if (
+                    calendar_task_executor is not None
+                    and approval.status is ApprovalState.APPROVED
+                    and approval.action.action_type == "CREATE_EVENT"
+                ):
+                    execution_now = datetime.now(timezone.utc)
+                    calendar_task_executor.execute_approved_task(
+                        approval.task_id,
+                        now=execution_now,
+                    )
+                    assert task_reader is not None
+                    return task_reader.get_approval(approval.approval_id)
+                return approval
             except Phase6ServiceError as error:
                 raise _phase6_error(error.code) from error
 

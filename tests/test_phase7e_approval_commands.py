@@ -18,6 +18,7 @@ from aaos.web.contracts import (
     ApprovalDetail,
     ApprovalSummary,
     SafeActionSummary,
+    TaskDetail,
 )
 from aaos.web.contracts import (
     ApprovalState as ApprovalViewState,
@@ -113,11 +114,26 @@ class FailingCommands(RecordingCommands):
         raise Phase6ServiceError(self.code)
 
 
-def _client(commands: RecordingCommands) -> TestClient:
+class RecordingCalendarExecutor:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute_approved_task(self, task_id: str, *, now: datetime) -> TaskDetail:
+        del now
+        self.calls.append(task_id)
+        raise AssertionError("rejected approvals must never execute Calendar work")
+
+
+def _client(
+    commands: RecordingCommands,
+    *,
+    calendar_task_executor: RecordingCalendarExecutor | None = None,
+) -> TestClient:
     return TestClient(
         create_app(
             task_commands=commands,
             principal_provider=RecordingPrincipal(),
+            calendar_task_executor=calendar_task_executor,
         ),
         raise_server_exceptions=False,
     )
@@ -146,7 +162,8 @@ def test_approve_route_uses_server_approver_and_empty_json_body() -> None:
 
 def test_reject_route_uses_server_approver_and_never_dispatches() -> None:
     commands = RecordingCommands()
-    response = _client(commands).post(
+    executor = RecordingCalendarExecutor()
+    response = _client(commands, calendar_task_executor=executor).post(
         "/api/v1/approvals/approval-1/reject",
         headers=_headers(),
         json={},
@@ -154,6 +171,7 @@ def test_reject_route_uses_server_approver_and_never_dispatches() -> None:
 
     assert response.status_code == 200
     assert commands.rejected == [(ApprovalId("approval-1"), APPROVER)]
+    assert executor.calls == []
 
 
 def test_approval_route_rejects_authority_fields_and_foreign_origin() -> None:
