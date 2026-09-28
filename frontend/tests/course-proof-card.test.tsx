@@ -6,9 +6,10 @@ import { AppShell } from "@/components/aaos/app-shell";
 import { CourseProofCard } from "@/components/aaos/course-proof-card";
 import type { CourseListResponse } from "@/lib/api/courses";
 
-const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock, pathnameMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
+  pathnameMock: vi.fn(() => "/"),
 }));
 
 vi.mock("@tanstack/react-query", async () => {
@@ -23,6 +24,10 @@ vi.mock("@tanstack/react-query", async () => {
     useQuery: useQueryMock,
   };
 });
+
+vi.mock("next/navigation", () => ({
+  usePathname: pathnameMock,
+}));
 
 function setQueryState({
   data,

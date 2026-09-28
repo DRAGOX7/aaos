@@ -99,8 +99,16 @@ class AcademicAskRequest(BaseModel):
         return normalized
 
 
+AcademicAskChangedField = Literal[
+    "title", "code", "due_at", "published_at", "course", "document_version"
+]
+AcademicAskChangeKind = Literal["ADDED", "REMOVED", "MODIFIED"]
+AcademicAskStudyTaskStatus = Literal["OPEN", "COMPLETED"]
+AcademicAskStudyTaskPriority = Literal["LOW", "NORMAL", "HIGH"]
+
+
 class AcademicAskSource(BaseModel):
-    """Trusted academic source identity attached to a structured answer."""
+    """Trusted, bounded source and result projection attached to an Ask answer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -115,7 +123,88 @@ class AcademicAskSource(BaseModel):
     change_id: str | None = Field(default=None, max_length=255)
     from_snapshot_id: int | None = Field(default=None, gt=0)
     to_snapshot_id: int | None = Field(default=None, gt=0)
-    changed_fields: tuple[str, ...] = Field(default=(), max_length=6)
+    changed_fields: tuple[AcademicAskChangedField, ...] = Field(default=(), max_length=6)
+    change_kind: AcademicAskChangeKind | None = None
+    before_due_at: datetime | None = None
+    after_due_at: datetime | None = None
+    study_task_status: AcademicAskStudyTaskStatus | None = None
+    study_task_priority: AcademicAskStudyTaskPriority | None = None
+    study_task_due_at: datetime | None = None
+    study_task_course_id: int | None = Field(default=None, gt=0)
+    study_task_course_title: str | None = Field(default=None, max_length=500)
+    study_task_assignment_id: int | None = Field(default=None, gt=0)
+    study_task_assignment_title: str | None = Field(default=None, max_length=500)
+
+
+class AcademicAskRagPageCitationView(BaseModel):
+    """Trusted page citation carried by the bounded Ask RAG projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    claim_id: str = Field(min_length=1, max_length=255)
+    document_version_id: int = Field(gt=0)
+    document_title: str = Field(min_length=1, max_length=2048)
+    page_start: int = Field(gt=0)
+    page_end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _page_range_is_valid(self) -> "AcademicAskRagPageCitationView":
+        if self.page_end < self.page_start:
+            raise ValueError("page_end must not precede page_start")
+        return self
+
+
+class AcademicAskRagStructuralCitationView(BaseModel):
+    """Trusted structural citation carried by the bounded Ask RAG projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    claim_id: str = Field(min_length=1, max_length=255)
+    document_version_id: int = Field(gt=0)
+    document_title: str = Field(min_length=1, max_length=2048)
+    unit_start: int = Field(gt=0)
+    unit_end: int = Field(gt=0)
+    heading: str | None = Field(default=None, max_length=2048)
+    table_index: int | None = Field(default=None, ge=0)
+    row_index: int | None = Field(default=None, ge=0)
+    column_index: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _structural_location_is_valid(self) -> "AcademicAskRagStructuralCitationView":
+        if self.unit_end < self.unit_start:
+            raise ValueError("unit_end must not precede unit_start")
+        coordinates = (self.table_index, self.row_index, self.column_index)
+        if any(value is None for value in coordinates) and not all(
+            value is None for value in coordinates
+        ):
+            raise ValueError("table coordinates must be all present or all absent")
+        return self
+
+
+class AcademicAskRagAnswerProvenanceView(BaseModel):
+    """Closed projection of the validated grounded-RAG answer payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    answer_text: str = Field(min_length=1, max_length=16384)
+    citations: tuple[
+        AcademicAskRagPageCitationView | AcademicAskRagStructuralCitationView, ...
+    ] = Field(max_length=64)
+    content_revision: int = Field(ge=0)
+    generation_id: int = Field(gt=0)
+    language: str = Field(min_length=1, max_length=32)
+    rendered_text: str = Field(min_length=1, max_length=16384)
+    status: Literal["ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"]
+
+
+class AcademicAskRagProvenanceSummaryView(BaseModel):
+    """Small validated RAG provenance summary used by document-grounded plans."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    generation_id: int = Field(gt=0)
+    content_revision: int = Field(ge=0)
+    citation_count: int = Field(ge=0, le=64)
 
 
 class CalendarProposalView(BaseModel):
@@ -150,7 +239,9 @@ class AcademicAskResponse(BaseModel):
     context_sources: tuple[AcademicAskSource, ...] = ()
     conversation_id: UUID | None = None
     sources: tuple[AcademicAskSource, ...] = ()
-    rag_provenance: dict[str, object] | None = None
+    rag_provenance: (
+        AcademicAskRagAnswerProvenanceView | AcademicAskRagProvenanceSummaryView | None
+    ) = None
     calendar_proposal: CalendarProposalView | None = None
     study_plan: StudyPlanView | None = None
     step_count: int = Field(ge=0, le=8)

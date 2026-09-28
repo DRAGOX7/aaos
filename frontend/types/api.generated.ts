@@ -301,6 +301,81 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AcademicAskRagAnswerProvenanceView
+         * @description Closed projection of the validated grounded-RAG answer payload.
+         */
+        AcademicAskRagAnswerProvenanceView: {
+            /** Answer Text */
+            answer_text: string;
+            /** Citations */
+            citations: (components["schemas"]["AcademicAskRagPageCitationView"] | components["schemas"]["AcademicAskRagStructuralCitationView"])[];
+            /** Content Revision */
+            content_revision: number;
+            /** Generation Id */
+            generation_id: number;
+            /** Language */
+            language: string;
+            /** Rendered Text */
+            rendered_text: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ANSWER" | "PARTIAL_ANSWER" | "INSUFFICIENT_EVIDENCE";
+        };
+        /**
+         * AcademicAskRagPageCitationView
+         * @description Trusted page citation carried by the bounded Ask RAG projection.
+         */
+        AcademicAskRagPageCitationView: {
+            /** Claim Id */
+            claim_id: string;
+            /** Document Title */
+            document_title: string;
+            /** Document Version Id */
+            document_version_id: number;
+            /** Page End */
+            page_end: number;
+            /** Page Start */
+            page_start: number;
+        };
+        /**
+         * AcademicAskRagProvenanceSummaryView
+         * @description Small validated RAG provenance summary used by document-grounded plans.
+         */
+        AcademicAskRagProvenanceSummaryView: {
+            /** Citation Count */
+            citation_count: number;
+            /** Content Revision */
+            content_revision: number;
+            /** Generation Id */
+            generation_id: number;
+        };
+        /**
+         * AcademicAskRagStructuralCitationView
+         * @description Trusted structural citation carried by the bounded Ask RAG projection.
+         */
+        AcademicAskRagStructuralCitationView: {
+            /** Claim Id */
+            claim_id: string;
+            /** Column Index */
+            column_index?: number | null;
+            /** Document Title */
+            document_title: string;
+            /** Document Version Id */
+            document_version_id: number;
+            /** Heading */
+            heading?: string | null;
+            /** Row Index */
+            row_index?: number | null;
+            /** Table Index */
+            table_index?: number | null;
+            /** Unit End */
+            unit_end: number;
+            /** Unit Start */
+            unit_start: number;
+        };
+        /**
          * AcademicAskRequest
          * @description Closed request contract for one bounded academic conversation turn.
          */
@@ -332,9 +407,7 @@ export interface components {
             /** Failure Message */
             failure_message?: string | null;
             /** Rag Provenance */
-            rag_provenance?: {
-                [key: string]: unknown;
-            } | null;
+            rag_provenance?: components["schemas"]["AcademicAskRagAnswerProvenanceView"] | components["schemas"]["AcademicAskRagProvenanceSummaryView"] | null;
             /** Refusal Code */
             refusal_code?: string | null;
             /** Request Id */
@@ -351,16 +424,22 @@ export interface components {
         };
         /**
          * AcademicAskSource
-         * @description Trusted academic source identity attached to a structured answer.
+         * @description Trusted, bounded source and result projection attached to an Ask answer.
          */
         AcademicAskSource: {
+            /** After Due At */
+            after_due_at?: string | null;
+            /** Before Due At */
+            before_due_at?: string | null;
             /** Change Id */
             change_id?: string | null;
+            /** Change Kind */
+            change_kind?: ("ADDED" | "REMOVED" | "MODIFIED") | null;
             /**
              * Changed Fields
              * @default []
              */
-            changed_fields: string[];
+            changed_fields: ("title" | "code" | "due_at" | "published_at" | "course" | "document_version")[];
             /** Course Id */
             course_id?: number | null;
             /** Entity Id */
@@ -375,6 +454,20 @@ export interface components {
             source_ref?: string | null;
             /** Source Turn */
             source_turn?: number | null;
+            /** Study Task Assignment Id */
+            study_task_assignment_id?: number | null;
+            /** Study Task Assignment Title */
+            study_task_assignment_title?: string | null;
+            /** Study Task Course Id */
+            study_task_course_id?: number | null;
+            /** Study Task Course Title */
+            study_task_course_title?: string | null;
+            /** Study Task Due At */
+            study_task_due_at?: string | null;
+            /** Study Task Priority */
+            study_task_priority?: ("LOW" | "NORMAL" | "HIGH") | null;
+            /** Study Task Status */
+            study_task_status?: ("OPEN" | "COMPLETED") | null;
             /** Title */
             title?: string | null;
             /** To Snapshot Id */

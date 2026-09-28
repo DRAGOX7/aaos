@@ -22,6 +22,8 @@ from aaos.web.activity import (
 )
 from aaos.web.activity_stream import iter_activity_sse
 from aaos.web.contracts import (
+    AcademicAskRagAnswerProvenanceView,
+    AcademicAskRagProvenanceSummaryView,
     AcademicAskRequest,
     AcademicAskResponse,
     AcademicAskSource,
@@ -377,6 +379,16 @@ def create_api_v1_router(
                         from_snapshot_id=source.from_snapshot_id,
                         to_snapshot_id=source.to_snapshot_id,
                         changed_fields=source.changed_fields,
+                        change_kind=source.change_kind,
+                        before_due_at=source.before_due_at,
+                        after_due_at=source.after_due_at,
+                        study_task_status=source.study_task_status,
+                        study_task_priority=source.study_task_priority,
+                        study_task_due_at=source.study_task_due_at,
+                        study_task_course_id=source.study_task_course_id,
+                        study_task_course_title=source.study_task_course_title,
+                        study_task_assignment_id=source.study_task_assignment_id,
+                        study_task_assignment_title=source.study_task_assignment_title,
                     )
                     for source in result.sources
                 ),
@@ -394,10 +406,20 @@ def create_api_v1_router(
                         from_snapshot_id=source.from_snapshot_id,
                         to_snapshot_id=source.to_snapshot_id,
                         changed_fields=source.changed_fields,
+                        change_kind=source.change_kind,
+                        before_due_at=source.before_due_at,
+                        after_due_at=source.after_due_at,
+                        study_task_status=source.study_task_status,
+                        study_task_priority=source.study_task_priority,
+                        study_task_due_at=source.study_task_due_at,
+                        study_task_course_id=source.study_task_course_id,
+                        study_task_course_title=source.study_task_course_title,
+                        study_task_assignment_id=source.study_task_assignment_id,
+                        study_task_assignment_title=source.study_task_assignment_title,
                     )
                     for source in result.context_sources
                 ),
-                rag_provenance=_json_compatible_mapping(result.rag_provenance),
+                rag_provenance=_academic_ask_rag_provenance_view(result.rag_provenance),
                 calendar_proposal=(
                     CalendarProposalView(
                         proposal_id=result.calendar_proposal.proposal_id,
@@ -583,6 +605,21 @@ def _json_compatible_mapping(value: Mapping[str, object] | None) -> dict[str, ob
     if not isinstance(normalized, dict):
         raise TypeError("academic answer provenance must be an object")
     return normalized
+
+
+def _academic_ask_rag_provenance_view(
+    value: Mapping[str, object] | None,
+) -> AcademicAskRagAnswerProvenanceView | AcademicAskRagProvenanceSummaryView | None:
+    normalized = _json_compatible_mapping(value)
+    if normalized is None:
+        return None
+    if "citations" in normalized:
+        citations = normalized.get("citations")
+        if not isinstance(citations, list):
+            raise TypeError("academic RAG citations must be a list")
+        normalized["citations"] = tuple(citations)
+        return AcademicAskRagAnswerProvenanceView.model_validate(normalized)
+    return AcademicAskRagProvenanceSummaryView.model_validate(normalized)
 
 
 def _study_plan_view(plan: StudyPlan | None) -> StudyPlanView | None:

@@ -1,6 +1,236 @@
 {
   "components": {
     "schemas": {
+      "AcademicAskRagAnswerProvenanceView": {
+        "additionalProperties": false,
+        "description": "Closed projection of the validated grounded-RAG answer payload.",
+        "properties": {
+          "answer_text": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Answer Text",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AcademicAskRagPageCitationView"
+                },
+                {
+                  "$ref": "#/components/schemas/AcademicAskRagStructuralCitationView"
+                }
+              ]
+            },
+            "maxItems": 64,
+            "title": "Citations",
+            "type": "array"
+          },
+          "content_revision": {
+            "minimum": 0.0,
+            "title": "Content Revision",
+            "type": "integer"
+          },
+          "generation_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Generation Id",
+            "type": "integer"
+          },
+          "language": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Language",
+            "type": "string"
+          },
+          "rendered_text": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Rendered Text",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ANSWER",
+              "PARTIAL_ANSWER",
+              "INSUFFICIENT_EVIDENCE"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer_text",
+          "citations",
+          "content_revision",
+          "generation_id",
+          "language",
+          "rendered_text",
+          "status"
+        ],
+        "title": "AcademicAskRagAnswerProvenanceView",
+        "type": "object"
+      },
+      "AcademicAskRagPageCitationView": {
+        "additionalProperties": false,
+        "description": "Trusted page citation carried by the bounded Ask RAG projection.",
+        "properties": {
+          "claim_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "document_title": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Document Title",
+            "type": "string"
+          },
+          "document_version_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Document Version Id",
+            "type": "integer"
+          },
+          "page_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Page End",
+            "type": "integer"
+          },
+          "page_start": {
+            "exclusiveMinimum": 0.0,
+            "title": "Page Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_id",
+          "document_version_id",
+          "document_title",
+          "page_start",
+          "page_end"
+        ],
+        "title": "AcademicAskRagPageCitationView",
+        "type": "object"
+      },
+      "AcademicAskRagProvenanceSummaryView": {
+        "additionalProperties": false,
+        "description": "Small validated RAG provenance summary used by document-grounded plans.",
+        "properties": {
+          "citation_count": {
+            "maximum": 64.0,
+            "minimum": 0.0,
+            "title": "Citation Count",
+            "type": "integer"
+          },
+          "content_revision": {
+            "minimum": 0.0,
+            "title": "Content Revision",
+            "type": "integer"
+          },
+          "generation_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Generation Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation_id",
+          "content_revision",
+          "citation_count"
+        ],
+        "title": "AcademicAskRagProvenanceSummaryView",
+        "type": "object"
+      },
+      "AcademicAskRagStructuralCitationView": {
+        "additionalProperties": false,
+        "description": "Trusted structural citation carried by the bounded Ask RAG projection.",
+        "properties": {
+          "claim_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "column_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Index"
+          },
+          "document_title": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Document Title",
+            "type": "string"
+          },
+          "document_version_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Document Version Id",
+            "type": "integer"
+          },
+          "heading": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading"
+          },
+          "row_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Index"
+          },
+          "table_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Index"
+          },
+          "unit_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Unit End",
+            "type": "integer"
+          },
+          "unit_start": {
+            "exclusiveMinimum": 0.0,
+            "title": "Unit Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claim_id",
+          "document_version_id",
+          "document_title",
+          "unit_start",
+          "unit_end"
+        ],
+        "title": "AcademicAskRagStructuralCitationView",
+        "type": "object"
+      },
       "AcademicAskRequest": {
         "additionalProperties": false,
         "description": "Closed request contract for one bounded academic conversation turn.",
@@ -115,8 +345,10 @@
           "rag_provenance": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/AcademicAskRagAnswerProvenanceView"
+              },
+              {
+                "$ref": "#/components/schemas/AcademicAskRagProvenanceSummaryView"
               },
               {
                 "type": "null"
@@ -185,8 +417,32 @@
       },
       "AcademicAskSource": {
         "additionalProperties": false,
-        "description": "Trusted academic source identity attached to a structured answer.",
+        "description": "Trusted, bounded source and result projection attached to an Ask answer.",
         "properties": {
+          "after_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Due At"
+          },
+          "before_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Due At"
+          },
           "change_id": {
             "anyOf": [
               {
@@ -199,9 +455,33 @@
             ],
             "title": "Change Id"
           },
+          "change_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ADDED",
+                  "REMOVED",
+                  "MODIFIED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Kind"
+          },
           "changed_fields": {
             "default": [],
             "items": {
+              "enum": [
+                "title",
+                "code",
+                "due_at",
+                "published_at",
+                "course",
+                "document_version"
+              ],
               "type": "string"
             },
             "maxItems": 6,
@@ -284,6 +564,97 @@
               }
             ],
             "title": "Source Turn"
+          },
+          "study_task_assignment_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Assignment Id"
+          },
+          "study_task_assignment_title": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Assignment Title"
+          },
+          "study_task_course_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Course Id"
+          },
+          "study_task_course_title": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Course Title"
+          },
+          "study_task_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Due At"
+          },
+          "study_task_priority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LOW",
+                  "NORMAL",
+                  "HIGH"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Priority"
+          },
+          "study_task_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "OPEN",
+                  "COMPLETED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Status"
           },
           "title": {
             "anyOf": [

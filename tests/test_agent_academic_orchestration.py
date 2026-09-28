@@ -1034,6 +1034,32 @@ def test_api_ask_route_returns_structured_provenance_from_injected_assistant() -
     assert follow_up_payload["conversation_id"] == payload["conversation_id"]
 
 
+def test_api_ask_route_serializes_typed_rag_citations() -> None:
+    gateway = FakeGateway(_tool("rag.answer", '{"course_name":"Deep Learning"}'))
+    assistant, academic, _documents, _rag = _assistant(
+        gateway,
+        rag=FakeRagService(_rag_grounded_answer()),
+    )
+    application = FastAPI()
+    application.include_router(create_api_v1_router(academic, ask_service=assistant))
+
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/v1/ask",
+            json={"question": "Explain the Neural Networks Report using documents."},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    citation = payload["rag_provenance"]["citations"][0]
+    assert payload["status"] == "ANSWERED"
+    assert citation["claim_id"] == "claim-1"
+    assert citation["document_version_id"] == 101
+    assert citation["document_title"] == "Neural Networks Report.pdf"
+    assert citation["page_start"] == 1
+    assert citation["page_end"] == 1
+
+
 def test_api_ask_echoes_caller_request_id_for_mutation_replay() -> None:
     request_id = "00000000-0000-4000-8000-000000000099"
     gateway = FakeGateway(_refuse("UNSUPPORTED_CAPABILITY"))

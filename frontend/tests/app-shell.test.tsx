@@ -1,8 +1,16 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/aaos/app-shell";
 import { PageHeader } from "@/components/aaos/page-header";
+
+const { pathnameMock } = vi.hoisted(() => ({
+  pathnameMock: vi.fn(() => "/"),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: pathnameMock,
+}));
 
 describe("AAOS application shell", () => {
   it("provides the required application landmarks", () => {

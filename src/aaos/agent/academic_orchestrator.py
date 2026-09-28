@@ -56,7 +56,16 @@ from aaos.study_tasks.contracts import (
     StudyTaskStatus,
 )
 from aaos.tasks.service import TaskPreparationError
-from aaos.web.contracts import AssignmentSummary, CourseSummary, DocumentSummary, TaskDetail
+from aaos.web.contracts import (
+    AcademicAskChangedField,
+    AcademicAskChangeKind,
+    AcademicAskStudyTaskPriority,
+    AcademicAskStudyTaskStatus,
+    AssignmentSummary,
+    CourseSummary,
+    DocumentSummary,
+    TaskDetail,
+)
 
 from .calendar_actions import (
     CalendarIntentError,
@@ -403,7 +412,17 @@ class AcademicSourceReference:
     change_id: str | None = None
     from_snapshot_id: int | None = None
     to_snapshot_id: int | None = None
-    changed_fields: tuple[str, ...] = ()
+    changed_fields: tuple[AcademicAskChangedField, ...] = ()
+    change_kind: AcademicAskChangeKind | None = None
+    before_due_at: datetime | None = None
+    after_due_at: datetime | None = None
+    study_task_status: AcademicAskStudyTaskStatus | None = None
+    study_task_priority: AcademicAskStudyTaskPriority | None = None
+    study_task_due_at: datetime | None = None
+    study_task_course_id: int | None = None
+    study_task_course_title: str | None = None
+    study_task_assignment_id: int | None = None
+    study_task_assignment_title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -4283,13 +4302,89 @@ def _render_academic_evidence(
     return rendered
 
 
+def _academic_ask_changed_field(value: object) -> AcademicAskChangedField:
+    if not isinstance(value, str):
+        raise ValueError("academic provenance changed field is invalid")
+    if value == "title":
+        return "title"
+    if value == "code":
+        return "code"
+    if value == "due_at":
+        return "due_at"
+    if value == "published_at":
+        return "published_at"
+    if value == "course":
+        return "course"
+    if value == "document_version":
+        return "document_version"
+    raise ValueError("academic provenance changed field is invalid")
+
+
+def _academic_ask_changed_fields(
+    value: object,
+) -> tuple[AcademicAskChangedField, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise ValueError("academic provenance changed fields are invalid")
+    return tuple(_academic_ask_changed_field(field) for field in value)
+
+
+def _academic_ask_change_kind(value: object) -> AcademicAskChangeKind | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("academic provenance change kind is invalid")
+    if value == "ADDED":
+        return "ADDED"
+    if value == "REMOVED":
+        return "REMOVED"
+    if value == "MODIFIED":
+        return "MODIFIED"
+    raise ValueError("academic provenance change kind is invalid")
+
+
+def _academic_ask_study_task_status(
+    value: object,
+) -> AcademicAskStudyTaskStatus | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("academic provenance StudyTask status is invalid")
+    if value == "OPEN":
+        return "OPEN"
+    if value == "COMPLETED":
+        return "COMPLETED"
+    raise ValueError("academic provenance StudyTask status is invalid")
+
+
+def _academic_ask_study_task_priority(
+    value: object,
+) -> AcademicAskStudyTaskPriority | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("academic provenance StudyTask priority is invalid")
+    if value == "LOW":
+        return "LOW"
+    if value == "NORMAL":
+        return "NORMAL"
+    if value == "HIGH":
+        return "HIGH"
+    raise ValueError("academic provenance StudyTask priority is invalid")
+
+
+def _read_reference_number(source_ref: str | None) -> int:
+    if not isinstance(source_ref, str) or not _READ_REFERENCE.fullmatch(source_ref):
+        raise ValueError("academic provenance reference is invalid")
+    return int(source_ref[5:])
+
+
 def _sources_for_evidence(
     values: list[tuple[ToolName, Mapping[str, object]]],
     *,
     source_turn: int,
 ) -> tuple[AcademicSourceReference, ...]:
     sources: list[AcademicSourceReference] = []
-    seen: set[tuple[str, int | None]] = set()
+    seen: dict[tuple[object, ...], int] = {}
     for name, output in values:
         records = output.get("records")
         filters = output.get("filter")
@@ -4337,10 +4432,6 @@ def _sources_for_evidence(
             entity_id = raw_record.get("id")
             if not isinstance(entity_id, int) or isinstance(entity_id, bool):
                 raise ValueError("academic provenance identity is invalid")
-            key = (kind, entity_id)
-            if key in seen:
-                continue
-            seen.add(key)
             raw_from_snapshot_id = (
                 output.get("from_snapshot_id")
                 if name is ToolName.MOODLE_LIST_CHANGES
@@ -4366,8 +4457,7 @@ def _sources_for_evidence(
                 if isinstance(raw_to_snapshot_id, int) and not isinstance(raw_to_snapshot_id, bool)
                 else None
             )
-            sources.append(
-                AcademicSourceReference(
+            source = AcademicSourceReference(
                     name.value,
                     kind,
                     entity_id,
@@ -4394,24 +4484,80 @@ def _sources_for_evidence(
                     ),
                     from_snapshot_id=from_snapshot_id,
                     to_snapshot_id=to_snapshot_id,
-                    changed_fields=(
-                        tuple(
-                            value
-                            for value in raw_record.get("changed_fields", ())
-                            if isinstance(value, str)
-                        )
+                    changed_fields=_academic_ask_changed_fields(
+                        raw_record.get("changed_fields", ())
                         if name is ToolName.MOODLE_LIST_CHANGES
-                        else tuple(
-                            value
-                            for value in filters.get("changed_fields", ())
-                            if isinstance(value, str)
-                        )
+                        else filters.get("changed_fields", ())
                         if name is ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_CHANGE
-                        and isinstance(filters.get("changed_fields"), (tuple, list))
                         else ()
                     ),
+                    change_kind=_academic_ask_change_kind(
+                        raw_record.get("change_kind")
+                        if name is ToolName.MOODLE_LIST_CHANGES
+                        else None
+                    ),
+                    before_due_at=(
+                        _provenance_datetime(raw_record.get("before_due_at"))
+                        if name is ToolName.MOODLE_LIST_CHANGES
+                        else None
+                    ),
+                    after_due_at=(
+                        _provenance_datetime(raw_record.get("after_due_at"))
+                        if name is ToolName.MOODLE_LIST_CHANGES
+                        else None
+                    ),
+                    study_task_status=_academic_ask_study_task_status(
+                        raw_record.get("status") if kind == "study_task" else None
+                    ),
+                    study_task_priority=_academic_ask_study_task_priority(
+                        raw_record.get("priority") if kind == "study_task" else None
+                    ),
+                    study_task_due_at=(
+                        _provenance_datetime(raw_record.get("due_at"))
+                        if kind == "study_task"
+                        else None
+                    ),
+                    study_task_course_id=(
+                        raw_record.get("course_id")
+                        if kind == "study_task" and isinstance(raw_record.get("course_id"), int)
+                        else None
+                    ),
+                    study_task_course_title=(
+                        raw_record.get("course_title")
+                        if kind == "study_task" and isinstance(raw_record.get("course_title"), str)
+                        else None
+                    ),
+                    study_task_assignment_id=(
+                        raw_record.get("assignment_id")
+                        if kind == "study_task"
+                        and isinstance(raw_record.get("assignment_id"), int)
+                        else None
+                    ),
+                    study_task_assignment_title=(
+                        raw_record.get("assignment_title")
+                        if kind == "study_task"
+                        and isinstance(raw_record.get("assignment_title"), str)
+                        else None
+                    ),
                 )
-            )
+            key: tuple[object, ...] = (kind, entity_id)
+            if name is ToolName.MOODLE_LIST_CHANGES:
+                key = (
+                    kind,
+                    entity_id,
+                    source.change_id,
+                    source.from_snapshot_id,
+                    source.to_snapshot_id,
+                )
+            existing_index = seen.get(key)
+            if existing_index is not None:
+                if kind == "study_task" and _read_reference_number(
+                    source.source_ref
+                ) > _read_reference_number(sources[existing_index].source_ref):
+                    sources[existing_index] = source
+                continue
+            seen[key] = len(sources)
+            sources.append(source)
     return tuple(sources)
 
 
@@ -4430,10 +4576,32 @@ def _source_for_context_entity(entity: TrustedContextEntity) -> AcademicSourceRe
         change_id=change.change_id if change is not None else None,
         from_snapshot_id=change.from_snapshot_id if change is not None else None,
         to_snapshot_id=change.to_snapshot_id if change is not None else None,
-        changed_fields=(
+        changed_fields=_academic_ask_changed_fields(
             tuple(field.value for field in change.changed_fields) if change is not None else ()
         ),
+        change_kind=_academic_ask_change_kind(
+            change.change_kind.value if change is not None else None
+        ),
+        before_due_at=change.before_due_at if change is not None else None,
+        after_due_at=change.after_due_at if change is not None else None,
     )
+
+
+def _provenance_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("academic provenance datetime is invalid") from error
+    else:
+        raise TypeError("academic provenance datetime must be an ISO timestamp or None")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("academic provenance datetime must include a timezone")
+    return parsed
 
 
 def _context_entities_for_plan(
