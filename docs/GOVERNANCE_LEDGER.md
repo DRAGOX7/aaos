@@ -102,6 +102,16 @@ and gates.
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 
+### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
+
+- Status: FROZEN as a synthetic evaluation baseline at candidate commit 37a7b4b19637458556da140649d8100af2bc8e79.
+- Frozen manifest: 100 cases; SHA-256 e1de0c65941633080f7bee400f7449f67a13725762e1959648e911ce025c4f49.
+- Deterministic report SHA-256: a3c75a6b563ff1b9db147eb4ba525cdeab397cc347f172a0fd2f6760aed3ae11.
+- Results artifact: docs/evaluations/agentic-aaos-ah-frozen-evaluation-v1-results-2026-09-28.md; SHA-256 370E4B49FBFE7C6921BCC9FE43EE6E42273220166032916A5F7CDB574D978BEE.
+- Frozen selectors: 100/100 PASS. Frontend, backend, security boundary, report reproducibility, and independent exact-SHA reviews: PASS.
+- Protected V4 evaluation material was not accessed or executed.
+- This records evaluation evidence only. It does not change Phase 9 acceptance or authorize Phase 10 or RLM work.
+
 Phase 0/2 qualifications are preserved from the pre-amendment roadmap, not
 new acceptance adjudications. Tags are historical evidence; a misleading tag
 alone cannot establish acceptance.
