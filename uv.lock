@@ -26,6 +26,7 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "torch" },
     { name = "transformers" },
+    { name = "tzdata" },
     { name = "urllib3" },
     { name = "uvicorn" },
 ]
@@ -57,6 +58,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2,<3" },
     { name = "torch", specifier = "==2.13.0+cu130", index = "https://download.pytorch.org/whl/cu130" },
     { name = "transformers", specifier = "==5.16.1" },
+    { name = "tzdata", specifier = "==2026.3" },
     { name = "urllib3", specifier = "==2.7.0" },
     { name = "uvicorn", specifier = ">=0.52.1" },
 ]
