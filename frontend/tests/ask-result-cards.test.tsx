@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { CalendarProposalCard } from "@/components/aaos/ask-result-cards";
+import { CalendarProposalCard, MoodleChangeCard } from "@/components/aaos/ask-result-cards";
 import type { components } from "@/types/api.generated";
 
 const { approveMock, rejectMock, fetchTaskMock, fetchApprovalMock } = vi.hoisted(() => ({
@@ -39,6 +39,22 @@ describe("CalendarProposalCard", () => {
     rejectMock.mockReset();
     fetchTaskMock.mockReset();
     fetchApprovalMock.mockReset();
+  });
+
+  it("renders Moodle supplied HTML as text without creating active elements", () => {
+    const hostileTitle =
+      '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script><iframe src="javascript:window.__xss=3"></iframe>';
+    const source: components["schemas"]["AcademicAskSource"] = {
+      tool_name: "read_moodle_changes",
+      entity_kind: "moodle_change",
+      entity_id: 17,
+      changed_fields: [],
+      title: hostileTitle,
+    };
+    const { container } = render(<MoodleChangeCard source={source} />);
+
+    expect(screen.getByText(hostileTitle)).toBeVisible();
+    expect(container.querySelector("script, img, iframe")).toBeNull();
   });
 
   it("keeps a pending proposal distinct from a created Calendar event", () => {

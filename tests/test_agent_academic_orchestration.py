@@ -692,7 +692,24 @@ def test_phase_b_malicious_prior_record_remains_untrusted_and_tool_catalog_stati
 
 @pytest.mark.parametrize(
     "unknown_tool",
-    ["shell", "arbitrary_http", "arbitrary_sql", "unknown_tool"],
+    [
+        "shell",
+        "powershell",
+        "bash",
+        "arbitrary_python",
+        "arbitrary_http",
+        "arbitrary_sql",
+        "arbitrary_filesystem",
+        "generic_browser",
+        "oauth_token_access",
+        "google_api_call",
+        "moodle_mutation",
+        "calendar_update",
+        "calendar_delete",
+        "self_modify_prompt",
+        "change_tool_permissions",
+        "recursive_agent",
+    ],
 )
 def test_unknown_execution_capability_fails_closed(unknown_tool: str) -> None:
     gateway = FakeGateway(_tool(unknown_tool))
