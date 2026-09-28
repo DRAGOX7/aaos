@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from aaos.agent.academic_orchestrator import AcademicAskResult
+from aaos.agent.study_plan_contracts import StudyPlan, StudyPlanSourceReference
 from aaos.tasks.contracts import BrowserTaskState
 from aaos.web.activity import (
     ActivityCursor,
@@ -38,8 +39,17 @@ from aaos.web.contracts import (
     DocumentListResponse,
     DocumentSummary,
     OperationState,
+    PlanFactKindView,
     RagAnswerResponse,
     RagQueryRequest,
+    StudyActivityTypeView,
+    StudyPlanItemView,
+    StudyPlanMoodleChangeView,
+    StudyPlanObligationView,
+    StudyPlanSourceReferenceView,
+    StudyPlanTaskFactView,
+    StudyPlanView,
+    StudyRationaleCodeView,
     TaskDetail,
     TaskListResponse,
     TaskSummary,
@@ -410,6 +420,7 @@ def create_api_v1_router(
                     if result.calendar_proposal is not None
                     else None
                 ),
+                study_plan=_study_plan_view(result.study_plan),
                 step_count=result.step_count,
                 conversation_id=result.conversation_id,
                 request_id=body.request_id,
@@ -572,3 +583,115 @@ def _json_compatible_mapping(value: Mapping[str, object] | None) -> dict[str, ob
     if not isinstance(normalized, dict):
         raise TypeError("academic answer provenance must be an object")
     return normalized
+
+
+def _study_plan_view(plan: StudyPlan | None) -> StudyPlanView | None:
+    if plan is None:
+        return None
+
+    def source_view(source: StudyPlanSourceReference) -> StudyPlanSourceReferenceView:
+        return StudyPlanSourceReferenceView(
+            kind=PlanFactKindView(source.kind.value),
+            tool_name=cast(
+                Literal[
+                    "academic.list_assignments",
+                    "study_task.list",
+                    "moodle.list_changes",
+                    "rag.answer",
+                ],
+                source.tool_name,
+            ),
+            entity_id=source.entity_id,
+            course_id=source.course_id,
+            change_id=source.change_id,
+            from_snapshot_id=source.from_snapshot_id,
+            to_snapshot_id=source.to_snapshot_id,
+            document_version_id=source.document_version_id,
+            citation_location=source.citation_location,
+            claim_id=source.claim_id,
+        )
+
+    return StudyPlanView(
+        plan_id=UUID(plan.plan_id),
+        planning_window_start=plan.planning_window_start,
+        planning_window_end=plan.planning_window_end,
+        timezone=plan.timezone,
+        generated_at=plan.generated_at,
+        calendar_conflict_aware=plan.calendar_conflict_aware,
+        assumptions=plan.assumptions,
+        warnings=plan.warnings,
+        obligations=tuple(
+            StudyPlanObligationView(
+                assignment_id=item.assignment_id,
+                course_id=item.course_id,
+                title=item.title,
+                due_at=item.due_at,
+                overdue=item.overdue,
+                source=source_view(item.source),
+            )
+            for item in plan.obligations
+        ),
+        study_tasks=tuple(
+            StudyPlanTaskFactView(
+                task_id=item.task_id,
+                title=item.title,
+                status=cast(Literal["OPEN", "COMPLETED"], item.status),
+                priority=cast(Literal["LOW", "NORMAL", "HIGH"], item.priority),
+                course_id=item.course_id,
+                assignment_id=item.assignment_id,
+                due_at=item.due_at,
+                source=source_view(item.source),
+            )
+            for item in plan.study_tasks
+        ),
+        moodle_changes=tuple(
+            StudyPlanMoodleChangeView(
+                change_id=item.change_id,
+                assignment_id=item.assignment_id,
+                course_id=item.course_id,
+                change_kind=cast(Literal["ADDED", "REMOVED", "MODIFIED"], item.change_kind),
+                title=item.title,
+                changed_fields=cast(
+                    tuple[
+                        Literal[
+                            "title",
+                            "code",
+                            "due_at",
+                            "published_at",
+                            "course",
+                            "document_version",
+                        ],
+                        ...,
+                    ],
+                    item.changed_fields,
+                ),
+                before_due_at=item.before_due_at,
+                after_due_at=item.after_due_at,
+                from_snapshot_id=item.from_snapshot_id,
+                to_snapshot_id=item.to_snapshot_id,
+                detected_at=item.detected_at,
+                source=source_view(item.source),
+            )
+            for item in plan.moodle_changes
+        ),
+        items=tuple(
+            StudyPlanItemView(
+                study_date=item.study_date,
+                course_id=item.course_id,
+                assignment_id=item.assignment_id,
+                study_task_id=item.study_task_id,
+                activity_type=StudyActivityTypeView(item.activity_type.value),
+                duration_minutes=item.duration_minutes,
+                rationale_code=StudyRationaleCodeView(item.rationale_code.value),
+                focus=item.focus,
+                estimated_duration=item.estimated_duration,
+                source_refs=tuple(source_view(source) for source in item.source_refs),
+            )
+            for item in plan.items
+        ),
+        available_minutes=plan.available_minutes,
+        max_session_minutes=plan.max_session_minutes,
+        moodle_from_snapshot_id=plan.moodle_from_snapshot_id,
+        moodle_to_snapshot_id=plan.moodle_to_snapshot_id,
+        rag_provenance=tuple(source_view(source) for source in plan.rag_provenance),
+    )

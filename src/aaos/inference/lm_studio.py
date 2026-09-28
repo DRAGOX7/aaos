@@ -725,6 +725,85 @@ _STRUCTURED_RESPONSE_FORMATS = {
     "calendar_proposal_study_task_read_decision_contextual": (
         _CONTEXTUAL_CALENDAR_PROPOSAL_STUDY_TASK_READ_DECISION_RESPONSE_FORMAT
     ),
+    "study_plan_recommendations": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "aaos_study_plan_recommendations_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "maxItems": 12,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "study_date": {"type": "string", "format": "date"},
+                                "course_id": {"type": "integer", "minimum": 1},
+                                "assignment_id": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 1},
+                                        {"type": "null"},
+                                    ]
+                                },
+                                "study_task_id": {
+                                    "anyOf": [
+                                        {"type": "integer", "minimum": 1},
+                                        {"type": "null"},
+                                    ]
+                                },
+                                "activity_type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "ASSIGNMENT_WORK",
+                                        "REVIEW",
+                                        "READING",
+                                        "PRACTICE",
+                                        "PROJECT_WORK",
+                                    ],
+                                },
+                                "duration_minutes": {
+                                    "type": "integer",
+                                    "minimum": 15,
+                                    "maximum": 180,
+                                },
+                                "rationale_code": {
+                                    "type": "string",
+                                    "enum": [
+                                        "DEADLINE_NEAR",
+                                        "OPEN_TASK",
+                                        "RECENT_MOODLE_CHANGE",
+                                        "USER_FOCUS",
+                                        "GENERAL_REVIEW",
+                                    ],
+                                },
+                                "focus": {
+                                    "anyOf": [
+                                        {"type": "string", "minLength": 1, "maxLength": 120},
+                                        {"type": "null"},
+                                    ]
+                                },
+                            },
+                            "required": [
+                                "study_date",
+                                "course_id",
+                                "assignment_id",
+                                "study_task_id",
+                                "activity_type",
+                                "duration_minutes",
+                                "rationale_code",
+                                "focus",
+                            ],
+                        },
+                    }
+                },
+                "required": ["items"],
+            },
+        },
+    },
     "agent_proposal": {
         "type": "json_schema",
         "json_schema": {

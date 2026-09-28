@@ -16,6 +16,8 @@ from uuid import UUID, uuid4
 
 from aaos.moodle.changes import ChangeField, ChangeKind, EntityType
 
+from .study_plan_contracts import StudyPlanContext
+
 MAX_CONVERSATION_TURNS = 8
 MAX_CONTEXT_ENTITIES = 16
 MAX_CONTEXT_ENTITY_TITLE_CHARACTERS = 2048
@@ -271,6 +273,7 @@ class ConversationContextSnapshot:
     last_collection: tuple[TrustedContextEntity, ...] = ()
     active_entity: TrustedContextEntity | None = None
     active_course: TrustedContextEntity | None = None
+    study_plan: StudyPlanContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.conversation_id, UUID):
@@ -300,6 +303,8 @@ class ConversationContextSnapshot:
             or self.active_course.kind is not ContextEntityKind.COURSE
         ):
             raise TypeError("active_course must be a course entity or None")
+        if self.study_plan is not None and not isinstance(self.study_plan, StudyPlanContext):
+            raise TypeError("study_plan must be a typed bounded plan or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +314,8 @@ class ConversationContextUpdate:
     last_collection: tuple[TrustedContextEntity, ...] | None = None
     active_entity: TrustedContextEntity | None = None
     active_course: TrustedContextEntity | None = None
+    # None preserves the last typed plan reference; no prose is retained.
+    study_plan: StudyPlanContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entities, tuple) or any(
@@ -329,6 +336,8 @@ class ConversationContextUpdate:
             or self.active_course.kind is not ContextEntityKind.COURSE
         ):
             raise TypeError("active_course must be a course entity or None")
+        if self.study_plan is not None and not isinstance(self.study_plan, StudyPlanContext):
+            raise TypeError("study_plan must be a typed bounded plan or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +430,7 @@ class ConversationContextStore:
                 session.snapshot.last_collection,
                 session.snapshot.active_entity,
                 session.snapshot.active_course,
+                session.snapshot.study_plan,
             )
             return ConversationContextLease(conversation_id, turn_number, token, snapshot)
 
@@ -461,6 +471,7 @@ class ConversationContextStore:
                 tuple(entity for entity in collection if entity in entities),
                 active_entity,
                 active_course,
+                update.study_plan or session.snapshot.study_plan,
             )
             session.snapshot = snapshot
             session.pending_token = None

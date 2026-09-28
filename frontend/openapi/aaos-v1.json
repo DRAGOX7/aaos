@@ -1,6 +1,342 @@
 {
   "components": {
     "schemas": {
+      "AcademicAskRequest": {
+        "additionalProperties": false,
+        "description": "Closed request contract for one bounded academic conversation turn.",
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "question": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "AcademicAskRequest",
+        "type": "object"
+      },
+      "AcademicAskResponse": {
+        "additionalProperties": false,
+        "description": "Bounded answer, refusal, or typed failure from read-only orchestration.",
+        "properties": {
+          "answer_text": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Text"
+          },
+          "calendar_proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalendarProposalView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context_sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AcademicAskSource"
+            },
+            "title": "Context Sources",
+            "type": "array"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
+          },
+          "rag_provenance": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rag Provenance"
+          },
+          "refusal_code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal Code"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AcademicAskSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AcademicAskStatusView"
+          },
+          "step_count": {
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Step Count",
+            "type": "integer"
+          },
+          "study_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "step_count"
+        ],
+        "title": "AcademicAskResponse",
+        "type": "object"
+      },
+      "AcademicAskSource": {
+        "additionalProperties": false,
+        "description": "Trusted academic source identity attached to a structured answer.",
+        "properties": {
+          "change_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          },
+          "changed_fields": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Changed Fields",
+            "type": "array"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "entity_kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Entity Kind",
+            "type": "string"
+          },
+          "from_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Snapshot Id"
+          },
+          "query_filter": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Filter"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "source_turn": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Turn"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "to_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Snapshot Id"
+          },
+          "tool_name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "entity_kind",
+          "entity_id"
+        ],
+        "title": "AcademicAskSource",
+        "type": "object"
+      },
+      "AcademicAskStatusView": {
+        "enum": [
+          "ANSWERED",
+          "REFUSED",
+          "INSUFFICIENT_EVIDENCE",
+          "FAILED",
+          "CANCELLED",
+          "TIMED_OUT",
+          "CALENDAR_PROPOSAL_CREATED"
+        ],
+        "title": "AcademicAskStatusView",
+        "type": "string"
+      },
       "ActivityCategory": {
         "enum": [
           "TASK",
@@ -534,6 +870,98 @@
         "title": "BrowserTaskState",
         "type": "string"
       },
+      "CalendarProposalView": {
+        "additionalProperties": false,
+        "description": "Safe view of a Calendar proposal and its canonical approval binding.",
+        "properties": {
+          "approval_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "approval_status": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "end": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "End",
+            "type": "string"
+          },
+          "operation": {
+            "const": "CREATE_EVENT",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operation_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposal_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "source_entity_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Source Entity Id",
+            "type": "integer"
+          },
+          "source_entity_kind": {
+            "enum": [
+              "assignment",
+              "study_task"
+            ],
+            "title": "Source Entity Kind",
+            "type": "string"
+          },
+          "start": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Start",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "task_status": {
+            "$ref": "#/components/schemas/BrowserTaskState"
+          },
+          "timezone": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "approval_id",
+          "operation",
+          "summary",
+          "start",
+          "end",
+          "timezone",
+          "source_entity_kind",
+          "source_entity_id",
+          "approval_status",
+          "task_status",
+          "operation_state"
+        ],
+        "title": "CalendarProposalView",
+        "type": "object"
+      },
       "CourseListResponse": {
         "additionalProperties": false,
         "description": "Browser-safe course collection response.",
@@ -882,6 +1310,16 @@
         "title": "OperationState",
         "type": "string"
       },
+      "PlanFactKindView": {
+        "enum": [
+          "ASSIGNMENT",
+          "STUDY_TASK",
+          "MOODLE_CHANGE",
+          "DOCUMENT"
+        ],
+        "title": "PlanFactKindView",
+        "type": "string"
+      },
       "RagAnswerResponse": {
         "additionalProperties": false,
         "description": "Validated final answer projection safe for browser rendering.",
@@ -1203,6 +1641,658 @@
         ],
         "title": "SafeActionSummary",
         "type": "object"
+      },
+      "StudyActivityTypeView": {
+        "enum": [
+          "ASSIGNMENT_WORK",
+          "REVIEW",
+          "READING",
+          "PRACTICE",
+          "PROJECT_WORK"
+        ],
+        "title": "StudyActivityTypeView",
+        "type": "string"
+      },
+      "StudyPlanItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "activity_type": {
+            "$ref": "#/components/schemas/StudyActivityTypeView"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "course_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "duration_minutes": {
+            "maximum": 180.0,
+            "minimum": 15.0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "estimated_duration": {
+            "title": "Estimated Duration",
+            "type": "boolean"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focus"
+          },
+          "rationale_code": {
+            "$ref": "#/components/schemas/StudyRationaleCodeView"
+          },
+          "source_refs": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanSourceReferenceView"
+            },
+            "maxItems": 4,
+            "title": "Source Refs",
+            "type": "array"
+          },
+          "study_date": {
+            "format": "date",
+            "title": "Study Date",
+            "type": "string"
+          },
+          "study_task_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Task Id"
+          }
+        },
+        "required": [
+          "study_date",
+          "course_id",
+          "assignment_id",
+          "study_task_id",
+          "activity_type",
+          "duration_minutes",
+          "rationale_code",
+          "focus",
+          "estimated_duration",
+          "source_refs"
+        ],
+        "title": "StudyPlanItemView",
+        "type": "object"
+      },
+      "StudyPlanMoodleChangeView": {
+        "additionalProperties": false,
+        "properties": {
+          "after_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Due At"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "before_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Due At"
+          },
+          "change_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Change Id",
+            "type": "string"
+          },
+          "change_kind": {
+            "enum": [
+              "ADDED",
+              "REMOVED",
+              "MODIFIED"
+            ],
+            "title": "Change Kind",
+            "type": "string"
+          },
+          "changed_fields": {
+            "items": {
+              "enum": [
+                "title",
+                "code",
+                "due_at",
+                "published_at",
+                "course",
+                "document_version"
+              ],
+              "type": "string"
+            },
+            "title": "Changed Fields",
+            "type": "array"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "detected_at": {
+            "format": "date-time",
+            "title": "Detected At",
+            "type": "string"
+          },
+          "from_snapshot_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "From Snapshot Id",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/StudyPlanSourceReferenceView"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "to_snapshot_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "To Snapshot Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "change_id",
+          "assignment_id",
+          "course_id",
+          "change_kind",
+          "title",
+          "changed_fields",
+          "before_due_at",
+          "after_due_at",
+          "from_snapshot_id",
+          "to_snapshot_id",
+          "detected_at",
+          "source"
+        ],
+        "title": "StudyPlanMoodleChangeView",
+        "type": "object"
+      },
+      "StudyPlanObligationView": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Assignment Id",
+            "type": "integer"
+          },
+          "course_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/StudyPlanSourceReferenceView"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "course_id",
+          "title",
+          "due_at",
+          "overdue",
+          "source"
+        ],
+        "title": "StudyPlanObligationView",
+        "type": "object"
+      },
+      "StudyPlanSourceReferenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          },
+          "citation_location": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Location"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Id"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "document_version_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Version Id"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "from_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Snapshot Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PlanFactKindView"
+          },
+          "to_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Snapshot Id"
+          },
+          "tool_name": {
+            "enum": [
+              "academic.list_assignments",
+              "study_task.list",
+              "moodle.list_changes",
+              "rag.answer"
+            ],
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "tool_name"
+        ],
+        "title": "StudyPlanSourceReferenceView",
+        "type": "object"
+      },
+      "StudyPlanTaskFactView": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "priority": {
+            "enum": [
+              "LOW",
+              "NORMAL",
+              "HIGH"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/StudyPlanSourceReferenceView"
+          },
+          "status": {
+            "enum": [
+              "OPEN",
+              "COMPLETED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Task Id",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "status",
+          "priority",
+          "course_id",
+          "assignment_id",
+          "due_at",
+          "source"
+        ],
+        "title": "StudyPlanTaskFactView",
+        "type": "object"
+      },
+      "StudyPlanView": {
+        "additionalProperties": false,
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "available_minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Minutes"
+          },
+          "calendar_conflict_aware": {
+            "const": false,
+            "title": "Calendar Conflict Aware",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanItemView"
+            },
+            "maxItems": 12,
+            "title": "Items",
+            "type": "array"
+          },
+          "max_session_minutes": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 180.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Session Minutes"
+          },
+          "moodle_changes": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanMoodleChangeView"
+            },
+            "maxItems": 5,
+            "title": "Moodle Changes",
+            "type": "array"
+          },
+          "moodle_from_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moodle From Snapshot Id"
+          },
+          "moodle_to_snapshot_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moodle To Snapshot Id"
+          },
+          "obligations": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanObligationView"
+            },
+            "maxItems": 30,
+            "title": "Obligations",
+            "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "planning_window_end": {
+            "format": "date",
+            "title": "Planning Window End",
+            "type": "string"
+          },
+          "planning_window_start": {
+            "format": "date",
+            "title": "Planning Window Start",
+            "type": "string"
+          },
+          "rag_provenance": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanSourceReferenceView"
+            },
+            "maxItems": 64,
+            "title": "Rag Provenance",
+            "type": "array"
+          },
+          "study_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanTaskFactView"
+            },
+            "maxItems": 50,
+            "title": "Study Tasks",
+            "type": "array"
+          },
+          "timezone": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan_id",
+          "planning_window_start",
+          "planning_window_end",
+          "timezone",
+          "generated_at",
+          "calendar_conflict_aware",
+          "assumptions",
+          "warnings",
+          "obligations",
+          "study_tasks",
+          "moodle_changes",
+          "items",
+          "rag_provenance"
+        ],
+        "title": "StudyPlanView",
+        "type": "object"
+      },
+      "StudyRationaleCodeView": {
+        "enum": [
+          "DEADLINE_NEAR",
+          "OPEN_TASK",
+          "RECENT_MOODLE_CHANGE",
+          "USER_FOCUS",
+          "GENERAL_REVIEW"
+        ],
+        "title": "StudyRationaleCodeView",
+        "type": "string"
       },
       "SystemHealthResponse": {
         "additionalProperties": false,
@@ -1760,6 +2850,44 @@
           }
         },
         "summary": "Reject Approval"
+      }
+    },
+    "/api/v1/ask": {
+      "post": {
+        "operationId": "ask_academic_api_v1_ask_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcademicAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcademicAskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask Academic"
       }
     },
     "/api/v1/assignments": {

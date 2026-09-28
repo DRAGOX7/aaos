@@ -1,6 +1,8 @@
 """Browser-safe Phase 7 API contracts."""
 
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal, cast
 from uuid import UUID
@@ -150,8 +152,132 @@ class AcademicAskResponse(BaseModel):
     sources: tuple[AcademicAskSource, ...] = ()
     rag_provenance: dict[str, object] | None = None
     calendar_proposal: CalendarProposalView | None = None
+    study_plan: StudyPlanView | None = None
     step_count: int = Field(ge=0, le=8)
     request_id: UUID | None = None
+
+
+class PlanFactKindView(StrEnum):
+    ASSIGNMENT = "ASSIGNMENT"
+    STUDY_TASK = "STUDY_TASK"
+    MOODLE_CHANGE = "MOODLE_CHANGE"
+    DOCUMENT = "DOCUMENT"
+
+
+class StudyActivityTypeView(StrEnum):
+    ASSIGNMENT_WORK = "ASSIGNMENT_WORK"
+    REVIEW = "REVIEW"
+    READING = "READING"
+    PRACTICE = "PRACTICE"
+    PROJECT_WORK = "PROJECT_WORK"
+
+
+class StudyRationaleCodeView(StrEnum):
+    DEADLINE_NEAR = "DEADLINE_NEAR"
+    OPEN_TASK = "OPEN_TASK"
+    RECENT_MOODLE_CHANGE = "RECENT_MOODLE_CHANGE"
+    USER_FOCUS = "USER_FOCUS"
+    GENERAL_REVIEW = "GENERAL_REVIEW"
+
+
+class StudyPlanSourceReferenceView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    kind: PlanFactKindView
+    tool_name: Literal[
+        "academic.list_assignments",
+        "study_task.list",
+        "moodle.list_changes",
+        "rag.answer",
+    ]
+    entity_id: int | None = Field(default=None, gt=0)
+    course_id: int | None = Field(default=None, gt=0)
+    change_id: str | None = Field(default=None, min_length=1, max_length=255)
+    from_snapshot_id: int | None = Field(default=None, gt=0)
+    to_snapshot_id: int | None = Field(default=None, gt=0)
+    document_version_id: int | None = Field(default=None, gt=0)
+    citation_location: str | None = Field(default=None, max_length=256)
+    claim_id: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class StudyPlanObligationView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    assignment_id: int = Field(gt=0)
+    course_id: int = Field(gt=0)
+    title: str = Field(max_length=512)
+    due_at: datetime | None
+    overdue: bool
+    source: StudyPlanSourceReferenceView
+
+
+class StudyPlanTaskFactView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    task_id: int = Field(gt=0)
+    title: str = Field(max_length=512)
+    status: Literal["OPEN", "COMPLETED"]
+    priority: Literal["LOW", "NORMAL", "HIGH"]
+    course_id: int | None = Field(gt=0)
+    assignment_id: int | None = Field(gt=0)
+    due_at: datetime | None
+    source: StudyPlanSourceReferenceView
+
+
+class StudyPlanMoodleChangeView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    change_id: str = Field(min_length=1, max_length=255)
+    assignment_id: int | None = Field(gt=0)
+    course_id: int | None = Field(gt=0)
+    change_kind: Literal["ADDED", "REMOVED", "MODIFIED"]
+    title: str | None = Field(max_length=512)
+    changed_fields: tuple[
+        Literal["title", "code", "due_at", "published_at", "course", "document_version"], ...
+    ]
+    before_due_at: datetime | None
+    after_due_at: datetime | None
+    from_snapshot_id: int = Field(gt=0)
+    to_snapshot_id: int = Field(gt=0)
+    detected_at: datetime
+    source: StudyPlanSourceReferenceView
+
+
+class StudyPlanItemView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    study_date: date
+    course_id: int = Field(gt=0)
+    assignment_id: int | None = Field(gt=0)
+    study_task_id: int | None = Field(gt=0)
+    activity_type: StudyActivityTypeView
+    duration_minutes: int = Field(ge=15, le=180)
+    rationale_code: StudyRationaleCodeView
+    focus: str | None = Field(max_length=120)
+    estimated_duration: bool
+    source_refs: tuple[StudyPlanSourceReferenceView, ...] = Field(max_length=4)
+
+
+class StudyPlanView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    plan_id: UUID
+    planning_window_start: date
+    planning_window_end: date
+    timezone: str = Field(min_length=1, max_length=128)
+    generated_at: datetime
+    calendar_conflict_aware: Literal[False]
+    assumptions: tuple[str, ...] = Field(max_length=8)
+    warnings: tuple[str, ...] = Field(max_length=12)
+    obligations: tuple[StudyPlanObligationView, ...] = Field(max_length=30)
+    study_tasks: tuple[StudyPlanTaskFactView, ...] = Field(max_length=50)
+    moodle_changes: tuple[StudyPlanMoodleChangeView, ...] = Field(max_length=5)
+    items: tuple[StudyPlanItemView, ...] = Field(max_length=12)
+    available_minutes: int | None = Field(default=None, gt=0)
+    max_session_minutes: int | None = Field(default=None, gt=0, le=180)
+    moodle_from_snapshot_id: int | None = Field(default=None, gt=0)
+    moodle_to_snapshot_id: int | None = Field(default=None, gt=0)
+    rag_provenance: tuple[StudyPlanSourceReferenceView, ...] = Field(max_length=64)
 
 
 class CourseSummary(BaseModel):

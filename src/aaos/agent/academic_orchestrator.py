@@ -87,6 +87,7 @@ from .contracts import (
     canonical_json,
 )
 from .conversation_context import (
+    MAX_CONTEXT_ENTITY_TITLE_CHARACTERS,
     ContextEntityKind,
     ContextReferenceResolver,
     ContextResolution,
@@ -122,6 +123,17 @@ from .registry import (
     ValidatedToolArguments,
 )
 from .runtime_policy import MAX_AGENT_STEPS, MAX_TOOL_CALLS
+from .study_plan_contracts import StudyPlan, StudyPlanContext
+from .study_planning import (
+    StudyPlanner,
+    StudyPlanningError,
+    StudyPlanningErrorCode,
+    has_study_plan_write_intent,
+    is_plan_explanation_request,
+    is_study_plan_request,
+    render_plan_context_explanation,
+    resolve_plan_explanation,
+)
 
 MAX_ACADEMIC_QUESTION_CHARACTERS = 4096
 MAX_ACADEMIC_RECORDS = 50
@@ -405,6 +417,7 @@ class AcademicAskResult:
     context_sources: tuple[AcademicSourceReference, ...] = ()
     rag_provenance: Mapping[str, object] | None = None
     calendar_proposal: CalendarProposalResult | None = None
+    study_plan: StudyPlan | None = None
     step_count: int = 0
     conversation_id: UUID | None = None
 
@@ -437,6 +450,8 @@ class AcademicAskResult:
             self.calendar_proposal, CalendarProposalResult
         ):
             raise TypeError("calendar_proposal must be a trusted result projection or None")
+        if self.study_plan is not None and not isinstance(self.study_plan, StudyPlan):
+            raise TypeError("study_plan must be a validated StudyPlan or None")
         if (self.status is AcademicAskStatus.CALENDAR_PROPOSAL_CREATED) != (
             self.calendar_proposal is not None
         ):
@@ -2507,6 +2522,15 @@ class ReadOnlyAcademicAssistant:
         self._calendar_task_service = calendar_task_service
         self._calendar_timezone = calendar_timezone
         self._moodle_change_reader = moodle_change_reader
+        self._study_planner = StudyPlanner(
+            gateway,
+            academic_reader,
+            study_task_service,
+            moodle_change_reader,
+            rag_service,
+            timezone_name=calendar_timezone,
+            clock=clock,
+        )
 
     async def ask(
         self,
@@ -2549,6 +2573,34 @@ class ReadOnlyAcademicAssistant:
 
         lease_active = True
         try:
+            if is_plan_explanation_request(question.strip(), lease.snapshot.study_plan):
+                plan_context = lease.snapshot.study_plan
+                assert plan_context is not None
+                item, resolution_message = resolve_plan_explanation(question.strip(), plan_context)
+                if item is None:
+                    explanation = AcademicAskResult(
+                        AcademicAskStatus.REFUSED,
+                        answer_text=resolution_message
+                        or "I couldn't resolve that reference to one block in the previous plan.",
+                        refusal_code=AcademicRefusalReason.AMBIGUOUS_REFERENCE,
+                        conversation_id=lease.conversation_id,
+                    )
+                else:
+                    explanation = AcademicAskResult(
+                        AcademicAskStatus.ANSWERED,
+                        answer_text=render_plan_context_explanation(item, plan_context),
+                        conversation_id=lease.conversation_id,
+                    )
+                self._context_store.finish_turn(
+                    lease,
+                    ConversationContextUpdate(
+                        active_entity=lease.snapshot.active_entity,
+                        active_course=lease.snapshot.active_course,
+                    ),
+                )
+                lease_active = False
+                return explanation
+
             resolution = self._context_resolver.resolve(question.strip(), lease.snapshot)
             if resolution.status in {
                 ContextResolutionStatus.AMBIGUOUS,
@@ -2611,20 +2663,35 @@ class ReadOnlyAcademicAssistant:
                 message: str,
                 *,
                 sources: tuple[AcademicSourceReference, ...] = (),
+                status: AcademicAskStatus = AcademicAskStatus.ANSWERED,
+                failure_code: AgentErrorCode | None = None,
+                failure_message: str | None = None,
+                study_plan: StudyPlan | None = None,
+                rag_provenance: Mapping[str, object] | None = None,
+                plan_context: StudyPlanContext | None = None,
+                plan_entities: tuple[TrustedContextEntity, ...] = (),
+                plan_collection: tuple[TrustedContextEntity, ...] | None = None,
             ) -> AcademicAskResult:
                 nonlocal lease_active
                 answer = AcademicAskResult(
-                    AcademicAskStatus.ANSWERED,
+                    status,
                     answer_text=message,
+                    failure_code=failure_code,
+                    failure_message=failure_message,
                     sources=sources,
                     context_sources=context_sources,
+                    rag_provenance=rag_provenance,
+                    study_plan=study_plan,
                     conversation_id=lease.conversation_id,
                 )
                 self._context_store.finish_turn(
                     lease,
                     ConversationContextUpdate(
+                        entities=plan_entities,
+                        last_collection=plan_collection,
                         active_entity=lease.snapshot.active_entity,
                         active_course=lease.snapshot.active_course,
+                        study_plan=plan_context,
                     ),
                 )
                 lease_active = False
@@ -2637,6 +2704,119 @@ class ReadOnlyAcademicAssistant:
                 )
 
             source_entity_kind = context_entity.kind.value if context_entity is not None else None
+            if is_study_plan_request(
+                question.strip(), has_plan_context=lease.snapshot.study_plan is not None
+            ):
+                if has_study_plan_write_intent(
+                    question.strip()
+                ) or has_explicit_calendar_create_intent(
+                    question.strip(), source_entity_kind=source_entity_kind
+                ):
+                    return direct_refusal(
+                        "This request combines plan generation with a write outside the planner's "
+                        "read-only scope. No data was changed."
+                    )
+                if cancel_event is not None and cancel_event.is_set():
+                    return direct_answer(
+                        "The study planning request was cancelled.",
+                        status=AcademicAskStatus.CANCELLED,
+                        failure_code=AgentErrorCode.TASK_CANCELLED,
+                        failure_message="The study planning request was cancelled.",
+                    )
+                explicit_course_id = None
+                if context_entity is not None:
+                    if context_entity.kind is ContextEntityKind.COURSE:
+                        explicit_course_id = context_entity.entity_id
+                    else:
+                        explicit_course_id = context_entity.course_id
+                planning_task = asyncio.create_task(
+                    self._study_planner.generate(
+                        question.strip(),
+                        previous=lease.snapshot.study_plan,
+                        explicit_course_id=explicit_course_id,
+                    )
+                )
+                deadline_task = asyncio.create_task(asyncio.sleep(self._request_deadline_seconds))
+                cancellation_event = cancel_event or asyncio.Event()
+                cancellation_task = asyncio.create_task(cancellation_event.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {planning_task, deadline_task, cancellation_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if planning_task not in done:
+                        timed_out = deadline_task in done
+                        planning_task.cancel()
+                        await asyncio.gather(planning_task, return_exceptions=True)
+                        if timed_out:
+                            return direct_answer(
+                                "The study planning request reached its time limit.",
+                                status=AcademicAskStatus.TIMED_OUT,
+                                failure_code=AgentErrorCode.REQUEST_DEADLINE_EXCEEDED,
+                                failure_message="The study planning request reached its time limit.",
+                            )
+                        return direct_answer(
+                            "The study planning request was cancelled.",
+                            status=AcademicAskStatus.CANCELLED,
+                            failure_code=AgentErrorCode.TASK_CANCELLED,
+                            failure_message="The study planning request was cancelled.",
+                        )
+                    outcome = planning_task.result()
+                except StudyPlanningError as error:
+                    if error.code is StudyPlanningErrorCode.RAG_REFUSED:
+                        return direct_answer(
+                            error.safe_message,
+                            status=AcademicAskStatus.INSUFFICIENT_EVIDENCE,
+                        )
+                    if error.code is StudyPlanningErrorCode.MODEL_UNAVAILABLE:
+                        return direct_answer(
+                            error.safe_message,
+                            status=AcademicAskStatus.FAILED,
+                            failure_code=AgentErrorCode.MODEL_UNAVAILABLE,
+                            failure_message=error.safe_message,
+                        )
+                    if error.code is StudyPlanningErrorCode.MODEL_TIMEOUT:
+                        return direct_answer(
+                            error.safe_message,
+                            status=AcademicAskStatus.TIMED_OUT,
+                            failure_code=AgentErrorCode.MODEL_TIMEOUT,
+                            failure_message=error.safe_message,
+                        )
+                    if error.code is StudyPlanningErrorCode.RAG_UNAVAILABLE:
+                        return direct_answer(
+                            error.safe_message,
+                            status=AcademicAskStatus.FAILED,
+                            failure_code=AgentErrorCode.RAG_QUERY_FAILED,
+                            failure_message=error.safe_message,
+                        )
+                    if error.code is StudyPlanningErrorCode.INVALID_MODEL_OUTPUT:
+                        return direct_answer(
+                            error.safe_message,
+                            status=AcademicAskStatus.FAILED,
+                            failure_code=AgentErrorCode.INVALID_PROPOSAL,
+                            failure_message=error.safe_message,
+                        )
+                    return direct_refusal(error.safe_message)
+                finally:
+                    for pending in (deadline_task, cancellation_task):
+                        if not pending.done():
+                            pending.cancel()
+                    await asyncio.gather(deadline_task, cancellation_task, return_exceptions=True)
+                plan_entities = _context_entities_for_plan(
+                    outcome.plan, outcome.context, source_turn=lease.turn_number
+                )
+                plan_course_collection = tuple(
+                    entity for entity in plan_entities if entity.kind is ContextEntityKind.COURSE
+                )
+                return direct_answer(
+                    outcome.answer_text,
+                    study_plan=outcome.plan,
+                    rag_provenance=outcome.rag_provenance,
+                    plan_context=outcome.context,
+                    plan_entities=plan_entities,
+                    plan_collection=plan_course_collection,
+                )
+
             calendar_intent = has_explicit_calendar_create_intent(
                 question.strip(),
                 source_entity_kind=source_entity_kind,
@@ -4254,6 +4434,58 @@ def _source_for_context_entity(entity: TrustedContextEntity) -> AcademicSourceRe
             tuple(field.value for field in change.changed_fields) if change is not None else ()
         ),
     )
+
+
+def _context_entities_for_plan(
+    plan: StudyPlan,
+    context: StudyPlanContext,
+    *,
+    source_turn: int,
+) -> tuple[TrustedContextEntity, ...]:
+    entities = [
+        TrustedContextEntity(
+            ContextEntityKind.COURSE,
+            course.course_id,
+            course.title,
+            course.course_id,
+            course.title,
+            ToolName.ACADEMIC_LIST_COURSES.value,
+            "read-1",
+            source_turn,
+        )
+        for course in context.course_refs
+    ]
+    course_titles = {course.course_id: course.title for course in context.course_refs}
+    for obligation in plan.obligations[: max(0, 16 - len(entities))]:
+        entities.append(
+            TrustedContextEntity(
+                ContextEntityKind.ASSIGNMENT,
+                obligation.assignment_id,
+                obligation.title[:MAX_CONTEXT_ENTITY_TITLE_CHARACTERS],
+                obligation.course_id,
+                course_titles.get(obligation.course_id),
+                ToolName.ACADEMIC_LIST_ASSIGNMENTS.value,
+                "read-2",
+                source_turn,
+            )
+        )
+    remaining = max(0, 16 - len(entities))
+    for task in plan.study_tasks[:remaining]:
+        if task.course_id is None:
+            continue
+        entities.append(
+            TrustedContextEntity(
+                ContextEntityKind.STUDY_TASK,
+                task.task_id,
+                task.title[:MAX_CONTEXT_ENTITY_TITLE_CHARACTERS],
+                task.course_id,
+                course_titles.get(task.course_id),
+                "study_task.list",
+                "read-3",
+                source_turn,
+            )
+        )
+    return tuple(entities)
 
 
 def _context_update_from_evidence(

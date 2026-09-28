@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask Academic */
+        post: operations["ask_academic_api_v1_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assignments": {
         parameters: {
             query?: never;
@@ -283,6 +300,93 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AcademicAskRequest
+         * @description Closed request contract for one bounded academic conversation turn.
+         */
+        AcademicAskRequest: {
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Question */
+            question: string;
+            /** Request Id */
+            request_id?: string | null;
+        };
+        /**
+         * AcademicAskResponse
+         * @description Bounded answer, refusal, or typed failure from read-only orchestration.
+         */
+        AcademicAskResponse: {
+            /** Answer Text */
+            answer_text?: string | null;
+            calendar_proposal?: components["schemas"]["CalendarProposalView"] | null;
+            /**
+             * Context Sources
+             * @default []
+             */
+            context_sources: components["schemas"]["AcademicAskSource"][];
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Failure Code */
+            failure_code?: string | null;
+            /** Failure Message */
+            failure_message?: string | null;
+            /** Rag Provenance */
+            rag_provenance?: {
+                [key: string]: unknown;
+            } | null;
+            /** Refusal Code */
+            refusal_code?: string | null;
+            /** Request Id */
+            request_id?: string | null;
+            /**
+             * Sources
+             * @default []
+             */
+            sources: components["schemas"]["AcademicAskSource"][];
+            status: components["schemas"]["AcademicAskStatusView"];
+            /** Step Count */
+            step_count: number;
+            study_plan?: components["schemas"]["StudyPlanView"] | null;
+        };
+        /**
+         * AcademicAskSource
+         * @description Trusted academic source identity attached to a structured answer.
+         */
+        AcademicAskSource: {
+            /** Change Id */
+            change_id?: string | null;
+            /**
+             * Changed Fields
+             * @default []
+             */
+            changed_fields: string[];
+            /** Course Id */
+            course_id?: number | null;
+            /** Entity Id */
+            entity_id: number | null;
+            /** Entity Kind */
+            entity_kind: string;
+            /** From Snapshot Id */
+            from_snapshot_id?: number | null;
+            /** Query Filter */
+            query_filter?: string | null;
+            /** Source Ref */
+            source_ref?: string | null;
+            /** Source Turn */
+            source_turn?: number | null;
+            /** Title */
+            title?: string | null;
+            /** To Snapshot Id */
+            to_snapshot_id?: number | null;
+            /** Tool Name */
+            tool_name: string;
+        };
+        /**
+         * AcademicAskStatusView
+         * @enum {string}
+         */
+        AcademicAskStatusView: "ANSWERED" | "REFUSED" | "INSUFFICIENT_EVIDENCE" | "FAILED" | "CANCELLED" | "TIMED_OUT" | "CALENDAR_PROPOSAL_CREATED";
         /**
          * ActivityCategory
          * @enum {string}
@@ -462,6 +566,39 @@ export interface components {
          */
         BrowserTaskState: "PREPARING" | "PREPARATION_FAILED" | "AWAITING_APPROVAL" | "APPROVED" | "CLAIMED" | "EXECUTING" | "UNKNOWN_OUTCOME" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "NOT_DISPATCHED" | "REJECTED" | "INVALIDATED" | "EXPIRED" | "REVOKED";
         /**
+         * CalendarProposalView
+         * @description Safe view of a Calendar proposal and its canonical approval binding.
+         */
+        CalendarProposalView: {
+            /** Approval Id */
+            approval_id: string;
+            approval_status: components["schemas"]["ApprovalState"];
+            /** End */
+            end: string;
+            /**
+             * Operation
+             * @constant
+             */
+            operation: "CREATE_EVENT";
+            operation_state: components["schemas"]["OperationState"] | null;
+            /** Proposal Id */
+            proposal_id: string;
+            /** Source Entity Id */
+            source_entity_id: number;
+            /**
+             * Source Entity Kind
+             * @enum {string}
+             */
+            source_entity_kind: "assignment" | "study_task";
+            /** Start */
+            start: string;
+            /** Summary */
+            summary: string;
+            task_status: components["schemas"]["BrowserTaskState"];
+            /** Timezone */
+            timezone: string;
+        };
+        /**
          * CourseListResponse
          * @description Browser-safe course collection response.
          */
@@ -598,6 +735,11 @@ export interface components {
          */
         OperationState: "CLAIMED" | "EXECUTING" | "NOT_DISPATCHED" | "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "UNKNOWN_OUTCOME" | "RECONCILIATION_PENDING";
         /**
+         * PlanFactKindView
+         * @enum {string}
+         */
+        PlanFactKindView: "ASSIGNMENT" | "STUDY_TASK" | "MOODLE_CHANGE" | "DOCUMENT";
+        /**
          * RagAnswerResponse
          * @description Validated final answer projection safe for browser rendering.
          */
@@ -708,6 +850,187 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /**
+         * StudyActivityTypeView
+         * @enum {string}
+         */
+        StudyActivityTypeView: "ASSIGNMENT_WORK" | "REVIEW" | "READING" | "PRACTICE" | "PROJECT_WORK";
+        /** StudyPlanItemView */
+        StudyPlanItemView: {
+            activity_type: components["schemas"]["StudyActivityTypeView"];
+            /** Assignment Id */
+            assignment_id: number | null;
+            /** Course Id */
+            course_id: number;
+            /** Duration Minutes */
+            duration_minutes: number;
+            /** Estimated Duration */
+            estimated_duration: boolean;
+            /** Focus */
+            focus: string | null;
+            rationale_code: components["schemas"]["StudyRationaleCodeView"];
+            /** Source Refs */
+            source_refs: components["schemas"]["StudyPlanSourceReferenceView"][];
+            /**
+             * Study Date
+             * Format: date
+             */
+            study_date: string;
+            /** Study Task Id */
+            study_task_id: number | null;
+        };
+        /** StudyPlanMoodleChangeView */
+        StudyPlanMoodleChangeView: {
+            /** After Due At */
+            after_due_at: string | null;
+            /** Assignment Id */
+            assignment_id: number | null;
+            /** Before Due At */
+            before_due_at: string | null;
+            /** Change Id */
+            change_id: string;
+            /**
+             * Change Kind
+             * @enum {string}
+             */
+            change_kind: "ADDED" | "REMOVED" | "MODIFIED";
+            /** Changed Fields */
+            changed_fields: ("title" | "code" | "due_at" | "published_at" | "course" | "document_version")[];
+            /** Course Id */
+            course_id: number | null;
+            /**
+             * Detected At
+             * Format: date-time
+             */
+            detected_at: string;
+            /** From Snapshot Id */
+            from_snapshot_id: number;
+            source: components["schemas"]["StudyPlanSourceReferenceView"];
+            /** Title */
+            title: string | null;
+            /** To Snapshot Id */
+            to_snapshot_id: number;
+        };
+        /** StudyPlanObligationView */
+        StudyPlanObligationView: {
+            /** Assignment Id */
+            assignment_id: number;
+            /** Course Id */
+            course_id: number;
+            /** Due At */
+            due_at: string | null;
+            /** Overdue */
+            overdue: boolean;
+            source: components["schemas"]["StudyPlanSourceReferenceView"];
+            /** Title */
+            title: string;
+        };
+        /** StudyPlanSourceReferenceView */
+        StudyPlanSourceReferenceView: {
+            /** Change Id */
+            change_id?: string | null;
+            /** Citation Location */
+            citation_location?: string | null;
+            /** Claim Id */
+            claim_id?: string | null;
+            /** Course Id */
+            course_id?: number | null;
+            /** Document Version Id */
+            document_version_id?: number | null;
+            /** Entity Id */
+            entity_id?: number | null;
+            /** From Snapshot Id */
+            from_snapshot_id?: number | null;
+            kind: components["schemas"]["PlanFactKindView"];
+            /** To Snapshot Id */
+            to_snapshot_id?: number | null;
+            /**
+             * Tool Name
+             * @enum {string}
+             */
+            tool_name: "academic.list_assignments" | "study_task.list" | "moodle.list_changes" | "rag.answer";
+        };
+        /** StudyPlanTaskFactView */
+        StudyPlanTaskFactView: {
+            /** Assignment Id */
+            assignment_id: number | null;
+            /** Course Id */
+            course_id: number | null;
+            /** Due At */
+            due_at: string | null;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "LOW" | "NORMAL" | "HIGH";
+            source: components["schemas"]["StudyPlanSourceReferenceView"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "OPEN" | "COMPLETED";
+            /** Task Id */
+            task_id: number;
+            /** Title */
+            title: string;
+        };
+        /** StudyPlanView */
+        StudyPlanView: {
+            /** Assumptions */
+            assumptions: string[];
+            /** Available Minutes */
+            available_minutes?: number | null;
+            /**
+             * Calendar Conflict Aware
+             * @constant
+             */
+            calendar_conflict_aware: false;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Items */
+            items: components["schemas"]["StudyPlanItemView"][];
+            /** Max Session Minutes */
+            max_session_minutes?: number | null;
+            /** Moodle Changes */
+            moodle_changes: components["schemas"]["StudyPlanMoodleChangeView"][];
+            /** Moodle From Snapshot Id */
+            moodle_from_snapshot_id?: number | null;
+            /** Moodle To Snapshot Id */
+            moodle_to_snapshot_id?: number | null;
+            /** Obligations */
+            obligations: components["schemas"]["StudyPlanObligationView"][];
+            /**
+             * Plan Id
+             * Format: uuid
+             */
+            plan_id: string;
+            /**
+             * Planning Window End
+             * Format: date
+             */
+            planning_window_end: string;
+            /**
+             * Planning Window Start
+             * Format: date
+             */
+            planning_window_start: string;
+            /** Rag Provenance */
+            rag_provenance: components["schemas"]["StudyPlanSourceReferenceView"][];
+            /** Study Tasks */
+            study_tasks: components["schemas"]["StudyPlanTaskFactView"][];
+            /** Timezone */
+            timezone: string;
+            /** Warnings */
+            warnings: string[];
+        };
+        /**
+         * StudyRationaleCodeView
+         * @enum {string}
+         */
+        StudyRationaleCodeView: "DEADLINE_NEAR" | "OPEN_TASK" | "RECENT_MOODLE_CHANGE" | "USER_FOCUS" | "GENERAL_REVIEW";
         /** SystemHealthResponse */
         SystemHealthResponse: {
             /**
@@ -1005,6 +1328,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_academic_api_v1_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcademicAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcademicAskResponse"];
                 };
             };
             /** @description Validation Error */
