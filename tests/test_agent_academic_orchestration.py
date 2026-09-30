@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from aaos.agent import academic_orchestrator as academic_orchestrator_module
 from aaos.agent.academic_orchestrator import (
     MAX_ACADEMIC_REQUEST_DEADLINE_SECONDS,
+    AcademicAskResult,
     AcademicAskStatus,
     AcademicDecisionAction,
     AcademicRefusalReason,
@@ -1092,3 +1093,139 @@ def test_api_ask_echoes_caller_request_id_for_mutation_replay() -> None:
 
     assert response.status_code == 200
     assert response.json()["request_id"] == request_id
+
+
+_AI_SECTION_TITLE = "AI495C-SPECIAL TOPICS IN ARTIFICIAL INTELLIGENCE (3) (1)"
+_AI_ALL_SECTIONS_TITLE = "AI495C-SPECIAL TOPICS IN ARTIFICIAL INTELLIGENCE (3) (All Sections )"
+
+
+def _moodle_section_courses(*extra: CourseSummary) -> FakeAcademicReader:
+    academic = FakeAcademicReader()
+    academic.courses = [
+        CourseSummary(id=1, title=_AI_SECTION_TITLE, code=None, description=None, updated_at=NOW),
+        CourseSummary(
+            id=2, title=_AI_ALL_SECTIONS_TITLE, code=None, description=None, updated_at=NOW
+        ),
+        CourseSummary(
+            id=5,
+            title="SE440-PROJECT MANAGEMENT (All Sections )",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+        *extra,
+    ]
+    academic.assignments = []
+    return academic
+
+
+def _indexed_documents(*course_ids: int) -> FakeDocumentReader:
+    documents = FakeDocumentReader()
+    documents.documents = [
+        DocumentSummary(
+            id=100 + course_id,
+            course_id=course_id,
+            title=f"Syllabus {course_id}",
+            ingestion_status=DocumentIngestionStatusView.READY,
+            extraction_status=DocumentExtractionStatusView.SUCCESS,
+            page_count=4,
+            index_readiness=DocumentIndexReadinessView.READY,
+            index_coverage=DocumentIndexCoverageView.FULL,
+            document_version_id=200 + course_id,
+            updated_at=NOW,
+        )
+        for course_id in course_ids
+    ]
+    return documents
+
+
+def _rag_scope_for(
+    course_name: str,
+    academic: FakeAcademicReader,
+    documents: FakeDocumentReader,
+) -> tuple[AcademicAskResult, FakeRagService]:
+    gateway = FakeGateway(
+        _tool("rag.answer", json.dumps({"course_name": course_name})),
+        _answer("read-1"),
+    )
+    assistant, _academic, _documents, rag = _assistant(
+        gateway, academic=academic, documents=documents
+    )
+    return asyncio.run(assistant.ask("What topics do the course materials cover?")), rag
+
+
+def test_course_code_prefix_resolves_a_unique_course_without_stored_code() -> None:
+    gateway = FakeGateway(
+        _tool("academic.list_assignments", '{"course_name":"se440"}'),
+        _answer("read-1"),
+    )
+    assistant, academic, _documents, _rag = _assistant(gateway, academic=_moodle_section_courses())
+
+    asyncio.run(assistant.ask("Show my SE440 assignments."))
+
+    assert ("list_assignments", 5) in academic.calls
+
+
+def test_course_code_prefix_requires_the_whole_code_token() -> None:
+    gateway = FakeGateway(_tool("academic.list_assignments", '{"course_name":"SE44"}'))
+    assistant, _academic, _documents, _rag = _assistant(gateway, academic=_moodle_section_courses())
+
+    result = asyncio.run(assistant.ask("Show my SE44 assignments."))
+
+    assert result.failure_code is AgentErrorCode.COURSE_NOT_FOUND
+
+
+def test_course_code_matching_section_siblings_stays_ambiguous_for_non_document_tools() -> None:
+    gateway = FakeGateway(_tool("academic.list_assignments", '{"course_name":"AI495C"}'))
+    assistant, _academic, _documents, _rag = _assistant(gateway, academic=_moodle_section_courses())
+
+    result = asyncio.run(assistant.ask("Show my AI495C assignments."))
+
+    assert result.failure_code is AgentErrorCode.AMBIGUOUS_COURSE
+
+
+def test_rag_course_code_searches_the_only_section_sibling_with_indexed_documents() -> None:
+    result, rag = _rag_scope_for("AI495C", _moodle_section_courses(), _indexed_documents(2))
+
+    assert result.failure_code is None
+    assert [query.scope for query in rag.queries] == [CourseScope(2)]
+
+
+def test_rag_exact_section_title_without_documents_uses_indexed_sibling() -> None:
+    result, rag = _rag_scope_for(
+        _AI_SECTION_TITLE, _moodle_section_courses(), _indexed_documents(2)
+    )
+
+    assert result.failure_code is None
+    assert [query.scope for query in rag.queries] == [CourseScope(2)]
+
+
+def test_rag_exact_title_with_its_own_documents_is_never_widened() -> None:
+    _result, rag = _rag_scope_for(
+        _AI_SECTION_TITLE, _moodle_section_courses(), _indexed_documents(1, 2)
+    )
+
+    assert [query.scope for query in rag.queries] == [CourseScope(1)]
+
+
+def test_rag_course_code_with_documents_on_several_siblings_is_ambiguous() -> None:
+    result, rag = _rag_scope_for("AI495C", _moodle_section_courses(), _indexed_documents(1, 2))
+
+    assert result.failure_code is AgentErrorCode.AMBIGUOUS_COURSE
+    assert rag.queries == []
+
+
+def test_rag_shared_code_does_not_join_courses_with_different_titles() -> None:
+    other = CourseSummary(
+        id=3,
+        title="AI495C-A DIFFERENT COURSE",
+        code=None,
+        description=None,
+        updated_at=NOW,
+    )
+    academic = _moodle_section_courses(other)
+    academic.courses = [course for course in academic.courses if course.id != 2]
+
+    _result, rag = _rag_scope_for(_AI_SECTION_TITLE, academic, _indexed_documents(3))
+
+    assert [query.scope for query in rag.queries] == [CourseScope(1)]

@@ -63,6 +63,7 @@ from aaos.web.contracts import (
     AcademicAskStudyTaskStatus,
     AssignmentSummary,
     CourseSummary,
+    DocumentIndexReadinessView,
     DocumentSummary,
     TaskDetail,
 )
@@ -191,6 +192,11 @@ STUDY_TASK_CHANGE_DECISION_SCHEMA: Final[Literal["study_task_change_decision_con
 )
 _READ_REFERENCE = re.compile(r"^read-[1-8]$")
 _SAFE_COURSE_NAME = re.compile(r"^[^\r\n]{1,512}$")
+# Moodle course titles carry the course code before the first hyphen, and a
+# section entry and its combined entry differ only by a trailing suffix such as
+# "(1)" or "(All Sections )". Both patterns apply to normalized titles.
+_COURSE_CODE_PREFIX = re.compile(r"([a-z]{2,}[0-9]{2,}[a-z0-9.]*)\s*-")
+_MOODLE_SECTION_SUFFIX = re.compile(r"\s*\((?:[0-9]+|all sections)\s*\)$")
 _STUDY_TASK_READ_TOOLS = frozenset({ToolName.STUDY_TASK_LIST, ToolName.STUDY_TASK_GET})
 _STUDY_TASK_WRITE_TOOLS = frozenset(
     {ToolName.STUDY_TASK_CREATE, ToolName.STUDY_TASK_UPDATE, ToolName.STUDY_TASK_COMPLETE}
@@ -1408,6 +1414,60 @@ class _AcademicToolRuntime:
             raise _ReadOperationFailed() from None
 
     def _course(self, name: str) -> CourseSummary:
+        _courses, matches, _exact = self._course_matches(name)
+        if len(matches) != 1:
+            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        return matches[0]
+
+    def _rag_course_id(self, name: str) -> int:
+        """Resolve a document-question course, using one indexed section sibling if needed.
+
+        A named course that has indexed documents is always searched as named.
+        Otherwise exactly one section sibling with indexed documents may stand
+        in for it; several indexed siblings remain ambiguous.
+        """
+        courses, matches, exact = self._course_matches(name)
+        sibling_keys = {_section_sibling_key(course.title) for course in matches}
+        if len(matches) > 1 and (exact or len(sibling_keys) != 1 or None in sibling_keys):
+            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        primary = matches[0] if len(matches) == 1 else None
+        if primary is not None and self._has_indexed_documents(primary.id):
+            return primary.id
+        key = _section_sibling_key(matches[0].title)
+        indexed_siblings = tuple(
+            course
+            for course in courses
+            if key is not None
+            and course is not primary
+            and _section_sibling_key(course.title) == key
+            and self._has_indexed_documents(course.id)
+        )
+        if len(indexed_siblings) == 1:
+            return indexed_siblings[0].id
+        if indexed_siblings or primary is None:
+            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        return primary.id
+
+    def _has_indexed_documents(self, course_id: int) -> bool:
+        documents = cast(
+            tuple[DocumentSummary, ...],
+            self._read(self._documents.list_documents, course_id, limit=MAX_ACADEMIC_RECORDS + 1),
+        )
+        if not isinstance(documents, tuple) or any(
+            not isinstance(document, DocumentSummary) for document in documents
+        ):
+            raise _InvalidReadOutput()
+        return any(
+            document.course_id == course_id
+            and document.index_readiness is DocumentIndexReadinessView.READY
+            and document.document_version_id is not None
+            for document in documents
+        )
+
+    def _course_matches(
+        self, name: str
+    ) -> tuple[tuple[CourseSummary, ...], tuple[CourseSummary, ...], bool]:
+        """Return all courses, the matches for name, and whether they matched exactly."""
         if not isinstance(name, str) or not _SAFE_COURSE_NAME.fullmatch(name.strip()):
             raise _LookupFailure(AgentErrorCode.COURSE_NOT_FOUND)
         courses = cast(
@@ -1427,11 +1487,12 @@ class _AcademicToolRuntime:
             if _normalized(course.title) == target
             or (course.code is not None and _normalized(course.code) == target)
         )
+        if matches:
+            return courses, matches, True
+        matches = tuple(course for course in courses if _course_code_token(course.title) == target)
         if not matches:
             raise _LookupFailure(AgentErrorCode.COURSE_NOT_FOUND)
-        if len(matches) != 1:
-            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
-        return matches[0]
+        return courses, matches, False
 
     def _list_courses(self, _arguments: ValidatedToolArguments) -> ToolResult:
         try:
@@ -2172,7 +2233,7 @@ class _AcademicToolRuntime:
                 scope = CourseScope(course_id)
             else:
                 scope = (
-                    CourseScope(self._course(course_name).id)
+                    CourseScope(self._rag_course_id(course_name))
                     if isinstance(course_name, str)
                     else GlobalScope()
                 )
@@ -3240,6 +3301,18 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
 
 def _normalized(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _course_code_token(title: str) -> str | None:
+    match = _COURSE_CODE_PREFIX.match(_normalized(title))
+    return match.group(1) if match else None
+
+
+def _section_sibling_key(title: str) -> str | None:
+    """Return the shared title of a Moodle section entry, or None without a suffix."""
+    normalized = _normalized(title)
+    match = _MOODLE_SECTION_SUFFIX.search(normalized)
+    return normalized[: match.start()] if match else None
 
 
 def _is_trusted_assignment_deadline_change(entity: TrustedContextEntity | None) -> bool:
