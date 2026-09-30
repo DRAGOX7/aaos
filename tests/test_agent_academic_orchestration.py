@@ -1268,3 +1268,17 @@ def test_invented_reference_after_a_tool_result_is_not_repaired() -> None:
 
     assert result.failure_code is AgentErrorCode.INVALID_GROUNDED_REFERENCE
     assert len(gateway.requests) == 2
+
+
+def test_decision_prompt_treats_an_empty_successful_read_as_complete_evidence() -> None:
+    """Regression: an empty assignment list led the model to refuse instead of answer."""
+    empty_reader = FakeAcademicReader()
+    empty_reader.assignments = []
+    gateway = FakeGateway(_tool("academic.list_assignments"), _answer("read-1"))
+    assistant, _academic, _documents, _rag = _assistant(gateway, academic=empty_reader)
+
+    result = asyncio.run(assistant.ask("Which assignments do I have?"))
+
+    assert "No assignments" in (result.answer_text or "")
+    system_prompt = " ".join(gateway.requests[0].messages[0].content.lower().split())
+    assert "zero records is complete evidence" in system_prompt
