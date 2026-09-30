@@ -48,4 +48,13 @@ describe("Next.js AAOS transport boundary", () => {
     });
     expect(JSON.stringify(rules)).not.toMatch(/EventSource|provider|credentials/i);
   });
+
+  it("lets proxied requests outlive the backend Ask deadline", () => {
+    // Backend MAX_ACADEMIC_REQUEST_DEADLINE_SECONDS is 300; Next's default
+    // rewrite proxy timeout of 30 seconds cut document answers off.
+    const proxyTimeout = nextConfig.experimental?.proxyTimeout;
+
+    expect(proxyTimeout).toBeGreaterThan(300_000);
+    expect(proxyTimeout).toBeLessThanOrEqual(600_000);
+  });
 });
