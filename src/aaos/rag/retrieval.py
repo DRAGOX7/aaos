@@ -277,6 +277,9 @@ class EvidenceSelectionConfig:
     max_chunks: int = 6
     max_tokens: int = 2400
     adjacent_overlap_ratio: float = 0.5
+    # Must match the sufficiency gate bound; the gate treats any selected
+    # candidate beyond it as a retrieval inconsistency.
+    max_fused_rank: int = 30
 
     def __post_init__(self) -> None:
         if (
@@ -298,6 +301,12 @@ class EvidenceSelectionConfig:
         ):
             raise ValueError("adjacent_overlap_ratio must be between zero and one")
         object.__setattr__(self, "adjacent_overlap_ratio", float(self.adjacent_overlap_ratio))
+        if (
+            isinstance(self.max_fused_rank, bool)
+            or not isinstance(self.max_fused_rank, int)
+            or self.max_fused_rank <= 0
+        ):
+            raise ValueError("max_fused_rank must be positive")
 
     @classmethod
     def from_index_config(cls, config: RagIndexConfig) -> "EvidenceSelectionConfig":
@@ -306,6 +315,7 @@ class EvidenceSelectionConfig:
         return cls(
             max_chunks=config.max_evidence_chunks,
             max_tokens=config.max_evidence_tokens,
+            max_fused_rank=config.sufficiency_max_fused_rank,
         )
 
 
@@ -540,8 +550,14 @@ class EvidenceSelector:
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY) from None
         _validate_selection_inputs(snapshot, candidates, authoritative)
         by_key = {item.chunk.chunk_key: item for item in authoritative}
+        # Every selection stage below draws from this prefix, so no stage can
+        # hand the sufficiency gate a candidate beyond its fused-rank bound.
         ordered = tuple(
-            sorted(candidates, key=lambda candidate: (candidate.fused_rank, candidate.chunk_key))
+            candidate
+            for candidate in sorted(
+                candidates, key=lambda candidate: (candidate.fused_rank, candidate.chunk_key)
+            )
+            if candidate.fused_rank <= self._config.max_fused_rank
         )
         accepted: list[AuthoritativeRetrievalChunk] = []
         seen_logical: set[tuple[int, str]] = set()

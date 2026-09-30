@@ -886,3 +886,142 @@ def test_sufficiency_thresholds_are_loaded_from_index_config() -> None:
         EvidenceSufficiencyGate(config).evaluate(evidence[:3], snapshot=SNAPSHOT).status
         is SufficiencyStatus.SUPPORTED
     )
+
+
+def _bounded_index_config(**overrides: object) -> RagIndexConfig:
+    values: dict[str, object] = {
+        "chunk_target_tokens": 400,
+        "chunk_preferred_min_tokens": 200,
+        "chunk_preferred_max_tokens": 600,
+        "chunk_hard_max_tokens": 800,
+        "chunk_overlap_tokens": 80,
+        "dense_candidate_limit": 30,
+        "lexical_candidate_limit": 30,
+        "rrf_k": 60,
+        "max_evidence_chunks": 4,
+        "max_evidence_tokens": 8,
+        "chunker_version": "heading-page-v1",
+        "lexical_normalizer_version": "unicode-v1",
+        "sufficiency_policy_version": "conservative-v1",
+        "embedding_model_identifier": "BAAI/bge-m3",
+        "embedding_model_revision": "v1",
+        "embedding_dimensions": 1024,
+        "sufficiency_min_chunks": 2,
+        "sufficiency_min_tokens": 1,
+    }
+    values.update(overrides)
+    return RagIndexConfig(**values)  # type: ignore[arg-type]
+
+
+def _single_document_monopoly_with_late_other(
+    other_rank: int,
+) -> tuple[tuple[AuthoritativeRetrievalChunk, ...], tuple[FusedCandidate, ...]]:
+    # Fused ranks must stay contiguous, so same-document duplicates fill the
+    # gap between the monopolizing prefix and the only other-document chunk.
+    filler_keys = tuple(f"dup{rank}" for rank in range(5, other_rank))
+    fillers = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=1,
+            text="same source 1",
+            token_count=1,
+            start=10,
+            end=24,
+        )
+        for key in filler_keys
+    )
+    authorities = (
+        fillers
+        + tuple(
+            _authority(
+                key,
+                version_id=101,
+                course_id=11,
+                ordinal=index,
+                text=f"same source {index}",
+                token_count=1,
+                start=index * 10,
+                end=index * 10 + 14,
+            )
+            for index, key in enumerate(("a", "b", "c", "d"), 1)
+        )
+        + (
+            _authority(
+                "other",
+                version_id=102,
+                course_id=12,
+                ordinal=1,
+                text="other source",
+                token_count=1,
+                start=0,
+                end=12,
+            ),
+        )
+    )
+    candidates = tuple(
+        _candidate(key, index) for index, key in enumerate(("a", "b", "c", "d", *filler_keys), 1)
+    ) + (_candidate("other", other_rank),)
+    return authorities, candidates
+
+
+def test_selector_diversity_replacement_never_exceeds_gate_fused_rank_bound() -> None:
+    """Regression: a rank-40 cross-document replacement made the gate fail closed."""
+    authorities, candidates = _single_document_monopoly_with_late_other(31)
+
+    selected = _select(authorities, candidates, EvidenceSelectionConfig(max_chunks=4, max_tokens=8))
+
+    assert "other" not in tuple(item.chunk_key for item in selected)
+    assert all(item.fused_rank <= 30 for item in selected)
+    decision = EvidenceSufficiencyGate(min_chunks=2, min_tokens=1).evaluate(
+        selected, snapshot=SNAPSHOT
+    )
+    assert decision.status is SufficiencyStatus.SUPPORTED
+
+
+def test_selector_primary_pass_never_exceeds_gate_fused_rank_bound() -> None:
+    duplicate_keys = tuple(f"dup{rank}" for rank in range(2, 31))
+    authorities = tuple(
+        _authority(
+            key,
+            version_id=101,
+            course_id=11,
+            ordinal=1,
+            text="alpha",
+            token_count=1,
+            start=0,
+            end=5,
+        )
+        for key in ("a", *duplicate_keys)
+    ) + (
+        _authority(
+            "late",
+            version_id=102,
+            course_id=12,
+            ordinal=1,
+            text="late distinct source",
+            token_count=1,
+            start=0,
+            end=20,
+        ),
+    )
+    candidates = tuple(
+        _candidate(key, rank) for rank, key in enumerate(("a", *duplicate_keys), 1)
+    ) + (_candidate("late", 31),)
+
+    selected = _select(authorities, candidates)
+
+    assert tuple(item.chunk_key for item in selected) == ("a",)
+    EvidenceSufficiencyGate(min_chunks=2, min_tokens=1).evaluate(selected, snapshot=SNAPSHOT)
+
+
+def test_selector_fused_rank_bound_is_loaded_from_index_config() -> None:
+    config = _bounded_index_config(sufficiency_max_fused_rank=4)
+    authorities, candidates = _single_document_monopoly_with_late_other(5)
+
+    selected = _select(authorities, candidates, EvidenceSelectionConfig.from_index_config(config))
+
+    assert "other" not in tuple(item.chunk_key for item in selected)
+    assert all(item.fused_rank <= 4 for item in selected)
+    EvidenceSufficiencyGate(config).evaluate(selected, snapshot=SNAPSHOT)
