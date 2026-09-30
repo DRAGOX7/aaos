@@ -41,6 +41,7 @@ from aaos.rag.contracts import (
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.contracts import AssignmentSummary, CourseSummary
 
+from .course_names import course_code_token
 from .study_plan_contracts import (
     PlanFactKind,
     StudyActivityType,
@@ -1108,7 +1109,13 @@ def _resolve_course_scope(
     normalized_question = " ".join(question.casefold().split())
     course_ids_by_alias: dict[str, set[int]] = {}
     for course in courses:
-        aliases = (course.title,) if course.code is None else (course.title, course.code)
+        # Moodle sync stores no course code, so the code leading the title
+        # ("SE440-...") is also an alias; shared codes stay ambiguous below.
+        aliases = tuple(
+            alias
+            for alias in (course.title, course.code, course_code_token(course.title))
+            if alias is not None
+        )
         for alias in dict.fromkeys(aliases):
             normalized_alias = " ".join(alias.casefold().split())
             if normalized_alias:

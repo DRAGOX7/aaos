@@ -494,6 +494,64 @@ def test_overlapping_course_titles_resolve_to_the_longest_match() -> None:
     assert academic.assignment_limits == [31]
 
 
+def test_moodle_course_code_scopes_plan_without_a_stored_code() -> None:
+    """Regression: a bare code silently planned across every course."""
+    academic = FakeAcademic()
+    academic.courses = [
+        CourseSummary(
+            id=7,
+            title="CS401-DEEP LEARNING (All Sections )",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+        CourseSummary(
+            id=8,
+            title="CS301-DATABASES (All Sections )",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+    ]
+    academic.assignments = [
+        _assignment(70, 7, "Neural lab", _due_after(2)),
+        _assignment(80, 8, "SQL lab", _due_after(3)),
+    ]
+    gateway = FakeGateway(
+        {"items": [_item("2026-09-29", 7, 70, None, reason=StudyRationaleCode.USER_FOCUS)]}
+    )
+    assistant, _academic, _tasks, _changes, _rag = _assistant(gateway, academic=academic)
+
+    result = asyncio.run(assistant.ask("Make me a study plan for cs401 this week"))
+
+    assert result.study_plan is not None
+    assert {item.course_id for item in result.study_plan.obligations} == {7}
+
+
+def test_moodle_course_code_matching_section_siblings_is_ambiguous() -> None:
+    academic = FakeAcademic()
+    academic.courses = [
+        CourseSummary(
+            id=7, title="CS401-DEEP LEARNING (1)", code=None, description=None, updated_at=NOW
+        ),
+        CourseSummary(
+            id=8,
+            title="CS401-DEEP LEARNING (All Sections )",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+    ]
+    gateway = FakeGateway({"items": []})
+    assistant, _academic, _tasks, _changes, _rag = _assistant(gateway, academic=academic)
+
+    result = asyncio.run(assistant.ask("Make me a study plan for CS401 this week"))
+
+    assert result.status is AcademicAskStatus.REFUSED
+    assert "ambiguous" in (result.answer_text or "")
+    assert gateway.requests == []
+
+
 def test_duplicate_course_titles_are_refused_as_ambiguous() -> None:
     academic = FakeAcademic()
     academic.courses = [

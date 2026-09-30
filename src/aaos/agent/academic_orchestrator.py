@@ -111,6 +111,7 @@ from .conversation_context import (
     TrustedMoodleChangeContext,
     serialize_context_hint,
 )
+from .course_names import course_code_token
 from .orchestrator import AgentOrchestrator
 from .phase4_adapter import (
     MAX_RAG_QUERY_CHARACTERS,
@@ -192,10 +193,8 @@ STUDY_TASK_CHANGE_DECISION_SCHEMA: Final[Literal["study_task_change_decision_con
 )
 _READ_REFERENCE = re.compile(r"^read-[1-8]$")
 _SAFE_COURSE_NAME = re.compile(r"^[^\r\n]{1,512}$")
-# Moodle course titles carry the course code before the first hyphen, and a
-# section entry and its combined entry differ only by a trailing suffix such as
-# "(1)" or "(All Sections )". Both patterns apply to normalized titles.
-_COURSE_CODE_PREFIX = re.compile(r"([a-z]{2,}[0-9]{2,}[a-z0-9.]*)\s*-")
+# A Moodle section entry and its combined entry differ only by a trailing
+# suffix such as "(1)" or "(All Sections )". Applies to normalized titles.
 _MOODLE_SECTION_SUFFIX = re.compile(r"\s*\((?:[0-9]+|all sections)\s*\)$")
 _STUDY_TASK_READ_TOOLS = frozenset({ToolName.STUDY_TASK_LIST, ToolName.STUDY_TASK_GET})
 _STUDY_TASK_WRITE_TOOLS = frozenset(
@@ -1494,7 +1493,7 @@ class _AcademicToolRuntime:
         )
         if matches:
             return courses, matches, True
-        matches = tuple(course for course in courses if _course_code_token(course.title) == target)
+        matches = tuple(course for course in courses if course_code_token(course.title) == target)
         if not matches:
             raise _LookupFailure(AgentErrorCode.COURSE_NOT_FOUND)
         return courses, matches, False
@@ -3328,11 +3327,6 @@ def _available_source_refs(request: ProposalRequest) -> set[object]:
         if observation.status == "OK"
         and observation.kind.startswith(("academic.", "study_task.", "moodle."))
     }
-
-
-def _course_code_token(title: str) -> str | None:
-    match = _COURSE_CODE_PREFIX.match(_normalized(title))
-    return match.group(1) if match else None
 
 
 def _section_sibling_key(title: str) -> str | None:
