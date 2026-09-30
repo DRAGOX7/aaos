@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
@@ -26,16 +27,6 @@ from aaos.web.contracts import (
 )
 from aaos.web.errors import install_error_boundary
 from aaos.web.health import SystemHealthResponse
-from aaos.web.routes import (
-    AcademicReader,
-    ActivityReader,
-    CourseReader,
-    DocumentReader,
-    SystemHealthReader,
-    TaskApprovalCommands,
-    TaskReader,
-    create_api_v1_router,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -62,7 +53,17 @@ if TYPE_CHECKING:
     from aaos.web.health_read import SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
-    from aaos.web.routes import AcademicAskService, ApprovedCalendarTaskExecutor
+    from aaos.web.routes import (
+        AcademicAskService,
+        AcademicReader,
+        ActivityReader,
+        ApprovedCalendarTaskExecutor,
+        CourseReader,
+        DocumentReader,
+        SystemHealthReader,
+        TaskApprovalCommands,
+        TaskReader,
+    )
 
     class _AcademicDocumentReadDelegate(AcademicDocumentPort, Protocol):
         def get_document(self, document_id: int) -> DocumentSummary: ...
@@ -652,6 +653,10 @@ def create_app(
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 
+    # Imported here so module import stays inert: the route graph pulls in the
+    # agent, RAG, and database stacks.
+    from aaos.web.routes import create_api_v1_router
+
     application.include_router(
         create_api_v1_router(
             course_reader,
@@ -681,4 +686,22 @@ def create_app(
     return application
 
 
-app = create_app()
+class _LazyASGIApplication:
+    """Build the API on first use so importing this module stays inert."""
+
+    def __init__(self) -> None:
+        self._application: FastAPI | None = None
+
+    def _get_application(self) -> FastAPI:
+        if self._application is None:
+            self._application = create_app()
+        return self._application
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._get_application()(scope, receive, send)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_application(), name)
+
+
+app = _LazyASGIApplication()
