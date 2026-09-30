@@ -91,7 +91,7 @@ and gates.
 | --- | --- | --- |
 | Phase 0 | Acceptance unresolved; historical `phase-00-passed` at `55d2293` is a final-acceptance planning commit per retained roadmap record | No retroactive 0G/0H acceptance; preserve tag |
 | Phase 1 | FROZEN: `phase-01-passed`, `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef` | Historical accepted baseline |
-| Phase 2 | Historical ACCEPTED at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`; NOT FROZEN | No recorded `phase-02-passed`; do not invent one |
+| Phase 2 | FROZEN: `phase-02-passed`, `736c8498ab1fe2c1d4d425ba4625774eaf791e93` | Historical accepted baseline; freeze tag added at project-owner request on 2026-09-30 |
 | Phase 3 | FROZEN: `phase-03-passed`, `12a27f7a77ed79a3e638d9fc6bf4509840a9b326` | No reopening |
 | Phase 4 | FROZEN: `phase-04-passed`, `e99c494628952e0a1ebcafa2450c87611b4dc6c8` | No reopening or held-out rerun |
 | Phase 5 | Implementation COMPLETE_FOR_LOCAL_DOWNSTREAM_DEVELOPMENT; deterministic verification PASS; formal V4 acceptance DEFERRED | `SEALED_MANIFEST_CLI_FAILURE`; held-out AVAILABLE (`execution_count=0`); local downstream development AUTHORIZED; Slice 7 / Slice 8 acceptance remains blocked; release freeze BLOCKED until V4 completes; not PASSED/FROZEN and no `phase-05-passed` move |
