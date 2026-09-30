@@ -85,3 +85,38 @@ def test_invalid_request_timeout_is_rejected(timeout_seconds: float | bool) -> N
     """Request timeout must be finite and strictly positive."""
     with pytest.raises(ValueError, match="lm_studio_request_timeout_seconds"):
         AppSettings(lm_studio_request_timeout_seconds=timeout_seconds)
+
+
+def test_calendar_timezone_is_unset_without_the_environment_key() -> None:
+    from aaos.config import settings_from_environment
+
+    assert settings_from_environment({}).calendar_timezone is None
+
+
+@pytest.mark.parametrize("raw", ("Asia/Amman", "  Asia/Amman  "))
+def test_calendar_timezone_is_loaded_from_the_environment(raw: str) -> None:
+    from aaos.config import CALENDAR_TIMEZONE_ENVIRONMENT_KEY, settings_from_environment
+
+    settings = settings_from_environment({CALENDAR_TIMEZONE_ENVIRONMENT_KEY: raw})
+
+    assert CALENDAR_TIMEZONE_ENVIRONMENT_KEY == "AAOS_CALENDAR_TIMEZONE"
+    assert settings.calendar_timezone == "Asia/Amman"
+
+
+@pytest.mark.parametrize("raw", ("", "   ", "Mars/Olympus_Mons", "UTC+3"))
+def test_invalid_configured_calendar_timezone_fails_closed(raw: str) -> None:
+    """A set but unusable value must never fall back to UTC or to unset."""
+    from aaos.config import settings_from_environment
+
+    with pytest.raises(ValueError, match="AAOS_CALENDAR_TIMEZONE"):
+        settings_from_environment({"AAOS_CALENDAR_TIMEZONE": raw})
+
+
+def test_environment_settings_ignore_unrelated_keys_and_keep_defaults() -> None:
+    from aaos.config import settings_from_environment
+
+    environment = {"AAOS_CALENDAR_TIMEZONE": "Asia/Amman", "AAOS_LM_STUDIO_MODEL": "other"}
+    settings = settings_from_environment(environment)
+
+    assert settings == AppSettings(calendar_timezone="Asia/Amman")
+    assert environment == {"AAOS_CALENDAR_TIMEZONE": "Asia/Amman", "AAOS_LM_STUDIO_MODEL": "other"}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
 from urllib.parse import urlsplit
@@ -96,4 +98,28 @@ class AppSettings:
                 raise ValueError("calendar_timezone must be a valid IANA name") from error
 
 
-DEFAULT_SETTINGS = AppSettings()
+CALENDAR_TIMEZONE_ENVIRONMENT_KEY = "AAOS_CALENDAR_TIMEZONE"
+
+
+def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
+    """Build settings from the explicit, non-secret AAOS environment keys.
+
+    Only the calendar timezone is configurable. When the key is absent the
+    timezone stays unset, so timezone-dependent features refuse; a key that is
+    set but blank or not a valid IANA name fails closed instead of assuming UTC.
+    """
+    raw_timezone = environment.get(CALENDAR_TIMEZONE_ENVIRONMENT_KEY)
+    if raw_timezone is None:
+        return AppSettings()
+    timezone_name = raw_timezone.strip()
+    try:
+        if not timezone_name:
+            raise ValueError("calendar_timezone must not be blank")
+        return AppSettings(calendar_timezone=timezone_name)
+    except ValueError as error:
+        raise ValueError(
+            f"{CALENDAR_TIMEZONE_ENVIRONMENT_KEY} must be a valid IANA timezone name when set"
+        ) from error
+
+
+DEFAULT_SETTINGS = settings_from_environment(os.environ)
