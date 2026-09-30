@@ -13,16 +13,18 @@ _ROUTE_DECORATOR = re.compile(
 
 
 def test_phase7d_boundary_remains_closed_after_later_phase_additions() -> None:
-    phase7d_source_text = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            ROOT / "src/aaos/web/rag.py",
-            ROOT / "frontend/components/aaos/ask-view.tsx",
-        )
-    ).lower()
+    rag_route_text = (ROOT / "src/aaos/web/rag.py").read_text(encoding="utf-8").lower()
+    ask_view_text = (
+        (ROOT / "frontend/components/aaos/ask-view.tsx").read_text(encoding="utf-8").lower()
+    )
+    phase7d_source_text = rag_route_text + "\n" + ask_view_text
 
     assert "approv" not in phase7d_source_text
-    assert "calendar" not in phase7d_source_text
+    assert "calendar" not in rag_route_text
+    # Phase H's accepted unified Ask page describes Calendar proposals in its
+    # copy, but the Phase 7D view must still not import or call Calendar code.
+    assert not re.search(r"^\s*import\b[^\n]*calendar", ask_view_text, re.MULTILINE)
+    assert "/calendar" not in ask_view_text
     assert "eventsource" not in phase7d_source_text
     assert "sse" not in phase7d_source_text
     assert "put(" not in phase7d_source_text

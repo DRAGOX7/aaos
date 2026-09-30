@@ -7,7 +7,9 @@ import pytest
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
+from aaos.persistence import moodle_sync_models as _moodle_sync_models  # noqa: F401
 from aaos.persistence import rag_models as _rag_models  # noqa: F401
+from aaos.persistence import study_task_models as _study_task_models  # noqa: F401
 from aaos.persistence.academic_models import (
     AnnouncementORM,
     AssignmentORM,
@@ -36,7 +38,14 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
     }
     phase7e_tables = {"task_records"}
     phase8_tables = {"visual_analysis_runs", "visual_elements"}
-    assert set(CourseORM.metadata.tables) - phase6a_tables - phase7e_tables - phase8_tables == {
+    agentic_study_task_tables = {"study_tasks", "study_task_mutations"}
+    agentic_moodle_change_tables = {"moodle_sync_snapshots"}
+    assert agentic_study_task_tables | agentic_moodle_change_tables <= set(
+        CourseORM.metadata.tables
+    )
+    assert set(CourseORM.metadata.tables) - phase6a_tables - phase7e_tables - phase8_tables - (
+        agentic_study_task_tables | agentic_moodle_change_tables
+    ) == {
         "courses",
         "assignments",
         "announcements",

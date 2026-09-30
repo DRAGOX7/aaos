@@ -103,7 +103,12 @@ def test_document_status_enums_match_existing_persistence_values() -> None:
 
 
 def test_document_summary_has_exact_closed_field_set() -> None:
-    assert set(DocumentSummary.model_fields) == {
+    browser_fields = {
+        name for name, field in DocumentSummary.model_fields.items() if not field.exclude
+    }
+    # The trusted document version identity is server-side only.
+    assert set(DocumentSummary.model_fields) - browser_fields == {"document_version_id"}
+    assert browser_fields == {
         "id",
         "course_id",
         "title",
