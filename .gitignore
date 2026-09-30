@@ -8,6 +8,7 @@ data/auth/
 data/credentials/
 data/database/
 data/chroma/
+data/rag/
 data/documents/
 data/logs/
 data/temporary/
