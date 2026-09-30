@@ -442,7 +442,9 @@ def test_no_change_result_cannot_invent_a_trusted_deadline() -> None:
     context_store = ConversationContextStore()
     reader = FakeMoodleChangeReader(change_set(no_changes=True))
     first = _query_changes(context_store, reader)
-    gateway = FakeGateway(_answer("read-1"))
+    # A premature answer gets exactly one repair; repeating the invented
+    # reference must still fail closed without a third model call.
+    gateway = FakeGateway(_answer("read-1"), _answer("read-1"))
 
     result = asyncio.run(
         _assistant(gateway, reader, context_store=context_store).ask(
@@ -453,7 +455,7 @@ def test_no_change_result_cannot_invent_a_trusted_deadline() -> None:
     assert result.status is AcademicAskStatus.FAILED
     assert result.failure_code is not None
     assert result.failure_code.value == "INVALID_GROUNDED_REFERENCE"
-    assert len(gateway.requests) == 1
+    assert len(gateway.requests) == 2
 
 
 def test_hostile_change_title_cannot_expand_followup_actions() -> None:

@@ -320,6 +320,11 @@ paths, SQL, HTTP requests, shell tools, citations, or unsupported source
 references.
 """
 
+ACADEMIC_PREMATURE_ANSWER_REPAIR_PROMPT = """There is no successful tool observation
+yet, so no source_ref exists and ANSWER is invalid. Choose CALL_TOOL with one
+listed capability that can read the requested information, or REFUSE.
+"""
+
 
 class AcademicDecisionAction(StrEnum):
     CALL_TOOL = "CALL_TOOL"
@@ -2408,12 +2413,22 @@ class AcademicDecisionAdapter:
                 self._last_failure or _proposal_failure(AgentErrorCode.MODEL_UNAVAILABLE)
             )
         decision = _parse_academic_decision(response, request, self._registry)
+        # An ANSWER before any successful tool observation can never cite valid
+        # evidence, so it gets the same single repair as a malformed proposal.
+        # Invented references after real observations still fail immediately.
+        premature_answer = (
+            isinstance(decision, AgentFailure)
+            and decision.code is AgentErrorCode.INVALID_GROUNDED_REFERENCE
+            and not (_available_source_refs(request) - {None})
+        )
         if (
             isinstance(decision, AgentFailure)
-            and decision.code is AgentErrorCode.INVALID_PROPOSAL
+            and (decision.code is AgentErrorCode.INVALID_PROPOSAL or premature_answer)
             and self._max_repair_attempts
         ):
-            repaired = await self._call(self._build_request(request, repair=True))
+            repaired = await self._call(
+                self._build_request(request, repair=True, premature_answer=premature_answer)
+            )
             if repaired is None:
                 return ProposalResult.failed(
                     self._last_failure or _proposal_failure(AgentErrorCode.MODEL_UNAVAILABLE)
@@ -2430,7 +2445,13 @@ class AcademicDecisionAdapter:
         assert decision.refusal_reason is not None
         return ProposalResult.success(TerminalProposal(_REFUSAL_MESSAGES[decision.refusal_reason]))
 
-    def _build_request(self, request: ProposalRequest, *, repair: bool = False) -> ChatRequest:
+    def _build_request(
+        self,
+        request: ProposalRequest,
+        *,
+        repair: bool = False,
+        premature_answer: bool = False,
+    ) -> ChatRequest:
         context = canonical_json(request.to_dict())
         structured_schema: StructuredOutputSchema
         if self._moodle_change_enabled:
@@ -2482,6 +2503,8 @@ class AcademicDecisionAdapter:
             )
         if repair:
             user_content += "\n" + ACADEMIC_REPAIR_PROMPT
+        if premature_answer:
+            user_content += "\n" + ACADEMIC_PREMATURE_ANSWER_REPAIR_PROMPT
         return ChatRequest(
             messages=(
                 ChatMessage(role="system", content=system_content),
@@ -3270,12 +3293,7 @@ def _parse_academic_decision(
             return _proposal_failure(AgentErrorCode.INVALID_PROPOSAL)
         if any(not _READ_REFERENCE.fullmatch(ref) for ref in refs):
             return _proposal_failure(AgentErrorCode.INVALID_GROUNDED_REFERENCE)
-        available = {
-            dict(observation.fields).get("source_ref")
-            for observation in request.observations
-            if observation.status == "OK"
-            and observation.kind.startswith(("academic.", "study_task.", "moodle."))
-        }
+        available = _available_source_refs(request)
         if any(reference not in available for reference in refs):
             return _proposal_failure(AgentErrorCode.INVALID_GROUNDED_REFERENCE)
         return AcademicDecision(AcademicDecisionAction.ANSWER, evidence_refs=tuple(refs))
@@ -3301,6 +3319,15 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
 
 def _normalized(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _available_source_refs(request: ProposalRequest) -> set[object]:
+    return {
+        dict(observation.fields).get("source_ref")
+        for observation in request.observations
+        if observation.status == "OK"
+        and observation.kind.startswith(("academic.", "study_task.", "moodle."))
+    }
 
 
 def _course_code_token(title: str) -> str | None:

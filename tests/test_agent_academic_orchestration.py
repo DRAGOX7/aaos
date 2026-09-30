@@ -1229,3 +1229,42 @@ def test_rag_shared_code_does_not_join_courses_with_different_titles() -> None:
     _result, rag = _rag_scope_for(_AI_SECTION_TITLE, academic, _indexed_documents(3))
 
     assert [query.scope for query in rag.queries] == [CourseScope(1)]
+
+
+def test_premature_answer_without_tool_result_gets_one_targeted_repair() -> None:
+    """Regression: an ANSWER before any tool result failed without a repair attempt."""
+    gateway = FakeGateway(
+        _answer("read-1"),
+        _tool("academic.list_courses"),
+        _answer("read-1"),
+    )
+    assistant, _academic, _documents, _rag = _assistant(gateway)
+
+    result = asyncio.run(assistant.ask("What courses am I taking?"))
+
+    assert result.status is AcademicAskStatus.ANSWERED
+    assert "Deep Learning" in (result.answer_text or "")
+    assert len(gateway.requests) == 3
+    repair_message = gateway.requests[1].messages[-1].content
+    assert "no successful tool observation" in repair_message.lower()
+
+
+def test_premature_answer_repeated_after_repair_fails_closed() -> None:
+    gateway = FakeGateway(_answer("read-1"), _answer("read-1"))
+    assistant, _academic, _documents, _rag = _assistant(gateway)
+
+    result = asyncio.run(assistant.ask("Which assignments do I have?"))
+
+    assert result.status is AcademicAskStatus.FAILED
+    assert result.failure_code is AgentErrorCode.INVALID_GROUNDED_REFERENCE
+    assert len(gateway.requests) == 2
+
+
+def test_invented_reference_after_a_tool_result_is_not_repaired() -> None:
+    gateway = FakeGateway(_tool("academic.list_courses"), _answer("read-99"))
+    assistant, _academic, _documents, _rag = _assistant(gateway)
+
+    result = asyncio.run(assistant.ask("What courses am I taking?"))
+
+    assert result.failure_code is AgentErrorCode.INVALID_GROUNDED_REFERENCE
+    assert len(gateway.requests) == 2
