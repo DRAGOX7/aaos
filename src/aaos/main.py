@@ -360,6 +360,25 @@ class _LazyDefaultStudyTaskService:
             priority=priority,
         )
 
+    def apply_moodle_deadline_change(
+        self,
+        *,
+        request_id: UUID,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+    ) -> StudyTask:
+        return self._ensure_delegate().apply_moodle_deadline_change(
+            request_id=request_id,
+            assignment_id=assignment_id,
+            expected_due_at=expected_due_at,
+            source_change_id=source_change_id,
+            source_from_snapshot_id=source_from_snapshot_id,
+            source_to_snapshot_id=source_to_snapshot_id,
+        )
+
     def complete(self, task_id: int, *, request_id: UUID) -> StudyTask:
         return self._ensure_delegate().complete(task_id, request_id=request_id)
 
