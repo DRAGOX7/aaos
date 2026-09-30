@@ -21,7 +21,7 @@ from aaos.agent.study_plan_contracts import (
     StudyPlanCourseReference,
     StudyRationaleCode,
 )
-from aaos.inference import ChatRequest, ChatResponse
+from aaos.inference import ChatRequest, ChatResponse, ModelAvailability
 from aaos.moodle.changes import (
     ChangeField,
     ChangeKind,
@@ -31,6 +31,7 @@ from aaos.moodle.changes import (
     MoodleChangeSet,
 )
 from aaos.rag.contracts import (
+    CourseScope,
     RagAnswerStatus,
     RagChunkSourceSpanValue,
     RagClaim,
@@ -285,7 +286,7 @@ class FakeGateway:
         self.outputs = list(outputs)
         self.requests: list[ChatRequest] = []
 
-    async def check_availability(self) -> object:
+    async def check_availability(self) -> ModelAvailability:
         raise AssertionError("study planning must not check model availability")
 
     async def generate(self, request: ChatRequest) -> ChatResponse:
@@ -693,12 +694,12 @@ def test_plan_followup_uses_typed_item_reference_and_factual_reason() -> None:
 
     assert first.study_plan is not None
     assert answer.status is AcademicAskStatus.ANSWERED
-    assert "StudyTask #50 was OPEN with HIGH priority" in answer.answer_text
-    assert "update it to refresh Moodle and academic state" in answer.answer_text
+    assert "StudyTask #50 was OPEN with HIGH priority" in (answer.answer_text or "")
+    assert "update it to refresh Moodle and academic state" in (answer.answer_text or "")
     deadline_explanation = asyncio.run(
         assistant.ask("Why is the first block there?", conversation_id=first.conversation_id)
     )
-    assert "2026-09-30T23:59:00+03:00" in deadline_explanation.answer_text
+    assert "2026-09-30T23:59:00+03:00" in (deadline_explanation.answer_text or "")
     assert len(gateway.requests) == 1
 
 
@@ -821,7 +822,7 @@ def test_document_grounded_plan_preserves_rag_refusal() -> None:
     assert result.study_plan is None
     assert result.answer_text == "Insufficient evidence."
     assert len(rag.queries) == 1
-    assert rag.queries[0].scope.course_id == 7
+    assert rag.queries[0].scope == CourseScope(7)
     assert gateway.requests == []
 
 
@@ -935,7 +936,7 @@ def test_excessive_planning_horizon_requires_narrower_scope() -> None:
     result = asyncio.run(assistant.ask("Make me a plan from 2026-09-28 to 2026-10-13"))
 
     assert result.status is AcademicAskStatus.REFUSED
-    assert "at most 14 local calendar days" in result.answer_text
+    assert "at most 14 local calendar days" in (result.answer_text or "")
     assert gateway.requests == []
 
 
@@ -954,7 +955,7 @@ def test_mixed_plan_and_write_request_is_refused_before_model_or_writes(question
     result = asyncio.run(assistant.ask(question))
 
     assert result.status is AcademicAskStatus.REFUSED
-    assert "read-only scope" in result.answer_text
+    assert "read-only scope" in (result.answer_text or "")
     assert gateway.requests == []
     assert tasks.write_calls == 0
     assert result.study_plan is None
@@ -1004,9 +1005,9 @@ def test_plan_reference_resolves_weekday_and_ambiguous_weekday_fails_safely() ->
     )
 
     assert ambiguous.status is AcademicAskStatus.REFUSED
-    assert "More than one" in ambiguous.answer_text
+    assert "More than one" in (ambiguous.answer_text or "")
     assert specific.status is AcademicAskStatus.ANSWERED
-    assert "block 2" in specific.answer_text
+    assert "block 2" in (specific.answer_text or "")
     assert len(gateway.requests) == 1
 
 
@@ -1070,7 +1071,7 @@ def test_plan_context_rejects_non_integer_duration_and_snapshot_id() -> None:
             generated_at=NOW,
             course_refs=(StudyPlanCourseReference(7, "Deep Learning"),),
             items=(item,),
-            moodle_to_snapshot_id=True,  # type: ignore[arg-type]
+            moodle_to_snapshot_id=True,
         )
 
 
@@ -1082,7 +1083,7 @@ def test_planning_requires_configured_timezone_and_does_not_assume_utc() -> None
 
     assert result.status is AcademicAskStatus.REFUSED
     assert result.study_plan is None
-    assert "No timezone was assumed" in result.answer_text
+    assert "No timezone was assumed" in (result.answer_text or "")
     assert gateway.requests == []
 
 

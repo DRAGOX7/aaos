@@ -28,13 +28,14 @@ from aaos.agent.academic_orchestrator import (
     AcademicAskStatus,
     AcademicRefusalReason,
     ReadOnlyAcademicAssistant,
+    StudyTaskPort,
 )
 from aaos.agent.contracts import ToolName
 from aaos.agent.conversation_context import ConversationContextStore
 from aaos.moodle.changes import ChangeField
 from aaos.persistence.database import create_database_engine, create_session_factory
 from aaos.persistence.study_task_models import StudyTaskMutationORM
-from aaos.rag import HistoricalScope, RagAnswerStatus, RagQuery
+from aaos.rag import HistoricalScope, RagAnswerStatus, RagQuery, RenderedRagResponse
 from aaos.study_tasks.contracts import (
     StudyTaskIdempotencyConflict,
     StudyTaskPersistenceError,
@@ -127,11 +128,11 @@ class ScenarioDocumentReader:
 
 
 class RecordingRagService:
-    def __init__(self, response: object) -> None:
+    def __init__(self, response: RenderedRagResponse) -> None:
         self.response = response
         self.queries: list[RagQuery] = []
 
-    async def ask(self, query: RagQuery) -> object:
+    async def ask(self, query: RagQuery) -> RenderedRagResponse:
         self.queries.append(query)
         return self.response
 
@@ -144,7 +145,7 @@ def _assistant(
     context_store: ConversationContextStore | None = None,
     document_reader: ScenarioDocumentReader | None = None,
     rag_service: RecordingRagService | None = None,
-    task_service: StudyTaskService | None = None,
+    task_service: StudyTaskPort | None = None,
     calendar_service: FakeCalendarProposalService | None = None,
 ) -> ReadOnlyAcademicAssistant:
     return ReadOnlyAcademicAssistant(

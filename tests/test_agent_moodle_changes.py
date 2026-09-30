@@ -163,6 +163,21 @@ class FakeStudyTaskService:
         self.write_calls.append("update")
         raise AssertionError("change titles cannot update a StudyTask")
 
+    def apply_moodle_deadline_change(
+        self,
+        *,
+        request_id: UUID,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+    ) -> StudyTask:
+        del request_id, assignment_id, expected_due_at, source_change_id
+        del source_from_snapshot_id, source_to_snapshot_id
+        self.write_calls.append("apply_moodle_deadline_change")
+        raise AssertionError("change titles cannot apply a deadline change")
+
     def complete(self, _task_id: int, *, request_id: UUID) -> StudyTask:
         del request_id
         self.write_calls.append("complete")

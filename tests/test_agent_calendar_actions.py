@@ -192,6 +192,18 @@ class FakeStudyTaskService:
     def update(self, task_id: int, **kwargs: Any) -> StudyTask:
         raise AssertionError((task_id, kwargs))
 
+    def apply_moodle_deadline_change(
+        self,
+        *,
+        request_id: UUID,
+        assignment_id: int,
+        expected_due_at: datetime,
+        source_change_id: str,
+        source_from_snapshot_id: int,
+        source_to_snapshot_id: int,
+    ) -> StudyTask:
+        raise AssertionError((request_id, assignment_id, expected_due_at, source_change_id))
+
     def complete(self, task_id: int, *, request_id: UUID) -> StudyTask:
         raise AssertionError((task_id, request_id))
 
