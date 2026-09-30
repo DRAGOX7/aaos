@@ -41,6 +41,7 @@ from aaos.rag.generation import (
     GroundedAnswerRequest,
     GroundedModelOutput,
     _build_messages,
+    build_insufficient_model_output,
     render_rag_answer,
 )
 from aaos.rag.retrieval import (
@@ -841,3 +842,49 @@ def test_insufficient_answer_uses_answer_language_for_fixed_notice() -> None:
     answer = CitationValidator().validate(output, _request((), answer_language="ar"))
 
     assert answer.answer_text == "لا تتوفر أدلة كافية."
+
+
+_INSUFFICIENT_WITH_CLAIMS = (
+    '{"status":"INSUFFICIENT_EVIDENCE","answer_text":"The document does not say.",'
+    '"language":"en","claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+    '"evidence_ids":["ev-1"]}]}'
+)
+
+
+def test_insufficient_verdict_with_supporting_claims_returns_fixed_refusal() -> None:
+    """Regression: a correct insufficiency verdict with context claims failed the request."""
+    gateway = FakeGateway([_response(_INSUFFICIENT_WITH_CLAIMS)])
+
+    output = _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert output == build_insufficient_model_output(_request())
+    assert output.claims == ()
+    assert len(gateway.requests) == 1
+
+
+def test_insufficient_verdict_with_invented_evidence_still_fails_closed() -> None:
+    payload = _INSUFFICIENT_WITH_CLAIMS.replace('"ev-1"', '"invented"')
+    gateway = FakeGateway([_response(payload)])
+
+    with pytest.raises(RagOperationalError) as error:
+        _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+    assert len(gateway.requests) == 1
+
+
+def test_insufficient_verdict_with_claims_still_requires_partial_status_when_partial() -> None:
+    gateway = FakeGateway(
+        [_response(_INSUFFICIENT_WITH_CLAIMS), _response(_INSUFFICIENT_WITH_CLAIMS)]
+    )
+    request = replace(
+        _request(),
+        semantic_status=SemanticCoverageStatus.PARTIAL,
+        unsupported_aspects=("exam location",),
+    )
+
+    with pytest.raises(RagOperationalError) as error:
+        _run(GroundedAnswerGenerator(gateway), request, _decision())
+
+    assert error.value.code is RagErrorCode.INVALID_STRUCTURED_OUTPUT
+    assert len(gateway.requests) == 2

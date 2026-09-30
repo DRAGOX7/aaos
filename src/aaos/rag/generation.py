@@ -1037,16 +1037,17 @@ def _parse_output(
     for raw_claim in claims_value:
         claim = _parse_claim(raw_claim, allowed_ids)
         claims.append(claim)
-    if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
-        if claims:
-            raise _SchemaInvalid
-    elif not claims:
+    if status is not RagAnswerStatus.INSUFFICIENT_EVIDENCE and not claims:
         raise _SchemaInvalid
     if (
         request.semantic_status is SemanticCoverageStatus.PARTIAL
         and status is not RagAnswerStatus.PARTIAL_ANSWER
     ):
         raise _SchemaInvalid
+    if status is RagAnswerStatus.INSUFFICIENT_EVIDENCE and claims:
+        # The model's insufficiency verdict stands, but its context claims are
+        # discarded: only the fixed, uncited refusal may be rendered.
+        return build_insufficient_model_output(request)
 
     try:
         return GroundedModelOutput(
