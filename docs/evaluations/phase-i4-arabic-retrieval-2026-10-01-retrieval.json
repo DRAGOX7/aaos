@@ -1,0 +1,402 @@
+[
+ {
+  "id": "se440-weights",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.8321948647499084
+ },
+ {
+  "id": "se440-weights",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 5,
+  "dense_rank": 1,
+  "lexical_rank": 4,
+  "fused_rank": 1,
+  "top_dense_distance": 0.852060079574585
+ },
+ {
+  "id": "se440-prerequisite",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 3,
+  "lexical_rank": 2,
+  "fused_rank": 3,
+  "top_dense_distance": 0.60179203748703
+ },
+ {
+  "id": "se440-prerequisite",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 5,
+  "dense_rank": 4,
+  "lexical_rank": 1,
+  "fused_rank": 3,
+  "top_dense_distance": 0.7668845653533936
+ },
+ {
+  "id": "se440-makeup",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.9271558523178101
+ },
+ {
+  "id": "se440-makeup",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 5,
+  "dense_rank": 1,
+  "lexical_rank": 5,
+  "fused_rank": 3,
+  "top_dense_distance": 0.9227869510650635
+ },
+ {
+  "id": "se440-exam-format",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.874817967414856
+ },
+ {
+  "id": "se440-exam-format",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 5,
+  "dense_rank": 1,
+  "lexical_rank": 5,
+  "fused_rank": 2,
+  "top_dense_distance": 0.8144851922988892
+ },
+ {
+  "id": "se440-textbook",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 4,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.9103049039840698
+ },
+ {
+  "id": "se440-textbook",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 5,
+  "dense_rank": 4,
+  "lexical_rank": 1,
+  "fused_rank": 2,
+  "top_dense_distance": 0.8335185050964355
+ },
+ {
+  "id": "ai495-instructor",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.6039594411849976
+ },
+ {
+  "id": "ai495-instructor",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 7,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.6716059446334839
+ },
+ {
+  "id": "ai495-five-vs",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.6657987833023071
+ },
+ {
+  "id": "ai495-five-vs",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 7,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.8203110098838806
+ },
+ {
+  "id": "ml-train-test",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 2,
+  "fused_rank": 1,
+  "top_dense_distance": 0.5039976835250854
+ },
+ {
+  "id": "ml-train-test",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 0,
+  "dense_rank": 1,
+  "lexical_rank": null,
+  "fused_rank": 1,
+  "top_dense_distance": 0.685427188873291
+ },
+ {
+  "id": "ml-pickle",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.7945427298545837
+ },
+ {
+  "id": "ml-pickle",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 3,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.6405462026596069
+ },
+ {
+  "id": "ml-outlier",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.555019736289978
+ },
+ {
+  "id": "ml-outlier",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 9,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.8435444831848145
+ },
+ {
+  "id": "ml-precision",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 3,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.7100273370742798
+ },
+ {
+  "id": "ml-precision",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 11,
+  "dense_rank": 2,
+  "lexical_rank": 1,
+  "fused_rank": 2,
+  "top_dense_distance": 0.8714873790740967
+ },
+ {
+  "id": "ml-kfold",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.512612521648407
+ },
+ {
+  "id": "ml-kfold",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 17,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.7034075856208801
+ },
+ {
+  "id": "knime-what",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.5303176045417786
+ },
+ {
+  "id": "knime-what",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 5,
+  "fused_rank": 3,
+  "top_dense_distance": 0.5531728267669678
+ },
+ {
+  "id": "knime-kmeans",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.632293701171875
+ },
+ {
+  "id": "knime-kmeans",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 22,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.6153659224510193
+ },
+ {
+  "id": "knime-missing",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 7,
+  "lexical_rank": 1,
+  "fused_rank": 2,
+  "top_dense_distance": 0.6121424436569214
+ },
+ {
+  "id": "knime-missing",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 29,
+  "dense_rank": 3,
+  "lexical_rank": 1,
+  "fused_rank": 2,
+  "top_dense_distance": 0.7477167248725891
+ },
+ {
+  "id": "project-weights",
+  "language": "en",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 1,
+  "fused_rank": 1,
+  "top_dense_distance": 0.7514115571975708
+ },
+ {
+  "id": "project-weights",
+  "language": "ar",
+  "answerable": true,
+  "lexical_hits": 30,
+  "dense_rank": 1,
+  "lexical_rank": 24,
+  "fused_rank": 7,
+  "top_dense_distance": 0.6932392716407776
+ },
+ {
+  "id": "none-parking",
+  "language": "en",
+  "answerable": false,
+  "lexical_hits": 30,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.2022148370742798
+ },
+ {
+  "id": "none-parking",
+  "language": "ar",
+  "answerable": false,
+  "lexical_hits": 0,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.2478021383285522
+ },
+ {
+  "id": "none-cafeteria",
+  "language": "en",
+  "answerable": false,
+  "lexical_hits": 30,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.157643437385559
+ },
+ {
+  "id": "none-cafeteria",
+  "language": "ar",
+  "answerable": false,
+  "lexical_hits": 0,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.1778311729431152
+ },
+ {
+  "id": "none-transformer",
+  "language": "en",
+  "answerable": false,
+  "lexical_hits": 30,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.1741204261779785
+ },
+ {
+  "id": "none-transformer",
+  "language": "ar",
+  "answerable": false,
+  "lexical_hits": 1,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.103103756904602
+ },
+ {
+  "id": "none-scholarship",
+  "language": "en",
+  "answerable": false,
+  "lexical_hits": 30,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.1034629344940186
+ },
+ {
+  "id": "none-scholarship",
+  "language": "ar",
+  "answerable": false,
+  "lexical_hits": 2,
+  "dense_rank": null,
+  "lexical_rank": null,
+  "fused_rank": null,
+  "top_dense_distance": 1.0998868942260742
+ }
+]

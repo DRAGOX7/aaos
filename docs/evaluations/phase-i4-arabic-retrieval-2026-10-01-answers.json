@@ -1,0 +1,632 @@
+[
+ {
+  "id": "se440-weights",
+  "language": "en",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 44.0
+ },
+ {
+  "id": "se440-weights",
+  "language": "ar",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    2,
+    2,
+    2
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 23.5
+ },
+ {
+  "id": "se440-prerequisite",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    2,
+    1,
+    1
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 24.1
+ },
+ {
+  "id": "se440-prerequisite",
+  "language": "ar",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    2,
+    1,
+    1
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 24.1
+ },
+ {
+  "id": "se440-makeup",
+  "language": "en",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 18.3
+ },
+ {
+  "id": "se440-makeup",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.9
+ },
+ {
+  "id": "se440-exam-format",
+  "language": "en",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    2,
+    4,
+    4
+   ],
+   [
+    2,
+    4,
+    4
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 26.0
+ },
+ {
+  "id": "se440-exam-format",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 27.0
+ },
+ {
+  "id": "se440-textbook",
+  "language": "en",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 24.6
+ },
+ {
+  "id": "se440-textbook",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 24.0
+ },
+ {
+  "id": "ai495-instructor",
+  "language": "en",
+  "answerable": true,
+  "status": "ERROR:INVALID_EVIDENCE_REFERENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 22.1
+ },
+ {
+  "id": "ai495-instructor",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 19.7
+ },
+ {
+  "id": "ai495-five-vs",
+  "language": "en",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 26.2
+ },
+ {
+  "id": "ai495-five-vs",
+  "language": "ar",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    1,
+    1,
+    2
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 26.1
+ },
+ {
+  "id": "ml-train-test",
+  "language": "en",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    3,
+    6,
+    6
+   ],
+   [
+    3,
+    6,
+    6
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 37.0
+ },
+ {
+  "id": "ml-train-test",
+  "language": "ar",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    3,
+    6,
+    6
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 28.4
+ },
+ {
+  "id": "ml-pickle",
+  "language": "en",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    3,
+    9,
+    9
+   ],
+   [
+    3,
+    9,
+    9
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 30.4
+ },
+ {
+  "id": "ml-pickle",
+  "language": "ar",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    3,
+    9,
+    9
+   ],
+   [
+    3,
+    9,
+    9
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 34.4
+ },
+ {
+  "id": "ml-outlier",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    3,
+    10,
+    10
+   ],
+   [
+    3,
+    10,
+    10
+   ],
+   [
+    3,
+    10,
+    10
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 27.9
+ },
+ {
+  "id": "ml-outlier",
+  "language": "ar",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    3,
+    10,
+    10
+   ],
+   [
+    3,
+    10,
+    10
+   ],
+   [
+    3,
+    10,
+    10
+   ],
+   [
+    3,
+    10,
+    10
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 32.2
+ },
+ {
+  "id": "ml-precision",
+  "language": "en",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 22.6
+ },
+ {
+  "id": "ml-precision",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 19.4
+ },
+ {
+  "id": "ml-kfold",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    3,
+    30,
+    30
+   ],
+   [
+    3,
+    30,
+    30
+   ],
+   [
+    3,
+    30,
+    30
+   ],
+   [
+    3,
+    30,
+    30
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 41.1
+ },
+ {
+  "id": "ml-kfold",
+  "language": "ar",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    3,
+    30,
+    30
+   ],
+   [
+    3,
+    30,
+    30
+   ],
+   [
+    3,
+    30,
+    30
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 45.6
+ },
+ {
+  "id": "knime-what",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 34.3
+ },
+ {
+  "id": "knime-what",
+  "language": "ar",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ],
+   [
+    4,
+    1,
+    1
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 32.5
+ },
+ {
+  "id": "knime-kmeans",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 31.4
+ },
+ {
+  "id": "knime-kmeans",
+  "language": "ar",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ],
+   [
+    4,
+    38,
+    38
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 32.6
+ },
+ {
+  "id": "knime-missing",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    4,
+    49,
+    50
+   ],
+   [
+    4,
+    49,
+    50
+   ],
+   [
+    4,
+    49,
+    50
+   ],
+   [
+    4,
+    49,
+    50
+   ],
+   [
+    4,
+    49,
+    50
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 33.5
+ },
+ {
+  "id": "knime-missing",
+  "language": "ar",
+  "answerable": true,
+  "status": "PARTIAL_ANSWER",
+  "citations": [
+   [
+    4,
+    48,
+    48
+   ]
+  ],
+  "answer_hit": false,
+  "seconds": 33.1
+ },
+ {
+  "id": "project-weights",
+  "language": "en",
+  "answerable": true,
+  "status": "ANSWER",
+  "citations": [
+   [
+    5,
+    13,
+    13
+   ]
+  ],
+  "answer_hit": true,
+  "seconds": 22.8
+ },
+ {
+  "id": "project-weights",
+  "language": "ar",
+  "answerable": true,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.6
+ },
+ {
+  "id": "none-parking",
+  "language": "en",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 18.3
+ },
+ {
+  "id": "none-parking",
+  "language": "ar",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.1
+ },
+ {
+  "id": "none-cafeteria",
+  "language": "en",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.4
+ },
+ {
+  "id": "none-cafeteria",
+  "language": "ar",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.7
+ },
+ {
+  "id": "none-transformer",
+  "language": "en",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.8
+ },
+ {
+  "id": "none-transformer",
+  "language": "ar",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 17.8
+ },
+ {
+  "id": "none-scholarship",
+  "language": "en",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 18.5
+ },
+ {
+  "id": "none-scholarship",
+  "language": "ar",
+  "answerable": false,
+  "status": "INSUFFICIENT_EVIDENCE",
+  "citations": [],
+  "answer_hit": false,
+  "seconds": 19.0
+ }
+]
