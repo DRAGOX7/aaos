@@ -131,3 +131,92 @@ def test_native_error_details_and_rendering_artifacts_are_not_exposed(tmp_path: 
 
     assert "native" not in str(caught.value)
     assert not list(tmp_path.iterdir())
+
+
+def _layout(words: list[tuple[str, bool]]) -> tuple[str, list[float]]:
+    """Place words left to right; a True flag positions that word's letters right to left.
+
+    This mirrors the affected syllabus: words in visual (left-to-right) stream
+    order, each Arabic word's letters stored in reading order.
+    """
+    text_parts: list[str] = []
+    centres: list[float] = []
+    x = 0.0
+    for index, (word, letters_right_to_left) in enumerate(words):
+        if index:
+            text_parts.append(" ")
+            centres.append(x + 2.0)
+            x += 4.0
+        positions = [x + 5.0 * offset for offset in range(len(word))]
+        if letters_right_to_left:
+            positions.reverse()
+        text_parts.append(word)
+        centres.extend(positions)
+        x += 5.0 * len(word)
+    return "".join(text_parts), centres
+
+
+def test_visual_order_arabic_words_are_restored_to_reading_order() -> None:
+    """Regression: the instructor's Arabic name was stored with its words reversed."""
+    from aaos.documents.pdf import reading_order_text
+
+    text, centres = _layout(
+        [("Sulieman.net/c", False), ("أحمد", True), ("بني", True), ("سليمان", True)]
+    )
+
+    assert reading_order_text(text, centres) == "سليمان بني أحمد Sulieman.net/c"
+
+
+def test_arabic_token_stored_in_visual_order_is_reordered_by_position() -> None:
+    from aaos.documents.pdf import reading_order_text
+
+    text, centres = _layout([("احمد", True), (".د.أ", False)])
+
+    assert reading_order_text(text, centres) == "أ.د. احمد"
+
+
+def test_arabic_already_in_reading_order_is_unchanged() -> None:
+    from aaos.documents.pdf import reading_order_text
+
+    words = [("سليمان", False), ("بني", False), ("أحمد", False)]
+    text, centres = _layout(words)
+    # Mirror the page: the first word sits rightmost and every word's letters
+    # run right to left, exactly as a reading-order PDF stores them.
+    mirrored = [100.0 - centre for centre in centres]
+
+    assert reading_order_text(text, mirrored) == text
+
+
+def test_english_line_with_an_arabic_word_keeps_its_english_order() -> None:
+    from aaos.documents.pdf import reading_order_text
+
+    text, centres = _layout(
+        [("Specific", False), ("Course", False), ("Policies", False), ("خاصة", True)]
+    )
+
+    assert reading_order_text(text, centres) == "خاصة Specific Course Policies"
+
+    text, centres = _layout([("Welcome", False), ("مرحبا", True), ("AAOS", False)])
+
+    assert reading_order_text(text, centres) == "Welcome مرحبا AAOS"
+
+
+def test_lines_without_arabic_and_misaligned_positions_are_returned_unchanged() -> None:
+    from aaos.documents.pdf import reading_order_text
+
+    english = "Course Syllabus\n  odd   spacing kept  \nInstructor: Prof. X"
+    assert reading_order_text(english, [float(i) for i in range(len(english))]) == english
+
+    arabic, centres = _layout([("أحمد", True), ("بني", True)])
+    assert reading_order_text(arabic, centres[:-1]) == arabic
+
+
+def test_only_lines_containing_arabic_are_rewritten() -> None:
+    from aaos.documents.pdf import reading_order_text
+
+    arabic, arabic_centres = _layout([("أحمد", True), ("بني", True), ("سليمان", True)])
+    header = "Course  Syllabus"
+    text = f"{header}\n{arabic}\n"
+    centres = [float(i) for i in range(len(header))] + [0.0] + arabic_centres + [0.0]
+
+    assert reading_order_text(text, centres) == "Course  Syllabus\nسليمان بني أحمد\n"

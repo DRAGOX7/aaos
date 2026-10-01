@@ -2534,7 +2534,7 @@ class _AcademicToolRuntime:
         return tuple(indexed)
 
 
-_ARABIC_LETTER = re.compile(r"[؀-ۿ]")
+_ARABIC_LETTER = re.compile(r"[\u0600-\u06ff]")
 _TITLE_TOKEN = re.compile(r"\w+")
 _TITLE_STOP_TOKENS = frozenset(
     {"the", "and", "for", "of", "course", "pdf", "doc", "docx", "ppt", "pptx"}

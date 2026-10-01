@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
+from collections.abc import Sequence
 from typing import Any
 
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
@@ -18,9 +20,73 @@ from aaos.documents.contracts import (
     TextSource,
 )
 
+_ARABIC = re.compile("[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]")
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+_WORD = re.compile(r"\S+")
+
 
 def _failure(code: IngestionErrorCode) -> DocumentIngestionFailure:
     return DocumentIngestionFailure(code)
+
+
+def reading_order_text(text: str, x_centres: Sequence[float]) -> str:
+    """Return page text with Arabic lines in reading order, from glyph positions.
+
+    Some PDFs emit right-to-left words in left-to-right visual order, which
+    reverses Arabic phrases. Only lines containing Arabic are rebuilt; all
+    other lines, and any input whose positions do not align, are unchanged.
+    The rule depends only on geometry, so text already in reading order
+    stays as it is.
+    """
+    if len(x_centres) != len(text) or not _ARABIC.search(text):
+        return text
+    parts: list[str] = []
+    start = 0
+    for match in [*_LINE_BREAK.finditer(text), None]:
+        end = match.start() if match is not None else len(text)
+        line = text[start:end]
+        parts.append(
+            _reading_order_line(line, x_centres[start:end]) if _ARABIC.search(line) else line
+        )
+        if match is not None:
+            parts.append(match.group())
+            start = match.end()
+    return "".join(parts)
+
+
+def _reading_order_line(line: str, x_centres: Sequence[float]) -> str:
+    if not all(math.isfinite(x) for x in x_centres):
+        return line
+    tokens: list[tuple[str, float, bool]] = []
+    for match in _WORD.finditer(line):
+        word = match.group()
+        xs = x_centres[match.start() : match.end()]
+        right_to_left = _ARABIC.search(word) is not None
+        if right_to_left:
+            # An Arabic word reads right to left on the page.
+            word = "".join(
+                character for character, _ in sorted(zip(word, xs), key=lambda item: -item[1])
+            )
+        tokens.append((word, sum(xs) / len(xs), right_to_left))
+    if not tokens:
+        return line
+    # A line whose rightmost word is Arabic is a right-to-left line.
+    line_right_to_left = max(tokens, key=lambda token: token[1])[2]
+    ordered = sorted(tokens, key=lambda token: -token[1] if line_right_to_left else token[1])
+    runs: list[list[tuple[str, float, bool]]] = []
+    for token in ordered:
+        if runs and runs[-1][0][2] == token[2]:
+            runs[-1].append(token)
+        else:
+            runs.append([token])
+    words: list[str] = []
+    for run in runs:
+        # Inside a run, Arabic reads right to left and other text left to right.
+        keep = run[0][2] == line_right_to_left
+        words.extend(token[0] for token in (run if keep else reversed(run)))
+    leading = line[: len(line) - len(line.lstrip())]
+    trailing = line[len(line.rstrip()) :]
+    return f"{leading}{' '.join(words)}{trailing}"
 
 
 class PdfProcessor:
@@ -83,6 +149,9 @@ def _extract_page(page: Any, *, page_number: int) -> ExtractedPage:
         text = text_page.get_text_bounded()
         if not isinstance(text, str):
             raise _failure(IngestionErrorCode.PDF_PARSE_FAILED)
+        if _ARABIC.search(text) and text_page.count_chars() == len(text):
+            boxes = (text_page.get_charbox(index) for index in range(len(text)))
+            text = reading_order_text(text, [(box[0] + box[2]) / 2 for box in boxes])
         return ExtractedPage(
             page_number=page_number,
             text=text,
