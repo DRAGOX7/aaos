@@ -404,6 +404,18 @@ class AssignmentSummary(BaseModel):
     updated_at: datetime | None
 
 
+class AnnouncementSummary(BaseModel):
+    """One stored Moodle announcement; body and date are None when not stored."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    id: int
+    course_id: int
+    title: str
+    body: str | None
+    published_at: datetime | None
+
+
 class AssignmentListResponse(BaseModel):
     """Browser-safe assignment collection response."""
 

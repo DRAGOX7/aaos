@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aaos.persistence.academic_models import AssignmentORM, CourseORM
-from aaos.web.contracts import AssignmentSummary, CourseSummary
+from aaos.persistence.academic_models import AnnouncementORM, AssignmentORM, CourseORM
+from aaos.web.contracts import AnnouncementSummary, AssignmentSummary, CourseSummary
 from aaos.web.errors import Phase7ApiError
 
 MAX_AGENT_READ_LIMIT = 51
@@ -145,6 +145,55 @@ class AcademicReadService:
                 updated_at=_to_utc(assignment.source_updated_at),
             )
             for assignment in assignments
+        )
+
+    def list_announcements(
+        self,
+        course_ids: tuple[int, ...] | None = None,
+        *,
+        limit: int | None = None,
+    ) -> tuple[AnnouncementSummary, ...]:
+        """Return active announcements of active courses, newest stored date first.
+
+        Announcements without a stored date follow, in stable id order. A blank
+        stored body is reported as not stored (None), never as content.
+        """
+
+        limit = _validated_read_limit(limit)
+        statement = (
+            select(AnnouncementORM)
+            .join(CourseORM, CourseORM.id == AnnouncementORM.course_id)
+            .where(
+                AnnouncementORM.is_active.is_(True),
+                CourseORM.is_active.is_(True),
+            )
+            .order_by(
+                case((AnnouncementORM.published_at.is_(None), 1), else_=0),
+                AnnouncementORM.published_at.desc(),
+                AnnouncementORM.id,
+            )
+        )
+        if course_ids is not None:
+            statement = statement.where(AnnouncementORM.course_id.in_(course_ids))
+        if limit is not None:
+            statement = statement.limit(limit)
+
+        with self._sessions() as session:
+            announcements = session.scalars(statement).all()
+
+        return tuple(
+            AnnouncementSummary(
+                id=announcement.id,
+                course_id=announcement.course_id,
+                title=announcement.title,
+                body=(
+                    announcement.body
+                    if announcement.body is not None and announcement.body.strip()
+                    else None
+                ),
+                published_at=_to_utc(announcement.published_at),
+            )
+            for announcement in announcements
         )
 
     def get_assignment(self, assignment_id: int) -> AssignmentSummary:
