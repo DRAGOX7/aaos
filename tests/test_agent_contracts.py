@@ -96,6 +96,7 @@ def test_tool_name_is_a_closed_logical_allowlist() -> None:
         "academic.list_assignments",
         "academic.get_assignment",
         "academic.list_documents",
+        "academic.list_announcements",
         "moodle.list_changes",
         "rag.answer",
         "study_task.list",

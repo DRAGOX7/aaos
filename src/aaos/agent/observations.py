@@ -430,6 +430,9 @@ class ObservationSanitizer:
                 "index_readiness",
                 "index_coverage",
             }
+        elif tool_name == ToolName.ACADEMIC_LIST_ANNOUNCEMENTS.value:
+            # Announcement text is untrusted and never projected to the model.
+            allowed_fields = {"id", "course_id", "course_title", "title", "published_at"}
         elif tool_name.startswith("study_task."):
             allowed_fields = {
                 "id",

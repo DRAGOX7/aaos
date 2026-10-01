@@ -61,6 +61,7 @@ from aaos.web.contracts import (
     AcademicAskChangeKind,
     AcademicAskStudyTaskPriority,
     AcademicAskStudyTaskStatus,
+    AnnouncementSummary,
     AssignmentSummary,
     CourseSummary,
     DocumentIndexReadinessView,
@@ -115,7 +116,9 @@ from .course_names import course_code_token
 from .intent_router import (
     RoutedIntent,
     asks_next_seven_days,
+    extract_topic,
     find_course_mention,
+    normalize_arabic,
     route_intent,
 )
 from .orchestrator import AgentOrchestrator
@@ -210,6 +213,7 @@ _STUDY_TASK_CHANGE_TOOLS = frozenset({ToolName.STUDY_TASK_ACKNOWLEDGE_DEADLINE_C
 _STUDY_TASK_MUTATION_TOOLS = _STUDY_TASK_WRITE_TOOLS | _STUDY_TASK_CHANGE_TOOLS
 _CALENDAR_PROPOSAL_TOOLS = frozenset({ToolName.CALENDAR_PROPOSE_CREATE_EVENT})
 _MOODLE_CHANGE_TOOLS = frozenset({ToolName.MOODLE_LIST_CHANGES})
+_ANNOUNCEMENT_TOOLS = frozenset({ToolName.ACADEMIC_LIST_ANNOUNCEMENTS})
 _CHANGE_EXPLANATION_INTENT = re.compile(
     r"\b(?:explain|describe|summari[sz]e|why|how|what\s+does|what\s+caused)\b",
     re.IGNORECASE,
@@ -531,6 +535,15 @@ class MoodleChangeReadPort(Protocol):
     ) -> MoodleChangeSet: ...
 
 
+class AnnouncementReadPort(Protocol):
+    def list_announcements(
+        self,
+        course_ids: tuple[int, ...] | None = None,
+        *,
+        limit: int | None = None,
+    ) -> tuple[AnnouncementSummary, ...]: ...
+
+
 class StudyTaskPort(Protocol):
     """Typed local task actions; it has no Calendar or Moodle methods."""
 
@@ -653,8 +666,11 @@ class _AcademicToolRuntime:
         moodle_change_reader: MoodleChangeReadPort | None = None,
         block_study_task_mutations: bool = False,
         routed_change_request: bool = False,
+        announcement_reader: AnnouncementReadPort | None = None,
+        routed_announcement_request: bool = False,
     ) -> None:
         self._academic = academic
+        self._announcement_reader = announcement_reader
         self._documents = documents
         self._rag = rag
         self._request_text = request_text
@@ -703,6 +719,21 @@ class _AcademicToolRuntime:
                 self._calendar_change_create_requested,
             )
         )
+        # Announcements have their own read-only surface, selected only by the
+        # trusted router; the default model-visible surface is unchanged. An
+        # explicit router decision outranks the English change recognizer,
+        # which also reads "new announcements" as a change question.
+        self._announcement_requested = (
+            routed_announcement_request
+            and announcement_reader is not None
+            and not any(
+                (
+                    self._change_explanation_requested,
+                    self._study_task_change_requested,
+                    self._calendar_change_create_requested,
+                )
+            )
+        )
         self.calendar_proposal: CalendarProposalResult | None = None
         self.calendar_duration_note: str | None = None
         self._rag_adapter = RagQueryAdapter(rag)
@@ -749,6 +780,8 @@ class _AcademicToolRuntime:
         return self._context_resolution.entity
 
     def build_registry(self) -> ToolRegistry:
+        if self._announcement_requested:
+            return ToolRegistry((self._announcement_definition(),))
         if self._moodle_change_requested:
             return ToolRegistry((self._moodle_change_definition(),))
         if self._change_explanation_requested:
@@ -871,6 +904,95 @@ class _AcademicToolRuntime:
             _moodle_change_output,
             5,
         )
+
+    def _announcement_definition(self) -> ToolDefinition:
+        return self._definition(
+            ToolName.ACADEMIC_LIST_ANNOUNCEMENTS,
+            "List stored course announcements, optionally filtered by a keyword",
+            self._schema(
+                (
+                    ToolField("course_name", ToolValueType.STRING, required=False, max_length=512),
+                    ToolField("keyword", ToolValueType.STRING, required=False, max_length=120),
+                ),
+                "academic_list_announcements",
+            ),
+            self._list_announcements,
+            _announcement_output,
+            5,
+        )
+
+    def _course_group(self, name: str) -> tuple[CourseSummary, ...]:
+        """Resolve a course name to the course and its Moodle section siblings."""
+        courses, matches, _exact = self._course_matches(name)
+        keys = {_section_sibling_key(course.title) for course in matches}
+        if len(matches) > 1 and (len(keys) != 1 or None in keys):
+            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        key = _section_sibling_key(matches[0].title)
+        if key is None:
+            return matches
+        return tuple(course for course in courses if _section_sibling_key(course.title) == key)
+
+    def _list_announcements(self, arguments: ValidatedToolArguments) -> ToolResult:
+        if self._announcement_reader is None:
+            return _tool_error(AgentErrorCode.TOOL_FAILED, "announcement reader is unavailable")
+        try:
+            values = arguments.to_mapping()
+            course_name = values.get("course_name")
+            keyword = values.get("keyword")
+            group = self._course_group(course_name) if isinstance(course_name, str) else None
+            course_ids = tuple(course.id for course in group) if group is not None else None
+            announcements = cast(
+                tuple[AnnouncementSummary, ...],
+                self._read(
+                    self._announcement_reader.list_announcements,
+                    course_ids,
+                    limit=MAX_ACADEMIC_RECORDS + 1,
+                ),
+            )
+            if not isinstance(announcements, tuple) or any(
+                not isinstance(item, AnnouncementSummary)
+                or (course_ids is not None and item.course_id not in course_ids)
+                for item in announcements
+            ):
+                return _invalid_output()
+            truncated = len(announcements) > MAX_ACADEMIC_RECORDS
+            announcements = announcements[:MAX_ACADEMIC_RECORDS]
+            keyword_matched: bool | None = None
+            if isinstance(keyword, str) and keyword.strip():
+                matching = _announcements_matching(announcements, keyword)
+                keyword_matched = bool(matching)
+                if matching:
+                    announcements = matching
+            course_titles = (
+                {course.id: course.title for course in group}
+                if group is not None
+                else self._course_titles(announcements)
+            )
+            records = tuple(
+                _announcement_record(item, course_titles.get(item.course_id))
+                for item in announcements
+            )
+            return self._structured_result(
+                ToolName.ACADEMIC_LIST_ANNOUNCEMENTS,
+                records,
+                {
+                    "course_ids": list(course_ids) if course_ids is not None else None,
+                    "keyword": keyword if isinstance(keyword, str) else None,
+                    "keyword_matched": keyword_matched,
+                    "truncated": truncated,
+                    "order_basis": (
+                        "published_at"
+                        if any(item.published_at is not None for item in announcements)
+                        else "stored_order"
+                    ),
+                },
+            )
+        except _LookupFailure as error:
+            return _lookup_tool_error(error.code)
+        except _InvalidReadOutput:
+            return _invalid_output()
+        except _ReadOperationFailed:
+            return _tool_error(AgentErrorCode.TOOL_FAILED, "announcement read failed")
 
     def _rag_answer_definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -2160,7 +2282,9 @@ class _AcademicToolRuntime:
             self._read(self._academic.get_assignment, matches[0].id),
         )
 
-    def _course_titles(self, assignments: tuple[AssignmentSummary, ...]) -> dict[int, str]:
+    def _course_titles(
+        self, assignments: tuple[AssignmentSummary | AnnouncementSummary, ...]
+    ) -> dict[int, str]:
         course_ids = {item.course_id for item in assignments}
         if not course_ids:
             return {}
@@ -2384,6 +2508,7 @@ class AcademicDecisionAdapter:
         expected.add(ACADEMIC_TOOL_NAMES | _CALENDAR_PROPOSAL_TOOLS)
         expected.add(task_read_surface | _CALENDAR_PROPOSAL_TOOLS)
         expected.add(_MOODLE_CHANGE_TOOLS)
+        expected.add(_ANNOUNCEMENT_TOOLS)
         expected.add(_STUDY_TASK_CHANGE_TOOLS)
         expected.add(_CALENDAR_PROPOSAL_TOOLS)
         expected.add(frozenset({ToolName.RAG_ANSWER}))
@@ -2591,6 +2716,7 @@ class ReadOnlyAcademicAssistant:
         calendar_timezone: str | None = None,
         moodle_change_reader: MoodleChangeReadPort | None = None,
         intent_routing: bool = False,
+        announcement_reader: AnnouncementReadPort | None = None,
     ) -> None:
         if not callable(getattr(academic_reader, "list_courses", None)) or not callable(
             getattr(academic_reader, "list_assignments", None)
@@ -2645,6 +2771,7 @@ class ReadOnlyAcademicAssistant:
         self._calendar_timezone = calendar_timezone
         self._moodle_change_reader = moodle_change_reader
         self._intent_routing = intent_routing
+        self._announcement_reader = announcement_reader
         self._study_planner = StudyPlanner(
             gateway,
             academic_reader,
@@ -3114,6 +3241,11 @@ class ReadOnlyAcademicAssistant:
                 self._moodle_change_reader,
                 task_change_discussion_only,
                 routed_change_request=routed_change_request,
+                announcement_reader=self._announcement_reader,
+                routed_announcement_request=(
+                    routed_tool is not None
+                    and routed_tool[0] is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS
+                ),
             )
             registry = runtime.build_registry()
             adapter: AcademicDecisionAdapter
@@ -3210,6 +3342,8 @@ class ReadOnlyAcademicAssistant:
             return None
         if tool is ToolName.MOODLE_LIST_CHANGES and self._moodle_change_reader is None:
             return None
+        if tool is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS and self._announcement_reader is None:
+            return None
         arguments: dict[str, object] = {}
         if tool is not ToolName.ACADEMIC_LIST_COURSES:
             try:
@@ -3229,6 +3363,10 @@ class ReadOnlyAcademicAssistant:
                 arguments["course_name"] = mention.course_name
         if tool is ToolName.ACADEMIC_LIST_ASSIGNMENTS and asks_next_seven_days(question):
             arguments["due_window"] = "NEXT_7_DAYS"
+        if tool is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS:
+            topic = extract_topic(question)
+            if topic is not None:
+                arguments["keyword"] = topic
         return tool, arguments
 
     async def _run_bounded(
@@ -3322,6 +3460,7 @@ _ROUTED_TOOLS: Mapping[RoutedIntent, ToolName] = {
     RoutedIntent.COURSE_FACTS: ToolName.ACADEMIC_LIST_COURSES,
     RoutedIntent.ASSIGNMENT_FACTS: ToolName.ACADEMIC_LIST_ASSIGNMENTS,
     RoutedIntent.MOODLE_CHANGES: ToolName.MOODLE_LIST_CHANGES,
+    RoutedIntent.ANNOUNCEMENTS: ToolName.ACADEMIC_LIST_ANNOUNCEMENTS,
 }
 
 
@@ -3541,6 +3680,99 @@ def _assignment_record(
         if assignment.updated_at is not None
         else None,
     }
+
+
+_ANNOUNCEMENT_EXCERPT_CHARACTERS = 400
+_ANNOUNCEMENT_KEYWORD_STOPWORDS = frozenset(
+    {
+        "the",
+        "any",
+        "and",
+        "for",
+        "with",
+        "about",
+        "was",
+        "were",
+        "there",
+        "this",
+        "that",
+        "are",
+        "from",
+        "our",
+        "your",
+        "posted",
+        "announcement",
+        "announcements",
+    }
+)
+
+
+def _announcement_record(
+    announcement: AnnouncementSummary, course_title: str | None
+) -> dict[str, object]:
+    excerpt: str | None = None
+    if announcement.body is not None:
+        text = " ".join(announcement.body.split())
+        excerpt = (
+            text
+            if len(text) <= _ANNOUNCEMENT_EXCERPT_CHARACTERS
+            else text[:_ANNOUNCEMENT_EXCERPT_CHARACTERS].rstrip() + "…"
+        )
+    return {
+        "body_excerpt": excerpt or None,
+        "course_id": announcement.course_id,
+        "course_title": course_title or f"Course {announcement.course_id}",
+        "id": announcement.id,
+        "published_at": (
+            announcement.published_at.isoformat() if announcement.published_at is not None else None
+        ),
+        "title": announcement.title,
+    }
+
+
+def _announcement_keyword_terms(keyword: str) -> tuple[str, ...]:
+    terms: list[str] = []
+    for token in re.split(r"[^\w]+", normalize_arabic(keyword)):
+        if len(token) < 3 or token in _ANNOUNCEMENT_KEYWORD_STOPWORDS:
+            continue
+        # Match Arabic words with or without the definite article.
+        if token.startswith("ال") and len(token) > 4:
+            token = token[2:]
+        terms.append(token)
+    return tuple(dict.fromkeys(terms))
+
+
+def _announcements_matching(
+    announcements: tuple[AnnouncementSummary, ...], keyword: str
+) -> tuple[AnnouncementSummary, ...]:
+    """Keep the announcements matching the most keyword terms, or none."""
+    terms = _announcement_keyword_terms(keyword)
+    if not terms:
+        return ()
+    scores = [
+        sum(term in normalize_arabic(f"{item.title} {item.body or ''}") for term in terms)
+        for item in announcements
+    ]
+    best = max(scores, default=0)
+    if best == 0:
+        return ()
+    return tuple(item for item, score in zip(announcements, scores) if score == best)
+
+
+def _announcement_output(result: ToolResult) -> ToolResult:
+    return _validate_academic_output(
+        result,
+        record_kind="announcement",
+        required_fields={
+            "id",
+            "course_id",
+            "course_title",
+            "title",
+            "body_excerpt",
+            "published_at",
+        },
+        max_records=MAX_ACADEMIC_RECORDS,
+    )
 
 
 def _document_record(document: DocumentSummary) -> dict[str, object]:
@@ -4184,6 +4416,17 @@ def _bounded_record(kind: str, record: Mapping[str, object]) -> bool:
             and (due is None or _bounded_text_value(due, 64))
             and (updated is None or _bounded_text_value(updated, 64))
         )
+    if kind == "announcement":
+        excerpt = record.get("body_excerpt")
+        published = record.get("published_at")
+        return (
+            _bounded_text_value(record.get("course_title"), MAX_ACADEMIC_TEXT_CHARACTERS)
+            and (
+                excerpt is None
+                or _bounded_text_value(excerpt, _ANNOUNCEMENT_EXCERPT_CHARACTERS + 1)
+            )
+            and (published is None or _bounded_text_value(published, 64))
+        )
     page_count = record.get("page_count")
     updated = record.get("updated_at")
     readiness = record.get("index_readiness")
@@ -4334,6 +4577,47 @@ def _terminal_to_ask_result(
     )
 
 
+def _render_announcement_evidence(output: Mapping[str, object]) -> str:
+    """Render stored announcements deterministically; never infer text or dates."""
+    records = output.get("records")
+    filters = output.get("filter")
+    if not isinstance(records, (tuple, list)) or not isinstance(filters, Mapping):
+        raise ValueError("validated announcement evidence is invalid")
+    if not records:
+        return "No announcements were found."
+    lines: list[str] = []
+    keyword = filters.get("keyword")
+    if isinstance(keyword, str) and filters.get("keyword_matched") is False:
+        lines.append(
+            f'No announcement title or stored text matched "{keyword}". '
+            "Showing the stored announcements instead."
+        )
+    if filters.get("truncated") is True:
+        lines.append(f"Showing the first {MAX_ACADEMIC_RECORDS} announcements; more are stored.")
+    if filters.get("order_basis") == "stored_order":
+        lines.append(
+            "Dates are not stored for these announcements, so they are not sorted by date."
+        )
+    current_course: object = None
+    for raw_record in records:
+        record = cast(Mapping[str, object], raw_record)
+        if record.get("course_id") != current_course:
+            current_course = record.get("course_id")
+            lines.append(f"Announcements in {record.get('course_title')}:")
+        published = record.get("published_at")
+        date_text = (
+            published[:16].replace("T", " ") + " UTC"
+            if isinstance(published, str)
+            else "date is not stored"
+        )
+        lines.append(f"- {record.get('title')} ({date_text})")
+        excerpt = record.get("body_excerpt")
+        lines.append(
+            f"  {excerpt}" if isinstance(excerpt, str) else "  (announcement text is not stored)"
+        )
+    return "\n".join(lines)
+
+
 def _render_moodle_change_evidence(output: Mapping[str, object]) -> str:
     from .observations import sanitize_tool_result
 
@@ -4439,6 +4723,9 @@ def _render_academic_evidence(
     for name, output in values:
         if name is ToolName.MOODLE_LIST_CHANGES:
             sections.append(_render_moodle_change_evidence(output))
+            continue
+        if name is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS:
+            sections.append(_render_announcement_evidence(output))
             continue
         records = output.get("records")
         if not isinstance(records, (tuple, list)):
@@ -4672,6 +4959,8 @@ def _sources_for_evidence(
                 kind = "course"
             elif name in {ToolName.ACADEMIC_LIST_ASSIGNMENTS, ToolName.ACADEMIC_GET_ASSIGNMENT}:
                 kind = "assignment"
+            elif name is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS:
+                kind = "announcement"
             elif name in _STUDY_TASK_READ_TOOLS | _STUDY_TASK_MUTATION_TOOLS:
                 kind = "study_task"
             else:
@@ -4921,7 +5210,9 @@ def _context_update_from_evidence(
     task_action_tools = _STUDY_TASK_MUTATION_TOOLS | {ToolName.STUDY_TASK_GET}
     latest_task_action: TrustedContextEntity | None = None
     for source_ref, name, output in values:
-        if name is ToolName.RAG_ANSWER:
+        # Announcements are not conversation entities: follow-up references to
+        # them are out of scope, and they must never fall through to DOCUMENT.
+        if name in {ToolName.RAG_ANSWER, ToolName.ACADEMIC_LIST_ANNOUNCEMENTS}:
             continue
         records = output.get("records")
         if not isinstance(records, (tuple, list)):

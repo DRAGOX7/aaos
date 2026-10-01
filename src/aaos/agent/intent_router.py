@@ -159,6 +159,21 @@ def has_bilingual_write_intent(question: str) -> bool:
     return _WRITE_EN.search(text) is not None or _WRITE_AR.search(text) is not None
 
 
+_TOPIC = re.compile(
+    r"(?:\b(?:about|regarding|concerning)\b|(?:^|\s)(?:عن|بخصوص|حول)(?=\s))\s+(?P<topic>.+)$",
+    re.IGNORECASE,
+)
+
+
+def extract_topic(question: str) -> str | None:
+    """Return the phrase after "about"/"regarding" (or عن/بخصوص/حول), if any."""
+    match = _TOPIC.search(" ".join(question.split()))
+    if match is None:
+        return None
+    topic = match.group("topic").strip(" ?؟.!،,")
+    return topic[:120] or None
+
+
 def asks_next_seven_days(question: str) -> bool:
     return _NEXT_SEVEN_DAYS.search(normalize_arabic(question)) is not None
 
