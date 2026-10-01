@@ -1112,3 +1112,16 @@ def test_api_ask_returns_closed_structured_plan_contract() -> None:
         == "academic.list_assignments"
     )
     assert payload["study_plan"]["moodle_changes"] == []
+
+
+def test_plan_request_with_arabic_write_clause_is_refused_before_model_or_writes() -> None:
+    """Phase I1: the mixed plan+write preflight recognizes Arabic write requests."""
+    gateway = FakeGateway({"items": []})
+    assistant, academic, _tasks, _changes, _rag = _assistant(gateway)
+
+    result = asyncio.run(assistant.ask("Make me a study plan for this week وأنشئ مهمة لكل واجب"))
+
+    assert result.status is AcademicAskStatus.REFUSED
+    assert "read-only scope" in (result.answer_text or "")
+    assert gateway.requests == []
+    assert academic.assignment_limits == []

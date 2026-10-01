@@ -42,6 +42,7 @@ from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskSt
 from aaos.web.contracts import AssignmentSummary, CourseSummary
 
 from .course_names import course_code_token
+from .intent_router import has_arabic_write_intent
 from .study_plan_contracts import (
     PlanFactKind,
     StudyActivityType,
@@ -196,7 +197,7 @@ def is_plan_update_followup(question: str) -> bool:
 
 
 def has_study_plan_write_intent(question: str) -> bool:
-    return bool(_EXPLICIT_WRITE_INTENT.search(question))
+    return bool(_EXPLICIT_WRITE_INTENT.search(question)) or has_arabic_write_intent(question)
 
 
 def is_plan_explanation_request(question: str, context: StudyPlanContext | None) -> bool:
