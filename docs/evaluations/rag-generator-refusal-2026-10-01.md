@@ -55,3 +55,25 @@ Coverage citations and span selection are separate model calls. When they choose
 - A RED regression test from the duplicate-document case.
 - The full suite and the frozen A–H selectors.
 - A 3-run trace re-measure, keeping unanswerable questions 8/8 refused with no citations.
+
+## Result after the fix (commit `510f70d9`)
+
+Owner approved and applied. Same manifest and 3-run protocol (`rag-refusal-trace-2026-10-01-after-generator-fix.json`, document text removed):
+
+| | Before claim fix | After claim fix | After generator fix |
+|---|---|---|---|
+| English: expected page cited (mean of 3 runs) | 11.0/16 | 12.7/16 | **13.3/16** |
+| Arabic: expected page cited (mean of 3 runs) | 9.7/16 | 12.0/16 | 12.0/16 |
+| S3 generator refusals | 8 | 7 | **0** |
+| S4 claim-NLI refusals | 14 | 2 | 7 |
+| S2 coverage refusals | 9 | 9 | 8 |
+| `INVALID_EVIDENCE_REFERENCE` errors | 2 | 3 | 1 |
+| Unanswerable refused / cited answers | 8/8 / 0 | 8/8 / 0 | **8/8 / 0** |
+| Median / max seconds | 27.4 / 50.1 | 26.0 / 67.5 | 30.0 / 66.1 |
+
+**Notes:**
+
+- **Arabic `ml-precision`:** the four "answers without the expected page" all cite the ML-notes page-23 chunk, which computes precision in code as TP / (TP + FP), returning 0 when the denominator is zero. Every surviving claim was verified against that chunk (entailment 0.85–0.99). They are grounded answers on a page the frozen manifest did not list (it lists pages 25–26). The manifest is not edited after the fact, so the frozen metric undercounts Arabic: with page 23 counted, it would read 13.0/16.
+- **S4 refusals rose from 2 to 7.** Cases the generator used to refuse now reach claim verification, and some of their claims are rejected there. All 7 are intermittent: each case also answers in other runs.
+- **One `INVALID_EVIDENCE_REFERENCE`** remains (`knime-kmeans`, Arabic, 1 run). The empty-evidence hypothesis explains the earlier errors' cases, but not this one.
+- **Median latency rose by about 4 s**, because questions that used to refuse quickly now generate an answer.
