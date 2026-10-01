@@ -111,6 +111,10 @@ class GroundedAnswerGenerator:
             return build_insufficient_model_output(request)
         if request.semantic_status is SemanticCoverageStatus.UNSUPPORTED:
             return build_insufficient_model_output(request)
+        # A supported requirement must reach the model with evidence; never ask
+        # it to answer (or invent citations) from an empty evidence list.
+        if request.requirement_coverage is not None and not _generator_evidence(request):
+            return build_insufficient_model_output(request)
 
         initial_request = ChatRequest(
             messages=_build_messages(request),
@@ -883,23 +887,53 @@ def _validate_generation_inputs(
         raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
 
+def _generator_evidence(request: GroundedAnswerRequest) -> tuple[RetrievedEvidence, ...]:
+    """Select the evidence the answer model may use for supported requirements.
+
+    With validated spans (the atomic path), the model sees exactly the span
+    quotes of supported requirements. Coverage citations and span selection
+    are separate model calls that may name different chunks (for example the
+    same text in a duplicate document), so coverage citations must not filter
+    the validated spans away. Without spans, coverage citations select chunks.
+    """
+    coverage = request.requirement_coverage
+    if coverage is None:
+        return request.evidence
+    supported = frozenset(
+        judgment.requirement_id
+        for judgment in coverage.judgments
+        if judgment.support is RequirementSupport.SUPPORTED
+    )
+    if request.validated_requirement_spans:
+        quotes_by_evidence: dict[str, list[str]] = {}
+        for requirement_spans in request.validated_requirement_spans:
+            if requirement_spans.requirement_id in supported:
+                for span in requirement_spans.spans:
+                    quotes_by_evidence.setdefault(span.evidence_id, []).append(span.quote)
+        return tuple(
+            replace(item, exact_text=" ".join(quotes_by_evidence[item.evidence_id]))
+            for item in request.evidence
+            if item.evidence_id in quotes_by_evidence
+        )
+    cited = frozenset(
+        evidence_id
+        for judgment in coverage.judgments
+        if judgment.requirement_id in supported
+        for evidence_id in judgment.evidence_ids
+    )
+    return tuple(item for item in request.evidence if item.evidence_id in cited)
+
+
 def _build_messages(
     request: GroundedAnswerRequest,
     *,
     repair: bool = False,
     invalid_output: str | None = None,
 ) -> tuple[ChatMessage, ...]:
-    evidence = request.evidence
+    evidence = _generator_evidence(request)
     supported_requirements: tuple[dict[str, str], ...] = ()
     unsupported_requirements: tuple[str, ...] = ()
     if request.requirement_coverage is not None:
-        supported_ids = frozenset(
-            evidence_id
-            for judgment in request.requirement_coverage.judgments
-            if judgment.support is RequirementSupport.SUPPORTED
-            for evidence_id in judgment.evidence_ids
-        )
-        evidence = tuple(item for item in evidence if item.evidence_id in supported_ids)
         supported_requirements = tuple(
             {
                 "requirement_id": item.requirement_id,
@@ -910,21 +944,6 @@ def _build_messages(
         unsupported_requirements = tuple(
             item.requirement_text for item in request.requirement_coverage.unsupported_requirements
         )
-        if request.validated_requirement_spans:
-            quotes_by_evidence: dict[str, list[str]] = {}
-            for requirement_spans in request.validated_requirement_spans:
-                if any(
-                    judgment.requirement_id == requirement_spans.requirement_id
-                    and judgment.support is RequirementSupport.SUPPORTED
-                    for judgment in request.requirement_coverage.judgments
-                ):
-                    for span in requirement_spans.spans:
-                        quotes_by_evidence.setdefault(span.evidence_id, []).append(span.quote)
-            evidence = tuple(
-                replace(item, exact_text=" ".join(quotes_by_evidence[item.evidence_id]))
-                for item in evidence
-                if item.evidence_id in quotes_by_evidence
-            )
     evidence_payload = tuple(
         {
             "evidence_id": item.evidence_id,

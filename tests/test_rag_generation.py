@@ -296,6 +296,60 @@ def test_atomic_generation_forwards_only_validated_span_quotes() -> None:
     assert "The deadline is Friday." not in prompt
 
 
+def _atomic_request(
+    coverage_ids: tuple[str, ...], spans: tuple[EvidenceSpan, ...]
+) -> GroundedAnswerRequest:
+    requirements = RequirementSet((Requirement("r1", "Give the deadline"),))
+    coverage = RequirementCoverageDecision(
+        requirement_set=requirements,
+        judgments=(RequirementCoverageJudgment("r1", RequirementSupport.SUPPORTED, coverage_ids),),
+        status=SemanticCoverageStatus.SUPPORTED,
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+        policy_version="grounded-v1",
+    )
+    return GroundedAnswerRequest.from_query(
+        RagQuery("What is the deadline?", GlobalScope()),
+        generation_id=GENERATION.generation_id,
+        content_revision=GENERATION.content_revision,
+        evidence=EVIDENCE,
+        policy_version="grounded-v1",
+        requirement_coverage=coverage,
+        validated_requirement_spans=(RequirementEvidenceSpans("r1", spans),),
+    )
+
+
+def test_supported_span_evidence_reaches_the_generator_when_coverage_cited_another_chunk() -> None:
+    """Regression: coverage and spans picked different chunks, so the model saw no evidence."""
+    gateway = FakeGateway(
+        [
+            _response(
+                '{"status":"ANSWER","answer_text":"Monday.","language":"en",'
+                '"claims":[{"claim_id":"claim-1","text":"The deadline is Monday.",'
+                '"evidence_ids":["ev-2"]}]}'
+            )
+        ]
+    )
+    request = _atomic_request(("ev-1",), (EvidenceSpan("ev-2", "The deadline is Monday."),))
+
+    output = _run(GroundedAnswerGenerator(gateway), request, _decision())
+
+    assert output.status is RagAnswerStatus.ANSWER
+    prompt = gateway.requests[0].messages[1].content
+    assert '"evidence_id":"ev-2"' in prompt
+    assert "The deadline is Friday." not in prompt
+
+
+def test_supported_coverage_without_any_span_evidence_refuses_without_the_model() -> None:
+    gateway = FakeGateway([])
+    request = _atomic_request(("ev-1",), ())
+
+    output = _run(GroundedAnswerGenerator(gateway), request, _decision())
+
+    assert output.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert gateway.requests == []
+
+
 def test_partial_semantic_model_answer_status_is_repaired_or_rejected() -> None:
     payload = (
         '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
