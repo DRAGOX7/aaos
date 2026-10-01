@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -15,6 +15,7 @@ from aaos.config import DEFAULT_SETTINGS, AppSettings
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
 from aaos.web.contracts import (
+    AnnouncementSummary,
     ApprovalDetail,
     ApprovalSummary,
     AssignmentSummary,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
         AcademicAskResult,
         AcademicDocumentPort,
         AcademicReadPort,
+        AnnouncementReadPort,
         CalendarTaskProposalPort,
         MoodleChangeReadPort,
         ReadOnlyAcademicAssistant,
@@ -82,6 +84,7 @@ class _LazyDefaultCourseReader:
 
     def __init__(self) -> None:
         self._delegate: AcademicReadPort | None = None
+        self._announcement_delegate: AnnouncementReadPort | None = None
         self._document_delegate: _AcademicDocumentReadDelegate | None = None
         self._engine: Engine | None = None
         self._sessions: sessionmaker[Session] | None = None
@@ -100,10 +103,22 @@ class _LazyDefaultCourseReader:
 
             self._engine = engine
             self._sessions = sessions
-            self._delegate = AcademicReadService(sessions)
+            academic_service = AcademicReadService(sessions)
+            self._delegate = academic_service
+            self._announcement_delegate = academic_service
             self._document_delegate = DocumentReadService(sessions)
 
         return self._delegate
+
+    def list_announcements(
+        self,
+        course_ids: tuple[int, ...] | None = None,
+        *,
+        limit: int | None = None,
+    ) -> tuple[AnnouncementSummary, ...]:
+        self._ensure_delegate()
+        assert self._announcement_delegate is not None
+        return self._announcement_delegate.list_announcements(course_ids, limit=limit)
 
     def _ensure_document_delegate(self) -> _AcademicDocumentReadDelegate:
         self._ensure_delegate()
@@ -244,8 +259,11 @@ class _LazyDefaultAcademicAskService:
         calendar_task_service: CalendarTaskProposalPort | None,
         calendar_timezone: str | None,
         moodle_change_reader: MoodleChangeReadPort | None,
+        *,
+        announcement_reader: AnnouncementReadPort | None = None,
     ) -> None:
         self._settings = settings
+        self._announcement_reader = announcement_reader
         self._academic_reader = academic_reader
         self._document_reader = document_reader
         self._rag_service = rag_service
@@ -274,6 +292,7 @@ class _LazyDefaultAcademicAskService:
                 calendar_timezone=self._calendar_timezone,
                 moodle_change_reader=self._moodle_change_reader,
                 intent_routing=True,
+                announcement_reader=self._announcement_reader,
             )
         assert self._assistant is not None
         return self._assistant
@@ -670,6 +689,11 @@ def create_app(
             calendar_task_service,
             settings.calendar_timezone,
             resolved_moodle_change_reader,
+            announcement_reader=(
+                cast("AnnouncementReadPort", academic_reader)
+                if callable(getattr(academic_reader, "list_announcements", None))
+                else None
+            ),
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 

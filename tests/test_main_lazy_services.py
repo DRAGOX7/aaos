@@ -82,3 +82,32 @@ def test_default_api_assistant_enables_bilingual_intent_routing() -> None:
     )
 
     assert service._ensure_assistant()._intent_routing is True
+
+
+def test_default_api_assistant_receives_the_announcement_reader() -> None:
+    """Phase I2: the API composition wires announcements into routed Ask."""
+    from test_agent_academic_orchestration import (
+        FakeAcademicReader,
+        FakeDocumentReader,
+        FakeRagService,
+    )
+    from test_agent_announcements import FakeAnnouncementReader
+
+    from aaos.config import AppSettings
+    from aaos.main import _LazyDefaultAcademicAskService, _LazyDefaultCourseReader
+
+    reader = FakeAnnouncementReader()
+    service = _LazyDefaultAcademicAskService(
+        AppSettings(),
+        FakeAcademicReader(),
+        FakeDocumentReader(),
+        FakeRagService(),
+        _LazyDefaultStudyTaskService(),
+        None,
+        None,
+        None,
+        announcement_reader=reader,
+    )
+
+    assert service._ensure_assistant()._announcement_reader is reader
+    assert callable(getattr(_LazyDefaultCourseReader(), "list_announcements", None))
