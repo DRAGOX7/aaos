@@ -155,6 +155,7 @@ def run_rag_command(
     operational_code: str | None = None
     operation_failed = False
     cleanup_failed = False
+    summaries_incomplete = False
     try:
         runtime = (build_runtime or _build_configured_runtime)()
         _validate_runtime(runtime)
@@ -168,6 +169,7 @@ def run_rag_command(
             rendered_lines = _render_status(_indexing(runtime).status())
         elif parsed.command == "summarize":
             rendered_lines = _run_summaries(runtime, parsed)
+            summaries_incomplete = "STATUS=FAILED" in rendered_lines
         else:
             assert question is not None
             assert parsed.scope is not None
@@ -201,6 +203,9 @@ def run_rag_command(
         return 1
     for line in rendered_lines:
         print(line, file=output)
+    if summaries_incomplete:
+        print("RAG_SUMMARY_INCOMPLETE", file=errors)
+        return 1
     return 0
 
 
@@ -438,10 +443,24 @@ def _run_summaries(runtime: _Runtime, parsed: _ParsedArguments) -> tuple[str, ..
     lines: list[str] = []
     for version in versions:
         assert isinstance(version, int)
-        if isinstance(runtime, _ConfiguredRuntime):
-            result = runtime.summarize(version, parsed.language)
-        else:
-            result = asyncio.run(summarizer.summarize_document(version, parsed.language))
+        try:
+            if isinstance(runtime, _ConfiguredRuntime):
+                result = runtime.summarize(version, parsed.language)
+            else:
+                result = asyncio.run(summarizer.summarize_document(version, parsed.language))
+        except RagOperationalError as error:
+            if not parsed.summarize_all:
+                raise
+            # One failed document must not discard the others in a batch.
+            lines.extend(
+                (
+                    "RAG_SUMMARY",
+                    f"DOCUMENT_VERSION_ID={version}",
+                    "STATUS=FAILED",
+                    f"ERROR_CODE={error.code.value}",
+                )
+            )
+            continue
         lines.extend(
             (
                 "RAG_SUMMARY",

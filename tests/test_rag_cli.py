@@ -498,6 +498,32 @@ def test_summarize_rejects_malformed_arguments(
     assert "summarize" in err
 
 
+class FailingOnceSummarizer(FakeSummarizer):
+    async def summarize_document(
+        self, document_version_id: int, language: str, *, deadline: float | None = None
+    ) -> Any:
+        from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
+        if document_version_id == 101:
+            self.calls.append((document_version_id, language))
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        return await super().summarize_document(document_version_id, language)
+
+
+def test_summarize_all_continues_past_a_failed_document_and_reports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: one failed document aborted --all and discarded the rest."""
+    summarizer = FailingOnceSummarizer([])
+    code, out, err = run(monkeypatch, _summarizing_runtime(summarizer), ["summarize", "--all"])
+
+    assert code == 1
+    assert summarizer.calls == [(101, "en"), (102, "en")]
+    assert "DOCUMENT_VERSION_ID=101\nSTATUS=FAILED\nERROR_CODE=INVALID_STRUCTURED_OUTPUT\n" in out
+    assert "DOCUMENT_VERSION_ID=102\nSTATUS=READY\n" in out
+    assert "RAG_SUMMARY_INCOMPLETE" in err
+
+
 def test_summarize_without_a_configured_summarizer_fails_safely(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
