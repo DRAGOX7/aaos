@@ -112,6 +112,12 @@ from .conversation_context import (
     serialize_context_hint,
 )
 from .course_names import course_code_token
+from .intent_router import (
+    RoutedIntent,
+    asks_next_seven_days,
+    find_course_mention,
+    route_intent,
+)
 from .orchestrator import AgentOrchestrator
 from .phase4_adapter import (
     MAX_RAG_QUERY_CHARACTERS,
@@ -646,6 +652,7 @@ class _AcademicToolRuntime:
         calendar_mutation_requested: bool = False,
         moodle_change_reader: MoodleChangeReadPort | None = None,
         block_study_task_mutations: bool = False,
+        routed_change_request: bool = False,
     ) -> None:
         self._academic = academic
         self._documents = documents
@@ -685,7 +692,11 @@ class _AcademicToolRuntime:
             and _is_trusted_assignment_deadline_change(context)
             and calendar_intent
         )
-        self._moodle_change_requested = is_moodle_change_request(request_text) and not any(
+        # A bilingual router decision may select the read-only change surface for
+        # questions the English-only change recognizer does not match.
+        self._moodle_change_requested = (
+            is_moodle_change_request(request_text) or routed_change_request
+        ) and not any(
             (
                 self._change_explanation_requested,
                 self._study_task_change_requested,
@@ -2575,11 +2586,14 @@ class ReadOnlyAcademicAssistant:
         calendar_task_service: CalendarTaskProposalPort | None = None,
         calendar_timezone: str | None = None,
         moodle_change_reader: MoodleChangeReadPort | None = None,
+        intent_routing: bool = False,
     ) -> None:
         if not callable(getattr(academic_reader, "list_courses", None)) or not callable(
             getattr(academic_reader, "list_assignments", None)
         ):
             raise TypeError("academic_reader must expose trusted academic read methods")
+        if not isinstance(intent_routing, bool):
+            raise TypeError("intent_routing must be a bool")
         if not callable(getattr(document_reader, "list_documents", None)):
             raise TypeError("document_reader must expose list_documents")
         if not callable(getattr(rag_service, "ask", None)):
@@ -2626,6 +2640,7 @@ class ReadOnlyAcademicAssistant:
         self._calendar_task_service = calendar_task_service
         self._calendar_timezone = calendar_timezone
         self._moodle_change_reader = moodle_change_reader
+        self._intent_routing = intent_routing
         self._study_planner = StudyPlanner(
             gateway,
             academic_reader,
@@ -3064,6 +3079,19 @@ class ReadOnlyAcademicAssistant:
                     "Creating a Calendar proposal from this change needs an idempotent request "
                     "ID and the configured Calendar proposal service."
                 )
+            routed_tool = (
+                self._routed_tool_call(question.strip())
+                if self._intent_routing
+                and context_resolution is None
+                and not calendar_intent
+                and not calendar_action_requested
+                and not task_change_reference
+                else None
+            )
+            routed_change_request = (
+                routed_tool is not None and routed_tool[0] is ToolName.MOODLE_LIST_CHANGES
+            )
+            change_request = is_moodle_change_request(question.strip()) or routed_change_request
             evidence = _EvidenceStore()
             runtime = _AcademicToolRuntime(
                 self._academic,
@@ -3081,12 +3109,22 @@ class ReadOnlyAcademicAssistant:
                 calendar_action_requested,
                 self._moodle_change_reader,
                 task_change_discussion_only,
+                routed_change_request=routed_change_request,
             )
             registry = runtime.build_registry()
-            adapter = AcademicDecisionAdapter(
-                self._gateway,
-                context_resolution=context_resolution,
-            )
+            adapter: AcademicDecisionAdapter
+            if routed_tool is not None and routed_tool[0] in registry.names:
+                adapter = _RoutedDecisionAdapter(
+                    self._gateway,
+                    tool_name=routed_tool[0],
+                    arguments=routed_tool[1],
+                    context_resolution=context_resolution,
+                )
+            else:
+                adapter = AcademicDecisionAdapter(
+                    self._gateway,
+                    context_resolution=context_resolution,
+                )
             orchestrator = AgentOrchestrator(
                 adapter,
                 registry,
@@ -3099,7 +3137,7 @@ class ReadOnlyAcademicAssistant:
                             if calendar_enabled
                             or task_change_available
                             or (
-                                not is_moodle_change_request(question.strip())
+                                not change_request
                                 and request_id is not None
                                 and self._study_task_service is not None
                                 and not calendar_action_requested
@@ -3155,6 +3193,39 @@ class ReadOnlyAcademicAssistant:
             if lease_active:
                 self._context_store.abort_turn(lease)
             raise
+
+    def _routed_tool_call(self, question: str) -> tuple[ToolName, dict[str, object]] | None:
+        """Map a confidently routed intent to one read tool call, or None.
+
+        Course scope comes only from trusted course records. A missing reader,
+        a failed read, or several different courses in the question all fall
+        back to the model loop rather than guessing.
+        """
+        tool = _ROUTED_TOOLS.get(route_intent(question))
+        if tool is None:
+            return None
+        if tool is ToolName.MOODLE_LIST_CHANGES and self._moodle_change_reader is None:
+            return None
+        arguments: dict[str, object] = {}
+        if tool is not ToolName.ACADEMIC_LIST_COURSES:
+            try:
+                courses = self._academic.list_courses(limit=MAX_ACADEMIC_RECORDS + 1)
+            except Exception:
+                return None
+            if (
+                not isinstance(courses, tuple)
+                or len(courses) > MAX_ACADEMIC_RECORDS
+                or any(not isinstance(course, CourseSummary) for course in courses)
+            ):
+                return None
+            mention = find_course_mention(question, courses)
+            if mention.ambiguous:
+                return None
+            if mention.course_name is not None:
+                arguments["course_name"] = mention.course_name
+        if tool is ToolName.ACADEMIC_LIST_ASSIGNMENTS and asks_next_seven_days(question):
+            arguments["due_window"] = "NEXT_7_DAYS"
+        return tool, arguments
 
     async def _run_bounded(
         self,
@@ -3239,6 +3310,81 @@ def build_read_only_academic_registry(
         clock,
         moodle_change_reader=moodle_change_reader,
     ).build_registry()
+
+
+_ROUTER_DECISION_SOURCE = "aaos-intent-router"
+_ROUTED_TOOLS: Mapping[RoutedIntent, ToolName] = {
+    RoutedIntent.DOCUMENT_QUESTION: ToolName.RAG_ANSWER,
+    RoutedIntent.COURSE_FACTS: ToolName.ACADEMIC_LIST_COURSES,
+    RoutedIntent.ASSIGNMENT_FACTS: ToolName.ACADEMIC_LIST_ASSIGNMENTS,
+    RoutedIntent.MOODLE_CHANGES: ToolName.MOODLE_LIST_CHANGES,
+}
+
+
+class _RoutedDecisionAdapter(AcademicDecisionAdapter):
+    """Supply the trusted intent router's closed decisions instead of model output.
+
+    The router's decisions are serialized and parsed by the same strict
+    validator as model output, against the same registry, so a routed request
+    can reach nothing a model-chosen decision could not. It calls exactly one
+    routed tool and then answers by citing that tool's trusted observation.
+    """
+
+    def __init__(
+        self,
+        gateway: ModelGateway,
+        *,
+        tool_name: ToolName,
+        arguments: Mapping[str, object],
+        context_resolution: ContextResolution | None = None,
+    ) -> None:
+        super().__init__(gateway, context_resolution=context_resolution)
+        self._routed_tool_name = tool_name
+        self._routed_arguments = dict(arguments)
+
+    async def propose(self, request: ProposalRequest) -> ProposalResult:
+        if not isinstance(request, ProposalRequest):
+            raise TypeError("request must be a ProposalRequest")
+        if self._registry is None:
+            return ProposalResult.failed(_proposal_failure(AgentErrorCode.INVALID_PROPOSAL))
+        self._last_decision = None
+        self._last_failure = None
+        payload: dict[str, object]
+        if not request.observations:
+            payload = {
+                "action": AcademicDecisionAction.CALL_TOOL.value,
+                "tool_name": self._routed_tool_name.value,
+                "arguments": self._routed_arguments,
+            }
+        else:
+            references = sorted(
+                reference
+                for reference in _available_source_refs(request)
+                if isinstance(reference, str)
+            )
+            if len(request.observations) != 1 or len(references) != 1:
+                return ProposalResult.failed(
+                    _proposal_failure(AgentErrorCode.INVALID_GROUNDED_REFERENCE)
+                )
+            payload = {
+                "action": AcademicDecisionAction.ANSWER.value,
+                "evidence_refs": references,
+            }
+        decision = _parse_academic_decision(
+            ChatResponse(
+                content=json.dumps(payload, ensure_ascii=False),
+                model_identifier=_ROUTER_DECISION_SOURCE,
+            ),
+            request,
+            self._registry,
+        )
+        if isinstance(decision, AgentFailure):
+            return ProposalResult.failed(decision)
+        self._last_decision = decision
+        if decision.action is AcademicDecisionAction.CALL_TOOL:
+            assert decision.tool_call is not None
+            return ProposalResult.success(AgentProposal(tool_call=decision.tool_call))
+        return ProposalResult.success(TerminalProposal("Trusted academic evidence selected."))
 
 
 def _parse_academic_decision(

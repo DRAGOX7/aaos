@@ -57,3 +57,28 @@ def test_lazy_study_task_service_delegates_moodle_deadline_changes(
 
     assert service.apply_moodle_deadline_change(**arguments) is sentinel
     assert calls == [arguments]
+
+
+def test_default_api_assistant_enables_bilingual_intent_routing() -> None:
+    """Phase I1: the API composition turns the deterministic router on."""
+    from test_agent_academic_orchestration import (
+        FakeAcademicReader,
+        FakeDocumentReader,
+        FakeRagService,
+    )
+
+    from aaos.config import AppSettings
+    from aaos.main import _LazyDefaultAcademicAskService
+
+    service = _LazyDefaultAcademicAskService(
+        AppSettings(),
+        FakeAcademicReader(),
+        FakeDocumentReader(),
+        FakeRagService(),
+        _LazyDefaultStudyTaskService(),
+        None,
+        None,
+        None,
+    )
+
+    assert service._ensure_assistant()._intent_routing is True

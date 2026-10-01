@@ -273,6 +273,7 @@ class _LazyDefaultAcademicAskService:
                 calendar_task_service=self._calendar_task_service,
                 calendar_timezone=self._calendar_timezone,
                 moodle_change_reader=self._moodle_change_reader,
+                intent_routing=True,
             )
         assert self._assistant is not None
         return self._assistant
