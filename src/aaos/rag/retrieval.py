@@ -465,6 +465,39 @@ def _validate_selection_inputs(
             raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
 
 
+def evidence_from_authoritative_chunk(
+    snapshot: QuerySnapshot,
+    item: AuthoritativeRetrievalChunk,
+    *,
+    evidence_id: str,
+    dense_rank: int | None,
+    lexical_rank: int | None,
+    fused_rank: int,
+) -> RetrievedEvidence:
+    """Project one authoritative chunk into request-local evidence.
+
+    The single construction path for evidence from repository-materialized
+    chunks, shared by the evidence selector and the document summarizer.
+    """
+    return RetrievedEvidence(
+        evidence_id=evidence_id,
+        chunk_key=item.chunk.chunk_key,
+        exact_text=item.chunk.exact_text,
+        heading=item.chunk.heading,
+        document_version_id=item.document_version.document_version_id,
+        document_title=item.document_version.source_filename,
+        course_id=item.document_version.course_id,
+        source_spans=_project_source_spans(item),
+        dense_rank=dense_rank,
+        lexical_rank=lexical_rank,
+        fused_rank=fused_rank,
+        generation_id=snapshot.generation.generation_id,
+        content_revision=snapshot.generation.content_revision,
+        token_count=item.chunk.token_count,
+        provenance_mode=(item.chunk.provenance_mode),
+    )
+
+
 def _project_source_spans(
     item: AuthoritativeRetrievalChunk,
 ) -> tuple[
@@ -721,22 +754,13 @@ class EvidenceSelector:
             used_ids.add(evidence_id)
             try:
                 evidence.append(
-                    RetrievedEvidence(
+                    evidence_from_authoritative_chunk(
+                        snapshot,
+                        item,
                         evidence_id=evidence_id,
-                        chunk_key=item.chunk.chunk_key,
-                        exact_text=item.chunk.exact_text,
-                        heading=item.chunk.heading,
-                        document_version_id=item.document_version.document_version_id,
-                        document_title=item.document_version.source_filename,
-                        course_id=item.document_version.course_id,
-                        source_spans=_project_source_spans(item),
                         dense_rank=candidate.dense_rank,
                         lexical_rank=candidate.lexical_rank,
                         fused_rank=candidate.fused_rank,
-                        generation_id=snapshot.generation.generation_id,
-                        content_revision=snapshot.generation.content_revision,
-                        token_count=item.chunk.token_count,
-                        provenance_mode=(item.chunk.provenance_mode),
                     )
                 )
             except (TypeError, ValueError):
