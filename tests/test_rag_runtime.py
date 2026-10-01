@@ -216,6 +216,7 @@ def _build(
     indexing_factory: Any | None = None,
     use_default_services: bool = False,
     summary_model_identifier: str | None = None,
+    query_embedding_factory: Any | None = None,
 ) -> Any:
     from aaos.rag.runtime import build_phase4_runtime
 
@@ -246,6 +247,8 @@ def _build(
         )
     if summary_model_identifier is not None:
         dependencies["summary_model_identifier"] = summary_model_identifier
+    if query_embedding_factory is not None:
+        dependencies["query_embedding_factory"] = query_embedding_factory
     return build_phase4_runtime(**dependencies)
 
 
@@ -620,3 +623,92 @@ def test_runtime_builds_a_summarizer_only_when_a_summary_model_is_configured(
     finally:
         without.close()
         configured.close()
+
+
+def test_resident_query_embedding_never_evicts_the_answer_model() -> None:
+    """Ask latency: embedding a question no longer unloads and reloads qwen."""
+    from aaos.rag.contracts import RagOperationalError
+    from aaos.rag.runtime import (
+        _ManagedEmbeddingService,
+        _ManagedModelGateway,
+        _ResidentQueryEmbedding,
+    )
+
+    events: list[str] = []
+    lifecycle = _Lifecycle(events)
+    indexing_embedding = _ManagedEmbeddingService(_EventEmbedding(events), lifecycle)
+    gateway = _ManagedModelGateway(_EventGateway(events), lifecycle, indexing_embedding)
+    query_embedding = _ResidentQueryEmbedding(_EventEmbedding(events))
+
+    for question in ("one", "two"):
+        query_embedding.embed_query(question)
+        query_embedding.release_model()
+        asyncio.run(
+            gateway.generate(ChatRequest(messages=(ChatMessage(role="user", content=question),)))
+        )
+
+    assert events == [
+        "bge.embed",
+        "model.load",
+        "gateway.generate",
+        "bge.embed",
+        "gateway.generate",
+    ]
+    with pytest.raises(RagOperationalError):
+        query_embedding.embed_documents(("document",))
+
+
+def test_only_a_configured_query_embedder_replaces_the_retrieval_embedding(
+    tmp_path: Path,
+) -> None:
+    class _QueryEmbedding(_Embedding):
+        def close(self) -> None:
+            self.events.append("query.close")
+
+    events: list[str] = []
+    default = _build(tmp_path / "default", [], use_default_services=True)
+    configured = _build(
+        tmp_path / "configured",
+        events,
+        use_default_services=True,
+        query_embedding_factory=lambda _config: _QueryEmbedding(events),
+    )
+
+    assert type(default.service._retriever._embedding_service).__name__ == (
+        "_ManagedEmbeddingService"
+    )
+    assert type(configured.service._retriever._embedding_service).__name__ == (
+        "_ResidentQueryEmbedding"
+    )
+    default.close()
+    configured.close()
+    assert "query.close" in events
+
+
+def test_warm_up_loads_the_query_embedder_and_claim_checker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    class _QueryEmbedding(_Embedding):
+        def embed_query(self, text: str) -> tuple[float, ...]:
+            self.events.append("query.embed")
+            return super().embed_query(text)
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        IndependentClaimEntailmentVerifier,
+        "warm_up",
+        lambda self: events.append("claim_nli.warm_up"),
+    )
+    runtime = _build(
+        tmp_path,
+        events,
+        use_default_services=True,
+        query_embedding_factory=lambda _config: _QueryEmbedding(events),
+    )
+
+    runtime.warm_up()
+
+    assert events == ["query.embed", "claim_nli.warm_up"]
+    runtime.close()

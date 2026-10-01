@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -99,6 +100,46 @@ class _NamedCloser:
 
 def _default_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
     return BgeM3EmbeddingService(device="cuda")
+
+
+def cpu_query_embedding_factory(_config: RagIndexConfig) -> EmbeddingService:
+    """Build the same BGE-M3 model on the CPU for embedding questions."""
+    return BgeM3EmbeddingService(device="cpu")
+
+
+class _ResidentQueryEmbedding:
+    """Embed questions on the CPU and keep the model loaded between asks.
+
+    The 6 GB GPU cannot hold the answer model and BGE-M3 together, so GPU
+    embedding unloads and reloads the answer model around every question
+    (about 12 s). A CPU query embedder uses no GPU memory, so the answer
+    model stays resident and ``release_model`` is a deliberate no-op.
+    Document embedding for indexing keeps the managed GPU path.
+    """
+
+    def __init__(self, inner: EmbeddingService) -> None:
+        self._inner = inner
+        self._lock = threading.Lock()
+
+    def model_metadata(self) -> EmbeddingModelMetadata:
+        return self._inner.model_metadata()
+
+    def embed_documents(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        raise RagOperationalError(RagErrorCode.QUERY_EMBEDDING_FAILED)
+
+    def embed_query(self, text: str) -> tuple[float, ...]:
+        # A background warm-up and a request may arrive together.
+        with self._lock:
+            return self._inner.embed_query(text)
+
+    def release_model(self) -> None:
+        return None
+
+    def warm_up(self) -> None:
+        self.embed_query("warm-up")
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 class _ManagedEmbeddingService:
@@ -206,6 +247,12 @@ class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
     _diagnostic_sink: TelemetrySink = emit_local_inference_telemetry
     _closed: bool = False
     summarizer: DocumentSummarizer | None = None
+    _warmers: tuple[Callable[[], None], ...] = ()
+
+    def warm_up(self) -> None:
+        """Load the models the first question would otherwise wait for."""
+        for warmer in self._warmers:
+            warmer()
 
     def close(self) -> None:
         """Close every owned resource once in reverse acquisition order."""
@@ -294,6 +341,7 @@ def build_phase4_runtime(
     model_lifecycle_factory: ModelLifecycleFactory | None = None,
     diagnostic_sink: TelemetrySink | None = None,
     summary_model_identifier: str | None = None,
+    query_embedding_factory: EmbeddingFactory | None = None,
 ) -> Phase4RagRuntime:
     """Compose one runtime from explicit paths and injectable dependencies.
 
@@ -441,9 +489,21 @@ def build_phase4_runtime(
             index_lock=index_lock,
         )
         _register_optional_closer(owned_closers, indexing, "close")
+        retrieval_embedding: EmbeddingService | _ManagedEmbeddingService = managed_embedding
+        warmers: list[Callable[[], None]] = []
+        if query_embedding_factory is not None:
+            query_embedding_service = query_embedding_factory(config)
+            _register_closer(
+                owned_closers, query_embedding_service, "close", "query_embedding_service"
+            )
+            _require_embedding_service(query_embedding_service)
+            _validate_embedding_identity(query_embedding_service, config)
+            resident_query_embedding = _ResidentQueryEmbedding(query_embedding_service)
+            retrieval_embedding = resident_query_embedding
+            warmers.append(resident_query_embedding.warm_up)
         retriever = selected_retriever_factory(
             repository=repository,
-            embedding_service=managed_embedding,
+            embedding_service=retrieval_embedding,
             dense_index_factory=selected_dense_factory,
             dense_candidate_limit=config.dense_candidate_limit,
             lexical_candidate_limit=config.lexical_candidate_limit,
@@ -584,6 +644,8 @@ def build_phase4_runtime(
         _require_callable(service, "ask", "service")
         for method in ("index_new", "rebuild", "status"):
             _require_callable(indexing, method, "indexing")
+        if query_embedding_factory is not None and claim_entailment_verifier is not None:
+            warmers.append(claim_entailment_verifier.warm_up)
         return Phase4RagRuntime(
             service=service,
             indexing=indexing,
@@ -591,6 +653,7 @@ def build_phase4_runtime(
             _owned_closers=tuple(owned_closers),
             _diagnostic_sink=selected_diagnostic_sink,
             summarizer=summarizer,
+            _warmers=tuple(warmers),
         )
     except Exception as error:
         cleanup_error = _cleanup_partial(owned_closers, selected_diagnostic_sink)

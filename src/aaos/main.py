@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
@@ -206,23 +207,41 @@ class _LazyDefaultRagReader:
         self._engine: Engine | None = None
         self._runtime: ConfiguredPhase4Runtime | None = None
         self._delegate: RagReadService | None = None
+        # A startup warm-up thread and a request may both build the runtime.
+        self._build_lock = threading.Lock()
+        self._warm_up_task: asyncio.Task[None] | None = None
 
     def _ensure_delegate(self) -> RagReadService:
-        if self._delegate is None:
-            from aaos.persistence.database import (
-                create_database_engine,
-                create_session_factory,
-            )
-            from aaos.rag.factory import build_configured_phase4_runtime
-            from aaos.web.rag import RagReadService
+        with self._build_lock:
+            if self._delegate is None:
+                from aaos.persistence.database import (
+                    create_database_engine,
+                    create_session_factory,
+                )
+                from aaos.rag.factory import build_configured_phase4_runtime
+                from aaos.web.rag import RagReadService
 
-            sessions = self._sessions
-            if sessions is None:
-                self._engine = create_database_engine()
-                sessions = create_session_factory(self._engine)
-            self._runtime = build_configured_phase4_runtime()
-            self._delegate = RagReadService(self._runtime.service, sessions)
-        return self._delegate
+                sessions = self._sessions
+                if sessions is None:
+                    self._engine = create_database_engine()
+                    sessions = create_session_factory(self._engine)
+                self._runtime = build_configured_phase4_runtime()
+                self._delegate = RagReadService(self._runtime.service, sessions)
+            return self._delegate
+
+    def _warm_up(self) -> None:
+        """Build the runtime and load its models; failures leave it lazy."""
+        try:
+            self._ensure_delegate()
+            if self._runtime is not None:
+                self._runtime.runtime.warm_up()
+        except Exception:
+            return
+
+    async def start_warm_up(self) -> None:
+        """Warm the runtime in a background thread without delaying startup."""
+        self._warm_up_task = asyncio.create_task(asyncio.to_thread(self._warm_up))
+        await asyncio.sleep(0)
 
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
         return await self._ensure_delegate().ask(request)
@@ -249,6 +268,9 @@ class _LazyDefaultRagReader:
         return await summarizer.summarize_course(document_version_ids, language, deadline=deadline)
 
     async def dispose(self) -> None:
+        if self._warm_up_task is not None:
+            # Never close the runtime underneath a warm-up still loading models.
+            await asyncio.gather(self._warm_up_task, return_exceptions=True)
         if self._runtime is not None:
             await self._runtime.aclose()
         if self._engine is not None:
@@ -614,6 +636,7 @@ def create_app(
     study_task_service: StudyTaskPort | None = None,
     calendar_task_service: CalendarTaskProposalPort | None = None,
     calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
+    warm_rag_on_startup: bool = False,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
@@ -720,6 +743,9 @@ def create_app(
         else:
             agent_rag_reader = _LazyDefaultRagReader(session_factory)
             application.router.add_event_handler("shutdown", agent_rag_reader.dispose)
+        if warm_rag_on_startup:
+            # Only the served app warms up, so imports and tests stay inert.
+            application.router.add_event_handler("startup", agent_rag_reader.start_warm_up)
         resolved_ask_service = _LazyDefaultAcademicAskService(
             settings,
             academic_reader,
@@ -779,7 +805,7 @@ class _LazyASGIApplication:
 
     def _get_application(self) -> FastAPI:
         if self._application is None:
-            self._application = create_app()
+            self._application = create_app(warm_rag_on_startup=True)
         return self._application
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

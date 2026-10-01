@@ -131,5 +131,9 @@ def test_shared_factory_validates_database_and_injects_existing_only_engine(
         assert calls[:3] == ["validate", "gateway", "build"]
         assert validated_paths == [captured["paths"].database_path]
         assert captured.get("database_engine_factory") is existing_only_engine_factory
+        # Ask latency: the API runtime embeds questions on the CPU.
+        from aaos.rag.runtime import cpu_query_embedding_factory
+
+        assert captured.get("query_embedding_factory") is cpu_query_embedding_factory
     finally:
         configured.close()

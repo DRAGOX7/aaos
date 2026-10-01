@@ -515,6 +515,12 @@ class IndependentClaimEntailmentVerifier:
             return _ClaimVerdict.CONTRADICTED
         return _ClaimVerdict.NEUTRAL
 
+    def warm_up(self) -> None:
+        """Load the NLI model before the first claim is checked."""
+        warm_up = getattr(self._classifier, "warm_up", None)
+        if callable(warm_up):
+            warm_up()
+
     def close(self) -> None:
         self._classifier.close()
 

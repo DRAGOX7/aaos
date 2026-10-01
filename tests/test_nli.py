@@ -256,3 +256,14 @@ def test_overflow_is_detected_without_truncation() -> None:
         classifier.classify("evidence", "requirement")
 
     assert tokenizer.calls[0][2]["truncation"] is False
+
+
+def test_warm_up_loads_the_model_once_without_classifying() -> None:
+    classifier, _, model = _classifier()
+
+    assert classifier.model_loaded is False
+    classifier.warm_up()
+    classifier.warm_up()
+
+    assert classifier.model_loaded is True
+    assert model.to_devices == ["cpu"]

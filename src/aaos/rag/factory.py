@@ -22,7 +22,11 @@ from aaos.rag.embeddings import (
     BGE_M3_MODEL_IDENTIFIER,
     BGE_M3_MODEL_REVISION,
 )
-from aaos.rag.runtime import Phase4RagRuntime, build_phase4_runtime
+from aaos.rag.runtime import (
+    Phase4RagRuntime,
+    build_phase4_runtime,
+    cpu_query_embedding_factory,
+)
 
 
 @dataclass(slots=True)
@@ -97,6 +101,7 @@ def build_configured_phase4_runtime(
             gateway=gateway,
             database_engine_factory=create_existing_rag_database_engine,
             summary_model_identifier=settings.lm_studio_model,
+            query_embedding_factory=cpu_query_embedding_factory,
         )
     except Exception:
         try:

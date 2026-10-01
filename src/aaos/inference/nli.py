@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -171,6 +172,7 @@ class PinnedCpuNliClassifier:
         self._label_ids: dict[str, int] | None = None
         self._max_length: int | None = None
         self._closed = False
+        self._load_lock = threading.Lock()
 
     @property
     def device(self) -> str:
@@ -238,9 +240,20 @@ class PinnedCpuNliClassifier:
         self._max_length = None
         gc.collect()
 
+    def warm_up(self) -> None:
+        """Load the model ahead of the first classification (safe to repeat)."""
+        self._ensure_loaded()
+
     def _ensure_loaded(self) -> tuple[_Tokenizer, _SequenceClassifier]:
         if self._model is not None and self._tokenizer is not None:
             return self._tokenizer, self._model
+        # A background warm-up and a request may race to load the model.
+        with self._load_lock:
+            if self._model is not None and self._tokenizer is not None:
+                return self._tokenizer, self._model
+            return self._load()
+
+    def _load(self) -> tuple[_Tokenizer, _SequenceClassifier]:
         pretrained: str
         kwargs: dict[str, object] = {
             "revision": self.revision,

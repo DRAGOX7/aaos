@@ -166,3 +166,88 @@ def test_default_api_assistant_receives_a_lazy_summarizer() -> None:
         summarizer=summaries,
     )
     assert service._ensure_assistant()._summarizer is summaries
+
+
+def _fake_configured_runtime(events: list[str]) -> Any:
+    class _Runtime:
+        def warm_up(self) -> None:
+            events.append("runtime.warm_up")
+
+    class _Configured:
+        runtime = _Runtime()
+        service = object()
+
+        async def aclose(self) -> None:
+            events.append("runtime.close")
+
+    return _Configured()
+
+
+def test_rag_reader_warm_up_loads_the_runtime_models_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ask latency: the first question no longer loads the embedder and NLI."""
+    import asyncio
+
+    import aaos.rag.factory as factory
+    from aaos.main import _LazyDefaultRagReader
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        factory,
+        "build_configured_phase4_runtime",
+        lambda: events.append("build") or _fake_configured_runtime(events),
+    )
+    reader = _LazyDefaultRagReader(sessions=lambda: None)  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        await reader.start_warm_up()
+        reader._ensure_delegate()
+        await reader.dispose()
+
+    asyncio.run(scenario())
+
+    assert events == ["build", "runtime.warm_up", "runtime.close"]
+
+
+def test_rag_reader_warm_up_failure_leaves_the_lazy_path_in_charge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import aaos.rag.factory as factory
+    from aaos.main import _LazyDefaultRagReader
+
+    def unavailable() -> Any:
+        raise RuntimeError("no runtime data")
+
+    monkeypatch.setattr(factory, "build_configured_phase4_runtime", unavailable)
+    reader = _LazyDefaultRagReader(sessions=lambda: None)  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        await reader.start_warm_up()
+        assert reader._warm_up_task is not None
+        await reader._warm_up_task
+        assert reader._runtime is None
+        await reader.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_only_the_served_app_warms_rag_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from aaos.main import _LazyDefaultRagReader, create_app
+
+    started: list[str] = []
+
+    async def record(self: Any) -> None:
+        started.append("warm")
+
+    monkeypatch.setattr(_LazyDefaultRagReader, "start_warm_up", record)
+    with TestClient(create_app()):
+        pass
+    with TestClient(create_app(warm_rag_on_startup=True)):
+        pass
+
+    assert started == ["warm"]
