@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import cast
+from typing import Any, Callable, cast
 
 import pytest
 
@@ -816,7 +816,7 @@ def test_claim_entailment_verifier_uses_claim_text_and_only_bound_evidence() -> 
     assert result.value == "ENTAILED"
     assert classifier.calls == [
         (
-            "The deadline is Friday.",
+            "source.pdf\n\nThe deadline is Friday.",
             "The deadline is Friday.",
         )
     ]
@@ -990,7 +990,7 @@ def test_claim_entailment_verifier_uses_validated_spans_instead_of_full_bound_ch
     assert result is EntailmentResult.ENTAILED
     assert classifier.calls == [
         (
-            "The deadline is Friday.",
+            "source.pdf\n\nThe deadline is Friday.",
             "The deadline is Friday.",
         )
     ]
@@ -1039,7 +1039,7 @@ def test_claim_entailment_verifier_deduplicates_repeated_validated_quotes() -> N
     )
 
     assert result.value == "ENTAILED"
-    assert classifier.calls == [(quote, claim.text)]
+    assert classifier.calls == [(f"source.pdf\n\n{quote}", claim.text)]
 
 
 def test_claim_entailment_verifier_deduplicates_repeated_bound_chunks() -> None:
@@ -1061,7 +1061,7 @@ def test_claim_entailment_verifier_deduplicates_repeated_bound_chunks() -> None:
     )
 
     assert result.value == "ENTAILED"
-    assert classifier.calls == [(quote, quote)]
+    assert classifier.calls == [(f"source.pdf\n\n{quote}", quote)]
 
 
 def test_claim_entailment_verifier_rejects_cited_evidence_without_validated_span() -> None:
@@ -1106,3 +1106,163 @@ def test_claim_entailment_verifier_rejects_cited_evidence_without_validated_span
 
     assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
     assert classifier.calls == []
+
+
+class RuleNliClassifier:
+    """Entails when ``entails(premise)``; overflows above ``limit`` characters."""
+
+    def __init__(
+        self,
+        entails: Callable[[str], bool],
+        *,
+        label_when_not_entailed: str = "neutral",
+        limit: int | None = None,
+    ) -> None:
+        self.entails = entails
+        self.label_when_not_entailed = label_when_not_entailed
+        self.limit = limit
+        self.calls: list[tuple[str, str]] = []
+
+    def classify(self, premise: str, hypothesis: str) -> NliClassification:
+        from aaos.inference.nli import NliInputOverflowError
+
+        if self.limit is not None and len(premise) + len(hypothesis) > self.limit:
+            raise NliInputOverflowError("too long")
+        self.calls.append((premise, hypothesis))
+        if self.entails(premise):
+            return NliClassification(NliDecision.ENTAILED, "entailment", 0.9, 0.05, 0.05)
+        return NliClassification(
+            NliDecision.NOT_ENTAILED, self.label_when_not_entailed, 0.05, 0.9, 0.05
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _span_claim_case(
+    chunk_text: str, quote: str, title: str = "AI495C Syllabus.pdf"
+) -> tuple[Any, Any, Any]:
+    from dataclasses import replace
+
+    from aaos.rag.contracts import EvidenceSpan, RagClaim, RequirementEvidenceSpans
+
+    evidence = replace(_evidence(), exact_text=chunk_text, document_title=title)
+    spans = (RequirementEvidenceSpans("r1", (EvidenceSpan(evidence.evidence_id, quote),)),)
+    claim = RagClaim("claim-1", "The AI 495C syllabus covers the five Vs.", ("ev-1",))
+    return evidence, spans, claim
+
+
+def test_claim_verifier_premise_includes_the_cited_document_title() -> None:
+    """Regression: a claim restating its document's identity failed on the bare span."""
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _span_claim_case(
+        "Overview: the five Vs of big data.", "the five Vs of big data."
+    )
+    classifier = RuleNliClassifier(lambda premise: "AI495C Syllabus" in premise)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert classifier.calls[0][0] == "AI495C Syllabus.pdf\n\nthe five Vs of big data."
+
+
+def test_neutral_span_premise_falls_back_to_the_full_cited_chunk() -> None:
+    """Regression: support outside the requirement span was never seen by the verifier."""
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    chunk = "AI 495C Special topics. Overview: the five Vs of big data."
+    evidence, spans, claim = _span_claim_case(chunk, "the five Vs of big data.")
+    classifier = RuleNliClassifier(lambda premise: "AI 495C" in premise)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert [premise for premise, _ in classifier.calls] == [
+        "AI495C Syllabus.pdf\n\nthe five Vs of big data.",
+        f"AI495C Syllabus.pdf\n\n{chunk}",
+    ]
+
+
+def test_contradicted_span_premise_is_rejected_without_fallback() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _span_claim_case(
+        "AI 495C. Overview: the five Vs.", "the five Vs.", title="x.pdf"
+    )
+    classifier = RuleNliClassifier(
+        lambda premise: "AI 495C" in premise, label_when_not_entailed="contradiction"
+    )
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+    assert len(classifier.calls) == 1
+
+
+def test_fallback_never_reads_evidence_the_claim_does_not_cite() -> None:
+    import asyncio
+    from dataclasses import replace
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _span_claim_case("Overview: the five Vs.", "the five Vs.")
+    uncited = replace(
+        evidence,
+        evidence_id="ev-2",
+        chunk_key="chunk-2",
+        exact_text="AI 495C covers the five Vs.",
+    )
+    classifier = RuleNliClassifier(lambda premise: "AI 495C" in premise)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence, uncited), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+    assert all("AI 495C covers" not in premise for premise, _ in classifier.calls)
+
+
+def test_fallback_reads_a_long_cited_chunk_in_bounded_windows() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    filler = " ".join(f"word{index}" for index in range(80))
+    chunk = f"{filler} AI 495C covers the five Vs."
+    evidence, spans, claim = _span_claim_case(chunk, "the five Vs.", title="x.pdf")
+    classifier = RuleNliClassifier(lambda premise: "AI 495C" in premise, limit=400)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert all(len(premise) + len(claim.text) <= 400 for premise, _ in classifier.calls)

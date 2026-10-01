@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unicodedata
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from aaos.inference import (
@@ -368,6 +369,15 @@ class IndependentEntailmentVerifier:
         self._classifier.close()
 
 
+MAX_CLAIM_PREMISE_WINDOW_DEPTH = 4
+
+
+class _ClaimVerdict(StrEnum):
+    ENTAILED = "ENTAILED"
+    NEUTRAL = "NEUTRAL"
+    CONTRADICTED = "CONTRADICTED"
+
+
 class IndependentClaimEntailmentVerifier:
     """Verify one generated factual claim against only its bound evidence."""
 
@@ -441,27 +451,69 @@ class IndependentClaimEntailmentVerifier:
         else:
             premise = "\n\n".join(dict.fromkeys(item.exact_text for item in bound_evidence))
 
-        try:
-            result = self._classifier.classify(
-                premise,
-                claim.text,
+        # A claim often restates its document's identity (course code, "the
+        # syllabus"), which a requirement span alone does not contain, so the
+        # trusted titles of the cited documents are part of the premise.
+        titles = "\n".join(dict.fromkeys(item.document_title for item in bound_evidence))
+        verdict = self._classify_windowed(f"{titles}\n\n{premise}", claim.text, depth=0)
+        if verdict is _ClaimVerdict.ENTAILED:
+            return EntailmentResult.ENTAILED
+        if verdict is _ClaimVerdict.CONTRADICTED or not validated_requirement_spans:
+            return EntailmentResult.NOT_ENTAILED
+        # A neutral span verdict may only mean the support lies outside the
+        # span. Re-check against each full chunk the claim cites, never other
+        # evidence; a contradiction there is still a rejection.
+        for item in bound_evidence:
+            fallback = self._classify_windowed(
+                f"{item.document_title}\n\n{item.exact_text}", claim.text, depth=0
             )
+            if fallback is _ClaimVerdict.ENTAILED:
+                return EntailmentResult.ENTAILED
+        return EntailmentResult.NOT_ENTAILED
+
+    def _classify_windowed(self, premise: str, hypothesis: str, *, depth: int) -> _ClaimVerdict:
+        """Classify, splitting an overflowing premise into overlapping halves.
+
+        ENTAILED if any window entails, else CONTRADICTED if any window
+        contradicts, else NEUTRAL. A claim that overflows on its own still
+        fails closed.
+        """
+        try:
+            result = self._classifier.classify(premise, hypothesis)
         except NliInputOverflowError:
-            raise RagOperationalError(RagErrorCode.ENTAILMENT_INPUT_OVERFLOW) from None
+            words = premise.split()
+            if depth >= MAX_CLAIM_PREMISE_WINDOW_DEPTH or len(words) < 2:
+                raise RagOperationalError(RagErrorCode.ENTAILMENT_INPUT_OVERFLOW) from None
+            half = len(words) // 2
+            overlap = max(1, len(words) // 8)
+            left = self._classify_windowed(
+                " ".join(words[: half + overlap]), hypothesis, depth=depth + 1
+            )
+            if left is _ClaimVerdict.ENTAILED:
+                return left
+            right = self._classify_windowed(
+                " ".join(words[max(0, half - overlap) :]), hypothesis, depth=depth + 1
+            )
+            if right is _ClaimVerdict.ENTAILED:
+                return right
+            if _ClaimVerdict.CONTRADICTED in (left, right):
+                return _ClaimVerdict.CONTRADICTED
+            return _ClaimVerdict.NEUTRAL
         except NliModelUnavailableError:
             raise RagOperationalError(RagErrorCode.NLI_MODEL_UNAVAILABLE) from None
         except NliInferenceError:
             raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
 
-        if not isinstance(result, NliClassification):
+        if not isinstance(result, NliClassification) or result.decision not in (
+            NliDecision.ENTAILED,
+            NliDecision.NOT_ENTAILED,
+        ):
             raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
-
         if result.decision is NliDecision.ENTAILED:
-            return EntailmentResult.ENTAILED
-        if result.decision is NliDecision.NOT_ENTAILED:
-            return EntailmentResult.NOT_ENTAILED
-
-        raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
+            return _ClaimVerdict.ENTAILED
+        if result.native_label == "contradiction":
+            return _ClaimVerdict.CONTRADICTED
+        return _ClaimVerdict.NEUTRAL
 
     def close(self) -> None:
         self._classifier.close()
