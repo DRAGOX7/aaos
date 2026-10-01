@@ -308,8 +308,8 @@ def test_mixed_page_and_structure_survive_retrieval_and_citation(
     assert rendered.rendered_text == (
         "Page claim.\n"
         "Structural claim.\n\n"
-        "[claim-page] lecture.pdf (page 2)\n"
-        "[claim-structure] notes.docx "
+        "[1] lecture.pdf (page 2)\n"
+        "[2] notes.docx "
         "(unit 4; heading Neural Networks)"
     )
 

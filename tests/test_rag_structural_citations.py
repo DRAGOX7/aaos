@@ -173,7 +173,7 @@ def test_renderer_uses_structural_location_not_page_label() -> None:
     rendered = render_rag_answer(answer)
 
     assert rendered.rendered_text == (
-        "Neural networks are covered.\n\n[claim-1] notes.docx (unit 4; heading Neural Networks)"
+        "Neural networks are covered.\n\n[1] notes.docx (unit 4; heading Neural Networks)"
     )
 
     assert "page " not in rendered.rendered_text

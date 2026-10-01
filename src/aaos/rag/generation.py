@@ -763,8 +763,12 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
                 raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
         if answer.citations:
             lines.append("")
+            # Claim ids are model-chosen references, not display text: label
+            # each claim by its order of first appearance instead.
+            labels: dict[str, int] = {}
             for citation in answer.citations:
-                claim_id = _safe_render_label(citation.claim_id)
+                _safe_render_label(citation.claim_id)
+                label = labels.setdefault(citation.claim_id, len(labels) + 1)
                 document_title = _safe_render_label(citation.document_title)
 
                 if isinstance(citation, Citation):
@@ -854,7 +858,7 @@ def render_rag_answer(answer: RagAnswer) -> RenderedRagResponse:
                 else:
                     raise RagOperationalError(RagErrorCode.PROVENANCE_RESOLUTION_FAILED)
 
-                lines.append(f"[{claim_id}] {document_title} ({location})")
+                lines.append(f"[{label}] {document_title} ({location})")
         return RenderedRagResponse(answer=answer, rendered_text="\n".join(lines))
     except RagOperationalError:
         raise

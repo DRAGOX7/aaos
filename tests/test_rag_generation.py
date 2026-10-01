@@ -624,8 +624,30 @@ def test_citation_validator_maps_authoritative_spans_and_renderer_is_determinist
     assert answer.citations == (Citation("claim-1", 101, "source.pdf", 1, 1),)
     rendered = render_rag_answer(answer)
     assert rendered.answer is answer
-    assert rendered.rendered_text == "Friday.\n\n[claim-1] source.pdf (page 1)"
+    assert rendered.rendered_text == "Friday.\n\n[1] source.pdf (page 1)"
     assert render_rag_answer(answer) == rendered
+
+
+def test_citation_labels_are_numbered_not_model_chosen_claim_ids() -> None:
+    """Regression: a model used a whole sentence as its claim id, shown as the label."""
+    sentence_id = "What is the name of the instructor for AI 495C Big Data Analytics?"
+    output = _model_output(
+        (
+            RagClaim(sentence_id, "Friday.", ("ev-1", "ev-2")),
+            RagClaim("c-two", "Monday.", ("ev-2",)),
+        )
+    )
+    answer = CitationValidator().validate(output, _request())
+
+    rendered = render_rag_answer(answer).rendered_text
+
+    assert sentence_id not in rendered
+    assert rendered.splitlines()[3:] == [
+        "[1] source.pdf (page 1)",
+        "[1] source.pdf (page 1)",
+        "[2] source.pdf (page 1)",
+    ]
+    assert answer.citations[0].claim_id == sentence_id
 
 
 def test_validator_derives_answer_text_only_from_cited_claims() -> None:
@@ -810,7 +832,7 @@ def test_renderer_sanitizes_trusted_labels_without_accepting_model_metadata() ->
 
     rendered = render_rag_answer(answer)
 
-    assert rendered.rendered_text == "Friday.\n\n[claim 1] source .pdf (page 1)"
+    assert rendered.rendered_text == "Friday.\n\n[1] source .pdf (page 1)"
 
 
 def test_renderer_rejects_unvalidated_answer() -> None:
