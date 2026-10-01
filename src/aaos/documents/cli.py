@@ -53,7 +53,10 @@ from aaos.persistence.database import (
     resolve_database_path,
 )
 
-_USAGE = "usage: aaos documents <ingest-new|refresh> [--remote-file-id <positive-int>]"
+_USAGE = (
+    "usage: aaos documents <ingest-new|refresh> [--remote-file-id <positive-int>]\n"
+    "       aaos documents reextract --document-version-id <positive-int>"
+)
 _REQUIRED_REVISION = "0003_phase3_document_ingestion"
 _POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 
@@ -280,6 +283,8 @@ def _parse_arguments(argv: Sequence[str]) -> tuple[IngestionMode, int | None] | 
 
 def run_documents_command(argv: Sequence[str]) -> int:
     """Parse and execute one exact document-ingestion command."""
+    if tuple(argv[:1]) == ("reextract",):
+        return _run_reextract(argv)
     parsed = _parse_arguments(argv)
     if parsed is None:
         print(_USAGE, file=sys.stderr)
@@ -321,6 +326,46 @@ def run_documents_command(argv: Sequence[str]) -> int:
     for line in lines:
         print(line)
     return exit_code
+
+
+def _run_reextract(argv: Sequence[str]) -> int:
+    """Re-extract one stored PDF version locally; never contacts Moodle."""
+    arguments = tuple(argv)
+    if (
+        len(arguments) != 3
+        or arguments[1] != "--document-version-id"
+        or _POSITIVE_DECIMAL.fullmatch(arguments[2]) is None
+    ):
+        print(_USAGE, file=sys.stderr)
+        return 2
+    from aaos.documents.reextract import ReextractError, reextract_pdf_version
+    from aaos.persistence.database import create_database_engine
+
+    paths = resolve_document_runtime_paths(Path("data").resolve())
+    engine: Engine | None = None
+    try:
+        engine = create_database_engine(_normal_database_path())
+        with IngestionLock(paths.ingestion_lock_path).acquire():
+            result = reextract_pdf_version(
+                create_session_factory(engine),
+                paths.content_store_root,
+                int(arguments[2]),
+            )
+    except ReextractError as error:
+        print("DOCUMENT_REEXTRACT_FAILED", file=sys.stderr)
+        print(f"ERROR_CODE={error.code}", file=sys.stderr)
+        return 1
+    except (IngestionLockUnavailable, OSError, SQLAlchemyError):
+        print("DOCUMENT_REEXTRACT_FAILED", file=sys.stderr)
+        return 1
+    finally:
+        if engine is not None:
+            engine.dispose()
+    print("DOCUMENT_REEXTRACT")
+    print(f"DOCUMENT_VERSION_ID={result.document_version_id}")
+    print(f"PAGE_COUNT={result.page_count}")
+    print(f"CHANGED_PAGES={','.join(str(number) for number in result.changed_pages) or 'NONE'}")
+    return 0
 
 
 def render_batch_result(result: BatchIngestionResult) -> tuple[str, ...]:
