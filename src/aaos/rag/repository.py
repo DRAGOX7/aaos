@@ -7,6 +7,7 @@ RAG error contract.  Phase 3 rows are queried but never mutated here.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -33,6 +34,7 @@ from aaos.persistence.rag_models import (
     RagChunkSourceSpanORM,
     RagChunkStructureSourceSpanORM,
     RagDocumentIndexORM,
+    RagDocumentSummaryORM,
     RagIndexGenerationORM,
 )
 from aaos.rag.contracts import (
@@ -54,6 +56,11 @@ from aaos.rag.lexical import (
     insert_fts_row,
     rebuild_fts_rows,
     search_fts,
+)
+from aaos.rag.summary_contracts import (
+    StoredDocumentSummary,
+    SummaryCacheKey,
+    SummaryPoint,
 )
 
 SessionFactory = Callable[[], Session]
@@ -2322,6 +2329,81 @@ class RagRepository:
                 return tuple(self._record_chunk(row) for row in rows)
         except SQLAlchemyError as error:
             raise _safe_database_error(RagErrorCode.DOCUMENT_INDEX_FAILED, error) from error
+        finally:
+            session.close()
+
+    def get_document_summary(self, key: SummaryCacheKey) -> StoredDocumentSummary | None:
+        """Return the cached verified summary for exactly this identity, if any."""
+        if not isinstance(key, SummaryCacheKey):
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+        session = self._session_factory()
+        try:
+            with session.begin():
+                row = session.scalar(
+                    select(RagDocumentSummaryORM).where(
+                        RagDocumentSummaryORM.document_version_id == key.document_version_id,
+                        RagDocumentSummaryORM.generation_id == key.generation_id,
+                        RagDocumentSummaryORM.content_revision == key.content_revision,
+                        RagDocumentSummaryORM.policy_version == key.policy_version,
+                        RagDocumentSummaryORM.model_identifier == key.model_identifier,
+                        RagDocumentSummaryORM.language == key.language,
+                    )
+                )
+                if row is None:
+                    return None
+                try:
+                    raw_points = json.loads(row.points_json)
+                    points = tuple(
+                        SummaryPoint(item["text"], tuple(item["chunk_keys"])) for item in raw_points
+                    )
+                    return StoredDocumentSummary(
+                        key=key,
+                        points=points,
+                        sections_total=row.sections_total,
+                        dropped_points=row.dropped_points,
+                    )
+                except (TypeError, ValueError, KeyError):
+                    # A corrupt cache entry fails closed rather than being trusted.
+                    raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED) from None
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.INDEX_INTEGRITY_FAILED, error) from error
+        finally:
+            session.close()
+
+    def put_document_summary(self, summary: StoredDocumentSummary) -> None:
+        """Cache a verified summary; an existing entry for the same identity wins."""
+        if not isinstance(summary, StoredDocumentSummary):
+            raise RagOperationalError(RagErrorCode.INDEX_INTEGRITY_FAILED)
+        if self.get_document_summary(summary.key) is not None:
+            return
+        key = summary.key
+        points_json = json.dumps(
+            [
+                {"text": point.text, "chunk_keys": list(point.chunk_keys)}
+                for point in summary.points
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        session = self._session_factory()
+        try:
+            with session.begin():
+                session.add(
+                    RagDocumentSummaryORM(
+                        document_version_id=key.document_version_id,
+                        generation_id=key.generation_id,
+                        content_revision=key.content_revision,
+                        policy_version=key.policy_version,
+                        model_identifier=key.model_identifier,
+                        language=key.language,
+                        sections_total=summary.sections_total,
+                        dropped_points=summary.dropped_points,
+                        points_json=points_json,
+                        created_at=_now_utc(),
+                    )
+                )
+        except SQLAlchemyError as error:
+            raise _safe_database_error(RagErrorCode.INDEX_INTEGRITY_FAILED, error) from error
         finally:
             session.close()
 

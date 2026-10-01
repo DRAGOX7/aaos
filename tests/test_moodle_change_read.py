@@ -149,7 +149,7 @@ def test_disposable_migrations_preserve_snapshot_history_and_change_linkage(
     try:
         with engine.connect() as connection:
             assert MigrationContext.configure(connection).get_current_revision() == (
-                "0012_change_aware_study_task_mutations"
+                "0013_rag_document_summaries"
             )
         assert "moodle_sync_snapshots" in set(inspect(engine).get_table_names())
         assert {

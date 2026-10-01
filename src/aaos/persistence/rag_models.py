@@ -290,3 +290,41 @@ class RagChunkStructureSourceSpanORM(Base):
         Integer,
         nullable=False,
     )
+
+
+class RagDocumentSummaryORM(Base):
+    """A verified document summary cached for one exact identity (Phase I3)."""
+
+    __tablename__ = "rag_document_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id",
+            "generation_id",
+            "content_revision",
+            "policy_version",
+            "model_identifier",
+            "language",
+            name="uq_rag_document_summaries_identity",
+        ),
+        CheckConstraint("id > 0", name="ck_rag_document_summaries_id"),
+        CheckConstraint("content_revision >= 0", name="ck_rag_document_summaries_revision"),
+        CheckConstraint("language IN ('en','ar')", name="ck_rag_document_summaries_language"),
+        CheckConstraint("sections_total > 0", name="ck_rag_document_summaries_sections"),
+        CheckConstraint("dropped_points >= 0", name="ck_rag_document_summaries_dropped"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_version_id: Mapped[int] = mapped_column(
+        ForeignKey("document_versions.id"), nullable=False
+    )
+    generation_id: Mapped[int] = mapped_column(
+        ForeignKey("rag_index_generations.id"), nullable=False
+    )
+    content_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_identifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    language: Mapped[str] = mapped_column(String(8), nullable=False)
+    sections_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    dropped_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    points_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)

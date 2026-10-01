@@ -60,6 +60,7 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
         "rag_chunks",
         "rag_chunk_source_spans",
         "rag_chunk_structure_source_spans",
+        "rag_document_summaries",
     }
 
 
