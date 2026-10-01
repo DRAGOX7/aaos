@@ -46,3 +46,19 @@ Query embedding with BGE-M3 on the CPU:
 1. **CPU-resident query embedding** for Ask, keeping the GPU swap for indexing. Expected: about 12 s less per question.
 2. **Warm up at backend start:** load the query embedder and NLI in the background so the first question doesn't pay ~45 s.
 3. **Bound the claim-NLI fallback.** For example, re-check only chunks whose span verdict was neutral, and stop at the first entailed window. Measure how often the fallback actually rescues a claim before tightening it.
+
+## Results after the changes
+
+Implemented and merged with owner approval:
+- CPU-resident query embedding and startup warm-up (`4bb4964a`);
+- the claim re-check bounded to two windows (`4fc8e5af`).
+
+| Measure | Before | After |
+|---|---|---|
+| Typical Ask answer (live API) | 25–45 s | 10–19 s |
+| Failing claim's re-check (same claim, real NLI) | 25.1 s (5 inferences + 3 overflow probes) | 5.4 s (2 inferences) |
+| 3-run trace: median / slowest query | 30.0 s / 66.1 s | 18.4 s / 44.0 s |
+| 3-run trace: expected page cited (EN / AR, mean of 16) | 13.3 / 12.0 | 14.3 / 12.3 |
+| 3-run trace: unanswerable refused, cited answers | 8/8, 0 | 8/8, 0 |
+
+The answer-quality differences are within run-to-run noise; the bound did not cost correct answers. The backend holds about 2.5 GB of extra RAM for the CPU query embedder.
