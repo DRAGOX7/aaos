@@ -250,3 +250,90 @@ def test_course_summary_reports_documents_it_could_not_prepare_in_budget() -> No
 
     assert result.outcome is SummaryOutcome.NOT_PREPARED
     assert result.missing_document_version_ids == (102,)
+
+
+class FakeNliClassifier:
+    """Overflows above `limit` characters; entails when the hypothesis key is present."""
+
+    def __init__(self, limit: int = 120) -> None:
+        self.limit = limit
+        self.premises: list[str] = []
+        self.closed = False
+
+    def classify(self, premise: str, hypothesis: str) -> Any:
+        from aaos.inference.nli import NliClassification, NliDecision, NliInputOverflowError
+
+        if len(premise) + len(hypothesis) > self.limit:
+            raise NliInputOverflowError("too long")
+        self.premises.append(premise)
+        key = hypothesis.split(":", 1)[-1].strip()
+        entailed = key in premise
+        return NliClassification(
+            NliDecision.ENTAILED if entailed else NliDecision.NOT_ENTAILED,
+            "entailment" if entailed else "neutral",
+            0.9 if entailed else 0.1,
+            0.1,
+            0.0,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _long_evidence(text: str) -> Any:
+    from test_rag_generation import _evidence
+
+    return _evidence("ev-long", text)
+
+
+def test_windowed_verifier_finds_support_inside_a_long_premise() -> None:
+    from aaos.rag.summaries import WindowedClaimVerifier
+
+    filler = " ".join(f"word{index}" for index in range(60))
+    evidence = (_long_evidence(f"{filler} The exam is on Sunday."),)
+    classifier = FakeNliClassifier()
+    verifier = WindowedClaimVerifier(classifier)
+
+    supported = asyncio.run(
+        verifier.verify(RagClaim("c1", "Point: Sunday", ("ev-long",)), evidence=evidence)
+    )
+    unsupported = asyncio.run(
+        verifier.verify(RagClaim("c2", "Point: Monday", ("ev-long",)), evidence=evidence)
+    )
+
+    assert supported is EntailmentResult.ENTAILED
+    assert unsupported is EntailmentResult.NOT_ENTAILED
+    assert all(len(premise) <= 120 for premise in classifier.premises)
+
+
+def test_windowed_verifier_fails_closed_when_the_claim_alone_is_too_long() -> None:
+    import pytest
+
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+    from aaos.rag.summaries import WindowedClaimVerifier
+
+    verifier = WindowedClaimVerifier(FakeNliClassifier(limit=20))
+    claim = RagClaim("c1", "Point: " + "x" * 40, ("ev-long",))
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(verifier.verify(claim, evidence=(_long_evidence("short premise text"),)))
+
+    assert error.value.code is RagErrorCode.ENTAILMENT_INPUT_OVERFLOW
+
+
+def test_windowed_verifier_rejects_references_outside_the_supplied_evidence() -> None:
+    import pytest
+
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+    from aaos.rag.summaries import WindowedClaimVerifier
+
+    verifier = WindowedClaimVerifier(FakeNliClassifier())
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(
+            verifier.verify(
+                RagClaim("c1", "Point: x", ("missing",)), evidence=(_long_evidence("text"),)
+            )
+        )
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE

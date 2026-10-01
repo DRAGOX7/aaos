@@ -18,8 +18,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from aaos.inference.nli import (
+    NliClassification,
+    NliDecision,
+    NliInferenceError,
+    NliInputOverflowError,
+    NliModelUnavailableError,
+)
+
 from .contracts import (
     EntailmentResult,
+    GlobalScope,
     GroundedAnswerRequest,
     HistoricalScope,
     RagAnswerStatus,
@@ -28,6 +37,7 @@ from .contracts import (
     RagGenerationIdentity,
     RagOperationalError,
     RagQuery,
+    RagScope,
     RenderedRagResponse,
     RetrievedEvidence,
 )
@@ -49,7 +59,7 @@ MAX_SECTION_CHUNKS = 6
 MAX_COURSE_DOCUMENTS = 8
 # Worst case for one section: a generation call (60 s) plus a schema repair
 # would exceed this, so a section only starts with this much time left.
-SECTION_TIME_RESERVE_SECONDS = 90.0
+SECTION_TIME_RESERVE_SECONDS = 150.0
 
 _SECTION_QUESTIONS = {
     "en": "Summarize the main points of these excerpts.",
@@ -63,7 +73,7 @@ _SUMMARY_QUESTIONS = {
 
 class SummaryRepositoryPort(Protocol):
     def pin_query_snapshot(
-        self, scope: HistoricalScope, *, normalized_query: str = ""
+        self, scope: RagScope, *, normalized_query: str = ""
     ) -> QuerySnapshot: ...
 
     def list_chunks(
@@ -89,6 +99,73 @@ class ClaimVerifierPort(Protocol):
     async def verify(
         self, claim: RagClaim, *, evidence: tuple[RetrievedEvidence, ...]
     ) -> EntailmentResult: ...
+
+
+class NliClassifierPort(Protocol):
+    def classify(self, premise: str, hypothesis: str) -> NliClassification: ...
+
+    def close(self) -> None: ...
+
+
+MAX_PREMISE_WINDOW_DEPTH = 4
+
+
+class WindowedClaimVerifier:
+    """Verify a summary point against its cited evidence with the pinned NLI model.
+
+    Summary points cite whole chunks, which can exceed the model's input
+    length together with the point. The classifier never truncates; when a
+    premise overflows, it is split into two overlapping word windows and each is
+    checked recursively (bounded depth). A point is entailed only if some window
+    of a cited chunk entails it; a point that overflows on its own fails closed.
+    """
+
+    def __init__(self, classifier: NliClassifierPort) -> None:
+        if not callable(getattr(classifier, "classify", None)) or not callable(
+            getattr(classifier, "close", None)
+        ):
+            raise ValueError("classifier must implement classify and close")
+        self._classifier = classifier
+
+    async def verify(
+        self, claim: RagClaim, *, evidence: tuple[RetrievedEvidence, ...]
+    ) -> EntailmentResult:
+        if not isinstance(claim, RagClaim) or not isinstance(evidence, tuple):
+            raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT)
+        by_id = {item.evidence_id: item for item in evidence}
+        if len(by_id) != len(evidence) or not claim.evidence_ids:
+            raise RagOperationalError(RagErrorCode.RETRIEVAL_INCONSISTENCY)
+        if any(evidence_id not in by_id for evidence_id in claim.evidence_ids):
+            raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+        for evidence_id in dict.fromkeys(claim.evidence_ids):
+            if self._entailed(by_id[evidence_id].exact_text, claim.text, depth=0):
+                return EntailmentResult.ENTAILED
+        return EntailmentResult.NOT_ENTAILED
+
+    def _entailed(self, premise: str, hypothesis: str, *, depth: int) -> bool:
+        try:
+            result = self._classifier.classify(premise, hypothesis)
+        except NliInputOverflowError:
+            words = premise.split()
+            if depth >= MAX_PREMISE_WINDOW_DEPTH or len(words) < 2:
+                raise RagOperationalError(RagErrorCode.ENTAILMENT_INPUT_OVERFLOW) from None
+            half = len(words) // 2
+            overlap = max(1, len(words) // 8)
+            left = " ".join(words[: half + overlap])
+            right = " ".join(words[max(0, half - overlap) :])
+            return self._entailed(left, hypothesis, depth=depth + 1) or self._entailed(
+                right, hypothesis, depth=depth + 1
+            )
+        except NliModelUnavailableError:
+            raise RagOperationalError(RagErrorCode.NLI_MODEL_UNAVAILABLE) from None
+        except NliInferenceError:
+            raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
+        if not isinstance(result, NliClassification):
+            raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
+        return result.decision is NliDecision.ENTAILED
+
+    def close(self) -> None:
+        self._classifier.close()
 
 
 class SummaryOutcome(StrEnum):
@@ -130,6 +207,10 @@ class DocumentSummarizer:
         self._validator = citation_validator
         self._model_identifier = model_identifier
         self._clock = clock
+
+    def published_document_versions(self) -> tuple[int, ...]:
+        """Return the document versions currently published in the active index."""
+        return tuple(self._repository.pin_query_snapshot(GlobalScope()).document_version_ids)
 
     async def summarize_document(
         self, document_version_id: int, language: str, *, deadline: float | None = None

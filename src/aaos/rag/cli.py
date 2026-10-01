@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, TextIO
+from typing import TYPE_CHECKING, Protocol, TextIO
 
 from .config import RagIndexConfig, resolve_rag_runtime_paths
 from .contracts import (
@@ -26,6 +26,10 @@ from .contracts import (
     RagScope,
     RenderedRagResponse,
 )
+
+if TYPE_CHECKING:
+    from .summaries import SummaryResult
+
 from .database import (
     create_existing_rag_database_engine,
     validate_rag_database,
@@ -33,7 +37,8 @@ from .database import (
 
 _USAGE = (
     "usage: aaos rag index-new [--document-version-id ID] | rag rebuild | rag status | "
-    "rag ask (--course-id ID | --global | --document-version-id ID)"
+    "rag ask (--course-id ID | --global | --document-version-id ID) | "
+    "rag summarize (--document-version-id ID | --all) [--language en|ar]"
 )
 _POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z")
 _INDEX_STATUSES = frozenset({"PASS", "NO_OP"})
@@ -67,6 +72,7 @@ class _ConfiguredRuntime:
     def __init__(self, runtime: _Runtime, gateway: object) -> None:
         self.service = runtime.service
         self.indexing = runtime.indexing
+        self.summarizer = getattr(runtime, "summarizer", None)
         self._runtime = runtime
         self._gateway = gateway
         self._event_loop = asyncio.new_event_loop()
@@ -76,6 +82,17 @@ class _ConfiguredRuntime:
         if self._closed:
             raise RuntimeError("runtime is closed")
         return self._event_loop.run_until_complete(self.service.ask(query))
+
+    def summarize(self, document_version_id: int, language: str) -> SummaryResult:
+        if self._closed:
+            raise RuntimeError("runtime is closed")
+        summarizer = getattr(self._runtime, "summarizer", None)
+        if summarizer is None:
+            raise RuntimeError("summaries are not configured")
+        result: SummaryResult = self._event_loop.run_until_complete(
+            summarizer.summarize_document(document_version_id, language)
+        )
+        return result
 
     def close(self) -> None:
         if self._closed:
@@ -149,6 +166,8 @@ def run_rag_command(
             rendered_lines = _render_index_result("RAG_REBUILD", result)
         elif parsed.command == "status":
             rendered_lines = _render_status(_indexing(runtime).status())
+        elif parsed.command == "summarize":
+            rendered_lines = _run_summaries(runtime, parsed)
         else:
             assert question is not None
             assert parsed.scope is not None
@@ -200,6 +219,8 @@ def _parse_arguments(argv: Sequence[str]) -> _ParsedArguments | None:
         return None
     if command in {"rebuild", "status"}:
         return _ParsedArguments(command, None, None) if len(arguments) == 1 else None
+    if command == "summarize":
+        return _parse_summarize(arguments[1:])
     if command != "ask":
         return None
     if len(arguments) == 2 and arguments[1] == "--global":
@@ -211,6 +232,22 @@ def _parse_arguments(argv: Sequence[str]) -> _ParsedArguments | None:
         if arguments[1] == "--course-id":
             return _ParsedArguments(command, None, CourseScope(identifier))
         return _ParsedArguments(command, None, HistoricalScope((identifier,)))
+    return None
+
+
+def _parse_summarize(arguments: tuple[str, ...]) -> _ParsedArguments | None:
+    language = "en"
+    if len(arguments) >= 2 and arguments[-2] == "--language":
+        if arguments[-1] not in {"en", "ar"}:
+            return None
+        language = arguments[-1]
+        arguments = arguments[:-2]
+    if arguments == ("--all",):
+        return _ParsedArguments("summarize", None, None, language, summarize_all=True)
+    if len(arguments) == 2 and arguments[0] == "--document-version-id":
+        document_version_id = _parse_positive_id(arguments[1])
+        if document_version_id is not None:
+            return _ParsedArguments("summarize", document_version_id, None, language)
     return None
 
 
@@ -368,6 +405,7 @@ def _build_configured_runtime() -> _ConfiguredRuntime:
             config=config,
             gateway=gateway,
             database_engine_factory=create_existing_rag_database_engine,
+            summary_model_identifier=DEFAULT_SETTINGS.lm_studio_model,
         )
     except Exception:
         try:
@@ -383,6 +421,38 @@ class _ParsedArguments:
     command: str
     document_version_id: int | None
     scope: CourseScope | GlobalScope | HistoricalScope | None
+    language: str = "en"
+    summarize_all: bool = False
+
+
+def _run_summaries(runtime: _Runtime, parsed: _ParsedArguments) -> tuple[str, ...]:
+    """Prepare and cache summaries explicitly, one document version at a time."""
+    summarizer = getattr(runtime, "summarizer", None)
+    if summarizer is None:
+        raise RuntimeError("summaries are not configured")
+    versions = (
+        tuple(summarizer.published_document_versions())
+        if parsed.summarize_all
+        else (parsed.document_version_id,)
+    )
+    lines: list[str] = []
+    for version in versions:
+        assert isinstance(version, int)
+        if isinstance(runtime, _ConfiguredRuntime):
+            result = runtime.summarize(version, parsed.language)
+        else:
+            result = asyncio.run(summarizer.summarize_document(version, parsed.language))
+        lines.extend(
+            (
+                "RAG_SUMMARY",
+                f"DOCUMENT_VERSION_ID={version}",
+                f"STATUS={result.outcome.value}",
+                f"DROPPED_POINTS={result.dropped_points}",
+            )
+        )
+        if result.response is not None:
+            lines.append(result.response.rendered_text)
+    return tuple(lines)
 
 
 __all__ = ["run_rag_command"]

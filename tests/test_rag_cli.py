@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import sys
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -415,3 +416,94 @@ def test_ask_closes_configured_gateway_on_same_event_loop() -> None:
     assert output.getvalue().startswith("RAG_ANSWER\n")
     assert underlying.closed == 1
     assert gateway.close_calls == 1
+
+
+@dataclass
+class FakeSummarizer:
+    calls: list[tuple[int, str]]
+    versions: tuple[int, ...] = (101, 102)
+    outcome: str = "READY"
+
+    def published_document_versions(self) -> tuple[int, ...]:
+        return self.versions
+
+    async def summarize_document(
+        self, document_version_id: int, language: str, *, deadline: float | None = None
+    ) -> Any:
+        from aaos.rag.summaries import SummaryOutcome, SummaryResult
+
+        self.calls.append((document_version_id, language))
+        outcome = SummaryOutcome(self.outcome)
+        return SummaryResult(
+            outcome,
+            answer_response() if outcome is SummaryOutcome.READY else None,
+            (document_version_id,),
+            dropped_points=1,
+        )
+
+
+@dataclass
+class SummarizingRuntime(FakeRuntime):
+    summarizer: FakeSummarizer | None = None
+
+
+def _summarizing_runtime(summarizer: FakeSummarizer | None) -> SummarizingRuntime:
+    return SummarizingRuntime(
+        service=FakeService([]), indexing=FakeIndexing([]), summarizer=summarizer
+    )
+
+
+def test_summarize_one_document_prints_status_and_the_cited_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summarizer = FakeSummarizer([])
+    code, out, err = run(
+        monkeypatch, _summarizing_runtime(summarizer), ["summarize", "--document-version-id", "101"]
+    )
+
+    assert code == 0, err
+    assert summarizer.calls == [(101, "en")]
+    assert "RAG_SUMMARY\nDOCUMENT_VERSION_ID=101\nSTATUS=READY\nDROPPED_POINTS=1\n" in out
+    assert answer_response().rendered_text in out
+
+
+def test_summarize_all_prepares_every_published_version_in_the_requested_language(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summarizer = FakeSummarizer([], outcome="NO_VERIFIED_POINTS")
+    code, out, _err = run(
+        monkeypatch, _summarizing_runtime(summarizer), ["summarize", "--all", "--language", "ar"]
+    )
+
+    assert code == 0
+    assert summarizer.calls == [(101, "ar"), (102, "ar")]
+    assert out.count("STATUS=NO_VERIFIED_POINTS") == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["summarize"],
+        ["summarize", "--all", "--language", "fr"],
+        ["summarize", "--document-version-id", "0"],
+        ["summarize", "--all", "--document-version-id", "1"],
+    ),
+)
+def test_summarize_rejects_malformed_arguments(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    code, _out, err = run(monkeypatch, _summarizing_runtime(FakeSummarizer([])), argv)
+
+    assert code == 2
+    assert "summarize" in err
+
+
+def test_summarize_without_a_configured_summarizer_fails_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code, _out, err = run(
+        monkeypatch, _summarizing_runtime(None), ["summarize", "--document-version-id", "101"]
+    )
+
+    assert code == 1
+    assert "RAG_OPERATION_FAILED" in err

@@ -96,6 +96,7 @@ def build_configured_phase4_runtime(
             config=config,
             gateway=gateway,
             database_engine_factory=create_existing_rag_database_engine,
+            summary_model_identifier=settings.lm_studio_model,
         )
     except Exception:
         try:

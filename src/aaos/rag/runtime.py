@@ -57,6 +57,7 @@ from .semantic_coverage import (
     RequirementDecomposer,
 )
 from .service import GuardedLocalRagService, _Generator, _SemanticClassifier
+from .summaries import DocumentSummarizer, WindowedClaimVerifier
 
 DatabaseEngineFactory = Callable[[Any], Engine]
 SessionFactoryFactory = Callable[[Engine], Callable[[], Any]]
@@ -204,6 +205,7 @@ class Phase4RagRuntime(AbstractContextManager["Phase4RagRuntime"]):
     _owned_closers: tuple[Callable[[], None], ...]
     _diagnostic_sink: TelemetrySink = emit_local_inference_telemetry
     _closed: bool = False
+    summarizer: DocumentSummarizer | None = None
 
     def close(self) -> None:
         """Close every owned resource once in reverse acquisition order."""
@@ -291,6 +293,7 @@ def build_phase4_runtime(
     indexing_factory: Callable[..., RagIndexingService] | None = None,
     model_lifecycle_factory: ModelLifecycleFactory | None = None,
     diagnostic_sink: TelemetrySink | None = None,
+    summary_model_identifier: str | None = None,
 ) -> Phase4RagRuntime:
     """Compose one runtime from explicit paths and injectable dependencies.
 
@@ -532,6 +535,21 @@ def build_phase4_runtime(
         _register_optional_closer(owned_closers, answer_generator, "close")
         citation_validator = selected_validator_factory()
         _register_optional_closer(owned_closers, citation_validator, "close")
+        summarizer: DocumentSummarizer | None = None
+        if summary_model_identifier is not None:
+            # Summary points are verified per claim against windows of their cited
+            # evidence; the pinned NLI model loads lazily, only when a summary runs.
+            summary_verifier = WindowedClaimVerifier(
+                PinnedCpuNliClassifier(snapshot_path=nli_snapshot_path)
+            )
+            _register_optional_closer(owned_closers, summary_verifier, "close")
+            summarizer = DocumentSummarizer(
+                repository,
+                answer_generator,
+                summary_verifier,
+                citation_validator,
+                model_identifier=summary_model_identifier,
+            )
         service_kwargs: dict[str, object] = {
             "retriever": retriever,
             "evidence_selector": evidence_selector,
@@ -572,6 +590,7 @@ def build_phase4_runtime(
             _dense_factory=selected_dense_factory,
             _owned_closers=tuple(owned_closers),
             _diagnostic_sink=selected_diagnostic_sink,
+            summarizer=summarizer,
         )
     except Exception as error:
         cleanup_error = _cleanup_partial(owned_closers, selected_diagnostic_sink)

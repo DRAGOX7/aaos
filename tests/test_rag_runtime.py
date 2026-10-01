@@ -215,6 +215,7 @@ def _build(
     dense_factory: Any | None = None,
     indexing_factory: Any | None = None,
     use_default_services: bool = False,
+    summary_model_identifier: str | None = None,
 ) -> Any:
     from aaos.rag.runtime import build_phase4_runtime
 
@@ -243,6 +244,8 @@ def _build(
                 ),
             }
         )
+    if summary_model_identifier is not None:
+        dependencies["summary_model_identifier"] = summary_model_identifier
     return build_phase4_runtime(**dependencies)
 
 
@@ -601,3 +604,19 @@ def test_load_failure_blocks_generation() -> None:
 
     assert caught.value.code is RagErrorCode.MODEL_UNAVAILABLE
     assert "gateway.generate" not in events
+
+
+def test_runtime_builds_a_summarizer_only_when_a_summary_model_is_configured(
+    tmp_path: Path,
+) -> None:
+    """Phase I3: summaries share the runtime's repository, generator, and validator."""
+    from aaos.rag.summaries import DocumentSummarizer
+
+    without = _build(tmp_path / "plain", [])
+    configured = _build(tmp_path / "summaries", [], summary_model_identifier="qwen/qwen3.5-4b")
+    try:
+        assert without.summarizer is None
+        assert isinstance(configured.summarizer, DocumentSummarizer)
+    finally:
+        without.close()
+        configured.close()
