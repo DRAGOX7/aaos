@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
@@ -48,6 +49,7 @@ from aaos.rag.contracts import (
     RagOperationalError,
     RagScope,
 )
+from aaos.rag.summaries import MAX_COURSE_DOCUMENTS, SummaryOutcome, SummaryResult
 from aaos.study_tasks.contracts import (
     StudyTask,
     StudyTaskError,
@@ -126,6 +128,8 @@ from .phase4_adapter import (
     MAX_RAG_QUERY_CHARACTERS,
     RagQueryAdapter,
     _rag_observation_projector,
+    _response_payload,
+    _safe_rag_failure,
     _validate_rag_tool_result,
 )
 from .policy import PermissionPolicy
@@ -160,6 +164,10 @@ MAX_ACADEMIC_RECORDS = 50
 MAX_ACADEMIC_TEXT_CHARACTERS = 2048
 MAX_MOODLE_CHANGE_AGENT_RECORDS = 5
 MAX_ACADEMIC_REQUEST_DEADLINE_SECONDS = 300.0
+# A routed summary runs inside the rag.answer tool's 120 s timeout. Sections
+# that cannot finish inside this budget are reported as not prepared and are
+# precomputed with `aaos rag summarize` instead.
+SUMMARY_TOOL_BUDGET_SECONDS = 100.0
 ACADEMIC_DECISION_SCHEMA: Final[Literal["read_only_academic_decision"]] = (
     "read_only_academic_decision"
 )
@@ -544,6 +552,18 @@ class AnnouncementReadPort(Protocol):
     ) -> tuple[AnnouncementSummary, ...]: ...
 
 
+class DocumentSummaryPort(Protocol):
+    """Verified Phase I3 summarizer; ``deadline`` is on the ``time.monotonic`` clock."""
+
+    async def summarize_course(
+        self,
+        document_version_ids: Sequence[int],
+        language: str,
+        *,
+        deadline: float | None = None,
+    ) -> SummaryResult: ...
+
+
 class StudyTaskPort(Protocol):
     """Typed local task actions; it has no Calendar or Moodle methods."""
 
@@ -668,8 +688,19 @@ class _AcademicToolRuntime:
         routed_change_request: bool = False,
         announcement_reader: AnnouncementReadPort | None = None,
         routed_announcement_request: bool = False,
+        summarizer: DocumentSummaryPort | None = None,
+        routed_summary: RoutedIntent | None = None,
     ) -> None:
         self._academic = academic
+        # Summaries are selected only by the trusted router and reuse the
+        # rag.answer capability, so their output keeps the Phase 4 trusted
+        # provenance and citation path.
+        self._summarizer = summarizer
+        self._routed_summary = (
+            routed_summary
+            if summarizer is not None and routed_summary in _SUMMARY_INTENTS
+            else None
+        )
         self._announcement_reader = announcement_reader
         self._documents = documents
         self._rag = rag
@@ -780,6 +811,8 @@ class _AcademicToolRuntime:
         return self._context_resolution.entity
 
     def build_registry(self) -> ToolRegistry:
+        if self._routed_summary is not None:
+            return ToolRegistry((self._rag_answer_definition(),))
         if self._announcement_requested:
             return ToolRegistry((self._announcement_definition(),))
         if self._moodle_change_requested:
@@ -2316,6 +2349,8 @@ class _AcademicToolRuntime:
     async def answer_rag(self, arguments: ValidatedToolArguments) -> ToolResult:
         values = arguments.to_mapping()
         course_name = values.get("course_name")
+        if self._routed_summary is not None:
+            return await self._answer_summary(course_name if isinstance(course_name, str) else None)
         try:
             context = self._context_entity(arguments)
         except _InvalidContextReference:
@@ -2412,6 +2447,121 @@ class _AcademicToolRuntime:
             )
         except RagOperationalError:
             return _tool_error(AgentErrorCode.RAG_QUERY_FAILED, "RAG query failed")
+
+    async def _answer_summary(self, course_name: str | None) -> ToolResult:
+        assert self._summarizer is not None
+        try:
+            versions = self._summary_versions(course_name)
+        except _LookupFailure as error:
+            return _lookup_tool_error(error.code)
+        except _InvalidReadOutput:
+            return _invalid_output()
+        except _ReadOperationFailed:
+            return _tool_error(AgentErrorCode.TOOL_FAILED, "document metadata read failed")
+        language = "ar" if _ARABIC_LETTER.search(self._request_text) else "en"
+        try:
+            result = await self._summarizer.summarize_course(
+                versions,
+                language,
+                deadline=time.monotonic() + SUMMARY_TOOL_BUDGET_SECONDS,
+            )
+        except RagOperationalError as error:
+            return _safe_rag_failure(error)
+        except Exception:
+            return _safe_rag_failure()
+        if not isinstance(result, SummaryResult):
+            return _invalid_output()
+        if result.outcome is SummaryOutcome.NOT_PREPARED:
+            return _tool_error(
+                AgentErrorCode.SUMMARY_NOT_PREPARED, "the summary is not prepared yet"
+            )
+        if result.outcome is not SummaryOutcome.READY or result.response is None:
+            return _tool_error(
+                AgentErrorCode.SUMMARY_UNVERIFIED, "no summary point could be verified"
+            )
+        try:
+            return ToolResult.success(_response_payload(result.response))
+        except (TypeError, ValueError, AttributeError):
+            return _safe_rag_failure()
+
+    def _summary_versions(self, course_name: str | None) -> tuple[int, ...]:
+        """Resolve the trusted document versions a routed summary covers.
+
+        A named course includes its Moodle section siblings. A document summary
+        needs exactly one indexed document in scope or one whose title best
+        matches the question; anything else is ambiguous rather than guessed.
+        """
+        course_ids: tuple[int | None, ...] = (
+            tuple(course.id for course in self._course_group(course_name))
+            if course_name is not None
+            else (None,)
+        )
+        indexed: dict[int, DocumentSummary] = {}
+        for course_id in course_ids:
+            documents = cast(
+                tuple[DocumentSummary, ...],
+                self._read(
+                    self._documents.list_documents, course_id, limit=MAX_ACADEMIC_RECORDS + 1
+                ),
+            )
+            if not isinstance(documents, tuple) or any(
+                not isinstance(document, DocumentSummary)
+                or (course_id is not None and document.course_id != course_id)
+                for document in documents
+            ):
+                raise _InvalidReadOutput()
+            if len(documents) > MAX_ACADEMIC_RECORDS:
+                raise _LookupFailure(AgentErrorCode.RESULT_TOO_LARGE)
+            for document in documents:
+                if (
+                    document.index_readiness is DocumentIndexReadinessView.READY
+                    and document.document_version_id is not None
+                ):
+                    indexed.setdefault(document.document_version_id, document)
+        if not indexed:
+            raise _LookupFailure(AgentErrorCode.NO_INDEXED_DOCUMENTS)
+        if self._routed_summary is RoutedIntent.DOCUMENT_SUMMARY:
+            if len(indexed) == 1:
+                return tuple(indexed)
+            chosen = _document_named_in(self._request_text, tuple(indexed.values()))
+            if chosen is None or chosen.document_version_id is None:
+                raise _LookupFailure(AgentErrorCode.AMBIGUOUS_DOCUMENT)
+            return (chosen.document_version_id,)
+        if course_name is None and len({doc.course_id for doc in indexed.values()}) > 1:
+            raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        if len(indexed) > MAX_COURSE_DOCUMENTS:
+            raise _LookupFailure(AgentErrorCode.RESULT_TOO_LARGE)
+        return tuple(indexed)
+
+
+_ARABIC_LETTER = re.compile(r"[؀-ۿ]")
+_TITLE_TOKEN = re.compile(r"\w+")
+_TITLE_STOP_TOKENS = frozenset(
+    {"the", "and", "for", "of", "course", "pdf", "doc", "docx", "ppt", "pptx"}
+)
+
+
+def _title_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in _TITLE_TOKEN.findall(normalize_arabic(text))
+        if (len(token) >= 3 or token.isdigit()) and token not in _TITLE_STOP_TOKENS
+    )
+
+
+def _document_named_in(
+    question: str, documents: tuple[DocumentSummary, ...]
+) -> DocumentSummary | None:
+    """Return the one document whose title shares the most words with the question."""
+    asked = _title_tokens(question)
+    scored = sorted(
+        ((len(asked & _title_tokens(document.title)), document) for document in documents),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not scored or scored[0][0] == 0 or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+        return None
+    return scored[0][1]
 
 
 class _AcademicRagAnswer:
@@ -2717,6 +2867,7 @@ class ReadOnlyAcademicAssistant:
         moodle_change_reader: MoodleChangeReadPort | None = None,
         intent_routing: bool = False,
         announcement_reader: AnnouncementReadPort | None = None,
+        summarizer: DocumentSummaryPort | None = None,
     ) -> None:
         if not callable(getattr(academic_reader, "list_courses", None)) or not callable(
             getattr(academic_reader, "list_assignments", None)
@@ -2772,6 +2923,9 @@ class ReadOnlyAcademicAssistant:
         self._moodle_change_reader = moodle_change_reader
         self._intent_routing = intent_routing
         self._announcement_reader = announcement_reader
+        if summarizer is not None and not callable(getattr(summarizer, "summarize_course", None)):
+            raise TypeError("summarizer must implement DocumentSummaryPort")
+        self._summarizer = summarizer
         self._study_planner = StudyPlanner(
             gateway,
             academic_reader,
@@ -3246,6 +3400,10 @@ class ReadOnlyAcademicAssistant:
                     routed_tool is not None
                     and routed_tool[0] is ToolName.ACADEMIC_LIST_ANNOUNCEMENTS
                 ),
+                summarizer=self._summarizer,
+                routed_summary=(
+                    route_intent(question.strip()) if routed_tool is not None else None
+                ),
             )
             registry = runtime.build_registry()
             adapter: AcademicDecisionAdapter
@@ -3337,8 +3495,11 @@ class ReadOnlyAcademicAssistant:
         a failed read, or several different courses in the question all fall
         back to the model loop rather than guessing.
         """
-        tool = _ROUTED_TOOLS.get(route_intent(question))
+        intent = route_intent(question)
+        tool = _ROUTED_TOOLS.get(intent)
         if tool is None:
+            return None
+        if intent in _SUMMARY_INTENTS and self._summarizer is None:
             return None
         if tool is ToolName.MOODLE_LIST_CHANGES and self._moodle_change_reader is None:
             return None
@@ -3455,8 +3616,11 @@ def build_read_only_academic_registry(
 
 
 _ROUTER_DECISION_SOURCE = "aaos-intent-router"
+_SUMMARY_INTENTS = frozenset({RoutedIntent.DOCUMENT_SUMMARY, RoutedIntent.COURSE_SUMMARY})
 _ROUTED_TOOLS: Mapping[RoutedIntent, ToolName] = {
     RoutedIntent.DOCUMENT_QUESTION: ToolName.RAG_ANSWER,
+    RoutedIntent.DOCUMENT_SUMMARY: ToolName.RAG_ANSWER,
+    RoutedIntent.COURSE_SUMMARY: ToolName.RAG_ANSWER,
     RoutedIntent.COURSE_FACTS: ToolName.ACADEMIC_LIST_COURSES,
     RoutedIntent.ASSIGNMENT_FACTS: ToolName.ACADEMIC_LIST_ASSIGNMENTS,
     RoutedIntent.MOODLE_CHANGES: ToolName.MOODLE_LIST_CHANGES,
@@ -5443,6 +5607,12 @@ def _ask_failure(
         AgentErrorCode.NO_MATCHING_DOCUMENT: "The requested document was not found.",
         AgentErrorCode.NO_INDEXED_DOCUMENTS: (
             "This course has no indexed documents yet, so there is nothing to search."
+        ),
+        AgentErrorCode.SUMMARY_NOT_PREPARED: (
+            "This summary is not prepared yet. Prepare it with: aaos rag summarize --all"
+        ),
+        AgentErrorCode.SUMMARY_UNVERIFIED: (
+            "No summary point could be verified against the document, so none is shown."
         ),
         AgentErrorCode.TOOL_TIMEOUT: "The academic read timed out.",
         AgentErrorCode.MODEL_TIMEOUT: "The local model timed out.",

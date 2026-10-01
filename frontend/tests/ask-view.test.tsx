@@ -541,6 +541,20 @@ describe("unified Ask view", () => {
     expect(screen.queryByText(/secret scope details/)).not.toBeInTheDocument();
   });
 
+  it("explains how to prepare a summary that is not ready", async () => {
+    askMock.mockResolvedValueOnce(response({
+      status: "FAILED",
+      failure_code: "SUMMARY_NOT_PREPARED",
+      failure_message: "secret summary details",
+    }));
+    render(<AskView />);
+
+    fillAndSend("Summarize the SE440 syllabus");
+    expect(await screen.findByText("This summary is not prepared yet.")).toBeVisible();
+    expect(screen.getByText(/aaos rag summarize --all/)).toBeVisible();
+    expect(screen.queryByText(/secret summary details/)).not.toBeInTheDocument();
+  });
+
   it("prevents duplicate in-flight submission and exposes truthful loading state", async () => {
     let resolveAsk: ((value: AcademicAskResponse) => void) | undefined;
     askMock.mockReturnValueOnce(new Promise<AcademicAskResponse>((resolve) => {

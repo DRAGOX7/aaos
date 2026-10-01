@@ -239,6 +239,8 @@ _SAFE_ERROR_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.HANDLER_EXECUTION_FAILED: "tool execution failed",
     AgentErrorCode.RAG_QUERY_FAILED: "RAG query failed",
     AgentErrorCode.NO_INDEXED_DOCUMENTS: "the selected scope has no indexed documents",
+    AgentErrorCode.SUMMARY_NOT_PREPARED: "the summary is not prepared yet",
+    AgentErrorCode.SUMMARY_UNVERIFIED: "no summary point could be verified",
     AgentErrorCode.MODEL_TIMEOUT: "local model timed out",
     AgentErrorCode.MODEL_UNAVAILABLE: "local model is unavailable",
 }

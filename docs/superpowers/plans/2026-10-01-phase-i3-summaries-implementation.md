@@ -29,9 +29,13 @@ Table `rag_document_summaries`: document version, RAG generation, content revisi
 
 An Ask request computes a missing summary only while it stays inside the existing 300-second request deadline (checked before each section); otherwise it returns an honest "summary is not prepared yet" with the CLI command. `aaos rag summarize --document-version-id N [--language en|ar]` and `aaos rag summarize --all [--language en|ar]` precompute and cache.
 
+**As built:** long chunks overflow the pinned NLI model's 512-token window, so points are verified by `WindowedClaimVerifier`, which splits an overflowing premise into overlapping halves (bounded depth) and still fails closed when a claim alone overflows. Measured on the real SE440 syllabus (2 sections), a cold summary took about 4m47s, so a section only starts with 150 s left. A routed Ask summary runs inside the `rag.answer` tool's existing 120 s timeout with a 100 s summary budget; in practice Ask serves cached summaries and reports `SUMMARY_NOT_PREPARED` otherwise, so summaries are precomputed with the CLI.
+
 ## Routing
 
 `DOCUMENT_SUMMARY` and `COURSE_SUMMARY` route to a new read-only `rag.summarize` capability on its own router-selected registry surface (default surface unchanged). Document choice is deterministic: the single indexed document of the resolved course, or the best title match within scope; ties or no match return a typed refusal listing nothing guessed. Output is returned as trusted RAG output, like `rag.answer`.
+
+**As built (smaller than planned):** instead of a new `rag.summarize` tool, the router selects the existing RAG-only `rag.answer` surface in a summary mode set only by the trusted router. This reuses the trusted Phase 4 output, citation, and provenance path unchanged, and adds no new tool name, runtime-policy entry, or sanitizer allowlist. Failures are typed: `SUMMARY_NOT_PREPARED`, `SUMMARY_UNVERIFIED`, `AMBIGUOUS_DOCUMENT`, `NO_INDEXED_DOCUMENTS`, `RESULT_TOO_LARGE` (more than 8 course documents), with fixed UI guidance. Without a configured summarizer, summary questions keep using the model loop.
 
 ## Steps (RED → GREEN each)
 
@@ -39,5 +43,5 @@ An Ask request computes a missing summary only while it stays inside the existin
 2. `DocumentSummarizer` (sections, map via existing components, NLI per point, deterministic reduce, budget, cache read/write with re-validation).
 3. Course summaries over cached/computed document summaries.
 4. CLI `aaos rag summarize`.
-5. Agent tool `rag.summarize`, document resolution, routing, runtime-policy declaration, wiring in the API composition.
+5. Summary mode on `rag.answer` (router-selected), document resolution, routing, wiring in the API composition.
 6. Full suite, frozen A–H selectors, live verification on the real documents (SE440 syllabus within the Ask budget; the 17,500-token ML notes via CLI precompute).

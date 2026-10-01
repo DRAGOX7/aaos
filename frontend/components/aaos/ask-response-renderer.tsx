@@ -55,6 +55,14 @@ const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }
     title: "This course has no indexed documents yet.",
     detail: "There is nothing to search for this course. Sync and ingest its materials first, or ask about another course.",
   },
+  SUMMARY_NOT_PREPARED: {
+    title: "This summary is not prepared yet.",
+    detail: "Long documents are summarized ahead of time. Prepare summaries with \"aaos rag summarize --all\", then ask again.",
+  },
+  SUMMARY_UNVERIFIED: {
+    title: "No summary point could be verified.",
+    detail: "AAOS shows only points it can verify against the document. Ask a specific question about the document instead.",
+  },
   TOOL_TIMEOUT: {
     title: "An academic data request timed out.",
     detail: "Try again. If this request could change a task or Calendar, reuse it from this page so its request ID stays the same.",

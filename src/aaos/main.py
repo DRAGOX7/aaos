@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
         AcademicReadPort,
         AnnouncementReadPort,
         CalendarTaskProposalPort,
+        DocumentSummaryPort,
         MoodleChangeReadPort,
         ReadOnlyAcademicAssistant,
         StudyTaskPort,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from aaos.moodle.changes import MoodleChangeSet
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
+    from aaos.rag.summaries import SummaryResult
     from aaos.study_tasks.service import StudyTaskService
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
@@ -229,6 +232,22 @@ class _LazyDefaultRagReader:
         assert self._runtime is not None
         return await self._runtime.service.ask(query)
 
+    async def summarize_course(
+        self,
+        document_version_ids: Sequence[int],
+        language: str,
+        *,
+        deadline: float | None = None,
+    ) -> SummaryResult:
+        self._ensure_delegate()
+        assert self._runtime is not None
+        summarizer = self._runtime.runtime.summarizer
+        if summarizer is None:
+            from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
+            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
+        return await summarizer.summarize_course(document_version_ids, language, deadline=deadline)
+
     async def dispose(self) -> None:
         if self._runtime is not None:
             await self._runtime.aclose()
@@ -246,6 +265,24 @@ class _DefaultAgentRagReadService:
         return await self._reader.ask_trusted(query)
 
 
+class _DefaultAgentSummaryService:
+    """Expose the configured runtime's verified summarizer without building it eagerly."""
+
+    def __init__(self, reader: _LazyDefaultRagReader) -> None:
+        self._reader = reader
+
+    async def summarize_course(
+        self,
+        document_version_ids: Sequence[int],
+        language: str,
+        *,
+        deadline: float | None = None,
+    ) -> SummaryResult:
+        return await self._reader.summarize_course(
+            document_version_ids, language, deadline=deadline
+        )
+
+
 class _LazyDefaultAcademicAskService:
     """Own one lazy local gateway and the bounded academic assistant."""
 
@@ -261,9 +298,11 @@ class _LazyDefaultAcademicAskService:
         moodle_change_reader: MoodleChangeReadPort | None,
         *,
         announcement_reader: AnnouncementReadPort | None = None,
+        summarizer: DocumentSummaryPort | None = None,
     ) -> None:
         self._settings = settings
         self._announcement_reader = announcement_reader
+        self._summarizer = summarizer
         self._academic_reader = academic_reader
         self._document_reader = document_reader
         self._rag_service = rag_service
@@ -293,6 +332,7 @@ class _LazyDefaultAcademicAskService:
                 moodle_change_reader=self._moodle_change_reader,
                 intent_routing=True,
                 announcement_reader=self._announcement_reader,
+                summarizer=self._summarizer,
             )
         assert self._assistant is not None
         return self._assistant
@@ -694,6 +734,7 @@ def create_app(
                 if callable(getattr(academic_reader, "list_announcements", None))
                 else None
             ),
+            summarizer=_DefaultAgentSummaryService(agent_rag_reader),
         )
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 

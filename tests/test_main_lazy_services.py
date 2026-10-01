@@ -111,3 +111,58 @@ def test_default_api_assistant_receives_the_announcement_reader() -> None:
 
     assert service._ensure_assistant()._announcement_reader is reader
     assert callable(getattr(_LazyDefaultCourseReader(), "list_announcements", None))
+
+
+def test_default_api_assistant_receives_a_lazy_summarizer() -> None:
+    """Phase I3: the API composition wires verified summaries into routed Ask."""
+    import asyncio
+
+    from test_agent_academic_orchestration import (
+        FakeAcademicReader,
+        FakeDocumentReader,
+        FakeRagService,
+    )
+
+    from aaos.config import AppSettings
+    from aaos.main import (
+        _DefaultAgentSummaryService,
+        _LazyDefaultAcademicAskService,
+        _LazyDefaultRagReader,
+    )
+
+    class _Summarizer:
+        def __init__(self) -> None:
+            self.calls: list[Any] = []
+
+        async def summarize_course(self, versions: Any, language: str, *, deadline: Any) -> str:
+            self.calls.append((tuple(versions), language, deadline))
+            return "summary"
+
+    class _Runtime:
+        summarizer = _Summarizer()
+
+    class _Configured:
+        runtime = _Runtime()
+
+    reader = _LazyDefaultRagReader()
+    summaries = _DefaultAgentSummaryService(reader)
+    assert reader._runtime is None  # building the service stays lazy
+
+    reader._runtime = _Configured()  # type: ignore[assignment]
+    reader._delegate = object()  # type: ignore[assignment]
+    result = asyncio.run(summaries.summarize_course((2,), "en", deadline=5.0))
+
+    assert result == "summary"
+    assert _Runtime.summarizer.calls == [((2,), "en", 5.0)]
+    service = _LazyDefaultAcademicAskService(
+        AppSettings(),
+        FakeAcademicReader(),
+        FakeDocumentReader(),
+        FakeRagService(),
+        _LazyDefaultStudyTaskService(),
+        None,
+        None,
+        None,
+        summarizer=summaries,
+    )
+    assert service._ensure_assistant()._summarizer is summaries
