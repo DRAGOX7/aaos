@@ -91,3 +91,33 @@ Fix only the S4 premise mismatch, smallest first, with a RED regression test bui
 - The trace is re-run for 3 runs before and after.
 
 **Expected effect:** fewer S4 refusals and partial downgrades. It does not address S2 or S3.
+
+## After the claim-verification fix (commit `bc4d5583`)
+
+The owner approved Option A combined with Option B's fallback, after a check on the real NLI model showed Option A alone fixed 1 of 3 recorded failing claims and the combination fixed 2:
+
+- the claim premise now starts with the cited documents' titles;
+- a *neutral* span verdict is re-checked against each full chunk the claim cites, in bounded windows;
+- a contradiction still rejects.
+
+Same manifest, same 3-run protocol (`rag-refusal-trace-2026-10-01-after-claim-fix.json`, document text removed):
+
+| | Before | After |
+|---|---|---|
+| English: expected page cited (runs) | 11, 10, 12 (mean 11.0/16) | 12, 13, 13 (mean 12.7/16) |
+| Arabic: expected page cited (runs) | 10, 9, 10 (mean 9.7/16) | 12, 12, 12 (mean 12.0/16) |
+| Answerable refusals at S4 claim NLI | 14 | 2 |
+| Answerable refusals at S2 / S3 (unchanged scope) | 9 / 8 | 9 / 7 |
+| Generated claims rejected | 47 / 202 | 20 / 198 |
+| Unanswerable refused / cited answers | 8/8 / 0 | 8/8 / 0 |
+| Answers without the expected page | 1 | 1 (same borderline case: `knime-missing` cites the adjacent "Missing Value Node" heading page) |
+| `INVALID_EVIDENCE_REFERENCE` errors | 2 | 3 (generator-side, not touched by this fix) |
+| Median / max seconds per query | 27.4 / 50.1 | 26.0 / 67.5 |
+
+**Remaining causes:**
+
+- S2 coverage refusals (`se440-makeup` both languages, `project-weights` Arabic, which is the retrieval loss at rank 7).
+- S3 generator refusals (`ai495-instructor`, `ml-precision` Arabic).
+- Generator citations of evidence ids it wasn't given.
+
+Each needs its own investigation.
