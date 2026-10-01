@@ -68,7 +68,8 @@ PROBE = (
     ("upload my report", "UNROUTED"),
     ("what is a project charter?", "UNROUTED"),
     ("thanks!", "UNROUTED"),
-    ("who teaches SE440?", "UNROUTED"),
+    # Was UNROUTED at I1; the instructor is a syllabus fact, so it now routes to documents.
+    ("who teaches SE440?", "DOCUMENT_QUESTION"),
     ("change my SE440 task priority to high", "UNROUTED"),
     ("غير اولوية مهمتي", "UNROUTED"),
 )
@@ -132,3 +133,50 @@ def test_two_different_courses_in_one_question_are_ambiguous() -> None:
     mention = find_course_mention("Compare the SE440 and HSS100 notes", MOODLE_COURSES)
 
     assert mention.ambiguous is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "Who is the instructor of AI 495C Big Data Analytics?",
+        "Who teaches SE440?",
+        "Who is the lecturer for SE440?",
+        "What are the office hours for SE440?",
+        "How is the final grade calculated in SE440?",
+        "What is the grade breakdown for AI495C?",
+        "How much is the final exam worth in SE440?",
+        "What percentage of the grade is the midterm in SE440?",
+        "What is the prerequisite for SE440?",
+        "Are makeup exams allowed in SE440?",
+        "What is the attendance policy for SE440?",
+        "What are the course learning outcomes of SE440?",
+        "من هو مدرس مادة AI 495C؟",
+        "مين الدكتور اللي بدرس SE440؟",
+        "ما هي الساعات المكتبية لمادة SE440؟",
+        "كيف يتم توزيع العلامات في مادة SE440؟",
+        "ما هو المتطلب السابق لمادة SE440؟",
+        "هل يسمح بالامتحان التعويضي في مادة SE440؟",
+    ),
+)
+def test_course_details_found_only_in_syllabi_route_to_documents(question: str) -> None:
+    """Regression: a plain instructor question went to the model loop, which refused."""
+    assert route_intent(question) is RoutedIntent.DOCUMENT_QUESTION
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    (
+        ("What did the instructor announce in AI495C?", RoutedIntent.ANNOUNCEMENTS),
+        ("Did my teacher post any notices this week?", RoutedIntent.ANNOUNCEMENTS),
+        ("What is my grade in SE440?", RoutedIntent.UNROUTED),
+        ("ما هي علامتي في مادة SE440؟", RoutedIntent.UNROUTED),
+        (
+            "Summarize what the instructor covers in the SE440 syllabus",
+            RoutedIntent.DOCUMENT_SUMMARY,
+        ),
+    ),
+)
+def test_course_detail_words_keep_existing_precedence(
+    question: str, expected: RoutedIntent
+) -> None:
+    assert route_intent(question) is expected

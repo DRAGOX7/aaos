@@ -109,6 +109,34 @@ _DOCUMENT = _any(
         r"مواد (?:ال)?مساق|مواد (?:ال)?ماده",
     )
 )
+# Course details that only the syllabus states. They count as a document
+# reference; a bare "grade" stays out because "my grade" is a personal record.
+_COURSE_DETAILS = _any(
+    (
+        r"\b(?:instructors?|lecturers?|professors?|teachers?|tutors?)\b",
+        r"\bwho (?:teaches|is teaching)\b",
+        r"\boffice hours?\b",
+        r"\bgrad(?:e|ing)\b.{0,40}\b(?:calculat\w*|computed|breakdown|distribution|weights?|scheme)\b",
+        r"\bgrading\b",
+        r"\b(?:worth|weight\w*|percentage)\b.{0,40}\b(?:exams?|midterms?|finals?|quiz\w*|projects?|grade)\b",
+        r"\b(?:exams?|midterms?|finals?|quiz\w*|projects?)\b.{0,40}\b(?:worth|weight\w*|percentage)\b",
+        r"\bpre-?requisites?\b",
+        r"\bmake-?up (?:exams?|tests?|quiz\w*)\b",
+        r"\battendance\b|\babsences?\b",
+        r"\b(?:exam|course|grading|late) polic(?:y|ies)\b",
+        r"\blearning outcomes?\b",
+        r"مدرس|دكتور|استاذ",
+        r"(?:من|مين) (?:\S+ )?(?:ي|ب)درس",
+        r"ساعات (?:ال)?مكتب",
+        r"توزيع (?:ال)?(?:علامات|درجات)",
+        r"(?:حساب|احتساب) (?:ال)?(?:علامه|درجه|علامات|درجات)",
+        r"(?:وزن|نسبه) (?:ال)?(?:امتحان|اختبار|مشروع|علامه)",
+        r"متطلب(?:ات)? (?:ال)?سابق",
+        r"(?:امتحان|اختبار)\S* (?:ال)?(?:تعويضي|تكميلي)",
+        r"(?:^|\s)(?:ال)?(?:حضور|غياب)",
+        r"(?:نتاجات|مخرجات) (?:ال)?تعلم",
+    )
+)
 _ANNOUNCEMENTS = _any(
     (
         r"\b(?:announcements?|announce|announced|notices?|news)\b",
@@ -192,7 +220,7 @@ def route_intent(question: str) -> RoutedIntent:
         return RoutedIntent.UNROUTED
 
     summary = _SUMMARY.search(text) is not None
-    document = _DOCUMENT.search(text) is not None
+    document = _DOCUMENT.search(text) is not None or _COURSE_DETAILS.search(text) is not None
     announcements = _ANNOUNCEMENTS.search(text) is not None
     changes = _CHANGES.search(text) is not None
     course_facts = _COURSE_FACTS.search(text) is not None
