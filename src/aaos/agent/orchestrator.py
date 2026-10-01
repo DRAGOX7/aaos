@@ -116,6 +116,7 @@ _SAFE_FAILURE_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.AMBIGUOUS_ASSIGNMENT: "the requested assignment is ambiguous",
     AgentErrorCode.NO_MATCHING_DOCUMENT: "the requested document was not found",
     AgentErrorCode.AMBIGUOUS_DOCUMENT: "the requested document title is ambiguous",
+    AgentErrorCode.NO_INDEXED_DOCUMENTS: "the selected scope has no indexed documents",
     AgentErrorCode.RESULT_TOO_LARGE: "the read result exceeds its bounded limit",
     AgentErrorCode.INVALID_TOOL_OUTPUT: "a read tool returned invalid data",
     AgentErrorCode.REQUEST_DEADLINE_EXCEEDED: "the request deadline was reached",

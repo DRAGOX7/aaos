@@ -253,6 +253,7 @@ def _safe_rag_failure(error: RagOperationalError | None = None) -> ToolResult:
     mapping = {
         RagErrorCode.MODEL_UNAVAILABLE: AgentErrorCode.MODEL_UNAVAILABLE,
         RagErrorCode.MODEL_TIMEOUT: AgentErrorCode.MODEL_TIMEOUT,
+        RagErrorCode.NO_ELIGIBLE_DOCUMENTS: AgentErrorCode.NO_INDEXED_DOCUMENTS,
     }
     code = (
         mapping.get(error.code, AgentErrorCode.RAG_QUERY_FAILED)
@@ -262,9 +263,15 @@ def _safe_rag_failure(error: RagOperationalError | None = None) -> ToolResult:
     message = {
         AgentErrorCode.MODEL_UNAVAILABLE: "RAG model is unavailable",
         AgentErrorCode.MODEL_TIMEOUT: "RAG model timed out",
+        AgentErrorCode.NO_INDEXED_DOCUMENTS: "the selected scope has no indexed documents",
     }.get(code, "RAG query failed")
     return ToolResult.failure(
-        ToolError(code, message, retryable=code is not AgentErrorCode.RAG_QUERY_FAILED)
+        ToolError(
+            code,
+            message,
+            retryable=code
+            not in {AgentErrorCode.RAG_QUERY_FAILED, AgentErrorCode.NO_INDEXED_DOCUMENTS},
+        )
     )
 
 

@@ -238,6 +238,7 @@ _SAFE_ERROR_MESSAGES: dict[AgentErrorCode, str] = {
     AgentErrorCode.TOOL_FAILED: "tool execution failed",
     AgentErrorCode.HANDLER_EXECUTION_FAILED: "tool execution failed",
     AgentErrorCode.RAG_QUERY_FAILED: "RAG query failed",
+    AgentErrorCode.NO_INDEXED_DOCUMENTS: "the selected scope has no indexed documents",
     AgentErrorCode.MODEL_TIMEOUT: "local model timed out",
     AgentErrorCode.MODEL_UNAVAILABLE: "local model is unavailable",
 }

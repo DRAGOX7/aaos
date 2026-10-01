@@ -527,6 +527,20 @@ describe("unified Ask view", () => {
     expect(screen.queryByText(/secret document backend details/)).not.toBeInTheDocument();
   });
 
+  it("tells the user honestly when a course has no indexed documents", async () => {
+    askMock.mockResolvedValueOnce(response({
+      status: "FAILED",
+      failure_code: "NO_INDEXED_DOCUMENTS",
+      failure_message: "secret scope details",
+    }));
+    render(<AskView />);
+
+    fillAndSend("Summarize the HSS100 notes");
+    expect(await screen.findByText("This course has no indexed documents yet.")).toBeVisible();
+    expect(screen.queryByText("AAOS could not search academic documents.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/secret scope details/)).not.toBeInTheDocument();
+  });
+
   it("prevents duplicate in-flight submission and exposes truthful loading state", async () => {
     let resolveAsk: ((value: AcademicAskResponse) => void) | undefined;
     askMock.mockReturnValueOnce(new Promise<AcademicAskResponse>((resolve) => {

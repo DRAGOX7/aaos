@@ -51,6 +51,10 @@ const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }
     title: "AAOS could not search academic documents.",
     detail: "The document search failed. Try again, or ask a question that does not need document evidence.",
   },
+  NO_INDEXED_DOCUMENTS: {
+    title: "This course has no indexed documents yet.",
+    detail: "There is nothing to search for this course. Sync and ingest its materials first, or ask about another course.",
+  },
   TOOL_TIMEOUT: {
     title: "An academic data request timed out.",
     detail: "Try again. If this request could change a task or Calendar, reuse it from this page so its request ID stays the same.",

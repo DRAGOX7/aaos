@@ -139,3 +139,57 @@ def test_question_naming_two_courses_is_not_routed_to_a_guessed_scope() -> None:
     assert len(gateway.requests) == 1
     assert rag.queries == []
 
+
+class _NoEligibleDocumentsRag(FakeRagService):
+    async def ask(self, query: Any) -> Any:
+        from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
+        self.queries.append(query)
+        raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
+
+
+def test_course_without_indexed_documents_is_reported_honestly() -> None:
+    """Regression: no indexed documents was reported as a failed document search."""
+    gateway = FakeGateway()
+    assistant, _academic, _rag = _assistant(gateway, rag=_NoEligibleDocumentsRag())
+
+    result = asyncio.run(assistant.ask("What do the Databases notes say about indexes?"))
+
+    assert result.failure_code is not None
+    assert result.failure_code.value == "NO_INDEXED_DOCUMENTS"
+    assert "no indexed documents" in (result.failure_message or "").lower()
+    assert gateway.requests == []
+
+
+def test_section_siblings_without_any_indexed_documents_are_reported_honestly() -> None:
+    """Regression: a course pair with no documents was reported as ambiguous."""
+    from aaos.web.contracts import CourseSummary
+
+    academic = FakeAcademicReader()
+    academic.courses = [
+        CourseSummary(
+            id=3,
+            title="HSS100O.T-DISABILITY AND THE SOCIETY (1)",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+        CourseSummary(
+            id=4,
+            title="HSS100O.T-DISABILITY AND THE SOCIETY (All Sections )",
+            code=None,
+            description=None,
+            updated_at=NOW,
+        ),
+    ]
+    documents = FakeDocumentReader()
+    documents.documents = []
+    gateway = FakeGateway()
+    assistant, _academic, rag = _assistant(gateway, academic=academic, documents=documents)
+
+    result = asyncio.run(assistant.ask("What do the HSS100 notes say about disability?"))
+
+    assert result.failure_code is not None
+    assert result.failure_code.value == "NO_INDEXED_DOCUMENTS"
+    assert rag.queries == []
+    assert gateway.requests == []

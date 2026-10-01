@@ -1461,8 +1461,12 @@ class _AcademicToolRuntime:
         )
         if len(indexed_siblings) == 1:
             return indexed_siblings[0].id
-        if indexed_siblings or primary is None:
+        if indexed_siblings:
             raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
+        if primary is None:
+            # A code naming only section siblings, none of which has indexed
+            # documents: there is nothing to search in any of them.
+            raise _LookupFailure(AgentErrorCode.NO_INDEXED_DOCUMENTS)
         return primary.id
 
     def _has_indexed_documents(self, course_id: int) -> bool:
@@ -4216,6 +4220,7 @@ def _lookup_tool_error(code: AgentErrorCode) -> ToolResult:
         AgentErrorCode.ASSIGNMENT_NOT_FOUND: "assignment was not found",
         AgentErrorCode.AMBIGUOUS_ASSIGNMENT: "assignment title is ambiguous",
         AgentErrorCode.NO_MATCHING_DOCUMENT: "document was not found",
+        AgentErrorCode.NO_INDEXED_DOCUMENTS: "the selected scope has no indexed documents",
         AgentErrorCode.STUDY_TASK_NOT_FOUND: "local StudyTask was not found",
         AgentErrorCode.AMBIGUOUS_STUDY_TASK: "local StudyTask title is ambiguous",
         AgentErrorCode.STUDY_TASK_IDEMPOTENCY_CONFLICT: "local StudyTask request ID conflicts",
@@ -5145,6 +5150,9 @@ def _ask_failure(
         AgentErrorCode.ASSIGNMENT_NOT_FOUND: "The requested assignment was not found.",
         AgentErrorCode.AMBIGUOUS_ASSIGNMENT: "The requested assignment title is ambiguous.",
         AgentErrorCode.NO_MATCHING_DOCUMENT: "The requested document was not found.",
+        AgentErrorCode.NO_INDEXED_DOCUMENTS: (
+            "This course has no indexed documents yet, so there is nothing to search."
+        ),
         AgentErrorCode.TOOL_TIMEOUT: "The academic read timed out.",
         AgentErrorCode.MODEL_TIMEOUT: "The local model timed out.",
         AgentErrorCode.TASK_CANCELLED: "The academic request was cancelled.",
