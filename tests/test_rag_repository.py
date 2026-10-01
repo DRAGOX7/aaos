@@ -1216,3 +1216,36 @@ def test_materialize_snapshot_chunks_returns_structural_provenance(
         for span in item.source_spans:
             assert not hasattr(span, "page_number")
             assert not hasattr(span, "document_page_id")
+
+
+def _share_content(sessions: SessionFactory, source_version_id: int, *version_ids: int) -> None:
+    with sessions() as session, session.begin():
+        blob_id = session.scalar(
+            select(DocumentVersionORM.content_blob_id).where(
+                DocumentVersionORM.id == source_version_id
+            )
+        )
+        session.execute(
+            update(DocumentVersionORM)
+            .where(DocumentVersionORM.id.in_(version_ids))
+            .values(content_blob_id=blob_id)
+        )
+
+
+def test_identical_files_in_one_course_are_indexed_once(tmp_path: Path) -> None:
+    """Regression: the same syllabus posted twice was indexed twice, splitting citations."""
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        _share_content(sessions, ids["one_v2"], ids["two_v1"], ids["other_course_v1"])
+
+        rebuild = repository.resolve_rebuild_candidates()
+        generation = _create_generation(repository)
+        active = repository.activate_generation(generation.identity, expected_revision=0)
+        index_new = repository.resolve_index_new_candidates(active.identity)
+
+        for candidates in (rebuild, index_new):
+            chosen = {item.document_version_id for item in candidates}
+            assert ids["one_v2"] in chosen
+            assert ids["two_v1"] not in chosen
+            # The same file in another course stays searchable in that course.
+            assert ids["other_course_v1"] in chosen

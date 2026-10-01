@@ -381,6 +381,23 @@ def _safe_database_error(code: RagErrorCode, error: SQLAlchemyError) -> RagOpera
     return RagOperationalError(code)
 
 
+def _without_duplicate_content(
+    records: tuple[DocumentVersionRecord, ...],
+) -> tuple[DocumentVersionRecord, ...]:
+    """Index one copy of identical stored content per course.
+
+    The same file can reach a course twice (for example a Moodle file and a
+    Drive link to it). Indexing both splits retrieval and citations between
+    identical chunks, so only the lowest version id is indexed. Copies in
+    other courses stay, so course-scoped questions still find them.
+    """
+    kept: dict[tuple[int, int], DocumentVersionRecord] = {}
+    for record in sorted(records, key=lambda item: item.document_version_id):
+        kept.setdefault((record.course_id, record.content_blob_id), record)
+    survivors = {id(record) for record in kept.values()}
+    return tuple(record for record in records if id(record) in survivors)
+
+
 def _as_generation_status(value: str) -> GenerationStatus:
     try:
         return GenerationStatus(value)
@@ -554,8 +571,8 @@ class RagRepository:
                 if generation.status != GenerationStatus.ACTIVE.value:
                     raise RagOperationalError(RagErrorCode.NO_ACTIVE_GENERATION)
                 try:
-                    current = self._resolve_versions_in_session(
-                        session, GlobalScope(), current=True
+                    current = _without_duplicate_content(
+                        self._resolve_versions_in_session(session, GlobalScope(), current=True)
                     )
                 except RagOperationalError as error:
                     if error.code is not RagErrorCode.NO_ELIGIBLE_DOCUMENTS:
@@ -939,7 +956,9 @@ class RagRepository:
         try:
             with session.begin():
                 try:
-                    return self._resolve_versions_in_session(session, GlobalScope(), current=True)
+                    return _without_duplicate_content(
+                        self._resolve_versions_in_session(session, GlobalScope(), current=True)
+                    )
                 except RagOperationalError as error:
                     if error.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS:
                         return ()
