@@ -73,7 +73,7 @@ Owner approved and applied. Same manifest and 3-run protocol (`rag-refusal-trace
 
 **Notes:**
 
-- **Arabic `ml-precision`:** the four "answers without the expected page" all cite the ML-notes page-23 chunk, which computes precision in code as TP / (TP + FP), returning 0 when the denominator is zero. Every surviving claim was verified against that chunk (entailment 0.85–0.99). They are grounded answers on a page the frozen manifest did not list (it lists pages 25–26). The manifest is not edited after the fact, so the frozen metric undercounts Arabic: with page 23 counted, it would read 13.0/16.
+- **`ml-precision`:** the four "answers without the expected page" (three Arabic runs, one English run) all cite the ML-notes page-23 chunk, which computes precision in code as TP / (TP + FP), returning 0 when the denominator is zero. Every surviving claim was verified against that chunk (entailment 0.85–0.99). They are grounded answers on a page the frozen manifest did not list (it lists pages 25–26). The manifest is not edited after the fact, so the frozen metric undercounts these answers: with page 23 counted, Arabic would read 13.0/16 and English 13.7/16.
 - **S4 refusals rose from 2 to 7.** Cases the generator used to refuse now reach claim verification, and some of their claims are rejected there. All 7 are intermittent: each case also answers in other runs.
 - **One `INVALID_EVIDENCE_REFERENCE`** remains (`knime-kmeans`, Arabic, 1 run). The empty-evidence hypothesis explains the earlier errors' cases, but not this one.
 - **Median latency rose by about 4 s**, because questions that used to refuse quickly now generate an answer.
