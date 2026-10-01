@@ -1266,3 +1266,49 @@ def test_fallback_reads_a_long_cited_chunk_in_bounded_windows() -> None:
 
     assert result is EntailmentResult.ENTAILED
     assert all(len(premise) + len(claim.text) <= 400 for premise, _ in classifier.calls)
+
+
+def test_claim_recheck_is_bounded_to_two_inferences_on_a_long_chunk() -> None:
+    """Ask latency: a claim that never verifies no longer windows a whole chunk."""
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    words = [f"word{index}" for index in range(600)]
+    words[300] = "SUPPORT"  # only in the middle: neither the start nor the span window
+    chunk = " ".join(words) + " the five Vs."
+    evidence, spans, claim = _span_claim_case(chunk, "the five Vs.", title="x.pdf")
+    classifier = RuleNliClassifier(lambda premise: "SUPPORT" in premise)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+    assert len(classifier.calls) == 3  # the span check plus at most two re-check windows
+    assert all(len(premise) <= 1300 for premise, _ in classifier.calls)
+
+
+def test_claim_recheck_reads_the_chunk_start_for_document_identity() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    filler = " ".join(f"word{index}" for index in range(400))
+    chunk = f"AI 495C syllabus. {filler} the five Vs."
+    evidence, spans, claim = _span_claim_case(chunk, "the five Vs.", title="x.pdf")
+    classifier = RuleNliClassifier(lambda premise: "AI 495C" in premise)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(evidence,), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert len(classifier.calls) == 2
+    assert classifier.calls[1][0].startswith("x.pdf\n\nAI 495C syllabus.")

@@ -370,12 +370,53 @@ class IndependentEntailmentVerifier:
 
 
 MAX_CLAIM_PREMISE_WINDOW_DEPTH = 4
+# Bounded re-check of a neutral claim against its cited chunks.
+MAX_CLAIM_RECHECK_INFERENCES = 2
+MAX_CLAIM_RECHECK_WINDOW_CHARACTERS = 1200
+MAX_CLAIM_RECHECK_SHRINKS = 3
 
 
 class _ClaimVerdict(StrEnum):
     ENTAILED = "ENTAILED"
     NEUTRAL = "NEUTRAL"
     CONTRADICTED = "CONTRADICTED"
+
+
+def _claim_verdict(result: object) -> _ClaimVerdict:
+    if not isinstance(result, NliClassification) or result.decision not in (
+        NliDecision.ENTAILED,
+        NliDecision.NOT_ENTAILED,
+    ):
+        raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
+    if result.decision is NliDecision.ENTAILED:
+        return _ClaimVerdict.ENTAILED
+    if result.native_label == "contradiction":
+        return _ClaimVerdict.CONTRADICTED
+    return _ClaimVerdict.NEUTRAL
+
+
+def _recheck_focuses(text: str, quotes: tuple[str, ...]) -> tuple[int | None, ...]:
+    """The chunk start first, then the centre of each quote found in the chunk."""
+    centres = [text.find(quote) + len(quote) // 2 for quote in quotes if quote in text]
+    return (None, *dict.fromkeys(centres))
+
+
+def _recheck_window_text(text: str, focus: int | None, size: int) -> str:
+    """Up to ``size`` characters at the start or centred on ``focus``, on word edges."""
+    if size <= 0:
+        return ""
+    if focus is None:
+        start = 0
+    else:
+        start = max(0, min(focus - size // 2, len(text) - size))
+    end = min(len(text), start + size)
+    if start > 0:
+        boundary = text.find(" ", start, end)
+        start = boundary + 1 if boundary != -1 else start
+    if end < len(text):
+        boundary = text.rfind(" ", start, end)
+        end = boundary if boundary > start else end
+    return text[start:end].strip()
 
 
 class IndependentClaimEntailmentVerifier:
@@ -460,16 +501,64 @@ class IndependentClaimEntailmentVerifier:
             return EntailmentResult.ENTAILED
         if verdict is _ClaimVerdict.CONTRADICTED or not validated_requirement_spans:
             return EntailmentResult.NOT_ENTAILED
-        # A neutral span verdict may only mean the support lies outside the
-        # span. Re-check against each full chunk the claim cites, never other
-        # evidence; a contradiction there is still a rejection.
+        # A neutral span verdict may only mean the support lies just outside
+        # the span. Re-check a bounded number of windows of the chunks the
+        # claim cites (never other evidence): each chunk's start, which carries
+        # document identity, then the text around each selected quote. CPU NLI
+        # costs seconds per window, so the re-check stops at the first verdict
+        # or after MAX_CLAIM_RECHECK_INFERENCES windows; a contradiction rejects.
+        remaining = MAX_CLAIM_RECHECK_INFERENCES
+        seen: set[str] = set()
         for item in bound_evidence:
-            fallback = self._classify_windowed(
-                f"{item.document_title}\n\n{item.exact_text}", claim.text, depth=0
+            quotes = tuple(
+                span.quote
+                for requirement_spans in validated_requirement_spans
+                for span in requirement_spans.spans
+                if span.evidence_id == item.evidence_id
             )
-            if fallback is _ClaimVerdict.ENTAILED:
-                return EntailmentResult.ENTAILED
+            for focus in _recheck_focuses(item.exact_text, quotes):
+                if remaining == 0:
+                    return EntailmentResult.NOT_ENTAILED
+                recheck = self._recheck_window(item, focus, claim.text, seen)
+                if recheck is None:
+                    continue
+                remaining -= 1
+                if recheck is _ClaimVerdict.ENTAILED:
+                    return EntailmentResult.ENTAILED
+                if recheck is _ClaimVerdict.CONTRADICTED:
+                    return EntailmentResult.NOT_ENTAILED
         return EntailmentResult.NOT_ENTAILED
+
+    def _recheck_window(
+        self,
+        item: RetrievedEvidence,
+        focus: int | None,
+        hypothesis: str,
+        seen: set[str],
+    ) -> _ClaimVerdict | None:
+        """Classify one window around ``focus`` (None means the chunk start).
+
+        An overflowing window shrinks around the same focus; detecting
+        overflow costs no inference. Returns None when the window repeats an
+        earlier one or never fits, without spending the inference budget.
+        """
+        size = MAX_CLAIM_RECHECK_WINDOW_CHARACTERS
+        for _ in range(MAX_CLAIM_RECHECK_SHRINKS + 1):
+            window = _recheck_window_text(item.exact_text, focus, size)
+            if not window or window in seen:
+                return None
+            try:
+                result = self._classifier.classify(f"{item.document_title}\n\n{window}", hypothesis)
+            except NliInputOverflowError:
+                size //= 2
+                continue
+            except NliModelUnavailableError:
+                raise RagOperationalError(RagErrorCode.NLI_MODEL_UNAVAILABLE) from None
+            except NliInferenceError:
+                raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
+            seen.add(window)
+            return _claim_verdict(result)
+        return None
 
     def _classify_windowed(self, premise: str, hypothesis: str, *, depth: int) -> _ClaimVerdict:
         """Classify, splitting an overflowing premise into overlapping halves.
@@ -503,17 +592,7 @@ class IndependentClaimEntailmentVerifier:
             raise RagOperationalError(RagErrorCode.NLI_MODEL_UNAVAILABLE) from None
         except NliInferenceError:
             raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED) from None
-
-        if not isinstance(result, NliClassification) or result.decision not in (
-            NliDecision.ENTAILED,
-            NliDecision.NOT_ENTAILED,
-        ):
-            raise RagOperationalError(RagErrorCode.NLI_INFERENCE_FAILED)
-        if result.decision is NliDecision.ENTAILED:
-            return _ClaimVerdict.ENTAILED
-        if result.native_label == "contradiction":
-            return _ClaimVerdict.CONTRADICTED
-        return _ClaimVerdict.NEUTRAL
+        return _claim_verdict(result)
 
     def warm_up(self) -> None:
         """Load the NLI model before the first claim is checked."""
