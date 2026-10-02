@@ -113,12 +113,15 @@ def _install(service: Any, record: dict[str, Any]) -> None:
 
     async def verify_claim(claim: Any, **kwargs: Any) -> Any:
         pending.clear()
+        accepted_by_table_rule = getattr(claim_verifier, "table_rule_acceptances", 0)
         result = await claim_verifier.verify(claim, **kwargs)
         record.setdefault("claims", []).append(
             {
                 "excerpt": " ".join(claim.text.split())[:EXCERPT_CHARACTERS],
                 "result": result.value,
                 "nli": pending[0] if pending else None,
+                "table_rule": getattr(claim_verifier, "table_rule_acceptances", 0)
+                > accepted_by_table_rule,
             }
         )
         return result
