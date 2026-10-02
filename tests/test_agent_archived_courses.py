@@ -158,3 +158,5 @@ def test_my_courses_lists_current_courses_and_past_wording_lists_past_ones() -> 
     assert "SE440-PROJECT MANAGEMENT" in (past.answer_text or "")
     assert "past course" in (past.answer_text or "")
     assert "Deep Learning" not in (past.answer_text or "")
+    assert "Past courses:" in (past.answer_text or "")
+    assert "Active courses" not in (past.answer_text or "")

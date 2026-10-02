@@ -490,6 +490,7 @@ class ObservationSanitizer:
             "removed_count",
             "modified_count",
             "total_change_count",
+            "archived_item_count",
             "offset",
             "limit",
             "has_more",

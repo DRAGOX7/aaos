@@ -10,6 +10,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from aaos.moodle.changes import (
+    ChangeKind,
     ComparisonStatus,
     ComparisonUnavailableReason,
     DocumentVersionObservation,
@@ -363,6 +364,23 @@ def _page_changes(
 ) -> MoodleChangeSet:
     if scoped_course_id is not None:
         changes = tuple(change for change in changes if change.course_source_id == scoped_course_id)
+    # A complete sync that stops listing a course archives it; its items are
+    # archived with it. Report the course once and count the items.
+    archived_courses = {
+        change.course_source_id
+        for change in changes
+        if change.entity_type is EntityType.COURSE and change.change_kind is ChangeKind.REMOVED
+    }
+    archived_items = tuple(
+        change
+        for change in changes
+        if change.entity_type is not EntityType.COURSE
+        and change.change_kind is ChangeKind.REMOVED
+        and change.course_source_id in archived_courses
+    )
+    if archived_items:
+        archived_ids = {change.change_id for change in archived_items}
+        changes = tuple(change for change in changes if change.change_id not in archived_ids)
     try:
         records = MoodleChangeReadService._with_entity_references(session, source_system, changes)
     except ValueError:
@@ -385,6 +403,7 @@ def _page_changes(
         offset=offset,
         limit=limit,
         has_more=offset + limit < len(changes),
+        archived_item_count=len(archived_items),
     )
 
 

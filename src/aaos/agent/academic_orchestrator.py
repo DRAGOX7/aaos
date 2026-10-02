@@ -3930,8 +3930,11 @@ def _required_text(arguments: ValidatedToolArguments, key: str) -> str:
     return value.strip()
 
 
+_PAST_COURSE_SUFFIX = " (past course)"
+
+
 def _display_title(course: CourseSummary) -> str:
-    return f"{course.title} (past course)" if course.status == "past" else course.title
+    return course.title + _PAST_COURSE_SUFFIX if course.status == "past" else course.title
 
 
 def _prefer_term(matches: tuple[CourseSummary, ...], *, past: bool) -> tuple[CourseSummary, ...]:
@@ -4204,6 +4207,7 @@ def _moodle_change_result(
             "removed_count": changes.removed_count,
             "modified_count": changes.modified_count,
             "total_change_count": changes.total_change_count,
+            "archived_item_count": changes.archived_item_count,
             "records": tuple(_moodle_change_record(item) for item in changes.records),
             "offset": changes.offset,
             "limit": changes.limit,
@@ -4419,6 +4423,7 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         "removed_count",
         "modified_count",
         "total_change_count",
+        "archived_item_count",
         "records",
         "offset",
         "limit",
@@ -4455,6 +4460,7 @@ def _moodle_change_envelope_is_valid(output: Mapping[str, object]) -> bool:
             "limit",
         )
     )
+    archived_item_count = output.get("archived_item_count")
     if (
         not isinstance(reference, str)
         or not _READ_REFERENCE.fullmatch(reference)
@@ -4481,6 +4487,9 @@ def _moodle_change_envelope_is_valid(output: Mapping[str, object]) -> bool:
         or not 1 <= counts[6] <= MAX_MOODLE_CHANGE_AGENT_RECORDS
         or len(records) > counts[6]
         or not isinstance(output.get("has_more"), bool)
+        or isinstance(archived_item_count, bool)
+        or not isinstance(archived_item_count, int)
+        or archived_item_count < 0
         or (
             output.get("from_snapshot_id") is not None
             and not _positive_id(output.get("from_snapshot_id"))
@@ -5028,6 +5037,11 @@ def _render_moodle_change_evidence(output: Mapping[str, object]) -> str:
     if not rows:
         return heading
     lines = [_render_moodle_change_record(row) for row in rows]
+    archived_items = projected.get("archived_item_count")
+    if isinstance(archived_items, int) and not isinstance(archived_items, bool) and archived_items:
+        noun = "item" if archived_items == 1 else "items"
+        verb = "is" if archived_items == 1 else "are"
+        lines.append(f"{archived_items} {noun} archived with these courses {verb} not listed.")
     return heading + "\n" + "\n".join(lines)
 
 
@@ -5038,6 +5052,9 @@ def _render_moodle_change_record(raw_row: object) -> str:
     change_kind = str(raw_row["change_kind"]).casefold()
     title = str(raw_row["title"])
     course_title = str(raw_row["course_title"])
+    if entity_type == "course" and change_kind == ChangeKind.REMOVED.value.casefold():
+        # A complete sync stops listing a course when it ends: it is archived.
+        return f"- course archived: {title}"
     line = f"- {change_kind} {entity_type}: {title} ({course_title})"
     fields = raw_row.get("changed_fields")
     if (
@@ -5092,8 +5109,11 @@ def _render_academic_evidence(
             if not rows:
                 sections.append("No active courses were found.")
             else:
+                past_listing = all(
+                    str(row.get("title", "")).endswith(_PAST_COURSE_SUFFIX) for row in rows
+                )
                 sections.append(
-                    "Active courses:\n"
+                    ("Past courses:\n" if past_listing else "Active courses:\n")
                     + "\n".join(
                         f"- {row['title']}"
                         + (f" ({row['code']})" if row.get("code") else "")

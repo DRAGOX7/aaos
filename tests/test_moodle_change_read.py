@@ -569,3 +569,37 @@ def test_document_version_change_is_detected_between_queries_on_same_sync(
         assert change.detected_at == second_version_at
     finally:
         engine.dispose()
+
+
+def test_an_archived_course_is_one_change_and_its_items_are_counted(tmp_path: Path) -> None:
+    engine, factory = service_for(tmp_path / "archive-changes.db")
+    now = datetime.now(UTC)
+    summer = CompleteSourceSnapshot(
+        source_system=SOURCE,
+        courses=(
+            RawCourse("course-1", "Deep Learning", "CS401"),
+            RawCourse("course-2", "Project Management", "SE440"),
+        ),
+        assignments=(
+            RawAssignment(
+                "assignment-1", "course-1", "Assignment 1", due_at="2026-10-01T09:00:00Z"
+            ),
+            RawAssignment("assignment-2", "course-2", "Charter", due_at="2026-08-01T09:00:00Z"),
+        ),
+        remote_files=(RawRemoteFile("resource-cm:7", "course-2", "Syllabus.pdf"),),
+    )
+    try:
+        sync_at(factory, summer, now - timedelta(days=2))
+        sync_at(factory, build_snapshot(), now - timedelta(days=1))
+
+        changes = MoodleChangeReadService(factory).list_changes(query_time=now)
+
+        assert [
+            (item.entity_type.value, item.change_kind, item.after_title or item.before_title)
+            for item in changes.records
+        ] == [("COURSE", ChangeKind.REMOVED, "Project Management")]
+        assert changes.archived_item_count == 2
+        assert changes.total_change_count == 1
+        assert changes.removed_count == 1
+    finally:
+        engine.dispose()

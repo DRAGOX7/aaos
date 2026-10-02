@@ -190,6 +190,9 @@ class MoodleChangeSet:
     offset: int
     limit: int
     has_more: bool
+    # Items that were archived together with a course in this comparison. They
+    # are counted, not listed; the course itself is the listed change.
+    archived_item_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.comparison_status, ComparisonStatus):
@@ -215,6 +218,7 @@ class MoodleChangeSet:
                 self.modified_count,
                 self.total_change_count,
                 self.offset,
+                self.archived_item_count,
             )
         ):
             raise ValueError("change counts and offset must be non-negative integers")
