@@ -773,6 +773,8 @@ class _AcademicToolRuntime:
         # and a document answer drawn only from past courses is labelled.
         self._past_requested = asks_about_past(request_text)
         self.past_answer_archived_dates: tuple[datetime | None, ...] | None = None
+        # Set when a document search ran unscoped (current courses only).
+        self.unscoped_document_search = False
 
     def _schema(
         self,
@@ -2432,6 +2434,7 @@ class _AcademicToolRuntime:
             else:
                 # Unscoped questions search current courses only.
                 scope = GlobalScope()
+                self.unscoped_document_search = True
         except _LookupFailure as error:
             return _lookup_tool_error(error.code)
         except _InvalidReadOutput:
@@ -3538,6 +3541,21 @@ class ReadOnlyAcademicAssistant:
                 )
             if runtime.past_answer_archived_dates is not None:
                 result = _with_past_course_notice(result, runtime.past_answer_archived_dates)
+            if (
+                runtime.unscoped_document_search
+                and result.status is AcademicAskStatus.FAILED
+                and result.failure_code is AgentErrorCode.NO_INDEXED_DOCUMENTS
+            ):
+                # The model searched without naming a course and current courses
+                # have no files: say so and name the past courses that do,
+                # instead of "This course has no indexed documents".
+                past_with_documents = self._past_courses_when_no_current_documents()
+                if past_with_documents:
+                    result = AcademicAskResult(
+                        AcademicAskStatus.ANSWERED,
+                        answer_text=_no_current_documents_message(question, past_with_documents),
+                        step_count=result.step_count,
+                    )
             if result.status in {AcademicAskStatus.CANCELLED, AcademicAskStatus.TIMED_OUT}:
                 response = replace(
                     result,

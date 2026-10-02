@@ -223,6 +223,17 @@ def asks_about_past(question: str) -> bool:
     return _PAST_COURSES.search(normalize_arabic(question)) is not None
 
 
+# A question asking what something is or means. It has no other home, so
+# it searches course files; personal records ("what is my grade") stay out.
+_CONCEPT = _any(
+    (
+        r"^(?:so |and |ok,? )?(?:what(?:'s| is| are| does)|tell me (?:what|about)|explain|define|describe)\b",
+        r"^(?:ما (?:هو|هي|هم)|شو (?:هو|هي|يعني)|ماذا يعني|ما معنى|اشرح|عرف)",
+    )
+)
+_PERSONAL = _any((r"\b(?:my|mine|me)\b(?! what)", r"(?:علامتي|درجتي|معدلي)"))
+
+
 def route_intent(question: str) -> RoutedIntent:
     """Classify a question into one closed intent, or UNROUTED.
 
@@ -259,6 +270,8 @@ def route_intent(question: str) -> RoutedIntent:
         return RoutedIntent.ASSIGNMENT_FACTS
     if course_facts:
         return RoutedIntent.COURSE_FACTS
+    if _CONCEPT.search(text) and not _PERSONAL.search(_PAST_COURSES.sub("", text)):
+        return RoutedIntent.DOCUMENT_QUESTION
     return RoutedIntent.UNROUTED
 
 
