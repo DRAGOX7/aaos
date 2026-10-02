@@ -1,6 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#1f6feb"/>
-  <rect x="18" y="22" width="7" height="20" fill="#fff"/>
-  <rect x="29" y="30" width="7" height="12" fill="#fff"/>
-  <rect x="40" y="18" width="7" height="24" fill="#fff"/>
+  <defs>
+    <linearGradient id="g" x1="6" y1="42" x2="42" y2="6" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B8DFF"/>
+      <stop offset="1" stop-color="#2DD4BF"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#10214B"/>
+  <g transform="translate(8 9)" stroke="url(#g)" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" fill="#10214B">
+    <polyline points="8.5,39 24,8.5 39.5,39"/>
+    <polyline points="8.5,39 24,26 39.5,39"/>
+    <circle cx="24" cy="8.5" r="4.6"/>
+    <circle cx="24" cy="26" r="4.6"/>
+    <circle cx="8.5" cy="39" r="4.6"/>
+    <circle cx="39.5" cy="39" r="4.6"/>
+  </g>
 </svg>
