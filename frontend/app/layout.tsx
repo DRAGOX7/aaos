@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 
 import { AppShell } from "@/components/aaos/app-shell";
 import { QueryProvider } from "@/components/providers/query-provider";
@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 
 import "./globals.css";
 
-const inter = Inter({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-jakarta",
 });
 
 export const metadata: Metadata = {
@@ -30,7 +30,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={cn("font-sans", inter.variable)}
+      className={cn("font-sans", jakarta.variable)}
     >
       <body>
         <QueryProvider>

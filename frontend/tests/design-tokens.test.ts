@@ -34,9 +34,9 @@ describe("AAOS design tokens", () => {
     expect(css).not.toContain(".dark {");
   });
 
-  it("uses the locally managed Inter font variable", () => {
+  it("uses the locally managed Plus Jakarta Sans font variable", () => {
     expect(css).toContain(
-      "--font-sans: var(--font-inter);",
+      "--font-sans: var(--font-jakarta);",
     );
   });
 

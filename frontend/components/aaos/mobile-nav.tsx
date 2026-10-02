@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, Menu } from "lucide-react";
+import { GraduationCap, Menu } from "lucide-react";
 
 import {
   AAOS_NAVIGATION,
@@ -41,9 +41,9 @@ export function MobileNav() {
         <div className="flex items-center gap-3 px-6 pb-6 pt-7">
           <div
             aria-hidden="true"
-            className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"
+            className="flex size-10 items-center justify-center rounded-xl bg-hero text-white"
           >
-            <LayoutDashboard className="size-5" strokeWidth={2} />
+            <GraduationCap className="size-5" strokeWidth={2} />
           </div>
 
           <div>

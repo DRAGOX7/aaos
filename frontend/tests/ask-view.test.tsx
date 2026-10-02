@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AskView } from "@/components/aaos/ask-view";
 import { AppShell } from "@/components/aaos/app-shell";
@@ -96,11 +97,30 @@ describe("unified Ask view", () => {
 
   it("keeps one workspace chrome header above the Ask page", () => {
     pathnameMock.mockReturnValue("/ask");
-    render(<AppShell><AskView /></AppShell>);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AppShell><AskView /></AppShell>
+      </QueryClientProvider>,
+    );
 
     expect(screen.getAllByRole("searchbox", { name: "Global workspace search" })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Overview", level: 1 })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Ask AAOS", level: 1 })).toBeVisible();
+  });
+
+  it("sends a question handed off from the Overview once, then forgets it", async () => {
+    window.sessionStorage.setItem("aaos.ask.handoff", "What's due this week?");
+    askMock.mockResolvedValueOnce(response({ answer_text: "Nothing is due." }));
+
+    render(<AskView />);
+
+    expect(await screen.findByText("Nothing is due.")).toBeVisible();
+    expect(askMock).toHaveBeenCalledTimes(1);
+    expect(askMock).toHaveBeenCalledWith(
+      expect.objectContaining({ question: "What's due this week?" }),
+      expect.any(AbortSignal),
+    );
+    expect(window.sessionStorage.getItem("aaos.ask.handoff")).toBeNull();
   });
 
   it("does not send an empty question", () => {

@@ -5,6 +5,7 @@ import {
   isPastCourse,
   type CourseSummary,
 } from "@/lib/api/courses";
+import { courseDisplayName } from "@/lib/courses/display";
 
 type CourseCardProps = Readonly<{
   course: CourseSummary;
@@ -12,6 +13,7 @@ type CourseCardProps = Readonly<{
 
 export function CourseCard({ course }: CourseCardProps) {
   const archived = isPastCourse(course) ? formatArchivedDate(course.archived_at) : null;
+  const { code, name } = courseDisplayName(course);
 
   return (
     <li className="py-4 first:pt-0 last:pb-0">
@@ -21,8 +23,8 @@ export function CourseCard({ course }: CourseCardProps) {
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {course.title}
+            <p className="truncate text-[15px] font-semibold text-foreground">
+              {name}
             </p>
 
             {course.description ? (
@@ -38,9 +40,9 @@ export function CourseCard({ course }: CourseCardProps) {
             ) : null}
           </div>
 
-          {course.code ? (
-            <span className="shrink-0 text-xs font-medium text-muted-foreground">
-              {course.code}
+          {code ? (
+            <span className="shrink-0 rounded-lg bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary-strong">
+              {code}
             </span>
           ) : null}
         </div>
