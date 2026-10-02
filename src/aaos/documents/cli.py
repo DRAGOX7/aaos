@@ -57,7 +57,7 @@ _USAGE = (
     "usage: aaos documents <ingest-new|refresh> [--remote-file-id <positive-int>]\n"
     "       aaos documents reextract --document-version-id <positive-int>"
 )
-_REQUIRED_REVISION = "0003_phase3_document_ingestion"
+_REQUIRED_REVISION = "0014_archived_courses"
 _POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*\Z", re.ASCII)
 
 __all__ = [

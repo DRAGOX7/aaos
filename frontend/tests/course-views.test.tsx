@@ -30,6 +30,7 @@ const courses: CourseSummary[] = [
     code: "CS-42",
     description: "Kernel and systems programming.",
     updated_at: null,
+    status: "current",
   },
   {
     id: 7,
@@ -37,8 +38,19 @@ const courses: CourseSummary[] = [
     code: null,
     description: null,
     updated_at: null,
+    status: "current",
   },
 ];
+
+const pastCourse: CourseSummary = {
+  id: 5,
+  title: "Project Management",
+  code: null,
+  description: null,
+  updated_at: null,
+  status: "past",
+  archived_at: "2026-10-02T08:16:00Z",
+};
 
 function setQueryState({
   data,
@@ -114,6 +126,19 @@ describe("AAOS course read views", () => {
       expect(screen.queryByText("progress")).not.toBeInTheDocument();
     });
 
+    it("lists past courses in their own group with the archive date", () => {
+      setQueryState({ data: { courses: [...courses, pastCourse] } });
+
+      render(<CourseListView />);
+
+      const active = screen.getByRole("list", { name: "Active courses" });
+      const past = screen.getByRole("list", { name: "Past courses" });
+      expect(within(active).queryByText("Project Management")).not.toBeInTheDocument();
+      expect(within(past).getByText("Project Management")).toBeInTheDocument();
+      expect(within(past).getByText("Archived 2 Oct 2026")).toBeInTheDocument();
+      expect(within(past).getByRole("link")).toHaveAttribute("href", "/courses/5");
+    });
+
     it("renders a bounded generic error state", () => {
       setQueryState({
         error: new Error("private traceback, SQL, and local path"),
@@ -157,6 +182,14 @@ describe("AAOS course read views", () => {
         "/documents?course_id=42",
       );
       expect(screen.queryByText(/grade|progress|deadline|schedule|metric|enrollment/i)).not.toBeInTheDocument();
+    });
+
+    it("marks a past course with its archive date", () => {
+      setQueryState({ data: pastCourse });
+
+      render(<CourseDetailView courseId={5} />);
+
+      expect(screen.getByText("Past course · archived 2 Oct 2026")).toBeInTheDocument();
     });
 
     it("renders a bounded not-found state for COURSE_NOT_FOUND", () => {

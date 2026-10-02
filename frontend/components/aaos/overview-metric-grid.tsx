@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isPastCourse } from "@/lib/api/courses";
 import { courseListQueryOptions } from "@/lib/query/courses";
 import { assignmentsQueryOptions } from "@/lib/query/academic";
 import {
@@ -126,7 +127,8 @@ export function OverviewMetricGrid() {
   const taskState = metricState(tasks);
   const approvalState = metricState(approvals);
 
-  const courseCount = courses.data?.courses.length ?? 0;
+  const courseCount =
+    courses.data?.courses.filter((course) => !isPastCourse(course)).length ?? 0;
   const assignmentCount = assignments.data?.assignments.length ?? 0;
   const activeTaskCount = tasks.data?.tasks.filter(
     (task) => !terminalTaskStates.has(task.status),

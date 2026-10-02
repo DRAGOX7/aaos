@@ -81,6 +81,9 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
                     + ", row " + ((citation.row_index ?? 0) + 1)
                     + ", column " + ((citation.column_index ?? 0) + 1)
                   : ""}
+                {"from_past_course" in provenance && provenance.from_past_course
+                  ? " · past course"
+                  : ""}
               </span>
             </span>
           </li>

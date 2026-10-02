@@ -98,6 +98,7 @@ describe("AAOS course proof card", () => {
             code: "AI375",
             description: null,
             updated_at: null,
+            status: "current",
           },
           {
             id: 2,
@@ -105,6 +106,7 @@ describe("AAOS course proof card", () => {
             code: "AI328",
             description: null,
             updated_at: null,
+            status: "current",
           },
           {
             id: 3,
@@ -112,6 +114,7 @@ describe("AAOS course proof card", () => {
             code: "AI342",
             description: null,
             updated_at: null,
+            status: "current",
           },
           {
             id: 4,
@@ -119,6 +122,7 @@ describe("AAOS course proof card", () => {
             code: "CS999",
             description: null,
             updated_at: null,
+            status: "current",
           },
         ],
       },

@@ -117,6 +117,7 @@ from .conversation_context import (
 from .course_names import course_code_token
 from .intent_router import (
     RoutedIntent,
+    asks_about_past,
     asks_next_seven_days,
     extract_topic,
     find_course_mention,
@@ -768,6 +769,10 @@ class _AcademicToolRuntime:
         self.calendar_proposal: CalendarProposalResult | None = None
         self.calendar_duration_note: str | None = None
         self._rag_adapter = RagQueryAdapter(rag)
+        # Archived (past) courses: explicit past wording selects past courses,
+        # and a document answer drawn only from past courses is labelled.
+        self._past_requested = asks_about_past(request_text)
+        self.past_answer_archived_dates: tuple[datetime | None, ...] | None = None
 
     def _schema(
         self,
@@ -957,6 +962,7 @@ class _AcademicToolRuntime:
     def _course_group(self, name: str) -> tuple[CourseSummary, ...]:
         """Resolve a course name to the course and its Moodle section siblings."""
         courses, matches, _exact = self._course_matches(name)
+        courses = _same_term(courses, matches[0])
         keys = {_section_sibling_key(course.title) for course in matches}
         if len(matches) > 1 and (len(keys) != 1 or None in keys):
             raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
@@ -997,7 +1003,7 @@ class _AcademicToolRuntime:
                 if matching:
                     announcements = matching
             course_titles = (
-                {course.id: course.title for course in group}
+                {course.id: _display_title(course) for course in group}
                 if group is not None
                 else self._course_titles(announcements)
             )
@@ -1599,6 +1605,7 @@ class _AcademicToolRuntime:
         in for it; several indexed siblings remain ambiguous.
         """
         courses, matches, exact = self._course_matches(name)
+        courses = _same_term(courses, matches[0])
         sibling_keys = {_section_sibling_key(course.title) for course in matches}
         if len(matches) > 1 and (exact or len(sibling_keys) != 1 or None in sibling_keys):
             raise _LookupFailure(AgentErrorCode.AMBIGUOUS_COURSE)
@@ -1664,11 +1671,11 @@ class _AcademicToolRuntime:
             or (course.code is not None and _normalized(course.code) == target)
         )
         if matches:
-            return courses, matches, True
+            return courses, _prefer_term(matches, past=self._past_requested), True
         matches = tuple(course for course in courses if course_code_token(course.title) == target)
         if not matches:
             raise _LookupFailure(AgentErrorCode.COURSE_NOT_FOUND)
-        return courses, matches, False
+        return courses, _prefer_term(matches, past=self._past_requested), False
 
     def _list_courses(self, _arguments: ValidatedToolArguments) -> ToolResult:
         try:
@@ -1682,7 +1689,8 @@ class _AcademicToolRuntime:
                 return _invalid_output()
             if len(courses) > MAX_ACADEMIC_RECORDS:
                 return _tool_error(AgentErrorCode.RESULT_TOO_LARGE, "course result is too large")
-            records = tuple(_course_record(course) for course in courses)
+            wanted = "past" if self._past_requested else "current"
+            records = tuple(_course_record(course) for course in courses if course.status == wanted)
             return self._structured_result(ToolName.ACADEMIC_LIST_COURSES, records, {})
         except _InvalidReadOutput:
             return _invalid_output()
@@ -2331,7 +2339,7 @@ class _AcademicToolRuntime:
             raise _InvalidReadOutput()
         if len(courses) > MAX_ACADEMIC_RECORDS:
             raise _LookupFailure(AgentErrorCode.RESULT_TOO_LARGE)
-        return {course.id: course.title for course in courses if course.id in course_ids}
+        return {course.id: _display_title(course) for course in courses if course.id in course_ids}
 
     def _structured_result(
         self,
@@ -2411,12 +2419,19 @@ class _AcademicToolRuntime:
                         AgentErrorCode.COURSE_NOT_FOUND, "the referenced entity has no course"
                     )
                 scope = CourseScope(course_id)
+            elif isinstance(course_name, str):
+                course_id = self._rag_course_id(course_name)
+                scope = CourseScope(course_id)
+                self._note_past_courses({course_id})
+            elif self._past_requested:
+                versions, archived_dates = self._past_document_versions()
+                if not versions:
+                    raise _LookupFailure(AgentErrorCode.NO_INDEXED_DOCUMENTS)
+                scope = HistoricalScope(versions)
+                self.past_answer_archived_dates = archived_dates
             else:
-                scope = (
-                    CourseScope(self._rag_course_id(course_name))
-                    if isinstance(course_name, str)
-                    else GlobalScope()
-                )
+                # Unscoped questions search current courses only.
+                scope = GlobalScope()
         except _LookupFailure as error:
             return _lookup_tool_error(error.code)
         except _InvalidReadOutput:
@@ -2447,6 +2462,57 @@ class _AcademicToolRuntime:
             )
         except RagOperationalError:
             return _tool_error(AgentErrorCode.RAG_QUERY_FAILED, "RAG query failed")
+
+    def _visible_courses(self) -> tuple[CourseSummary, ...]:
+        courses = cast(
+            tuple[CourseSummary, ...],
+            self._read(self._academic.list_courses, limit=MAX_ACADEMIC_RECORDS + 1),
+        )
+        if not isinstance(courses, tuple) or any(
+            not isinstance(course, CourseSummary) for course in courses
+        ):
+            raise _InvalidReadOutput()
+        return courses[:MAX_ACADEMIC_RECORDS]
+
+    def _note_past_courses(self, course_ids: set[int]) -> None:
+        """Remember the archive dates when an answer draws only on past courses."""
+        courses = {course.id: course for course in self._visible_courses()}
+        chosen = [courses[course_id] for course_id in course_ids if course_id in courses]
+        if (
+            chosen
+            and len(chosen) == len(course_ids)
+            and all(course.status == "past" for course in chosen)
+        ):
+            self.past_answer_archived_dates = tuple(course.archived_at for course in chosen)
+
+    def _past_document_versions(self) -> tuple[tuple[int, ...], tuple[datetime | None, ...]]:
+        """Indexed document versions of past courses, for explicit past questions."""
+        versions: list[int] = []
+        archived: list[datetime | None] = []
+        for course in self._visible_courses():
+            if course.status != "past":
+                continue
+            documents = cast(
+                tuple[DocumentSummary, ...],
+                self._read(
+                    self._documents.list_documents, course.id, limit=MAX_ACADEMIC_RECORDS + 1
+                ),
+            )
+            if not isinstance(documents, tuple) or any(
+                not isinstance(document, DocumentSummary) for document in documents
+            ):
+                raise _InvalidReadOutput()
+            ready = [
+                document.document_version_id
+                for document in documents
+                if document.course_id == course.id
+                and document.index_readiness is DocumentIndexReadinessView.READY
+                and document.document_version_id is not None
+            ]
+            if ready:
+                versions.extend(ready)
+                archived.append(course.archived_at)
+        return tuple(dict.fromkeys(versions))[:MAX_ACADEMIC_RECORDS], tuple(archived)
 
     async def _answer_summary(self, course_name: str | None) -> ToolResult:
         assert self._summarizer is not None
@@ -2520,6 +2586,7 @@ class _AcademicToolRuntime:
                     indexed.setdefault(document.document_version_id, document)
         if not indexed:
             raise _LookupFailure(AgentErrorCode.NO_INDEXED_DOCUMENTS)
+        self._note_past_courses({document.course_id for document in indexed.values()})
         if self._routed_summary is RoutedIntent.DOCUMENT_SUMMARY:
             if len(indexed) == 1:
                 return tuple(indexed)
@@ -3373,6 +3440,17 @@ class ReadOnlyAcademicAssistant:
                 and not task_change_reference
                 else None
             )
+            if (
+                routed_tool is not None
+                and routed_tool[0] is ToolName.RAG_ANSWER
+                and "course_name" not in routed_tool[1]
+                and not asks_about_past(question)
+            ):
+                past_with_documents = self._past_courses_when_no_current_documents()
+                if past_with_documents:
+                    return direct_answer(
+                        _no_current_documents_message(question, past_with_documents)
+                    )
             routed_change_request = (
                 routed_tool is not None and routed_tool[0] is ToolName.MOODLE_LIST_CHANGES
             )
@@ -3458,6 +3536,8 @@ class ReadOnlyAcademicAssistant:
                     runtime.calendar_duration_note,
                     step_count=result.step_count,
                 )
+            if runtime.past_answer_archived_dates is not None:
+                result = _with_past_course_notice(result, runtime.past_answer_archived_dates)
             if result.status in {AcademicAskStatus.CANCELLED, AcademicAskStatus.TIMED_OUT}:
                 response = replace(
                     result,
@@ -3488,6 +3568,34 @@ class ReadOnlyAcademicAssistant:
                 self._context_store.abort_turn(lease)
             raise
 
+    def _past_courses_when_no_current_documents(self) -> tuple[CourseSummary, ...]:
+        """Past courses with indexed documents, when current courses have none.
+
+        Unscoped questions search current courses only. When there is nothing
+        current to search, the answer names the past courses that can be asked
+        about instead of a bare "no documents". Any read failure keeps the
+        normal path.
+        """
+        try:
+            current = self._documents.list_documents(None, limit=MAX_ACADEMIC_RECORDS + 1)
+            if any(_is_indexed(document) for document in current):
+                return ()
+            past: list[CourseSummary] = []
+            for course in self._academic.list_courses(limit=MAX_ACADEMIC_RECORDS + 1):
+                if course.status != "past":
+                    continue
+                documents = self._documents.list_documents(
+                    course.id, limit=MAX_ACADEMIC_RECORDS + 1
+                )
+                if any(
+                    _is_indexed(document) and document.course_id == course.id
+                    for document in documents
+                ):
+                    past.append(course)
+            return tuple(past)
+        except Exception:
+            return ()
+
     def _routed_tool_call(self, question: str) -> tuple[ToolName, dict[str, object]] | None:
         """Map a confidently routed intent to one read tool call, or None.
 
@@ -3517,7 +3625,9 @@ class ReadOnlyAcademicAssistant:
                 or any(not isinstance(course, CourseSummary) for course in courses)
             ):
                 return None
-            mention = find_course_mention(question, courses)
+            mention = find_course_mention(
+                question, _term_preferred(courses, past=asks_about_past(question))
+            )
             if mention.ambiguous:
                 return None
             if mention.course_name is not None:
@@ -3820,12 +3930,98 @@ def _required_text(arguments: ValidatedToolArguments, key: str) -> str:
     return value.strip()
 
 
+_PAST_COURSE_SUFFIX = " (past course)"
+
+
+def _display_title(course: CourseSummary) -> str:
+    return course.title + _PAST_COURSE_SUFFIX if course.status == "past" else course.title
+
+
+def _prefer_term(matches: tuple[CourseSummary, ...], *, past: bool) -> tuple[CourseSummary, ...]:
+    """A retaken course resolves to the current one unless the past is asked for."""
+    wanted = "past" if past else "current"
+    preferred = tuple(course for course in matches if course.status == wanted)
+    return preferred or matches
+
+
+def _term_preferred(courses: tuple[CourseSummary, ...], *, past: bool) -> tuple[CourseSummary, ...]:
+    """Drop a retaken course's copy from the other term so a mention is not ambiguous."""
+    wanted = "past" if past else "current"
+    wanted_titles = {
+        course.title.strip().casefold() for course in courses if course.status == wanted
+    }
+    return tuple(
+        course
+        for course in courses
+        if course.status == wanted or course.title.strip().casefold() not in wanted_titles
+    )
+
+
+def _same_term(
+    courses: tuple[CourseSummary, ...], course: CourseSummary
+) -> tuple[CourseSummary, ...]:
+    """Section siblings of a course come from the same term (current or past)."""
+    return tuple(candidate for candidate in courses if candidate.status == course.status)
+
+
+def _is_indexed(document: object) -> bool:
+    return (
+        isinstance(document, DocumentSummary)
+        and document.index_readiness is DocumentIndexReadinessView.READY
+        and document.document_version_id is not None
+    )
+
+
+def _no_current_documents_message(question: str, courses: tuple[CourseSummary, ...]) -> str:
+    names = "; ".join(course.title.strip() for course in courses[:10])
+    if any("\u0600" <= character <= "\u06ff" for character in question):
+        return (
+            "لا توجد مستندات مفهرسة لموادك الحالية بعد. "
+            f"مواد سابقة تحتوي على مستندات: {names}. "
+            "اذكر اسم المادة في سؤالك للبحث فيها."
+        )
+    return (
+        "Your current courses have no indexed documents yet, so there is nothing to search. "
+        f"Past courses with documents: {names}. Name one in your question to search it."
+    )
+
+
+def _with_past_course_notice(
+    result: AcademicAskResult, archived_dates: tuple[datetime | None, ...]
+) -> AcademicAskResult:
+    """Label an answer drawn only from past courses; the Phase 4 payload is unchanged."""
+    provenance = result.rag_provenance
+    if provenance is None or "citations" not in provenance or result.answer_text is None:
+        return result
+    dates = {value.date() for value in archived_dates if value is not None}
+    arabic = provenance.get("language") == "ar"
+    if len(dates) == 1:
+        (day,) = dates
+        notice = (
+            f"من مادة سابقة (أُرشفت في {day.isoformat()}):"
+            if arabic
+            else f"From a past course (archived {day.day} {day:%b %Y}):"
+        )
+    else:
+        notice = "من مواد سابقة:" if arabic else "From past courses:"
+    label = " · مادة سابقة" if arabic else " · past course"
+    lines = [
+        f"{line}{label}" if re.match(r"^\[\d+\] ", line) else line
+        for line in result.answer_text.splitlines()
+    ]
+    return replace(
+        result,
+        answer_text=f"{notice}\n\n" + "\n".join(lines),
+        rag_provenance={**provenance, "from_past_course": True},
+    )
+
+
 def _course_record(course: CourseSummary) -> dict[str, object]:
     return {
         "code": course.code,
         "description": course.description,
         "id": course.id,
-        "title": course.title,
+        "title": _display_title(course),
         "updated_at": course.updated_at.isoformat() if course.updated_at is not None else None,
     }
 
@@ -4011,6 +4207,7 @@ def _moodle_change_result(
             "removed_count": changes.removed_count,
             "modified_count": changes.modified_count,
             "total_change_count": changes.total_change_count,
+            "archived_item_count": changes.archived_item_count,
             "records": tuple(_moodle_change_record(item) for item in changes.records),
             "offset": changes.offset,
             "limit": changes.limit,
@@ -4226,6 +4423,7 @@ def _moodle_change_output(result: ToolResult) -> ToolResult:
         "removed_count",
         "modified_count",
         "total_change_count",
+        "archived_item_count",
         "records",
         "offset",
         "limit",
@@ -4262,6 +4460,7 @@ def _moodle_change_envelope_is_valid(output: Mapping[str, object]) -> bool:
             "limit",
         )
     )
+    archived_item_count = output.get("archived_item_count")
     if (
         not isinstance(reference, str)
         or not _READ_REFERENCE.fullmatch(reference)
@@ -4288,6 +4487,9 @@ def _moodle_change_envelope_is_valid(output: Mapping[str, object]) -> bool:
         or not 1 <= counts[6] <= MAX_MOODLE_CHANGE_AGENT_RECORDS
         or len(records) > counts[6]
         or not isinstance(output.get("has_more"), bool)
+        or isinstance(archived_item_count, bool)
+        or not isinstance(archived_item_count, int)
+        or archived_item_count < 0
         or (
             output.get("from_snapshot_id") is not None
             and not _positive_id(output.get("from_snapshot_id"))
@@ -4835,6 +5037,11 @@ def _render_moodle_change_evidence(output: Mapping[str, object]) -> str:
     if not rows:
         return heading
     lines = [_render_moodle_change_record(row) for row in rows]
+    archived_items = projected.get("archived_item_count")
+    if isinstance(archived_items, int) and not isinstance(archived_items, bool) and archived_items:
+        noun = "item" if archived_items == 1 else "items"
+        verb = "is" if archived_items == 1 else "are"
+        lines.append(f"{archived_items} {noun} archived with these courses {verb} not listed.")
     return heading + "\n" + "\n".join(lines)
 
 
@@ -4845,6 +5052,9 @@ def _render_moodle_change_record(raw_row: object) -> str:
     change_kind = str(raw_row["change_kind"]).casefold()
     title = str(raw_row["title"])
     course_title = str(raw_row["course_title"])
+    if entity_type == "course" and change_kind == ChangeKind.REMOVED.value.casefold():
+        # A complete sync stops listing a course when it ends: it is archived.
+        return f"- course archived: {title}"
     line = f"- {change_kind} {entity_type}: {title} ({course_title})"
     fields = raw_row.get("changed_fields")
     if (
@@ -4899,8 +5109,11 @@ def _render_academic_evidence(
             if not rows:
                 sections.append("No active courses were found.")
             else:
+                past_listing = all(
+                    str(row.get("title", "")).endswith(_PAST_COURSE_SUFFIX) for row in rows
+                )
                 sections.append(
-                    "Active courses:\n"
+                    ("Past courses:\n" if past_listing else "Active courses:\n")
                     + "\n".join(
                         f"- {row['title']}"
                         + (f" ({row['code']})" if row.get("code") else "")

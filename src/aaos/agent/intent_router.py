@@ -206,6 +206,23 @@ def asks_next_seven_days(question: str) -> bool:
     return _NEXT_SEVEN_DAYS.search(normalize_arabic(question)) is not None
 
 
+# Explicit wording for past (archived) courses; see the archived-courses spec.
+_PAST_COURSES = _any(
+    (
+        r"\b(?:last|previous|past|prior)\s+(?:semester|term|courses?|classes|subjects)\b",
+        r"\b(?:my\s+)?(?:previous|past|prior|old|earlier)\s+(?:courses?|classes|subjects)\b",
+        r"\bmy\s+previous\b",
+        r"(?:الفصل|الترم|السمستر)\s+(?:الماضي|السابق|الفائت)",
+        r"(?:المواد|المساقات|موادي|مساقاتي)\s+(?:السابقه|الماضيه|القديمه)",
+    )
+)
+
+
+def asks_about_past(question: str) -> bool:
+    """Whether a question explicitly asks about past (archived) courses."""
+    return _PAST_COURSES.search(normalize_arabic(question)) is not None
+
+
 def route_intent(question: str) -> RoutedIntent:
     """Classify a question into one closed intent, or UNROUTED.
 
@@ -279,7 +296,9 @@ def _course_aliases(course: CourseSummary) -> tuple[str, ...]:
 
 
 def _mentions(text: str, alias: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text) is not None
+    # A code may be written with a space or hyphen before its digits ("AI 495C").
+    pattern = re.sub(r"(?<=[a-z])(?=\d)", r"[\\s-]?", re.escape(alias), count=1)
+    return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
 
 
 def find_course_mention(question: str, courses: Iterable[CourseSummary]) -> CourseMention:

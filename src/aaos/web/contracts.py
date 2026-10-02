@@ -187,14 +187,16 @@ class AcademicAskRagAnswerProvenanceView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     answer_text: str = Field(min_length=1, max_length=16384)
-    citations: tuple[
-        AcademicAskRagPageCitationView | AcademicAskRagStructuralCitationView, ...
-    ] = Field(max_length=64)
+    citations: tuple[AcademicAskRagPageCitationView | AcademicAskRagStructuralCitationView, ...] = (
+        Field(max_length=64)
+    )
     content_revision: int = Field(ge=0)
     generation_id: int = Field(gt=0)
     language: str = Field(min_length=1, max_length=32)
     rendered_text: str = Field(min_length=1, max_length=16384)
     status: Literal["ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"]
+    # The answer drew only on archived (past) courses; the client labels sources.
+    from_past_course: bool = False
 
 
 class AcademicAskRagProvenanceSummaryView(BaseModel):
@@ -381,6 +383,9 @@ class CourseSummary(BaseModel):
     code: str | None
     description: str | None
     updated_at: datetime | None
+    # A past course was archived when a complete sync stopped listing it.
+    status: Literal["current", "past"] = "current"
+    archived_at: datetime | None = None
 
 
 class CourseListResponse(BaseModel):

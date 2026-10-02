@@ -512,3 +512,34 @@ def test_registry_and_local_response_schemas_expose_only_fixed_change_read() -> 
             assert arguments["properties"]["context_ref"]["enum"] == ["ctx-1"]
         else:
             assert "context_ref" not in arguments["properties"]
+
+
+def test_an_archived_course_reads_as_archived_and_its_items_as_a_count() -> None:
+    base = change_set()
+    course_change = replace(
+        base.records[0],
+        entity_type=EntityType.COURSE,
+        entity_source_id="provider-course-1",
+        change_kind=ChangeKind.REMOVED,
+        changed_fields=(ChangeField.TITLE,),
+        before_title="Project Management",
+        after_title=None,
+        before_due_at=None,
+        after_due_at=None,
+        entity_id=7,
+        course_title="Project Management",
+    )
+    archived = replace(
+        base, records=(course_change,), modified_count=0, removed_count=1, archived_item_count=3
+    )
+    gateway = FakeGateway(_tool(), _answer())
+
+    result = asyncio.run(
+        build_assistant(gateway, FakeMoodleChangeReader(archived)).ask("What changed in Moodle?")
+    )
+
+    assert result.status is AcademicAskStatus.ANSWERED
+    text = result.answer_text or ""
+    assert "- course archived: Project Management" in text
+    assert "removed course" not in text
+    assert "3 items archived with these courses are not listed." in text

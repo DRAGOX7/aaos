@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from aaos.academic.visibility import course_visible, item_visible
 from aaos.persistence.academic_models import AnnouncementORM, AssignmentORM, CourseORM
 from aaos.web.contracts import AnnouncementSummary, AssignmentSummary, CourseSummary
 from aaos.web.errors import Phase7ApiError
@@ -38,6 +39,19 @@ def _to_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _course_summary(course: CourseORM) -> CourseSummary:
+    past = not course.is_active
+    return CourseSummary(
+        id=course.id,
+        title=course.title,
+        code=course.code,
+        description=course.description,
+        updated_at=_to_utc(course.source_updated_at),
+        status="past" if past else "current",
+        archived_at=_to_utc(course.archived_at) if past else None,
+    )
+
+
 class AcademicReadService:
     """Read-only Phase 7 projection service for academic state."""
 
@@ -45,13 +59,14 @@ class AcademicReadService:
         self._sessions = sessions
 
     def list_courses(self, *, limit: int | None = None) -> tuple[CourseSummary, ...]:
-        """Return active courses using stable browser-visible ordering."""
+        """Return current courses, then past (archived) ones, in stable order."""
 
         limit = _validated_read_limit(limit)
         statement = (
             select(CourseORM)
-            .where(CourseORM.is_active.is_(True))
+            .where(course_visible(include_past=True))
             .order_by(
+                case((CourseORM.is_active.is_(True), 0), else_=1),
                 case((CourseORM.code.is_(None), 1), else_=0),
                 func.lower(CourseORM.code),
                 func.lower(CourseORM.title),
@@ -64,25 +79,16 @@ class AcademicReadService:
         with self._sessions() as session:
             courses = session.scalars(statement).all()
 
-        return tuple(
-            CourseSummary(
-                id=course.id,
-                title=course.title,
-                code=course.code,
-                description=course.description,
-                updated_at=_to_utc(course.source_updated_at),
-            )
-            for course in courses
-        )
+        return tuple(_course_summary(course) for course in courses)
 
     def get_course(self, course_id: int) -> CourseSummary:
-        """Return one active course or a stable non-leaking not-found error."""
+        """Return one current or past course, or a stable non-leaking not-found error."""
 
         with self._sessions() as session:
             course = session.scalar(
                 select(CourseORM).where(
                     CourseORM.id == course_id,
-                    CourseORM.is_active.is_(True),
+                    course_visible(include_past=True),
                 )
             )
 
@@ -93,13 +99,7 @@ class AcademicReadService:
                 "The requested course is not available.",
             )
 
-        return CourseSummary(
-            id=course.id,
-            title=course.title,
-            code=course.code,
-            description=course.description,
-            updated_at=_to_utc(course.source_updated_at),
-        )
+        return _course_summary(course)
 
     def list_assignments(
         self,
@@ -107,7 +107,11 @@ class AcademicReadService:
         *,
         limit: int | None = None,
     ) -> tuple[AssignmentSummary, ...]:
-        """Return active assignments with stable due-date ordering."""
+        """Return assignments with stable due-date ordering.
+
+        Unscoped listings cover current courses only; a named past course
+        lists the assignments archived with it.
+        """
 
         limit = _validated_read_limit(limit)
         if course_id is not None:
@@ -116,10 +120,7 @@ class AcademicReadService:
         statement = (
             select(AssignmentORM)
             .join(CourseORM, CourseORM.id == AssignmentORM.course_id)
-            .where(
-                AssignmentORM.is_active.is_(True),
-                CourseORM.is_active.is_(True),
-            )
+            .where(item_visible(AssignmentORM, include_past=course_id is not None))
             .order_by(
                 case((AssignmentORM.due_at.is_(None), 1), else_=0),
                 AssignmentORM.due_at,
@@ -153,7 +154,10 @@ class AcademicReadService:
         *,
         limit: int | None = None,
     ) -> tuple[AnnouncementSummary, ...]:
-        """Return active announcements of active courses, newest stored date first.
+        """Return announcements, newest stored date first.
+
+        Unscoped listings cover current courses only; past-course announcements
+        appear only when their course is named (archived-courses spec).
 
         Announcements without a stored date follow, in stable id order. A blank
         stored body is reported as not stored (None), never as content.
@@ -163,10 +167,7 @@ class AcademicReadService:
         statement = (
             select(AnnouncementORM)
             .join(CourseORM, CourseORM.id == AnnouncementORM.course_id)
-            .where(
-                AnnouncementORM.is_active.is_(True),
-                CourseORM.is_active.is_(True),
-            )
+            .where(item_visible(AnnouncementORM, include_past=course_ids is not None))
             .order_by(
                 case((AnnouncementORM.published_at.is_(None), 1), else_=0),
                 AnnouncementORM.published_at.desc(),
@@ -197,7 +198,7 @@ class AcademicReadService:
         )
 
     def get_assignment(self, assignment_id: int) -> AssignmentSummary:
-        """Return one active assignment or a stable non-leaking not-found error."""
+        """Return one assignment (current, or archived with a past course) or not-found."""
 
         if (
             isinstance(assignment_id, bool)
@@ -215,8 +216,7 @@ class AcademicReadService:
             .join(CourseORM, CourseORM.id == AssignmentORM.course_id)
             .where(
                 AssignmentORM.id == assignment_id,
-                AssignmentORM.is_active.is_(True),
-                CourseORM.is_active.is_(True),
+                item_visible(AssignmentORM, include_past=True),
             )
         )
         with self._sessions() as session:

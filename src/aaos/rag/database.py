@@ -12,7 +12,7 @@ from sqlalchemy import URL, Engine, event
 from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
-_REQUIRED_REVISION = "0004_phase4_local_rag"
+_REQUIRED_REVISION = "0014_archived_courses"
 
 
 class RagDatabaseConfigurationError(RuntimeError):
@@ -61,7 +61,7 @@ def validate_rag_database(database_path: Path) -> None:
 
 
 def _is_compatible_migration_revision(revision: str) -> bool:
-    """Return whether revision is Phase 4 or a repository descendant."""
+    """Return whether revision is the archived-courses schema or a descendant."""
     try:
         config = Config(str(Path(__file__).resolve().parents[3] / "alembic.ini"))
         script = ScriptDirectory.from_config(config)

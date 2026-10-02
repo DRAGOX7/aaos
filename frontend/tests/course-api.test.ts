@@ -24,6 +24,7 @@ describe("AAOS courses API client", () => {
           code: "AI375",
           description: null,
           updated_at: null,
+          status: "current",
         },
       ],
     };

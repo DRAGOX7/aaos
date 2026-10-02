@@ -36,6 +36,7 @@ const courses: CourseListResponse = {
       code: "CS-42",
       description: null,
       updated_at: null,
+      status: "current",
     },
   ],
 };

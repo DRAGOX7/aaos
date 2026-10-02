@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Callable, TypeVar, cast
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -433,15 +433,28 @@ class RagRepository:
         self._session_factory = session_factory
 
     @staticmethod
-    def _version_filters() -> tuple[ColumnElement[bool], ...]:
+    def _version_filters(*, include_past: bool = True) -> tuple[ColumnElement[bool], ...]:
+        """Eligible documents: current courses, plus past ones when ``include_past``.
+
+        A past (archived) course's document stays eligible only when its file
+        archived together with the course; a file removed from a course that
+        was still current never is (archived-courses spec).
+        """
+        current = and_(RemoteFileORM.is_active.is_(True), CourseORM.is_active.is_(True))
+        past = and_(
+            CourseORM.is_active.is_(False),
+            CourseORM.archived_at.is_not(None),
+            RemoteFileORM.archived_at.is_not(None),
+        )
         return (
             DocumentORM.ingestion_status == IngestionStatus.READY.value,
-            RemoteFileORM.is_active.is_(True),
-            CourseORM.is_active.is_(True),
+            or_(current, past) if include_past else current,
         )
 
     @classmethod
-    def _version_query(cls, *, ready_generation_id: int | None = None) -> Select[Any]:
+    def _version_query(
+        cls, *, ready_generation_id: int | None = None, include_past: bool = True
+    ) -> Select[Any]:
         query = (
             select(
                 DocumentVersionORM.id,
@@ -459,7 +472,7 @@ class RagRepository:
             .join(ContentBlobORM, DocumentVersionORM.content_blob_id == ContentBlobORM.id)
             .join(RemoteFileORM, DocumentORM.remote_file_id == RemoteFileORM.id)
             .join(CourseORM, RemoteFileORM.course_id == CourseORM.id)
-            .where(*cls._version_filters())
+            .where(*cls._version_filters(include_past=include_past))
         )
         if ready_generation_id is not None:
             query = query.join(
@@ -492,18 +505,24 @@ class RagRepository:
         *,
         current: bool,
         ready_generation_id: int | None = None,
+        include_past: bool | None = None,
     ) -> tuple[DocumentVersionRecord, ...]:
+        if include_past is None:
+            # Unscoped questions search current courses only (archived-courses spec).
+            include_past = not isinstance(scope, GlobalScope)
         if not isinstance(scope, (CourseScope, GlobalScope, HistoricalScope)):
             raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
         if isinstance(scope, HistoricalScope):
             if current:
                 raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
             requested_ids = tuple(sorted(set(scope.document_version_ids)))
-            query = self._version_query(ready_generation_id=ready_generation_id).where(
-                DocumentVersionORM.id.in_(requested_ids)
-            )
+            query = self._version_query(
+                ready_generation_id=ready_generation_id, include_past=include_past
+            ).where(DocumentVersionORM.id.in_(requested_ids))
         else:
-            query = self._version_query(ready_generation_id=ready_generation_id)
+            query = self._version_query(
+                ready_generation_id=ready_generation_id, include_past=include_past
+            )
             if isinstance(scope, CourseScope):
                 query = query.where(CourseORM.id == scope.course_id)
             latest = (
@@ -514,7 +533,7 @@ class RagRepository:
                 .join(DocumentORM, DocumentVersionORM.document_id == DocumentORM.id)
                 .join(RemoteFileORM, DocumentORM.remote_file_id == RemoteFileORM.id)
                 .join(CourseORM, RemoteFileORM.course_id == CourseORM.id)
-                .where(*self._version_filters())
+                .where(*self._version_filters(include_past=include_past))
                 .group_by(DocumentVersionORM.document_id)
                 .subquery()
             )
@@ -572,7 +591,9 @@ class RagRepository:
                     raise RagOperationalError(RagErrorCode.NO_ACTIVE_GENERATION)
                 try:
                     current = _without_duplicate_content(
-                        self._resolve_versions_in_session(session, GlobalScope(), current=True)
+                        self._resolve_versions_in_session(
+                            session, GlobalScope(), current=True, include_past=True
+                        )
                     )
                 except RagOperationalError as error:
                     if error.code is not RagErrorCode.NO_ELIGIBLE_DOCUMENTS:
@@ -633,10 +654,11 @@ class RagRepository:
         *,
         document_version_ids: tuple[int, ...] | None = None,
         course_id: int | None = None,
+        include_past: bool = True,
     ) -> Select[Any]:
         """Build the terminal-publication view used by query authorization."""
         query = (
-            cls._version_query()
+            cls._version_query(include_past=include_past)
             .add_columns(RagDocumentIndexORM.status.label("published_status"))
             .join(
                 RagDocumentIndexORM,
@@ -657,12 +679,20 @@ class RagRepository:
         return query
 
     def _resolve_current_query_versions_in_session(
-        self, session: Session, scope: CourseScope | GlobalScope, generation_id: int
+        self,
+        session: Session,
+        scope: CourseScope | GlobalScope,
+        generation_id: int,
+        include_past: bool | None = None,
     ) -> tuple[tuple[DocumentVersionRecord, ...], bool]:
         """Resolve latest published versions and report whether any were published."""
         query = self._published_version_query(
             generation_id,
             course_id=scope.course_id if isinstance(scope, CourseScope) else None,
+            # Unscoped questions search current courses only (archived-courses spec).
+            include_past=include_past
+            if include_past is not None
+            else isinstance(scope, CourseScope),
         ).order_by(
             CourseORM.id,
             RemoteFileORM.id,
@@ -716,8 +746,20 @@ class RagRepository:
             return self._generation_from_row(generation).identity, records
         raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
 
-    def pin_query_snapshot(self, scope: RagScope, *, normalized_query: str = "") -> QuerySnapshot:
-        """Pin one coherent generation/revision and immutable version universe."""
+    def pin_query_snapshot(
+        self,
+        scope: RagScope,
+        *,
+        normalized_query: str = "",
+        include_past: bool | None = None,
+    ) -> QuerySnapshot:
+        """Pin one coherent generation/revision and immutable version universe.
+
+        ``include_past`` defaults to the scope rule: an unscoped (global) query
+        sees current courses only; a named course or explicit versions may be
+        past. Pass True to list every published version, for example to
+        prepare summaries.
+        """
         session = self._session_factory()
         try:
             with session.begin():
@@ -748,7 +790,7 @@ class RagRepository:
                     )
                 else:
                     records, published = self._resolve_current_query_versions_in_session(
-                        session, scope, int(active.id)
+                        session, scope, int(active.id), include_past
                     )
                     generation_identity = self._generation_from_row(active).identity
                     if not published:
@@ -957,7 +999,9 @@ class RagRepository:
             with session.begin():
                 try:
                     return _without_duplicate_content(
-                        self._resolve_versions_in_session(session, GlobalScope(), current=True)
+                        self._resolve_versions_in_session(
+                            session, GlobalScope(), current=True, include_past=True
+                        )
                     )
                 except RagOperationalError as error:
                     if error.code is RagErrorCode.NO_ELIGIBLE_DOCUMENTS:

@@ -21,6 +21,7 @@ const course: CourseSummary = {
   code: "CS-42",
   description: null,
   updated_at: null,
+  status: "current",
 };
 
 const assignments: AssignmentListResponse = {

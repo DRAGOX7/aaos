@@ -69,6 +69,8 @@ def test_course_detail_endpoint_returns_safe_projection(
         "code": "AI342",
         "description": "Neural networks.",
         "updated_at": None,
+        "status": "current",
+        "archived_at": None,
     }
     assert "private-source" not in response.text
     assert "private-course-7" not in response.text

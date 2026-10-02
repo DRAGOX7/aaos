@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
+import { formatArchivedDate, isPastCourse } from "@/lib/api/courses";
 import { courseQueryOptions } from "@/lib/query/academic";
 import { parseCourseRouteId } from "@/lib/routing/route-ids";
 
@@ -63,6 +64,14 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
             {data.code ? (
               <p className="mt-1 text-sm font-medium text-muted-foreground">
                 {data.code}
+              </p>
+            ) : null}
+
+            {isPastCourse(data) ? (
+              <p className="mt-2 inline-block rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                {formatArchivedDate(data.archived_at)
+                  ? "Past course · archived " + formatArchivedDate(data.archived_at)
+                  : "Past course"}
               </p>
             ) : null}
           </div>

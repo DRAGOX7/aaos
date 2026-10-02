@@ -311,6 +311,11 @@ export interface components {
             citations: (components["schemas"]["AcademicAskRagPageCitationView"] | components["schemas"]["AcademicAskRagStructuralCitationView"])[];
             /** Content Revision */
             content_revision: number;
+            /**
+             * From Past Course
+             * @default false
+             */
+            from_past_course: boolean;
             /** Generation Id */
             generation_id: number;
             /** Language */
@@ -704,12 +709,20 @@ export interface components {
          * @description Browser-safe projection of an active academic course.
          */
         CourseSummary: {
+            /** Archived At */
+            archived_at?: string | null;
             /** Code */
             code: string | null;
             /** Description */
             description: string | null;
             /** Id */
             id: number;
+            /**
+             * Status
+             * @default current
+             * @enum {string}
+             */
+            status: "current" | "past";
             /** Title */
             title: string;
             /** Updated At */
