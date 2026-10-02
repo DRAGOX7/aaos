@@ -1,6 +1,6 @@
 # Archived (Past) Courses — Specification
 
-Status: **draft for owner approval**. No code before approval.
+Status: **approved by the owner on 2026-10-02**, including both choices recorded under "Owner decisions". Implementation follows this spec, test-first.
 
 ## Why
 
@@ -43,7 +43,7 @@ Rules:
 
 - Course scoping, including Moodle section siblings, works identically for past courses. A question scoped to one course, current or past, never retrieves another course's documents.
 - Course-name resolution covers current and past courses. The resolver returns the state with the match, so routing and answers know a course is past.
-- Assignment and announcement listings default to current courses. A named past course can be listed and is labelled past.
+- Assignment and announcement listings default to current courses. A past course's assignments and announcements appear **only when that past course is explicitly named**, and are then labelled past. They never appear in unscoped or "recent" lists.
 
 ## 4. Summaries
 
@@ -79,7 +79,7 @@ Rules:
 
 Term names (Moodle gives none; the archive date stands in), deleting past data, and a UI to manually archive or restore.
 
-## Open choices for the owner
+## Owner decisions (2026-10-02)
 
-1. Default for unscoped questions: **current only** (proposed above) or current and past together, with past results labelled.
-2. Whether past-course announcements should appear in "recent announcements" lists at all, or only when the course is named (proposed: only when named).
+1. **Unscoped questions search current courses only.** Past courses are searched only when named, or when the question uses explicit past wording (section 2).
+2. **Past-course announcements appear only when the past course is explicitly named** (section 3). They never appear in unscoped or "recent announcements" lists.
