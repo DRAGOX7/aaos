@@ -465,6 +465,7 @@ def test_summarize_one_document_prints_status_and_the_cited_summary(
     assert summarizer.calls == [(101, "en")]
     assert "RAG_SUMMARY\nDOCUMENT_VERSION_ID=101\nSTATUS=READY\nDROPPED_POINTS=1\n" in out
     assert answer_response().rendered_text in out
+    assert "SKIPPED_SECTIONS=0" in out
 
 
 def test_summarize_all_prepares_every_published_version_in_the_requested_language(

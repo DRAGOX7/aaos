@@ -182,6 +182,19 @@ class SummaryResult:
     missing_document_version_ids: tuple[int, ...] = ()
     dropped_points: int = 0
     from_cache: bool = False
+    skipped_sections: int = 0
+
+
+# Bad model output for one section; anything else (model or index outages)
+# still fails the whole document.
+_SKIPPABLE_SECTION_ERRORS = frozenset(
+    {
+        RagErrorCode.INVALID_STRUCTURED_OUTPUT,
+        RagErrorCode.INVALID_EVIDENCE_REFERENCE,
+        RagErrorCode.UNCITED_CLAIM,
+        RagErrorCode.ENTAILMENT_INPUT_OVERFLOW,
+    }
+)
 
 
 class _NotPrepared(Exception):
@@ -235,6 +248,7 @@ class DocumentSummarizer:
         missing: list[int] = []
         from_cache = True
         dropped = 0
+        skipped = 0
         for version in versions:
             key = self._key(snapshot, version, language)
             cached = self._repository.get_document_summary(key)
@@ -244,11 +258,14 @@ class DocumentSummarizer:
                 continue
             from_cache = False
             try:
-                computed, computed_dropped = await self._compute(snapshot, key, deadline)
+                computed, computed_dropped, computed_skipped = await self._compute(
+                    snapshot, key, deadline
+                )
             except _NotPrepared:
                 missing.append(version)
                 continue
             dropped += computed_dropped
+            skipped += computed_skipped
             if computed is not None:
                 self._repository.put_document_summary(computed)
                 summaries.append(computed)
@@ -259,10 +276,15 @@ class DocumentSummarizer:
                 versions,
                 missing_document_version_ids=tuple(missing),
                 dropped_points=dropped,
+                skipped_sections=skipped,
             )
         if not summaries:
             return SummaryResult(
-                SummaryOutcome.NO_VERIFIED_POINTS, None, versions, dropped_points=dropped
+                SummaryOutcome.NO_VERIFIED_POINTS,
+                None,
+                versions,
+                dropped_points=dropped,
+                skipped_sections=skipped,
             )
         response = self._render(snapshot, versions, language, summaries)
         return SummaryResult(
@@ -271,6 +293,7 @@ class DocumentSummarizer:
             versions,
             dropped_points=dropped,
             from_cache=from_cache,
+            skipped_sections=skipped,
         )
 
     def _key(self, snapshot: QuerySnapshot, version: int, language: str) -> SummaryCacheKey:
@@ -285,24 +308,29 @@ class DocumentSummarizer:
 
     async def _compute(
         self, snapshot: QuerySnapshot, key: SummaryCacheKey, deadline: float | None
-    ) -> tuple[StoredDocumentSummary | None, int]:
+    ) -> tuple[StoredDocumentSummary | None, int, int]:
         chunks = self._repository.list_chunks(snapshot.generation, key.document_version_id)
         sections = _sections(chunks)
         if not sections:
-            return None, 0
+            return None, 0, 0
         if deadline is not None and (
             deadline - self._clock() < SECTION_TIME_RESERVE_SECONDS * len(sections)
         ):
             raise _NotPrepared()
         section_points: list[list[SummaryPoint]] = []
         dropped = 0
+        skipped = 0
         for section in sections:
-            points, section_dropped = await self._summarize_section(snapshot, key, section)
+            outcome = await self._summarize_section_or_skip(snapshot, key, section, deadline)
+            if outcome is None:
+                skipped += 1
+                continue
+            points, section_dropped = outcome
             section_points.append(points)
             dropped += section_dropped
         points = _spread(section_points, MAX_SUMMARY_POINTS)
         if not points:
-            return None, dropped
+            return None, dropped, skipped
         return (
             StoredDocumentSummary(
                 key=key,
@@ -311,7 +339,35 @@ class DocumentSummarizer:
                 dropped_points=dropped,
             ),
             dropped,
+            skipped,
         )
+
+    async def _summarize_section_or_skip(
+        self,
+        snapshot: QuerySnapshot,
+        key: SummaryCacheKey,
+        section: tuple[ChunkRecord, ...],
+        deadline: float | None,
+    ) -> tuple[list[SummaryPoint], int] | None:
+        """Summarize one section, retrying bad model output once, else skip it.
+
+        One malformed or ungrounded section output (for example a citation of
+        evidence the model was not given) must not discard every other
+        section. Infrastructure failures still fail the whole document.
+        """
+        try:
+            return await self._summarize_section(snapshot, key, section)
+        except RagOperationalError as error:
+            if error.code not in _SKIPPABLE_SECTION_ERRORS:
+                raise
+        if deadline is not None and deadline - self._clock() < SECTION_TIME_RESERVE_SECONDS:
+            return None
+        try:
+            return await self._summarize_section(snapshot, key, section)
+        except RagOperationalError as error:
+            if error.code not in _SKIPPABLE_SECTION_ERRORS:
+                raise
+        return None
 
     async def _summarize_section(
         self,

@@ -337,3 +337,67 @@ def test_windowed_verifier_rejects_references_outside_the_supplied_evidence() ->
         )
 
     assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+
+
+class FlakyGenerator(FakeGenerator):
+    """Fails on the section containing ``marker`` for the first ``failures`` calls."""
+
+    def __init__(self, marker: str, failures: int, code: Any = None) -> None:
+        from aaos.rag.contracts import RagErrorCode
+
+        super().__init__()
+        self.marker = marker
+        self.failures = failures
+        self.code = code or RagErrorCode.INVALID_EVIDENCE_REFERENCE
+
+    async def generate(self, request: Any, sufficiency: Any) -> GroundedModelOutput:
+        from aaos.rag.contracts import RagOperationalError
+
+        if self.failures and any(self.marker in item.exact_text for item in request.evidence):
+            self.failures -= 1
+            self.requests.append(request)
+            raise RagOperationalError(self.code)
+        return await super().generate(request, sufficiency)
+
+
+def test_a_section_with_bad_model_output_is_retried_once() -> None:
+    repository = FakeRepository(_document(101, 9))
+    generator = FlakyGenerator("Fact 4 of", failures=1)
+
+    result = asyncio.run(_summarizer(repository, generator).summarize_document(101, "en"))
+
+    assert result.outcome is SummaryOutcome.READY
+    assert result.skipped_sections == 0
+    assert len(generator.requests) == 4  # three sections plus one retry
+    assert result.response is not None
+    assert any("Fact 4" in claim.text for claim in result.response.answer.claims)
+
+
+def test_a_section_that_keeps_failing_is_skipped_not_the_whole_document() -> None:
+    """Regression: one bad section output failed the whole document's summary."""
+    repository = FakeRepository(_document(101, 9))
+    generator = FlakyGenerator("Fact 4 of", failures=2)
+
+    result = asyncio.run(_summarizer(repository, generator).summarize_document(101, "en"))
+
+    assert result.outcome is SummaryOutcome.READY
+    assert result.skipped_sections == 1
+    assert result.response is not None
+    texts = [claim.text for claim in result.response.answer.claims]
+    assert not any("Fact 4" in text or "Fact 5" in text or "Fact 6" in text for text in texts)
+    assert any("Fact 1" in text for text in texts) and any("Fact 7" in text for text in texts)
+
+
+def test_infrastructure_failures_still_fail_the_document() -> None:
+    import pytest
+
+    from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
+    repository = FakeRepository(_document(101, 9))
+    generator = FlakyGenerator("Fact 4 of", failures=1, code=RagErrorCode.MODEL_UNAVAILABLE)
+
+    with pytest.raises(RagOperationalError) as error:
+        asyncio.run(_summarizer(repository, generator).summarize_document(101, "en"))
+
+    assert error.value.code is RagErrorCode.MODEL_UNAVAILABLE
+    assert repository.puts == 0

@@ -467,6 +467,7 @@ def _run_summaries(runtime: _Runtime, parsed: _ParsedArguments) -> tuple[str, ..
                 f"DOCUMENT_VERSION_ID={version}",
                 f"STATUS={result.outcome.value}",
                 f"DROPPED_POINTS={result.dropped_points}",
+                f"SKIPPED_SECTIONS={result.skipped_sections}",
             )
         )
         if result.response is not None:
