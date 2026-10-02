@@ -1,7 +1,9 @@
 "use client";
 
+import { CheckCircle2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Button } from "@/components/ui/button";
@@ -45,7 +47,12 @@ export function ApprovalListView() {
             Approval data is temporarily unavailable.
           </p>
         ) : query.data?.approvals.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No approvals found.</p>
+          <EmptyState
+            icon={CheckCircle2}
+            title="No approvals found."
+            description="When AAOS proposes a Calendar event, it waits here until you approve or reject it."
+            action={{ href: "/ask", label: "Open Ask AAOS" }}
+          />
         ) : (
           <ul aria-label="Approvals" className="space-y-3">
             {query.data?.approvals.map((approval) => (

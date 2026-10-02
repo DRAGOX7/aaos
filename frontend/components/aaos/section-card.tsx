@@ -18,12 +18,12 @@ export function SectionCard({
   return (
     <section
       className={cn(
-        "min-w-0 rounded-[var(--aaos-radius-card)] border border-border bg-[color:var(--aaos-surface-glass)] shadow-[var(--aaos-shadow-card)] backdrop-blur-xl transition-shadow duration-200 hover:shadow-[var(--aaos-shadow-float)]",
+        "min-w-0 rounded-[var(--aaos-radius-card)] border border-border bg-white shadow-[var(--aaos-shadow-card)]",
         className,
       )}
     >
       <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
-        <h2 className="text-base font-semibold tracking-tight text-foreground">
+        <h2 className="text-base font-bold tracking-tight text-foreground">
           {title}
         </h2>
 

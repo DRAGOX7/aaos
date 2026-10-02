@@ -1,7 +1,9 @@
 "use client";
 
+import { ListTodo } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
+import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,7 +34,12 @@ export function TaskListView() {
             Task data is temporarily unavailable.
           </p>
         ) : query.data?.tasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No tasks found.</p>
+          <EmptyState
+            icon={ListTodo}
+            title="No tasks found."
+            description="Ask AAOS to create a study task, for example: remind me to review the AI445 notes."
+            action={{ href: "/ask", label: "Open Ask AAOS" }}
+          />
         ) : (
           <ul aria-label="Tasks" className="space-y-3">
             {query.data?.tasks.map((task) => (

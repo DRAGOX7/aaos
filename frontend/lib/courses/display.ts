@@ -30,7 +30,7 @@ function isAllCaps(text: string): boolean {
 }
 
 /** A readable course code and name from a Moodle course title. */
-export function courseDisplayName(course: CourseSummary): CourseDisplayName {
+export function courseDisplayName(course: Pick<CourseSummary, "title" | "code">): CourseDisplayName {
   const match = MOODLE_TITLE.exec(course.title.trim());
   if (!match) {
     return { code: course.code, name: course.title.trim() };

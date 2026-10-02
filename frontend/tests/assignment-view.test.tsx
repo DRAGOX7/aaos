@@ -146,9 +146,11 @@ describe("AAOS assignment read view", () => {
     expect(within(rows[1]!).getByText(/Distributed Systems/)).toBeInTheDocument();
     expect(within(rows[2]!).getByText("Course unavailable")).toBeInTheDocument();
     expect(within(rows[2]!).queryByText("Operating Systems")).not.toBeInTheDocument();
-    expect(screen.getByText("DUE_SOON")).toBeInTheDocument();
-    expect(screen.getByText("NO_DUE_DATE")).toBeInTheDocument();
-    expect(screen.getByText("LATER")).toBeInTheDocument();
+    // Readable due labels, not the internal bucket codes.
+    expect(screen.getByText("Due soon")).toBeInTheDocument();
+    expect(screen.getByText("No due date")).toBeInTheDocument();
+    expect(screen.getByText("Later")).toBeInTheDocument();
+    expect(screen.queryByText(/DUE_SOON|NO_DUE_DATE|LATER/)).not.toBeInTheDocument();
   });
 
   it("renders a stable not-found state for a missing or inactive course", () => {

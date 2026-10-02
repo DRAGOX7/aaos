@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { Activity } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
@@ -9,6 +10,7 @@ import {
   type ActivityConnectionState,
   type ActivityEvent,
 } from "@/components/aaos/activity-stream";
+import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -77,7 +79,11 @@ export function ActivityListView() {
             Activity history is temporarily unavailable.
           </p>
         ) : visibleEvents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
+          <EmptyState
+            icon={Activity}
+            title="No activity recorded yet."
+            description="Approvals, task updates and Calendar actions are recorded here as they happen."
+          />
         ) : (
           <ul aria-label="Activity events" className="space-y-3">
             {visibleEvents.map((event) => {

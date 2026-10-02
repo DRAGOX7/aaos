@@ -1627,8 +1627,10 @@
       },
       "HealthDetailCode": {
         "enum": [
+          "DATABASE_READY",
           "DATABASE_UNAVAILABLE",
           "SCHEMA_NOT_READY",
+          "ACADEMIC_DATA_READY",
           "ACADEMIC_READ_UNAVAILABLE",
           "RAG_INDEX_READY",
           "RAG_INDEX_PARTIAL",
