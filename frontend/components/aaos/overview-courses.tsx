@@ -2,22 +2,27 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { CalendarCheck, CalendarClock } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { isPastCourse } from "@/lib/api/courses";
+import { courseCardFacts, type CourseCardFacts } from "@/lib/courses/card-data";
 import { courseDisplayName, distinctCourses } from "@/lib/courses/display";
-import { documentsQueryOptions } from "@/lib/query/academic";
+import { assignmentsQueryOptions, documentsQueryOptions } from "@/lib/query/academic";
 import { courseListQueryOptions } from "@/lib/query/courses";
+import { useClientMinute } from "@/lib/time/use-client-minute";
 
-// Each course gets a stable tint by position: soft fill and readable ink.
-const TINTS = [
-  "bg-[#e8f1fe] text-[#0b4aae]",
-  "bg-[#e7f8f7] text-[#0a6e75]",
-  "bg-[#f0ecff] text-[#5238b0]",
-  "bg-[#fff2df] text-[#8a5300]",
-  "bg-[#fdecee] text-[#a62a33]",
-  "bg-[#e9f8f0] text-[#066b47]",
-] as const;
+// Each course gets a stable colour by position. White text meets WCAG AA on
+// every band (each is at least 6:1 against white).
+const BANDS = ["#1d3a8a", "#0f6b66", "#5232a8", "#8a4b08", "#9b1c3a", "#25507a"] as const;
+
+const dueFormat = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function fileLabel(count: number | null): string {
   if (count === null) return "";
@@ -25,18 +30,47 @@ function fileLabel(count: number | null): string {
   return `${count} file${count === 1 ? "" : "s"}`;
 }
 
+function DeadlineLine({ deadline }: { deadline: CourseCardFacts["nextDeadline"] }) {
+  // Unknown (assignments failed, or the clock is not known yet): say nothing.
+  if (deadline === null) return null;
+  if (deadline === undefined) {
+    return (
+      <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <CalendarCheck aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
+        No upcoming deadlines
+      </p>
+    );
+  }
+  return (
+    <p className="flex items-start gap-2 text-[13px] leading-snug text-foreground">
+      <CalendarClock
+        aria-hidden="true"
+        className="mt-px size-4 shrink-0 text-primary-strong"
+        strokeWidth={2}
+      />
+      <span className="min-w-0 break-words">
+        <span className="font-semibold">{deadline.title}</span>
+        <span className="text-muted-foreground"> · due {dueFormat.format(deadline.dueAt)}</span>
+      </span>
+    </p>
+  );
+}
+
 export function OverviewCourses() {
   const courses = useQuery(courseListQueryOptions());
   const documents = useQuery(documentsQueryOptions());
+  const assignments = useQuery(assignmentsQueryOptions());
+  // "Upcoming" depends on the viewer's clock, known only after hydration.
+  const now = useClientMinute();
 
   const all = Array.isArray(courses.data?.courses) ? courses.data.courses : null;
   const current = all ? distinctCourses(all.filter((course) => !isPastCourse(course))) : [];
   const pastCount = all ? distinctCourses(all.filter(isPastCourse)).length : 0;
-  const fileCounts = new Map<number, number>();
   const documentList = Array.isArray(documents.data?.documents) ? documents.data.documents : null;
-  for (const document of documentList ?? []) {
-    fileCounts.set(document.course_id, (fileCounts.get(document.course_id) ?? 0) + 1);
-  }
+  const assignmentList = Array.isArray(assignments.data?.assignments)
+    ? assignments.data.assignments
+    : null;
+  const facts = courseCardFacts(current, all ?? [], assignmentList, documentList, now);
 
   return (
     <section aria-labelledby="overview-courses-title" className="flex flex-col gap-3.5">
@@ -53,9 +87,9 @@ export function OverviewCourses() {
       </div>
 
       {courses.isPending ? (
-        <div aria-label="Loading courses" className="grid grid-cols-2 gap-3 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }, (_, index) => (
-            <Skeleton key={index} className="h-[8.5rem] rounded-2xl" />
+        <div aria-label="Loading courses" className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }, (_, index) => (
+            <Skeleton key={index} className="h-[11rem] rounded-2xl" />
           ))}
         </div>
       ) : courses.isError || !all ? (
@@ -67,23 +101,46 @@ export function OverviewCourses() {
           No current courses yet. They appear after your next Moodle sync.
         </p>
       ) : (
-        <ul aria-label="Current courses" className="grid grid-cols-2 gap-3 sm:gap-3.5 lg:grid-cols-3 xl:grid-cols-5">
+        <ul aria-label="Current courses" className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           {current.map((course, index) => {
             const { code, name } = courseDisplayName(course);
-            const files = documentList ? (fileCounts.get(course.id) ?? 0) : null;
+            const card = facts.get(course.id);
+            const band = BANDS[index % BANDS.length];
             return (
               <li key={course.id}>
                 <Link
                   href={`/courses/${course.id}`}
-                  className="flex h-full min-h-[7.5rem] min-w-0 flex-col gap-3 rounded-2xl border border-border bg-white p-4 sm:min-h-[8.5rem] sm:gap-3.5 sm:p-[1.125rem] transition-[border-color,box-shadow] duration-200 hover:border-[#bcd3f4] hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="group flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-white transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgb(16_33_75_/_0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
                 >
-                  {code ? (
-                    <span className={`self-start rounded-lg px-2.5 py-1 text-[13px] font-bold ${TINTS[index % TINTS.length]}`}>
-                      {code}
+                  <div
+                    className="flex flex-col gap-2.5 px-[1.125rem] pb-4 pt-[1.125rem] text-white"
+                    style={{ backgroundColor: band }}
+                  >
+                    {code ? (
+                      <span className="self-start rounded-lg bg-white/15 px-2.5 py-1 text-[13px] font-bold">
+                        {code}
+                      </span>
+                    ) : null}
+                    <span className="break-words text-[17px] font-bold leading-snug tracking-tight">
+                      {name}
                     </span>
-                  ) : null}
-                  <span className="break-words text-sm font-semibold leading-snug text-foreground sm:text-[15px]">{name}</span>
-                  <span className="mt-auto text-xs text-muted-foreground">{fileLabel(files)}</span>
+                  </div>
+                  <div className="flex flex-1 flex-col gap-3.5 px-[1.125rem] py-4">
+                    <DeadlineLine deadline={card ? card.nextDeadline : null} />
+                    <div className="mt-auto flex items-center justify-between gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        {fileLabel(card ? card.fileCount : null)}
+                      </span>
+                      {/* Visual only: the whole card is the one link. */}
+                      <span
+                        aria-hidden="true"
+                        className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+                        style={{ backgroundColor: band }}
+                      >
+                        Open
+                      </span>
+                    </div>
+                  </div>
                 </Link>
               </li>
             );

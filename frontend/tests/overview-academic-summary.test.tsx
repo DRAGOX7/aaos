@@ -134,6 +134,48 @@ describe("AAOS overview (refresh direction A)", () => {
     );
   });
 
+  it("shows each course's next deadline, gathered from all its Moodle entries", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-03T09:00:00Z"));
+    try {
+      setQueries({
+        ...allSuccess,
+        assignments: {
+          data: {
+            assignments: [
+              { id: 1, course_id: 6, title: "Lab 4", description: null,
+                due_at: "2026-10-05T09:00:00Z", updated_at: null },
+              { id: 2, course_id: 42, title: "Old quiz", description: null,
+                due_at: "2026-09-01T09:00:00Z", updated_at: null },
+            ],
+          },
+        },
+      });
+      render(<OverviewAcademicSummary />);
+
+      const [optimization, systems] = within(
+        screen.getByRole("list", { name: "Current courses" }),
+      ).getAllByRole("link");
+      expect(within(optimization).getByText("Lab 4")).toBeInTheDocument();
+      expect(optimization).toHaveTextContent(/due Mon 5 Oct/);
+      expect(within(systems).getByText("No upcoming deadlines")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps each card one link, named by its course and not by the Open pill", () => {
+    setQueries(allSuccess);
+    render(<OverviewAcademicSummary />);
+
+    const list = screen.getByRole("list", { name: "Current courses" });
+    for (const item of within(list).getAllByRole("listitem")) {
+      const links = within(item).getAllByRole("link");
+      expect(links).toHaveLength(1);
+      expect(links[0]).not.toHaveAccessibleName(/Open/);
+    }
+  });
+
   it("shows a calm empty state when nothing is due", () => {
     setQueries(allSuccess);
     render(<OverviewAcademicSummary />);
@@ -171,6 +213,8 @@ describe("AAOS overview (refresh direction A)", () => {
 
     expect(screen.getByText("Optimization Algorithms")).toBeInTheDocument();
     expect(screen.getByText("Academic data is temporarily unavailable.")).toBeInTheDocument();
+    // Unknown deadlines are left out, never shown as "none".
+    expect(screen.queryByText("No upcoming deadlines")).not.toBeInTheDocument();
   });
 
   it("shows each panel's own loading state", () => {
