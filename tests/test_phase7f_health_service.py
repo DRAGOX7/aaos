@@ -174,3 +174,13 @@ def test_system_health_optional_registered_components_are_truthfully_unknown() -
     assert inference.status is HealthStatus.UNKNOWN
     assert inference.detail_code is HealthDetailCode.PASSIVE_STATUS_UNAVAILABLE
     assert calendar.status is HealthStatus.NOT_CONFIGURED
+
+
+def test_healthy_components_report_their_own_ready_detail() -> None:
+    """Regression: a healthy database and academic data reported "RAG index is ready"."""
+    response = _service().check(now=datetime(2026, 10, 2, tzinfo=timezone.utc))
+
+    database = _component(response, HealthComponentName.DATABASE)
+    academic = _component(response, HealthComponentName.ACADEMIC_DATA)
+    assert database.detail_code is HealthDetailCode.DATABASE_READY
+    assert academic.detail_code is HealthDetailCode.ACADEMIC_DATA_READY

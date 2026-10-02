@@ -805,7 +805,7 @@ export interface components {
          * HealthDetailCode
          * @enum {string}
          */
-        HealthDetailCode: "DATABASE_UNAVAILABLE" | "SCHEMA_NOT_READY" | "ACADEMIC_READ_UNAVAILABLE" | "RAG_INDEX_READY" | "RAG_INDEX_PARTIAL" | "RAG_INDEX_NOT_CONFIGURED" | "PASSIVE_STATUS_UNAVAILABLE" | "INTERNAL_STATUS_UNAVAILABLE";
+        HealthDetailCode: "DATABASE_READY" | "DATABASE_UNAVAILABLE" | "SCHEMA_NOT_READY" | "ACADEMIC_DATA_READY" | "ACADEMIC_READ_UNAVAILABLE" | "RAG_INDEX_READY" | "RAG_INDEX_PARTIAL" | "RAG_INDEX_NOT_CONFIGURED" | "PASSIVE_STATUS_UNAVAILABLE" | "INTERNAL_STATUS_UNAVAILABLE";
         /**
          * HealthResponse
          * @description Stable response contract for process-level health checks.

@@ -163,7 +163,7 @@ class SystemHealthService:
             HealthComponentName.DATABASE,
             HealthStatus.HEALTHY,
             True,
-            HealthDetailCode.RAG_INDEX_READY,
+            HealthDetailCode.DATABASE_READY,
         )
 
     def _academic(self, database: HealthComponent) -> HealthComponent:
@@ -188,7 +188,7 @@ class SystemHealthService:
             HealthComponentName.ACADEMIC_DATA,
             HealthStatus.HEALTHY,
             True,
-            HealthDetailCode.RAG_INDEX_READY,
+            HealthDetailCode.ACADEMIC_DATA_READY,
         )
 
     def _rag(self) -> HealthComponent:

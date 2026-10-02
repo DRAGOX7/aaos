@@ -15,7 +15,9 @@ const component = (
   status: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED",
   required: boolean,
   detail_code:
+    | "DATABASE_READY"
     | "DATABASE_UNAVAILABLE"
+    | "ACADEMIC_DATA_READY"
     | "ACADEMIC_READ_UNAVAILABLE"
     | "RAG_INDEX_READY"
     | "RAG_INDEX_PARTIAL"
@@ -44,7 +46,7 @@ describe("system health view", () => {
         checked_at: "2026-09-18T00:00:00Z",
         overall: "DEGRADED",
         components: [
-          component("DATABASE", "HEALTHY", true, "RAG_INDEX_READY"),
+          component("DATABASE", "HEALTHY", true, "DATABASE_READY"),
           component("ACADEMIC_DATA", "UNAVAILABLE", true, "ACADEMIC_READ_UNAVAILABLE"),
           component("RAG_INDEX", "NOT_CONFIGURED", false, "RAG_INDEX_NOT_CONFIGURED"),
         ],
@@ -57,13 +59,16 @@ describe("system health view", () => {
     expect(screen.getByRole("heading", { name: "System health", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Required components", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Optional components", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText("DEGRADED")).toBeInTheDocument();
-    expect(screen.getByText("DATABASE")).toBeInTheDocument();
-    expect(screen.getByText("ACADEMIC DATA")).toBeInTheDocument();
-    expect(screen.getByText("RAG INDEX")).toBeInTheDocument();
-    expect(screen.getAllByText("HEALTHY")).toHaveLength(1);
-    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
-    expect(screen.getByText("NOT CONFIGURED")).toBeInTheDocument();
+    expect(screen.getByText("Some systems are degraded")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Database", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Academic data", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Document index", level: 3 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Database status Healthy")).toBeInTheDocument();
+    expect(screen.getByLabelText("Academic data status Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Document index status Not configured")).toBeInTheDocument();
+    // Regression: a healthy database used to read "RAG index is ready".
+    expect(screen.getByText("The local database is reachable and its schema is current.")).toBeInTheDocument();
+    expect(screen.queryByText(/DATABASE|ACADEMIC DATA|RAG INDEX/)).not.toBeInTheDocument();
     expect(screen.queryByText(/restart|repair|clear cache|diagnostic|credential|C:\\|\\\\/i)).not.toBeInTheDocument();
   });
 
@@ -82,8 +87,9 @@ describe("system health view", () => {
       isError: false,
     });
     render(<SystemHealthView />);
-    expect(screen.getAllByText("UNKNOWN")).toHaveLength(2);
-    expect(screen.getByText("NOT CONFIGURED")).toBeInTheDocument();
+    expect(screen.getByText("Systems need attention")).toBeInTheDocument();
+    expect(screen.getByLabelText("Database status Unknown")).toBeInTheDocument();
+    expect(screen.getByLabelText("Document index status Not configured")).toBeInTheDocument();
     expect(screen.queryByText(/uptime|latency|requests per second|restart/i)).not.toBeInTheDocument();
   });
 
@@ -93,17 +99,20 @@ describe("system health view", () => {
         schema_version: "phase7-health-v1",
         checked_at: "2026-09-18T00:00:00Z",
         overall: "HEALTHY",
-        components: [component("DATABASE", "HEALTHY", true, "RAG_INDEX_READY")],
+        components: [component("DATABASE", "HEALTHY", true, "DATABASE_READY")],
       },
       isPending: false,
       isError: false,
     });
     render(<SystemHealthView />);
 
-    expect(screen.getByText("DATABASE").closest("li")).toHaveClass("flex-col", "sm:flex-row");
-    expect(screen.getByText("Overall status").parentElement).toHaveClass(
+    expect(screen.getByRole("heading", { name: "Database", level: 3 }).closest("li")).toHaveClass(
       "flex-col",
       "sm:flex-row",
     );
+    expect(
+      screen.getByRole("heading", { name: "Overall status" }).parentElement?.parentElement
+        ?.parentElement,
+    ).toHaveClass("flex-col", "sm:flex-row");
   });
 });
