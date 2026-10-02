@@ -409,3 +409,18 @@ RLM work were all zero/not started. The historical 28-file formatting baseline
 and retained deterministic rather than raw-output evidence are non-blocking
 minor findings; no Critical or Important findings remain. Phase 9 remains
 PLANNED / NOT STARTED.
+
+## Phase 10 authorization and standing notification approval (2026-10-02)
+
+- **Authorization:** the owner authorized Phase 10, Moodle change notifications via Telegram. The open Phase 0 and Phase 5 gates are explicitly deferred, not resolved.
+- **Spec:** `docs/superpowers/specs/2026-10-02-phase-10-moodle-change-notifications.md`, approved.
+- **Standing approval (spec §7)** for Telegram sends that meet all of these conditions:
+  - the destination is the single chat the owner links with `aaos notify link`;
+  - the message is one of the fixed templates for the closed event set (`NEW_ANNOUNCEMENT`, `NEW_ASSIGNMENT`, `DEADLINE_CHANGED`, `NEW_COURSE`, `COURSE_ARCHIVED`, `AUTH_REQUIRED`), the digest, the test message or the link confirmation;
+  - the content is limited to course names, item titles, dates and Moodle links built from the configured origin.
+- **Revocation:** `aaos notify unlink` revokes the standing approval. Every other content or destination requires the normal approval path, and every send is recorded in `notification_deliveries`.
+- **Owner decisions:**
+  - checks run every 15 minutes, 07:00–24:00 Asia/Amman;
+  - a visible Edge window per run is accepted, and the headless-browsing boundary is unchanged;
+  - consent is given to send titles and dates through Telegram;
+  - more than 5 events from one run are sent as one digest.
