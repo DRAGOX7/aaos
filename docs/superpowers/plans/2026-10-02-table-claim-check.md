@@ -43,7 +43,7 @@ Running the check before the re-check saves 2–5 s of CPU NLI when it matches. 
    - For each occurrence, its **row label** is the text since the previous number or percentage in the chunk, whitespace and line breaks collapsed, with brackets and punctuation trimmed. This handles rows split across lines, such as `Final Exam \r\n(40%)`.
    - An empty label, or a label of more than 8 words, does not bind.
 3. **Label in claim.**
-   - Every content word of the row label (lower-cased, at least 2 letters) appears in the claim.
+   - Every content word of the row label (lower-cased, at least 2 letters, stopwords such as `and`, `of` and `the` excluded) appears in the claim.
    - Example: `Final Exam` → {final, exam}.
 4. **Nothing else asserted.**
    - Remove from the claim:
@@ -60,6 +60,7 @@ Running the check before the re-check saves 2–5 s of CPU NLI when it matches. 
 
 - **No Arabic claims in v1.** Labels are English table text, so an Arabic claim's words cannot match. Arabic claims keep today's path, unchanged. This is a known limitation, reported separately in the measurements.
 - **Percentages only.** Dates, counts and other numbers keep today's path.
+- **Abbreviated labels fail closed.** "Data cleaning is worth 15%" is true, but the row says "Data cleaning and preprocessing". The claim lacks "preprocessing", so the rule does not match and today's path decides. This is an accepted false negative: a refusal, never a wrong answer.
 - **No new evidence.** It reads only the cited chunks, never other evidence, and it does not change citations.
 
 ### Traceability
@@ -87,7 +88,7 @@ The verifier's public result stays `ENTAILED` / `NOT_ENTAILED`, so no contract c
 | Swapped rows | "Machine learning implementation is worth 15%." |
 | Extra assertion | "The final exam is worth 40% and is optional." |
 | Negation | "The final exam is not worth 40%." |
-| Ambiguous number | "Data cleaning is worth 15%." (`15%` labels three rows; only one says data cleaning. It is accepted only if exactly one row's label is fully in the claim.) |
+| Ambiguous number | A claim whose label words fit two rows that carry the same percentage |
 | Label partly present | "The exam is worth 40%." (the label word `final` is missing) |
 | Two numbers | "The first and second exams are worth 25% each, 50% total." |
 | Number not in the cited chunk | a correct label with a percentage that appears only in uncited evidence |
