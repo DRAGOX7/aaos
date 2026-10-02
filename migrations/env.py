@@ -27,7 +27,9 @@ from aaos.persistence.database import (
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers that already exist (for example an AAOS module imported before an
+    # in-process migration): fileConfig would otherwise silence them.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
