@@ -79,7 +79,15 @@ def _create_existing_database_engine(database_path: Path) -> Engine:
     return engine
 
 
-def collect_configured_snapshot(environment: RuntimeMoodleEnvironment) -> SourceCollection:
+# Waiting for sign-in: an unattended (scheduled) run gives up quickly and
+# raises one "login needed" alert; a run the owner watches keeps 10 minutes.
+UNATTENDED_AUTH_WAIT_SECONDS = 90
+ATTENDED_AUTH_WAIT_SECONDS = 600
+
+
+def collect_configured_snapshot(
+    environment: RuntimeMoodleEnvironment, *, auth_wait_seconds: int = ATTENDED_AUTH_WAIT_SECONDS
+) -> SourceCollection:
     """Use the configured authenticated browser and restricted source only."""
     from aaos.moodle.browser_runtime import launch_msedge_persistent_context
 
@@ -88,6 +96,7 @@ def collect_configured_snapshot(environment: RuntimeMoodleEnvironment) -> Source
         paths=environment.auth_paths,
         launch_persistent_context=launch_msedge_persistent_context,
         canonical_wwwroot=environment.bootstrap_config.canonical_wwwroot,
+        auth_wait_seconds=auth_wait_seconds,
     )
 
 
@@ -123,8 +132,9 @@ class SyncOutcome:
     browser_stage: str | None = None
 
 
-def run_configured_moodle_sync_outcome() -> SyncOutcome:
+def run_configured_moodle_sync_outcome(*, unattended: bool = False) -> SyncOutcome:
     """The same sync as ``run_configured_moodle_sync``, reporting why it failed."""
+    auth_wait_seconds = UNATTENDED_AUTH_WAIT_SECONDS if unattended else ATTENDED_AUTH_WAIT_SECONDS
     try:
         environment = load_runtime_moodle_environment()
         database_path = _normal_database_path()
@@ -152,7 +162,9 @@ def run_configured_moodle_sync_outcome() -> SyncOutcome:
             return SyncOutcome(_render_failure("PERSISTENCE"))
 
         try:
-            collection = collect_configured_snapshot(environment)
+            collection = collect_configured_snapshot(
+                environment, auth_wait_seconds=auth_wait_seconds
+            )
         except BrowserSmokeFailure as error:
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
             return SyncOutcome(_render_failure("BROWSER"), browser_stage=str(error.stage))

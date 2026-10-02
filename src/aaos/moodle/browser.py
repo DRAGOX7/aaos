@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from playwright.sync_api import Error as PlaywrightError
@@ -53,6 +54,7 @@ from aaos.moodle.embedded_drive import (
 )
 from aaos.moodle.models import AuthPaths, MoodleSettings
 from aaos.moodle.session_lifetime import wait_for_authenticated_course_index
+from aaos.moodle.sso_continuation import SignInResult, continue_remembered_sign_in
 
 BrowserSmokeFailureStage: TypeAlias = Literal[
     "PROFILE",
@@ -475,6 +477,7 @@ def _run_same_context_complete_collection(
     paths: AuthPaths,
     launch_persistent_context: Callable[..., object],
     canonical_wwwroot: str | None = None,
+    auth_wait_seconds: int = 600,
 ) -> SourceCollection:
     """Collect one complete Moodle snapshot inside the authenticated context."""
     if settings.mode != "browser":
@@ -515,18 +518,37 @@ def _run_same_context_complete_collection(
                 raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
             except (AttributeError, OSError, TypeError, ValueError):
                 raise BrowserSmokeFailure("AUTH_REQUIRED") from None
+            course_index_url = settings.base_origin + "/current/my/courses.php"
+            auth_started = monotonic()
+            # Moodle's session ends with the browser; a remembered Microsoft
+            # sign-in completes by following the login page's own link once.
+            try:
+                continuation = continue_remembered_sign_in(
+                    auth_page,
+                    base_origin=settings.base_origin,
+                    course_index_url=course_index_url,
+                    timeout_seconds=auth_wait_seconds,
+                )
+            except (AttributeError, OSError, PlaywrightError, TimeoutError, TypeError, ValueError):
+                raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
+            if continuation is SignInResult.TIMED_OUT:
+                raise BrowserSmokeFailure("AUTH_TIMEOUT")
+            remaining_seconds = max(1, int(auth_wait_seconds - (monotonic() - auth_started)))
             try:
                 authenticated = wait_for_authenticated_course_index(
                     auth_page,
-                    course_index_url=settings.base_origin + "/current/my/courses.php",
-                    timeout_seconds=600,
+                    course_index_url=course_index_url,
+                    timeout_seconds=remaining_seconds,
                 )
             except TimeoutError:
                 raise BrowserSmokeFailure("AUTH_TIMEOUT") from None
             except (AttributeError, OSError, TypeError, ValueError):
                 raise BrowserSmokeFailure("AUTH_PROOF") from None
             if not authenticated:
-                raise BrowserSmokeFailure("AUTH_PROOF")
+                # Still off the course list when the budget ends means nobody
+                # signed in, which the monitor reports as "login needed".
+                still_signing_in = getattr(auth_page, "url", None) != course_index_url
+                raise BrowserSmokeFailure("AUTH_TIMEOUT" if still_signing_in else "AUTH_PROOF")
             auth_pages, sentinel = _create_transition_sentinel(context)
             _close_auth_pages(context, auth_pages, sentinel)
             try:

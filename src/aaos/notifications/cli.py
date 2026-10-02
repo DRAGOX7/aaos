@@ -89,7 +89,8 @@ def run_monitor_once(*, force: bool = False) -> int:
         return 0
     from aaos.moodle.live_sync import run_configured_moodle_sync_outcome
 
-    outcome = run_configured_moodle_sync_outcome()
+    # A scheduled run is unattended; "Sync Now" (--now) has the owner present.
+    outcome = run_configured_moodle_sync_outcome(unattended=not force)
     try:
         source, origin, sessions = _environment()
     except Exception:

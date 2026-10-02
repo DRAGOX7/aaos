@@ -53,6 +53,13 @@ Output lines:
 | `MONITOR_AUTH_REQUIRED=ALERT_QUEUED` | your Moodle login expired; one alert is sent per expiry |
 | `NOTIFY_NOT_LINKED` | Telegram is not linked; messages wait until you link |
 
+**Signing in.** Moodle forgets its login every time the window closes. When a run lands on the Moodle login page, AAOS follows the page's own "Log in with Microsoft" link once. If your Microsoft sign-in is remembered, that is enough and the run continues on its own. AAOS never types, clicks or reads anything on a Microsoft page. If Microsoft asks for anything (password, code, account choice), the run waits:
+
+- a scheduled run waits **90 seconds**, then sends one "Moodle login needed" message;
+- `--now` and `aaos moodle sync` wait **10 minutes**, so you can finish the prompt in the window yourself.
+
+Spec: `docs/superpowers/specs/2026-10-03-phase-10-sso-continuation.md`.
+
 ## 5. Run it every 15 minutes (Windows Task Scheduler)
 
 **Create the task** (runs 07:00–24:00 Amman; the command itself also skips outside those hours):

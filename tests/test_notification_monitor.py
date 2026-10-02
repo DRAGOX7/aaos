@@ -26,7 +26,7 @@ def test_outside_active_hours_no_sync_runs(monkeypatch, capsys) -> None:  # type
     monkeypatch.setattr(cli, "within_active_hours", lambda _now: False)
     monkeypatch.setattr(
         "aaos.moodle.live_sync.run_configured_moodle_sync_outcome",
-        lambda: pytest.fail("Moodle must not be contacted outside active hours"),
+        lambda **_kwargs: pytest.fail("Moodle must not be contacted outside active hours"),
     )
 
     assert cli.run_monitor_once() == 0
@@ -66,7 +66,9 @@ class Recorder:
 )
 def test_the_sync_outcome_decides_what_is_recorded(monkeypatch, outcome, expected) -> None:  # type: ignore[no-untyped-def]
     recorder = Recorder()
-    monkeypatch.setattr("aaos.moodle.live_sync.run_configured_moodle_sync_outcome", lambda: outcome)
+    monkeypatch.setattr(
+        "aaos.moodle.live_sync.run_configured_moodle_sync_outcome", lambda **_kwargs: outcome
+    )
     monkeypatch.setattr(cli, "_environment", lambda: ("src", "https://m.example", None))
     monkeypatch.setattr(cli, "NotificationPipeline", lambda _sessions: recorder)
     monkeypatch.setattr(cli, "_telegram", lambda: object())
@@ -75,6 +77,27 @@ def test_the_sync_outcome_decides_what_is_recorded(monkeypatch, outcome, expecte
 
     assert recorder.calls == expected
     assert exit_code == outcome.exit_code
+
+
+@pytest.mark.parametrize(("force", "unattended"), [(False, True), (True, False)])
+def test_only_the_scheduled_run_uses_the_short_unattended_sign_in_wait(
+    monkeypatch, force: bool, unattended: bool
+) -> None:  # type: ignore[no-untyped-def]
+    seen: list[bool] = []
+
+    def sync(*, unattended: bool) -> SyncOutcome:
+        seen.append(unattended)
+        return SyncOutcome(1)
+
+    monkeypatch.setattr(cli, "within_active_hours", lambda _now: True)
+    monkeypatch.setattr("aaos.moodle.live_sync.run_configured_moodle_sync_outcome", sync)
+    monkeypatch.setattr(cli, "_environment", lambda: ("src", "https://m.example", None))
+    monkeypatch.setattr(cli, "NotificationPipeline", lambda _sessions: Recorder())
+    monkeypatch.setattr(cli, "_telegram", lambda: object())
+
+    cli.run_monitor_once(force=force)
+
+    assert seen == [unattended]
 
 
 def test_unlinked_telegram_leaves_deliveries_pending(capsys) -> None:  # type: ignore[no-untyped-def]
