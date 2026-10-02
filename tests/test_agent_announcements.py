@@ -195,5 +195,7 @@ def test_course_title_is_shown_once_per_course_group() -> None:
     result, _gateway = _ask("Show me the HSS100 announcements.", reader)
 
     text = result.answer_text or ""
-    assert text.count(HSS_SECTION) == 1
-    assert f"Announcements in {HSS_SECTION}:" in text
+    readable = "HSS100O.T · Disability and the Society"
+    assert text.count(readable) == 1
+    assert f"Announcements in {readable}:" in text
+    assert HSS_SECTION not in text
