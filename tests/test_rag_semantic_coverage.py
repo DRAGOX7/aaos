@@ -1312,3 +1312,108 @@ def test_claim_recheck_reads_the_chunk_start_for_document_identity() -> None:
     assert result is EntailmentResult.ENTAILED
     assert len(classifier.calls) == 2
     assert classifier.calls[1][0].startswith("x.pdf\n\nAI 495C syllabus.")
+
+
+_GRADE_TABLE = "Assessment\r\nFirst Exam (25%)\r\nSecond Exam (25%)\r\nFinal Exam \r\n(40%)\r\n"
+
+
+def _table_claim_case(text: str = "The final exam is worth 40% of the SE440 grade.") -> Any:
+    from aaos.rag.contracts import RagClaim
+
+    evidence, spans, _claim = _span_claim_case(_GRADE_TABLE, "Final Exam", title="SE440.pdf")
+    return evidence, spans, RagClaim("claim-1", text, ("ev-1",))
+
+
+def test_a_neutral_claim_matching_one_table_row_is_accepted_without_a_recheck() -> None:
+    """Regression: the NLI read true grade-weight claims on table rows as neutral."""
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _table_claim_case()
+    classifier = RuleNliClassifier(lambda premise: False)
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    result = asyncio.run(
+        verifier.verify(claim, evidence=(evidence,), validated_requirement_spans=spans)
+    )
+
+    assert result is EntailmentResult.ENTAILED
+    assert len(classifier.calls) == 1  # the span check only; no re-check inference
+    assert verifier.table_rule_acceptances == 1
+
+
+def test_a_contradicted_claim_is_never_accepted_by_the_table_rule() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _table_claim_case()
+    classifier = RuleNliClassifier(lambda premise: False, label_when_not_entailed="contradiction")
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    result = asyncio.run(
+        verifier.verify(claim, evidence=(evidence,), validated_requirement_spans=spans)
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+    assert verifier.table_rule_acceptances == 0
+
+
+def test_a_wrong_table_claim_still_goes_through_the_bounded_recheck() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, spans, claim = _table_claim_case("The final exam is worth 25% of the SE440 grade.")
+    classifier = RuleNliClassifier(lambda premise: False)
+    verifier = IndependentClaimEntailmentVerifier(classifier)
+
+    result = asyncio.run(
+        verifier.verify(claim, evidence=(evidence,), validated_requirement_spans=spans)
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+    assert len(classifier.calls) > 1  # the unchanged re-check ran
+    assert verifier.table_rule_acceptances == 0
+
+
+def test_the_table_rule_never_reads_evidence_the_claim_does_not_cite() -> None:
+    import asyncio
+    from dataclasses import replace
+
+    from aaos.rag.contracts import EntailmentResult, EvidenceSpan, RequirementEvidenceSpans
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, _spans, claim = _table_claim_case()
+    cited = replace(evidence, exact_text="Assessment overview. Final Exam details follow.")
+    spans = (RequirementEvidenceSpans("r1", (EvidenceSpan(cited.evidence_id, "Final Exam"),)),)
+    uncited = replace(evidence, evidence_id="ev-2", chunk_key="chunk-2")
+    classifier = RuleNliClassifier(lambda premise: False)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(
+            claim, evidence=(cited, uncited), validated_requirement_spans=spans
+        )
+    )
+
+    assert result is EntailmentResult.NOT_ENTAILED
+
+
+def test_the_table_rule_applies_without_requirement_spans() -> None:
+    import asyncio
+
+    from aaos.rag.contracts import EntailmentResult
+    from aaos.rag.semantic_coverage import IndependentClaimEntailmentVerifier
+
+    evidence, _spans, claim = _table_claim_case()
+    classifier = RuleNliClassifier(lambda premise: False)
+
+    result = asyncio.run(
+        IndependentClaimEntailmentVerifier(classifier).verify(claim, evidence=(evidence,))
+    )
+
+    assert result is EntailmentResult.ENTAILED
