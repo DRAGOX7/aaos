@@ -704,12 +704,20 @@ export interface components {
          * @description Browser-safe projection of an active academic course.
          */
         CourseSummary: {
+            /** Archived At */
+            archived_at?: string | null;
             /** Code */
             code: string | null;
             /** Description */
             description: string | null;
             /** Id */
             id: number;
+            /**
+             * Status
+             * @default current
+             * @enum {string}
+             */
+            status: "current" | "past";
             /** Title */
             title: string;
             /** Updated At */

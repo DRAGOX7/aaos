@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from aaos.academic.visibility import course_visible, item_visible
 from aaos.persistence.academic_models import CourseORM, RemoteFileORM
 from aaos.persistence.document_models import DocumentORM, DocumentVersionORM
 from aaos.persistence.rag_models import RagDocumentIndexORM, RagIndexGenerationORM
@@ -52,20 +53,21 @@ class DocumentReadService:
     def list_documents(
         self, course_id: int | None = None, *, limit: int | None = None
     ) -> tuple[DocumentSummary, ...]:
-        """Return active document projections in deterministic title/id order."""
+        """Return document projections in deterministic title/id order.
+
+        Unscoped listings cover current courses only; a named past course lists
+        the documents archived with it (archived-courses spec).
+        """
 
         limit = _validated_read_limit(limit)
         if course_id is not None:
-            self._require_active_course(course_id)
+            self._require_visible_course(course_id)
 
         statement = (
             select(DocumentORM, RemoteFileORM, CourseORM)
             .join(RemoteFileORM, RemoteFileORM.id == DocumentORM.remote_file_id)
             .join(CourseORM, CourseORM.id == RemoteFileORM.course_id)
-            .where(
-                RemoteFileORM.is_active.is_(True),
-                CourseORM.is_active.is_(True),
-            )
+            .where(item_visible(RemoteFileORM, include_past=course_id is not None))
             .order_by(func.lower(RemoteFileORM.title), RemoteFileORM.id, DocumentORM.id)
         )
         if course_id is not None:
@@ -78,7 +80,7 @@ class DocumentReadService:
             return self._project_rows(session, rows)
 
     def get_document(self, document_id: int) -> DocumentSummary:
-        """Return one active document or a stable non-leaking not-found error."""
+        """Return one document (current, or archived with a past course) or not-found."""
 
         statement = (
             select(DocumentORM, RemoteFileORM, CourseORM)
@@ -86,8 +88,7 @@ class DocumentReadService:
             .join(CourseORM, CourseORM.id == RemoteFileORM.course_id)
             .where(
                 DocumentORM.id == document_id,
-                RemoteFileORM.is_active.is_(True),
-                CourseORM.is_active.is_(True),
+                item_visible(RemoteFileORM, include_past=True),
             )
         )
 
@@ -97,12 +98,12 @@ class DocumentReadService:
                 raise self._document_not_found()
             return self._project_rows(session, [row])[0]
 
-    def _require_active_course(self, course_id: int) -> None:
+    def _require_visible_course(self, course_id: int) -> None:
         with self._sessions() as session:
             exists = session.scalar(
                 select(CourseORM.id).where(
                     CourseORM.id == course_id,
-                    CourseORM.is_active.is_(True),
+                    course_visible(include_past=True),
                 )
             )
         if exists is None:

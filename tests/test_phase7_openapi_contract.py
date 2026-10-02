@@ -51,6 +51,8 @@ def test_openapi_contains_versioned_courses_contract() -> None:
         "code",
         "description",
         "updated_at",
+        "status",
+        "archived_at",
     }
 
     rendered = json.dumps(course_schema)

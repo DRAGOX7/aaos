@@ -180,3 +180,58 @@ def test_migration_backfills_courses_archived_by_the_latest_complete_sync(
         engine.dispose()
     assert courses == {"summer": "2026-10-02T08:16:07Z", "fall": None}
     assert files == {"f1": "2026-10-02T08:16:07Z", "f2": None, "f3": None}
+
+
+def _archived_world(tmp_path: Path) -> tuple[object, dict[str, int]]:
+    """Summer archived (file, assignment, announcement); Fall current with one file."""
+    from aaos.persistence.document_models import DocumentORM
+
+    service, sessions, _clock = _service(tmp_path)
+    service.sync(_snapshot("summer", files=("summer:1",)))
+    service.sync(_snapshot("fall", files=("fall:1",)))
+    with sessions() as session, session.begin():  # type: ignore[operator]
+        ids = {row.source_id: row.id for row in session.scalars(select(CourseORM)).all()}
+        for remote in session.scalars(select(RemoteFileORM)).all():
+            session.add(
+                DocumentORM(
+                    remote_file_id=remote.id,
+                    ingestion_status="READY",
+                    created_at=SUMMER_END,
+                    updated_at=SUMMER_END,
+                )
+            )
+    return sessions, ids
+
+
+def test_courses_list_current_first_then_past_with_status(tmp_path: Path) -> None:
+    from aaos.web.academic import AcademicReadService
+
+    sessions, _ids = _archived_world(tmp_path)
+
+    courses = AcademicReadService(sessions).list_courses()  # type: ignore[arg-type]
+
+    assert [(c.title, c.status, c.archived_at) for c in courses] == [
+        ("FALL", "current", None),
+        ("SUMMER", "past", SUMMER_END),
+    ]
+
+
+def test_past_course_items_appear_only_when_the_course_is_named(tmp_path: Path) -> None:
+    from aaos.web.academic import AcademicReadService
+    from aaos.web.documents import DocumentReadService
+
+    sessions, ids = _archived_world(tmp_path)
+    academic = AcademicReadService(sessions)  # type: ignore[arg-type]
+    documents = DocumentReadService(sessions)  # type: ignore[arg-type]
+
+    assert {item.title for item in academic.list_announcements()} == {"News"}
+    assert all(item.course_id == ids["fall"] for item in academic.list_announcements())
+    assert all(item.course_id == ids["fall"] for item in academic.list_assignments())
+    assert {d.course_id for d in documents.list_documents()} == {ids["fall"]}
+
+    assert [item.course_id for item in academic.list_announcements((ids["summer"],))] == [
+        ids["summer"]
+    ]
+    assert [item.course_id for item in academic.list_assignments(ids["summer"])] == [ids["summer"]]
+    assert [d.course_id for d in documents.list_documents(ids["summer"])] == [ids["summer"]]
+    assert academic.get_course(ids["summer"]).status == "past"

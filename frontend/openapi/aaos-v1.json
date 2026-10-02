@@ -1355,6 +1355,18 @@
         "additionalProperties": false,
         "description": "Browser-safe projection of an active academic course.",
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "code": {
             "anyOf": [
               {
@@ -1380,6 +1392,15 @@
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "status": {
+            "default": "current",
+            "enum": [
+              "current",
+              "past"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "title": {
             "title": "Title",

@@ -179,6 +179,8 @@ def test_list_courses_projects_only_browser_safe_fields(
         "code",
         "description",
         "updated_at",
+        "status",
+        "archived_at",
     }
 
     assert "source_system" not in rendered
