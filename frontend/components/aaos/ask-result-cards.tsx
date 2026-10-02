@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
@@ -53,15 +52,20 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
   if (!("citations" in provenance) || provenance.citations.length === 0) return null;
 
   return (
-    <section aria-label="RAG citations" className="mt-5 border-t border-border pt-4">
-      <h3 className="text-sm font-semibold text-foreground">Sources</h3>
+    <section aria-label="RAG citations" className="mt-1 border-t border-border pt-4">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sources</h3>
       <ul className="mt-2 space-y-2">
         {provenance.citations.map((citation, index) => (
           <li
-            className="flex min-w-0 gap-3 rounded-xl border border-border bg-white/70 px-3 py-2.5 text-sm"
+            className="flex min-w-0 gap-3 rounded-xl bg-muted px-3 py-2.5 text-sm"
             key={citation.claim_id + ":" + index}
           >
-            <FileText aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-primary" />
+            <span
+              aria-hidden="true"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-white text-xs font-bold text-primary-strong"
+            >
+              {index + 1}
+            </span>
             <span className="min-w-0">
               <span className="block break-words font-medium text-foreground">
                 {citation.document_title}

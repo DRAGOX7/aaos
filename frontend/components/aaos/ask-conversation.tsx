@@ -1,5 +1,7 @@
 "use client";
 
+import { GraduationCap } from "lucide-react";
+
 import { AskResponseRenderer } from "@/components/aaos/ask-response-renderer";
 import type { AcademicAskResponse } from "@/lib/api/ask";
 
@@ -29,6 +31,17 @@ function AskIssueMessage({ kind, message }: { kind: AskIssueKind; message: strin
   );
 }
 
+function AssistantMark() {
+  return (
+    <span
+      aria-hidden="true"
+      className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-hero text-white"
+    >
+      <GraduationCap className="size-4" strokeWidth={2.1} />
+    </span>
+  );
+}
+
 export function AskConversation({
   entries,
   pending,
@@ -41,33 +54,39 @@ export function AskConversation({
       aria-label="Conversation"
       aria-live="polite"
       aria-relevant="additions"
-      className="min-h-0 space-y-5"
+      className="flex min-h-0 flex-col gap-6"
       role="log"
     >
-      {entries.map((entry) => (
-        <article
-          className={entry.kind === "user" ? "flex justify-end" : "flex justify-start"}
-          key={entry.id}
-        >
-          {entry.kind === "user" ? (
-            <div className="max-w-[88%] rounded-2xl rounded-br-md border border-primary/10 bg-primary-soft px-4 py-3 sm:max-w-[75%]">
-              <p className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-                {entry.text}
-              </p>
-            </div>
-          ) : (
-            <div className="w-full max-w-4xl min-w-0 rounded-2xl border border-border bg-[color:var(--aaos-surface-glass)] p-4 shadow-[var(--aaos-shadow-card)] sm:p-5">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-primary">AAOS</p>
+      {entries.map((entry) =>
+        entry.kind === "user" ? (
+          <article aria-label="Your question" className="flex justify-end" key={entry.id}>
+            <p
+              dir="auto"
+              className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-hero px-4 py-3 text-[15px] leading-6 text-white sm:max-w-[75%]"
+            >
+              {entry.text}
+            </p>
+          </article>
+        ) : (
+          <article aria-label="AAOS answer" className="flex gap-3" key={entry.id}>
+            <AssistantMark />
+            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-white px-5 py-4">
               {entry.kind === "assistant"
                 ? <AskResponseRenderer response={entry.response} />
                 : <AskIssueMessage kind={entry.issue.kind} message={entry.issue.message} />}
             </div>
-          )}
-        </article>
-      ))}
+          </article>
+        ),
+      )}
       {pending ? (
-        <div aria-live="polite" className="flex justify-start">
-          <p className="rounded-xl border border-border bg-white/80 px-4 py-3 text-sm text-muted-foreground">
+        <div aria-live="polite" className="flex items-center gap-3">
+          <AssistantMark />
+          <p className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-white px-4 py-3 text-sm text-muted-foreground">
+            <span aria-hidden="true" className="flex gap-1">
+              <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.3s] motion-reduce:animate-none" />
+              <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.15s] motion-reduce:animate-none" />
+              <span className="size-1.5 animate-bounce rounded-full bg-primary motion-reduce:animate-none" />
+            </span>
             AAOS is thinking…
           </p>
         </div>
