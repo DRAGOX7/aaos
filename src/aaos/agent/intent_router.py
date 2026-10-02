@@ -296,7 +296,9 @@ def _course_aliases(course: CourseSummary) -> tuple[str, ...]:
 
 
 def _mentions(text: str, alias: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text) is not None
+    # A code may be written with a space or hyphen before its digits ("AI 495C").
+    pattern = re.sub(r"(?<=[a-z])(?=\d)", r"[\\s-]?", re.escape(alias), count=1)
+    return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
 
 
 def find_course_mention(question: str, courses: Iterable[CourseSummary]) -> CourseMention:

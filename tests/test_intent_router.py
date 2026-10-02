@@ -112,6 +112,8 @@ MOODLE_COURSES = (
         ("What do the HSS100 notes say about disability?", "hss100o.t"),
         ("ماذا تقول ملاحظات مادة hss100o.t؟", "hss100o.t"),
         ("Summarize the AI495 syllabus", "ai495c"),
+        ("who is the instructor of AI 495C?", "ai495c"),
+        ("What does the SE-440 syllabus say?", "se440"),
         ("What does the project management syllabus say?", "se440"),
         ("What is in my notes?", None),
     ),
