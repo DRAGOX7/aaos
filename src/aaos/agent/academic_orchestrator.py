@@ -117,6 +117,7 @@ from .conversation_context import (
 from .course_names import arabic_date, course_code_token, course_display_title
 from .intent_router import (
     RoutedIntent,
+    asks_about_current,
     asks_about_past,
     asks_next_seven_days,
     extract_topic,
@@ -691,6 +692,7 @@ class _AcademicToolRuntime:
         routed_announcement_request: bool = False,
         summarizer: DocumentSummaryPort | None = None,
         routed_summary: RoutedIntent | None = None,
+        past_requested: bool | None = None,
     ) -> None:
         self._academic = academic
         # Summaries are selected only by the trusted router and reuse the
@@ -769,9 +771,14 @@ class _AcademicToolRuntime:
         self.calendar_proposal: CalendarProposalResult | None = None
         self.calendar_duration_note: str | None = None
         self._rag_adapter = RagQueryAdapter(rag)
-        # Archived (past) courses: explicit past wording selects past courses,
-        # and a document answer drawn only from past courses is labelled.
-        self._past_requested = asks_about_past(request_text)
+        # Archived (past) courses: past wording, or a conversation already about
+        # past courses, selects past courses; an answer drawn only from past
+        # courses is labelled.
+        self._past_requested = (
+            asks_about_past(request_text) if past_requested is None else past_requested
+        )
+        # Set when a document search named a current course.
+        self.searched_current_course = False
         self.past_answer_archived_dates: tuple[datetime | None, ...] | None = None
         # Set when a document search ran unscoped (current courses only).
         self.unscoped_document_search = False
@@ -2481,6 +2488,8 @@ class _AcademicToolRuntime:
         """Remember the archive dates when an answer draws only on past courses."""
         courses = {course.id: course for course in self._visible_courses()}
         chosen = [courses[course_id] for course_id in course_ids if course_id in courses]
+        if any(course.status == "current" for course in chosen):
+            self.searched_current_course = True
         if (
             chosen
             and len(chosen) == len(course_ids)
@@ -3434,8 +3443,14 @@ class ReadOnlyAcademicAssistant:
                     "Creating a Calendar proposal from this change needs an idempotent request "
                     "ID and the configured Calendar proposal service."
                 )
+            # Past courses are searched for past wording, or when this
+            # conversation is already about them and the question does not
+            # ask for the current term.
+            past_requested = asks_about_past(question) or (
+                lease.snapshot.past_focus and not asks_about_current(question)
+            )
             routed_tool = (
-                self._routed_tool_call(question.strip())
+                self._routed_tool_call(question.strip(), past=past_requested)
                 if self._intent_routing
                 and context_resolution is None
                 and not calendar_intent
@@ -3447,7 +3462,7 @@ class ReadOnlyAcademicAssistant:
                 routed_tool is not None
                 and routed_tool[0] is ToolName.RAG_ANSWER
                 and "course_name" not in routed_tool[1]
-                and not asks_about_past(question)
+                and not past_requested
             ):
                 past_with_documents = self._past_courses_when_no_current_documents()
                 if past_with_documents:
@@ -3485,6 +3500,7 @@ class ReadOnlyAcademicAssistant:
                 routed_summary=(
                     route_intent(question.strip()) if routed_tool is not None else None
                 ),
+                past_requested=past_requested,
             )
             registry = runtime.build_registry()
             adapter: AcademicDecisionAdapter
@@ -3570,15 +3586,19 @@ class ReadOnlyAcademicAssistant:
                 conversation_id=lease.conversation_id,
                 context_sources=context_sources,
             )
-            self._context_store.finish_turn(
+            update = _context_update_from_evidence(
+                evidence.items(),
                 lease,
-                _context_update_from_evidence(
-                    evidence.items(),
-                    lease,
-                    resolution,
-                    evidence.document_version_for,
-                ),
+                resolution,
+                evidence.document_version_for,
             )
+            # Remember whether this conversation is about past courses.
+            past_focus: bool | None = None
+            if asks_about_current(question) or runtime.searched_current_course:
+                past_focus = False
+            elif asks_about_past(question) or runtime.past_answer_archived_dates is not None:
+                past_focus = True
+            self._context_store.finish_turn(lease, replace(update, past_focus=past_focus))
             lease_active = False
             return response
         except BaseException:
@@ -3614,7 +3634,9 @@ class ReadOnlyAcademicAssistant:
         except Exception:
             return ()
 
-    def _routed_tool_call(self, question: str) -> tuple[ToolName, dict[str, object]] | None:
+    def _routed_tool_call(
+        self, question: str, *, past: bool | None = None
+    ) -> tuple[ToolName, dict[str, object]] | None:
         """Map a confidently routed intent to one read tool call, or None.
 
         Course scope comes only from trusted course records. A missing reader,
@@ -3644,7 +3666,8 @@ class ReadOnlyAcademicAssistant:
             ):
                 return None
             mention = find_course_mention(
-                question, _term_preferred(courses, past=asks_about_past(question))
+                question,
+                _term_preferred(courses, past=asks_about_past(question) if past is None else past),
             )
             if mention.ambiguous:
                 return None

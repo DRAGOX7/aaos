@@ -218,6 +218,20 @@ _PAST_COURSES = _any(
 )
 
 
+_CURRENT_COURSES = _any(
+    (
+        r"\b(?:this|current) (?:semester|term)\b",
+        r"\b(?:current|this semester'?s?) (?:courses?|classes|subjects)\b",
+        r"(?:هالفصل|هذا الفصل|الفصل الحالي|الترم الحالي|المواد الحاليه|موادي الحاليه)",
+    )
+)
+
+
+def asks_about_current(question: str) -> bool:
+    """Explicit current-term wording, which ends a conversation's past-course focus."""
+    return _CURRENT_COURSES.search(normalize_arabic(question)) is not None
+
+
 def asks_about_past(question: str) -> bool:
     """Whether a question explicitly asks about past (archived) courses."""
     return _PAST_COURSES.search(normalize_arabic(question)) is not None
