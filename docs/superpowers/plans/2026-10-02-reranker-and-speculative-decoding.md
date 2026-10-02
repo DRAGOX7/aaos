@@ -53,7 +53,7 @@ A cross-encoder reads the question and each passage together and scores relevanc
 
 - **`BAAI/bge-reranker-v2-m3`:** multilingual including Arabic, the same family as the BGE-M3 embedder, about 568M parameters.
 - **Placement:** runs on the CPU next to the query embedder, so the GPU keeps qwen and no model swap is added.
-- **Memory:** about 1.1 GB of extra RAM in fp32. Measure whether int8/ONNX is needed.
+- **Memory:** the weights are 2.27 GB (`model.safetensors`, Apache-2.0, revision `953dc6f6`). That is about 2.3 GB of extra RAM in fp32, on top of the ~2.5 GB the embedder holds. Measure whether int8/ONNX is needed.
 
 ### Design
 
