@@ -47,11 +47,54 @@ The latest 3-run trace (bounded claim re-check) has 96 answerable rows from the 
 - **No temperature change is recommended.**
 - **The remaining failures are at the claim check (S4) and the coverage check (S2).** The S4 losses show up as flips.
 
-## Next hypothesis (not yet tested)
+## Experiment 2: random evidence IDs
 
-Variation that survives temperature 0 points to **inputs that change between runs**. The evidence selector names each chunk with a random ID (`token_urlsafe(18)` in `retrieval.py`). If those IDs appear in the coverage and generator prompts, every run sends different tokens.
+**Hypothesis:** variation that survives temperature 0 comes from inputs that change between runs. The evidence selector is the only random source in the RAG pipeline: it names each chunk with `token_urlsafe(18)` (`retrieval.py`), and those IDs appear in the coverage and generator prompts.
 
-A discriminating experiment: give evidence IDs a fixed factory, inside the probe only, and repeat the five cases. If the flips disappear, the IDs are the cause. Deterministic IDs could then be considered. Their safety role (unguessable references the model must copy) must be weighed before any production change.
+**Method:**
+
+- In the probe only, a seeded ID sequence of the same shape (24 URL-safe characters) is reset before every question. The same evidence therefore gets the same IDs in every run.
+- Same 5 cases × 5 runs, under two conditions:
+  - fixed IDs with the generator at temperature 0, so every model input is identical across runs;
+  - fixed IDs with production's generator temperature.
+
+| Case | Fixed IDs + generator at temperature 0 | Fixed IDs + production temperature |
+|---|---|---|
+| `ai495-five-vs` AR | 5/5 | 5/5 |
+| `knime-missing` AR | 5/5 | 5/5 |
+| `project-weights` EN | **0/5 (5× S4)** | 3/5 (2× S4) |
+| `se440-makeup` EN | 0/5 (5× S2) | 0/5 (5× S2) |
+| `se440-weights` EN | **0/5 (5× S4)** | 2/5 (3× S4) |
+| **Total** | **10/25** | **15/25** |
+
+### What it shows
+
+- **The flips have two sources:** random evidence IDs and generator sampling.
+  - With both fixed, every case returns the same outcome in all 5 runs.
+  - With only the temperature fixed (experiment 1), `project-weights` still flipped.
+- **Making the pipeline deterministic lowers the score** (10/25 against 15–17/25). The flips were not noise around a correct answer. Some runs got lucky with wording that passes the claim check.
+- **Deterministic IDs are not recommended:** they would lock in the failures. The defect is in the claim check.
+
+## Root cause of the S4 flips: claim NLI on table rows
+
+Both deterministic S4 failures are **true claims** whose premise is a table flattened into text:
+
+| Claim (generator) | What the evidence says | NLI verdict |
+|---|---|---|
+| "The final exam is worth 40% of the SE440 grade." | `Final Exam (40%) Final Part#2` in the SE440 syllabus assessment table | neutral 0.74, entailment 0.25 |
+| "The machine learning implementation component is worth 20% of the project grade." | `Machine learning implementation 20%` in the KNIME project's criteria table | neutral 0.84, entailment 0.15 |
+
+- **Violated assumption:** the claim check assumes its premise reads as prose. The multilingual NLI model cannot connect "X is worth 20%" to a header-value row like "X 20%".
+- **What sampling did:** sometimes the generator happened to phrase a claim that the NLI accepted.
+- **Why this is safe but costly:** it fails closed, refusing rather than misleading, but it loses correct answers about grade weights, the questions students ask most.
+
+## Candidate fixes (none implemented; each needs approval and the full gate)
+
+1. **Present table rows to NLI as sentences.** For example, restate `Machine learning implementation 20%` as "Machine learning implementation: 20%." when the premise span comes from a table row. Low risk, but it may not move the NLI enough.
+2. **A narrow table check:** accept a claim when the same premise row contains both the claim's item label and its exact number. This is deterministic and fast. The risk is false acceptance (for example the wrong row, or a number used for something else), so it needs the unanswerable guard and a contradiction test set.
+3. **Ask the local model to re-judge NLI-neutral claims on table premises.** It reads tables far better than the NLI model, but costs ~2–3 s per claim, and it makes model judgment part of verification.
+
+Option 2 or 1 first. Measure on the frozen manifest plus a set of deliberately wrong table claims (wrong number, wrong row), which must all still be rejected.
 
 ## Tooling
 
@@ -61,5 +104,5 @@ A discriminating experiment: give evidence IDs a fixed factory, inside the probe
 
 ## Recommended follow-up (each needs approval)
 
-1. Run the fixed-evidence-ID experiment.
+1. Fix the claim check for table premises (candidate fixes above). This addresses the S4 flips.
 2. Publish a v2 of the I4 manifest that accepts page 23 for `ml-precision`. The v1 manifest is frozen and stays unchanged.
