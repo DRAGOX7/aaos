@@ -208,3 +208,59 @@ def test_the_arabic_past_course_notice_spells_out_the_date() -> None:
     labelled = _with_past_course_notice(arabic, (ARCHIVED,))
 
     assert (labelled.answer_text or "").startswith("من مادة سابقة (أُرشفت في 2 تشرين الأول 2026):")
+
+
+def test_concept_questions_route_to_document_search() -> None:
+    from aaos.agent.intent_router import RoutedIntent, route_intent
+
+    for question in (
+        "tell me what knime is",
+        "what is knime from my previous semester?",
+        "What is k-fold cross validation?",
+        "Explain precision and recall",
+        "ما هو KNIME؟",
+        "شو يعني overfitting",
+    ):
+        assert route_intent(question) is RoutedIntent.DOCUMENT_QUESTION, question
+    # Personal records and other intents are not concept questions.
+    assert route_intent("what is my grade in AI445?") is not RoutedIntent.DOCUMENT_QUESTION
+    assert route_intent("What is due this week?") is RoutedIntent.ASSIGNMENT_FACTS
+
+
+def test_a_concept_question_with_past_wording_searches_past_course_files() -> None:
+    academic, documents = _world()
+    assistant, _gateway, rag = _assistant(academic, documents)
+
+    asyncio.run(assistant.ask("what is knime from my previous semester?"))
+
+    assert [query.scope for query in rag.queries] == [HistoricalScope((202,))]
+
+
+def test_an_unscoped_model_search_without_current_files_names_the_past_courses() -> None:
+    """Regression: the model's unscoped search failed as "This course has no indexed documents"."""
+    academic, documents = _world(current_documents=False)
+    gateway = FakeGateway(
+        '{"action":"CALL_TOOL","tool_name":"rag.answer","arguments":{"course_name":null}}'
+    )
+
+    class NoCurrentFilesRag(FakeRagService):
+        """Like the real index: an unscoped search finds no current files."""
+
+        async def ask(self, query):  # type: ignore[no-untyped-def]
+            from aaos.rag.contracts import RagErrorCode, RagOperationalError
+
+            self.queries.append(query)
+            raise RagOperationalError(RagErrorCode.NO_ELIGIBLE_DOCUMENTS)
+
+    rag = NoCurrentFilesRag()
+    assistant = ReadOnlyAcademicAssistant(
+        gateway, academic, documents, rag, clock=lambda: NOW, intent_routing=True
+    )
+
+    result = asyncio.run(assistant.ask("Can you help me with knime?"))
+
+    assert [query.scope for query in rag.queries] == [GlobalScope()]
+
+    assert result.status is AcademicAskStatus.ANSWERED
+    assert "current courses have no indexed documents" in (result.answer_text or "")
+    assert "SE440 · Project Management" in (result.answer_text or "")

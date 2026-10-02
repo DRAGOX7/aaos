@@ -66,7 +66,9 @@ PROBE = (
     ("delete the SE440 notes", "UNROUTED"),
     ("ذكرني ادرس بكرا", "UNROUTED"),
     ("upload my report", "UNROUTED"),
-    ("what is a project charter?", "UNROUTED"),
+    # Was UNROUTED; left to the model, concept questions were answered with a
+    # course list or an unscoped search failure, so they now search course files.
+    ("what is a project charter?", "DOCUMENT_QUESTION"),
     ("thanks!", "UNROUTED"),
     # Was UNROUTED at I1; the instructor is a syllabus fact, so it now routes to documents.
     ("who teaches SE440?", "DOCUMENT_QUESTION"),
