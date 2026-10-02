@@ -1249,3 +1249,73 @@ def test_identical_files_in_one_course_are_indexed_once(tmp_path: Path) -> None:
             assert ids["two_v1"] not in chosen
             # The same file in another course stays searchable in that course.
             assert ids["other_course_v1"] in chosen
+
+
+def _publish_all_current(repository: RagRepository) -> None:
+    generation = _create_generation(repository)
+    for candidate in repository.resolve_rebuild_candidates():
+        repository.insert_document_index(
+            generation.identity,
+            expected_revision=generation.identity.content_revision,
+            document_version_id=candidate.document_version_id,
+            status=DocumentIndexStatus.READY,
+            coverage_status=CoverageStatus.FULL,
+            searchable_page_count=1,
+            chunk_count=0,
+        )
+    repository.activate_generation(generation.identity, expected_revision=0)
+
+
+def _archive_course(sessions: SessionFactory, course_id: int) -> None:
+    with sessions() as session, session.begin():
+        session.execute(
+            update(CourseORM)
+            .where(CourseORM.id == course_id)
+            .values(is_active=False, archived_at=NOW)
+        )
+        session.execute(
+            update(RemoteFileORM)
+            .where(RemoteFileORM.course_id == course_id, RemoteFileORM.is_active.is_(True))
+            .values(is_active=False, archived_at=NOW)
+        )
+
+
+def test_unscoped_search_uses_current_courses_and_a_named_past_course_stays_searchable(
+    tmp_path: Path,
+) -> None:
+    """Archived courses: past documents stay searchable only when their course is named."""
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        _publish_all_current(repository)
+        _archive_course(sessions, ids["course_one"])
+
+        unscoped = repository.pin_query_snapshot(GlobalScope()).document_version_ids
+        past_course = repository.pin_query_snapshot(
+            CourseScope(ids["course_one"])
+        ).document_version_ids
+        indexable = {item.document_version_id for item in repository.resolve_rebuild_candidates()}
+
+        assert unscoped == (ids["other_course_v1"],)
+        assert past_course == (ids["one_v2"], ids["two_v1"])
+        assert {ids["one_v2"], ids["two_v1"], ids["other_course_v1"]} <= indexable
+
+
+def test_a_file_removed_from_a_current_course_stays_unsearchable(tmp_path: Path) -> None:
+    with repository_database(tmp_path) as (repository, sessions, _):
+        ids = _seed_phase3(sessions)
+        _publish_all_current(repository)
+        with sessions() as session, session.begin():
+            remote_two = session.scalar(
+                select(DocumentORM.remote_file_id)
+                .join(DocumentVersionORM, DocumentVersionORM.document_id == DocumentORM.id)
+                .where(DocumentVersionORM.id == ids["two_v1"])
+            )
+            session.execute(
+                update(RemoteFileORM).where(RemoteFileORM.id == remote_two).values(is_active=False)
+            )
+
+        course = repository.pin_query_snapshot(CourseScope(ids["course_one"])).document_version_ids
+        indexable = {item.document_version_id for item in repository.resolve_rebuild_candidates()}
+
+        assert ids["two_v1"] not in course
+        assert ids["two_v1"] not in indexable

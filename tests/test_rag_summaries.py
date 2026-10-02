@@ -49,11 +49,14 @@ class FakeRepository:
         self.puts = 0
         self.generation = GENERATION
 
-    def pin_query_snapshot(self, scope: Any, *, normalized_query: str = "") -> QuerySnapshot:
+    def pin_query_snapshot(
+        self, scope: Any, *, normalized_query: str = "", include_past: bool | None = None
+    ) -> QuerySnapshot:
+        self.include_past = include_past
         return QuerySnapshot(
             generation=self.generation,
             scope=scope,
-            document_version_ids=scope.document_version_ids,
+            document_version_ids=getattr(scope, "document_version_ids", tuple(self.by_version)),
             normalized_query=normalized_query,
         )
 
@@ -401,3 +404,12 @@ def test_infrastructure_failures_still_fail_the_document() -> None:
 
     assert error.value.code is RagErrorCode.MODEL_UNAVAILABLE
     assert repository.puts == 0
+
+
+def test_summary_listing_includes_past_course_documents() -> None:
+    """Archived courses: `aaos rag summarize --all` also prepares past documents."""
+    repository = FakeRepository(_document(101, 2))
+
+    _summarizer(repository, FakeGenerator()).published_document_versions()
+
+    assert repository.include_past is True

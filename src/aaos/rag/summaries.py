@@ -73,7 +73,7 @@ _SUMMARY_QUESTIONS = {
 
 class SummaryRepositoryPort(Protocol):
     def pin_query_snapshot(
-        self, scope: RagScope, *, normalized_query: str = ""
+        self, scope: RagScope, *, normalized_query: str = "", include_past: bool | None = None
     ) -> QuerySnapshot: ...
 
     def list_chunks(
@@ -223,7 +223,9 @@ class DocumentSummarizer:
 
     def published_document_versions(self) -> tuple[int, ...]:
         """Return the document versions currently published in the active index."""
-        return tuple(self._repository.pin_query_snapshot(GlobalScope()).document_version_ids)
+        # Past (archived) courses' documents are summarized too.
+        snapshot = self._repository.pin_query_snapshot(GlobalScope(), include_past=True)
+        return tuple(snapshot.document_version_ids)
 
     async def summarize_document(
         self, document_version_id: int, language: str, *, deadline: float | None = None
