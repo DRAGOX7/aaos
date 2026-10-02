@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from aaos.rag.contracts import GlobalScope, RagOperationalError, RagQuery
+from aaos.rag.contracts import HistoricalScope, RagOperationalError, RagQuery
 from aaos.rag.factory import build_configured_phase4_runtime
 from aaos.rag.retrieval import reciprocal_rank_fusion
 
@@ -32,6 +32,29 @@ MANIFEST = (
 )
 EVIDENCE_CHUNKS = 6
 MAX_FUSED_RANK = 30
+DATABASE = Path("data/database/aaos.db")
+
+
+def evaluation_scope(database: Path = DATABASE) -> HistoricalScope:
+    """Every version in the active index.
+
+    The evaluated documents belong to archived courses, and unscoped questions
+    now search current courses only. This pins the same candidate set the
+    unscoped runs used before the courses were archived.
+    """
+    connection = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
+    try:
+        versions = tuple(
+            version
+            for (version,) in connection.execute(
+                "select distinct c.document_version_id from rag_chunks c"
+                " join rag_index_generations g on g.id = c.generation_id"
+                " where g.status = 'ACTIVE' order by 1"
+            )
+        )
+    finally:
+        connection.close()
+    return HistoricalScope(versions)
 
 
 def _chunk_pages(database: Path) -> dict[str, tuple[int, int, int]]:
@@ -61,10 +84,11 @@ def _best(ranked: list[tuple[str, int]], pages: dict[str, Any], expected: Any) -
 
 def _retrieval(runtime: Any, pages: dict[str, Any], cases: list[dict[str, Any]]) -> list[Any]:
     retriever = runtime.runtime.service._retriever  # evaluation-only inspection
+    scope = evaluation_scope()
     rows = []
     for case in cases:
         for language in ("en", "ar"):
-            candidates = retriever.retrieve_candidates(RagQuery(case[language], GlobalScope()))
+            candidates = retriever.retrieve_candidates(RagQuery(case[language], scope))
             fused = reciprocal_rank_fusion(
                 candidates.dense_hits, candidates.lexical_result.hits, rrf_k=60
             )
@@ -98,6 +122,7 @@ def _retrieval(runtime: Any, pages: dict[str, Any], cases: list[dict[str, Any]])
 
 
 async def _answers(runtime: Any, cases: list[dict[str, Any]]) -> list[Any]:
+    scope = evaluation_scope()
     rows = []
     for case in cases:
         for language in ("en", "ar"):
@@ -108,7 +133,7 @@ async def _answers(runtime: Any, cases: list[dict[str, Any]]) -> list[Any]:
                 "answerable": case["answerable"],
             }
             try:
-                response = await runtime.service.ask(RagQuery(case[language], GlobalScope()))
+                response = await runtime.service.ask(RagQuery(case[language], scope))
                 citations = response.answer.citations
                 row["status"] = response.answer.status.value
                 row["citations"] = [
@@ -145,7 +170,7 @@ def main(argv: list[str]) -> int:
     runtime = build_configured_phase4_runtime(data_root=Path("data"))
     if mode == "retrieval":
         try:
-            rows = _retrieval(runtime, _chunk_pages(Path("data/database/aaos.db")), cases)
+            rows = _retrieval(runtime, _chunk_pages(DATABASE), cases)
         finally:
             runtime.close()
     else:
