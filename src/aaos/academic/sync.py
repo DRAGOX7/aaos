@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
+from typing import cast
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,8 +18,11 @@ from aaos.persistence.academic_models import (
     RemoteFileORM,
 )
 
-# Courses first: items archive only together with their course.
-_ARCHIVABLE_MODELS: tuple[type, ...] = (CourseORM, AssignmentORM, AnnouncementORM, RemoteFileORM)
+_ItemModel = type[AssignmentORM] | type[AnnouncementORM] | type[RemoteFileORM]
+_ArchivableModel = type[CourseORM] | _ItemModel
+# Items archive only together with their course.
+_ITEM_MODELS: tuple[_ItemModel, ...] = (AssignmentORM, AnnouncementORM, RemoteFileORM)
+_ARCHIVABLE_MODELS: tuple[_ArchivableModel, ...] = (CourseORM, *_ITEM_MODELS)
 
 
 class SynchronizationConflict(ValueError):
@@ -82,7 +86,7 @@ class AcademicSyncService:
         self._apply_archive_state(session, snapshot.source_system, previously_active)
 
     @staticmethod
-    def _active_ids(session: Session, source_system: str) -> dict[type, frozenset[int]]:
+    def _active_ids(session: Session, source_system: str) -> dict[_ArchivableModel, frozenset[int]]:
         return {
             model: frozenset(
                 session.scalars(
@@ -98,7 +102,7 @@ class AcademicSyncService:
         self,
         session: Session,
         source_system: str,
-        previously_active: dict[type, frozenset[int]],
+        previously_active: dict[_ArchivableModel, frozenset[int]],
     ) -> None:
         """Archive courses this complete sync stopped listing, with their items.
 
@@ -119,8 +123,12 @@ class AcademicSyncService:
             elif course.id in previously_active[CourseORM]:
                 course.archived_at = now
                 archived_now.add(course.id)
-        for model in _ARCHIVABLE_MODELS[1:]:
-            for item in session.scalars(select(model).where(model.source_system == source_system)):
+        for model in _ITEM_MODELS:
+            items = cast(
+                "Iterable[AssignmentORM | AnnouncementORM | RemoteFileORM]",
+                session.scalars(select(model).where(model.source_system == source_system)),
+            )
+            for item in items:
                 if item.is_active or item.course_id in active_courses:
                     item.archived_at = None
                 elif item.id in previously_active[model] and item.course_id in archived_now:
