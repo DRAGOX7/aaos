@@ -7,14 +7,16 @@ import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isPastCourse } from "@/lib/api/courses";
+import { distinctCourses } from "@/lib/courses/display";
 import { courseListQueryOptions } from "@/lib/query/courses";
 
 export function CourseListView() {
   const { data, isError, isPending } = useQuery(
     courseListQueryOptions(),
   );
-  const currentCourses = data?.courses.filter((course) => !isPastCourse(course)) ?? [];
-  const pastCourses = data?.courses.filter(isPastCourse) ?? [];
+  // Moodle lists a course once per section; show each course once.
+  const currentCourses = distinctCourses(data?.courses.filter((course) => !isPastCourse(course)) ?? []);
+  const pastCourses = distinctCourses(data?.courses.filter(isPastCourse) ?? []);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">

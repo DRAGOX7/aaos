@@ -8,19 +8,24 @@
   color-scheme: light;
 
   /* AAOS visual source of truth */
-  --aaos-background: #f6f9fd;
+  --aaos-background: #f4f7fc;
   --aaos-surface: #ffffff;
   --aaos-surface-soft: #f3f7fc;
   --aaos-surface-glass: rgb(255 255 255 / 0.86);
 
   --aaos-text: #10214b;
   --aaos-primary-deep: #0c2b63;
-  --aaos-text-muted: #66779a;
-  --aaos-text-subtle: #8a9abb;
+  --aaos-text-muted: #55678a;
+  --aaos-text-subtle: #6e7e9f;
   --aaos-border: #dfe8f4;
   --aaos-border-strong: #cbd9ed;
 
   --aaos-primary: #1677f2;
+  --aaos-primary-strong: #1361d6;
+
+  /* Dark hero surface (direction A) */
+  --aaos-hero: #10214b;
+  --aaos-hero-muted: #afc3e6;
   --aaos-primary-soft: #eaf3ff;
 
   --aaos-teal: #0b9ea8;
@@ -84,8 +89,8 @@
 }
 
 @theme inline {
-  --font-heading: var(--font-inter);
-  --font-sans: var(--font-inter);
+  --font-heading: var(--font-jakarta);
+  --font-sans: var(--font-jakarta);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -100,6 +105,10 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-soft: var(--aaos-primary-soft);
   --color-primary-deep: var(--aaos-primary-deep);
+  --color-primary-strong: var(--aaos-primary-strong);
+  --color-hero: var(--aaos-hero);
+  --color-hero-muted: var(--aaos-hero-muted);
+  --color-success-soft: var(--aaos-success-soft);
   --color-teal: var(--aaos-teal);
   --color-teal-soft: var(--aaos-teal-soft);
   --color-success: var(--aaos-success);
@@ -156,11 +165,6 @@
   body {
     @apply text-foreground;
     background-color: var(--aaos-background);
-    background-image:
-      radial-gradient(circle at 88% 0%, rgb(22 119 242 / 0.09), transparent 30rem),
-      radial-gradient(circle at 5% 22%, rgb(11 158 168 / 0.06), transparent 28rem),
-      linear-gradient(180deg, #f8fbff 0%, var(--aaos-background) 58%, #f4f8fd 100%);
-    background-attachment: fixed;
     margin: 0;
     min-height: 100%;
   }

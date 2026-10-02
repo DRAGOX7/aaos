@@ -1,4 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/aaos/app-shell";
@@ -12,83 +14,52 @@ vi.mock("next/navigation", () => ({
   usePathname: pathnameMock,
 }));
 
+function renderShell(children: ReactNode) {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <AppShell>{children}</AppShell>
+    </QueryClientProvider>,
+  );
+}
+
 describe("AAOS application shell", () => {
   it("provides the required application landmarks", () => {
-    render(
-      <AppShell>
-        <p>Workspace content</p>
-      </AppShell>,
-    );
+    renderShell(<p>Workspace content</p>);
 
-    expect(
-      screen.getByRole("navigation", { name: "AAOS" }),
-    ).toBeInTheDocument();
-
-    expect(
-      screen.getByRole("banner"),
-    ).toBeInTheDocument();
-
-    expect(
-      screen.getByRole("main"),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "AAOS" })).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
-  it("uses only the approved 7B overview header copy", () => {
-    render(
-      <AppShell>
-        <p>Workspace content</p>
-      </AppShell>,
-    );
+  it("leaves the page title to the page, so no page is mislabelled", () => {
+    // Regression: the shell header read "Overview" on every page but Ask.
+    renderShell(<p>Workspace content</p>);
+
+    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).queryByText("Overview")).not.toBeInTheDocument();
+  });
+
+  it("renders exactly one workspace search, even with a page header inside", () => {
+    // Regression: page headers repeated the search box and workspace badge.
+    renderShell(<PageHeader title="Courses" description="Your courses." />);
 
     expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "Overview",
-      }),
-    ).toBeInTheDocument();
-
-    expect(
-      screen.getByText("Your academic workspace"),
-    ).toBeInTheDocument();
+      screen.getAllByRole("searchbox", { name: "Global workspace search" }),
+    ).toHaveLength(1);
+    expect(screen.getAllByText("AAOS workspace")).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Courses" })).toBeInTheDocument();
   });
 
   it("preserves PageHeader defaults when rendered directly", () => {
     render(<PageHeader />);
 
-    expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "Overview",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Your academic workspace"),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByText("Your academic workspace")).toBeInTheDocument();
   });
 
   it("keeps child content inside the main workspace", () => {
-    render(
-      <AppShell>
-        <p>Workspace content</p>
-      </AppShell>,
-    );
+    renderShell(<p>Workspace content</p>);
 
-    const main = screen.getByRole("main");
-
-    expect(
-      within(main).getByText("Workspace content"),
-    ).toBeInTheDocument();
-  });
-
-  it("exposes a quiet workspace search and identity affordance", () => {
-    render(<AppShell><p>Workspace content</p></AppShell>);
-
-    expect(
-      screen.getByRole("searchbox", { name: "Global workspace search" }),
-    ).toHaveAttribute(
-      "placeholder",
-      "Search courses, documents, or assignments",
-    );
-    expect(screen.getAllByText("AAOS workspace")).toHaveLength(2);
+    expect(within(screen.getByRole("main")).getByText("Workspace content")).toBeInTheDocument();
   });
 });

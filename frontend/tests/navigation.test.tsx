@@ -1,7 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppSidebar, resolveActiveNavigationHref } from "@/components/aaos/app-sidebar";
+
+const { pathnameMock } = vi.hoisted(() => ({
+  pathnameMock: vi.fn(() => "/"),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: pathnameMock,
+}));
 
 const expectedLabels = [
   "Overview",
@@ -46,6 +54,22 @@ describe("AAOS navigation", () => {
     );
 
     expect(links).toHaveLength(9);
+  });
+
+  it("highlights the page reached by client-side navigation", () => {
+    // Regression: the sidebar listened only to popstate, so after router.push
+    // to /ask it still marked Overview as the current page.
+    pathnameMock.mockReturnValue("/ask");
+    render(<AppSidebar />);
+
+    const navigation = screen.getByRole("navigation", { name: "AAOS" });
+    expect(within(navigation).getByRole("link", { name: "Ask AAOS" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("link", { name: "Overview" })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 
   it.each([

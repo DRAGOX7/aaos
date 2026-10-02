@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { LoaderCircle, Plus, Send, Square } from "lucide-react";
 
 import { AskConversation, type AskIssueKind, type AskThreadEntry } from "@/components/aaos/ask-conversation";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
+import { takeAskHandoff } from "@/lib/ask/handoff";
 import {
   fetchAcademicAsk,
   MalformedAskResponseError,
@@ -83,9 +84,18 @@ export function AskView() {
   const abortCause = useRef<"timeout" | "stopped" | null>(null);
   const retryAttempt = useRef<RetryAttempt | null>(null);
 
-  async function submitQuestion() {
+  // A question started on the Overview arrives through a one-time handoff
+  // and is sent as if typed here. takeAskHandoff removes it, so a remount
+  // never sends it twice.
+  useEffect(() => {
+    const handoff = takeAskHandoff();
+    if (handoff) void submitQuestion(handoff);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on arrival
+  }, []);
+
+  async function submitQuestion(text: string = question) {
     if (requestInFlight.current) return;
-    const normalizedQuestion = question.trim();
+    const normalizedQuestion = text.trim();
     if (!normalizedQuestion) {
       setValidationMessage("Enter a question to continue.");
       return;

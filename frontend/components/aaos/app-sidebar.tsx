@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import {
   Activity,
   BookOpen,
   CheckCircle2,
   ClipboardList,
   FileText,
+  GraduationCap,
   HeartPulse,
   LayoutDashboard,
   ListTodo,
@@ -90,34 +91,29 @@ export function AppSidebar({
   className,
   activeHref,
 }: AppSidebarProps) {
-  const pathname = useSyncExternalStore(
-    (onStoreChange) => {
-      window.addEventListener("popstate", onStoreChange);
-      return () => window.removeEventListener("popstate", onStoreChange);
-    },
-    () => window.location.pathname,
-    () => "/",
-  );
+  // usePathname follows client-side navigation; a popstate listener missed
+  // Link and router.push moves and left the previous page highlighted.
+  const pathname = usePathname() ?? "/";
 
   const resolvedActiveHref = activeHref ?? resolveActiveNavigationHref(pathname);
 
   return (
     <aside
       className={cn(
-        "flex h-full w-64 flex-col border-r border-sidebar-border bg-white/88 shadow-[8px_0_32px_rgb(28_52_91_/_0.035)] backdrop-blur-xl",
+        "flex h-full w-64 flex-col border-r border-sidebar-border bg-white",
         className,
       )}
     >
       <div className="flex items-center gap-3 px-6 pb-6 pt-7">
         <div
           aria-hidden="true"
-          className="flex size-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_18px_rgb(22_119_242_/_0.22)]"
+          className="flex size-10 items-center justify-center rounded-xl bg-hero text-white"
         >
-          <LayoutDashboard className="size-5" strokeWidth={2} />
+          <GraduationCap className="size-5" strokeWidth={2} />
         </div>
 
         <div className="min-w-0">
-          <p className="text-base font-semibold tracking-tight text-sidebar-foreground">
+          <p className="text-[17px] font-extrabold tracking-[-0.01em] text-sidebar-foreground">
             AAOS
           </p>
           <p className="text-xs text-muted-foreground">
@@ -142,7 +138,7 @@ export function AppSidebar({
               className={cn(
                 "relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-all duration-200",
                 active
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm before:absolute before:-left-3 before:h-6 before:w-1 before:rounded-r-full before:bg-primary"
+                  ? "bg-primary-soft font-semibold text-foreground [&>svg]:text-primary"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
             >
@@ -157,14 +153,6 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className="mx-4 mb-5 mt-6 rounded-2xl border border-border bg-primary-soft/60 px-4 py-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
-          AAOS workspace
-        </p>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Trusted academic context, kept close at hand.
-        </p>
-      </div>
     </aside>
   );
 }
