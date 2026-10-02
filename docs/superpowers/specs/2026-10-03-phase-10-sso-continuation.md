@@ -1,6 +1,6 @@
 # Phase 10 Addendum — Continuing a Remembered Microsoft Sign-in
 
-**Status: DRAFT for owner approval. No code until approved.**
+**Status: APPROVED by the owner on 2026-10-03 ("approved").**
 
 **Changes a Phase 2 boundary:** "the user logs in themselves". It is narrowed, not removed: AAOS never sees, types or stores a credential.
 
@@ -37,7 +37,7 @@ When a sync lands on Moodle's login page, AAOS **follows the page's own "Log in 
 |---|---|
 | Not exactly one SSO anchor on the configured origin | No click; normal waiting (§3) |
 | Microsoft shows any page that needs input (password, code, account picker, consent, "Stay signed in?") | AAOS does nothing on it; the run waits only its time budget (§3), then ends as `AUTH_REQUIRED` with one Telegram alert per episode |
-| Redirect lands on a different origin than Moodle or Microsoft sign-in | The run stops as `AUTH_REQUIRED` |
+| Any page outside the Moodle origin (Microsoft or a federated university sign-in page) | AAOS takes no action on it. Sign-in may pass through several such pages; if the run has not returned to Moodle when its budget (§3) ends, it ends as `AUTH_REQUIRED` |
 
 ## 3. Waiting budget
 

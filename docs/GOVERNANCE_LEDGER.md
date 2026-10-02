@@ -424,3 +424,10 @@ PLANNED / NOT STARTED.
   - a visible Edge window per run is accepted, and the headless-browsing boundary is unchanged;
   - consent is given to send titles and dates through Telegram;
   - more than 5 events from one run are sent as one digest.
+
+## Phase 10 addendum — remembered Microsoft sign-in (2026-10-03)
+
+- **Approval:** the owner approved `docs/superpowers/specs/2026-10-03-phase-10-sso-continuation.md`. This narrows the Phase 2 rule "the user logs in themselves".
+- **What AAOS may do:** follow Moodle's own same-origin "Log in with Microsoft" link once per run, so a Microsoft sign-in remembered by the browser profile completes.
+- **What AAOS never does:** type into, click on, read or store anything on any sign-in page.
+- **Waiting budget:** unattended runs end as `AUTH_REQUIRED` after 90 s; runs with the owner present keep 10 minutes.
