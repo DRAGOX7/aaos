@@ -114,7 +114,7 @@ from .conversation_context import (
     TrustedMoodleChangeContext,
     serialize_context_hint,
 )
-from .course_names import course_code_token
+from .course_names import arabic_date, course_code_token, course_display_title
 from .intent_router import (
     RoutedIntent,
     asks_about_past,
@@ -3973,7 +3973,7 @@ def _is_indexed(document: object) -> bool:
 
 
 def _no_current_documents_message(question: str, courses: tuple[CourseSummary, ...]) -> str:
-    names = "; ".join(course.title.strip() for course in courses[:10])
+    names = "; ".join(course_display_title(course.title) for course in courses[:10])
     if any("\u0600" <= character <= "\u06ff" for character in question):
         return (
             "لا توجد مستندات مفهرسة لموادك الحالية بعد. "
@@ -3998,7 +3998,7 @@ def _with_past_course_notice(
     if len(dates) == 1:
         (day,) = dates
         notice = (
-            f"من مادة سابقة (أُرشفت في {day.isoformat()}):"
+            f"من مادة سابقة (أُرشفت في {arabic_date(day)}):"
             if arabic
             else f"From a past course (archived {day.day} {day:%b %Y}):"
         )
@@ -4964,12 +4964,15 @@ def _render_announcement_evidence(output: Mapping[str, object]) -> str:
         lines.append(
             "Dates are not stored for these announcements, so they are not sorted by date."
         )
-    current_course: object = None
+    # Group by the readable name, so a course's Moodle section entries share
+    # one heading.
+    current_course: str | None = None
     for raw_record in records:
         record = cast(Mapping[str, object], raw_record)
-        if record.get("course_id") != current_course:
-            current_course = record.get("course_id")
-            lines.append(f"Announcements in {record.get('course_title')}:")
+        course_name = course_display_title(str(record.get("course_title")))
+        if course_name != current_course:
+            current_course = course_name
+            lines.append(f"Announcements in {course_name}:")
         published = record.get("published_at")
         date_text = (
             published[:16].replace("T", " ") + " UTC"
@@ -5051,7 +5054,7 @@ def _render_moodle_change_record(raw_row: object) -> str:
     entity_type = str(raw_row["entity_type"]).casefold()
     change_kind = str(raw_row["change_kind"]).casefold()
     title = str(raw_row["title"])
-    course_title = str(raw_row["course_title"])
+    course_title = course_display_title(str(raw_row["course_title"]))
     if entity_type == "course" and change_kind == ChangeKind.REMOVED.value.casefold():
         # A complete sync stops listing a course when it ends: it is archived.
         return f"- course archived: {title}"
@@ -5112,14 +5115,15 @@ def _render_academic_evidence(
                 past_listing = all(
                     str(row.get("title", "")).endswith(_PAST_COURSE_SUFFIX) for row in rows
                 )
+                # Moodle lists a course once per section; name each course once.
+                names = dict.fromkeys(
+                    course_display_title(str(row["title"]))
+                    + (f" ({row['code']})" if row.get("code") else "")
+                    for row in rows
+                )
                 sections.append(
                     ("Past courses:\n" if past_listing else "Active courses:\n")
-                    + "\n".join(
-                        f"- {row['title']}"
-                        + (f" ({row['code']})" if row.get("code") else "")
-                        + f" [course #{row['id']}]"
-                        for row in rows
-                    )
+                    + "\n".join(f"- {name}" for name in names)
                 )
         elif name in {ToolName.ACADEMIC_LIST_ASSIGNMENTS, ToolName.ACADEMIC_GET_ASSIGNMENT}:
             if not rows:
@@ -5136,7 +5140,7 @@ def _render_academic_evidence(
                     heading
                     + "\n"
                     + "\n".join(
-                        f"- {row['title']} — {row['course_title']}"
+                        f"- {row['title']} — {course_display_title(str(row['course_title']))}"
                         + (f"; due {row['due_at']}" if row.get("due_at") else "; no due date")
                         + f" [assignment #{row['id']}]"
                         for row in rows
@@ -5171,7 +5175,7 @@ def _render_academic_evidence(
                 for row in rows:
                     line = f"- {row['title']}"
                     if row.get("course_title"):
-                        line += f" — {row['course_title']}"
+                        line += f" — {course_display_title(str(row['course_title']))}"
                     due_at = row.get("due_at")
                     line += (
                         f"; Moodle deadline at acknowledgement {due_at}"
@@ -5200,7 +5204,11 @@ def _render_academic_evidence(
                 + "\n".join(
                     f"- {row['title']} ({row['status']}, {row['priority']} priority)"
                     + (f" — {row['assignment_title']}" if row.get("assignment_title") else "")
-                    + (f" — {row['course_title']}" if row.get("course_title") else "")
+                    + (
+                        f" — {course_display_title(str(row['course_title']))}"
+                        if row.get("course_title")
+                        else ""
+                    )
                     + (f"; due {row['due_at']}" if row.get("due_at") else "")
                     for row in rows
                 )

@@ -117,7 +117,7 @@ def test_without_current_documents_an_unscoped_question_names_the_past_courses()
 
     assert rag.queries == []
     assert "current courses have no indexed documents" in (result.answer_text or "")
-    assert "SE440-PROJECT MANAGEMENT" in (result.answer_text or "")
+    assert "SE440 · Project Management" in (result.answer_text or "")
 
 
 def test_past_wording_without_a_course_searches_past_course_documents() -> None:
@@ -155,8 +155,56 @@ def test_my_courses_lists_current_courses_and_past_wording_lists_past_ones() -> 
 
     assert "SE440" not in (current.answer_text or "")
     assert "Deep Learning" in (current.answer_text or "")
-    assert "SE440-PROJECT MANAGEMENT" in (past.answer_text or "")
+    assert "SE440 · Project Management (past course)" in (past.answer_text or "")
     assert "past course" in (past.answer_text or "")
     assert "Deep Learning" not in (past.answer_text or "")
     assert "Past courses:" in (past.answer_text or "")
     assert "Active courses" not in (past.answer_text or "")
+
+
+def test_a_course_listed_once_per_section_is_listed_once() -> None:
+    academic, documents = _world()
+    sections = [
+        PAST_SE440.model_copy(
+            update={
+                "id": 11,
+                "title": "AI380-OPTIMIZATION ALGORITHMS (1)",
+                "status": "current",
+                "archived_at": None,
+            }
+        ),
+        PAST_SE440.model_copy(
+            update={
+                "id": 12,
+                "title": "AI380-OPTIMIZATION ALGORITHMS (All Sections )",
+                "status": "current",
+                "archived_at": None,
+            }
+        ),
+    ]
+    academic.courses = [*academic.courses, *sections]
+    assistant, _gateway, _rag = _assistant(academic, documents)
+
+    result = asyncio.run(assistant.ask("What courses am I registered in?"))
+
+    text = result.answer_text or ""
+    assert text.count("AI380 · Optimization Algorithms") == 1
+    assert "(All Sections" not in text
+    assert "[course #" not in text
+
+
+def test_the_arabic_past_course_notice_spells_out_the_date() -> None:
+    from dataclasses import replace
+
+    from aaos.agent.academic_orchestrator import _with_past_course_notice
+
+    base = asyncio.run(_assistant(*_world())[0].ask("What does the SE440 syllabus say?"))
+    arabic = replace(
+        base,
+        answer_text="المدرس هو د. سليمان.",
+        rag_provenance={**(base.rag_provenance or {}), "language": "ar"},
+    )
+
+    labelled = _with_past_course_notice(arabic, (ARCHIVED,))
+
+    assert (labelled.answer_text or "").startswith("من مادة سابقة (أُرشفت في 2 تشرين الأول 2026):")
