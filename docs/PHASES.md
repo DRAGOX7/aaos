@@ -43,6 +43,7 @@ terminology, not evidence of a freeze tag.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
+- Phase 10 — **AUTHORIZED / SPEC PENDING**: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 
 ### Historical status notes
 
@@ -592,3 +593,31 @@ introduce missing security or product capabilities late.
 - Clean setup succeeds.
 - The end-to-end demo succeeds.
 - Documented benchmark and evaluation results exist.
+
+## PHASE 10 — Moodle Change Notifications (Telegram)
+
+**Current status: AUTHORIZED / SPEC PENDING.** The owner authorized Phase 10 on 2026-10-02 and explicitly deferred the open Phase 0 and Phase 5 gates.
+
+Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
+
+### Purpose
+
+Notify the owner on Telegram, within a configured interval, when the read-only Moodle sync detects a meaningful change.
+
+### Core work
+
+- **Event derivation:** from the existing COMPLETE→COMPLETE snapshot diff, with stable event keys.
+- **Notification service:** outbox, de-duplication, baseline at enablement, digest, escaping, retry.
+- **Telegram adapter:** send-only, one allow-listed chat, token outside Git, logs and model context.
+- **Manual "Sync Now",** then a scheduled `aaos monitor run-once` that reuses the same service.
+- **Operations:** sync and notification history, plus one rate-limited `AUTH_REQUIRED` alert.
+
+### Acceptance gate
+
+- No Moodle writes. No sends outside the linked chat and the closed event set.
+- No secret in logs, frontend, model context, Git or Telegram.
+- On a replay of real snapshot history:
+  - every notification matches a real change;
+  - every in-scope change is notified exactly once.
+- Unchanged data sends nothing. Failed or incomplete syncs send nothing except one auth alert.
+- All earlier gates still pass.
