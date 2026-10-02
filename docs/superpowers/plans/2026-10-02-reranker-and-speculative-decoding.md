@@ -1,6 +1,9 @@
 # Plan — Reranker and Speculative Decoding (2026-10-02)
 
-**Status: PROPOSED. Not approved. No code written.**
+**Status:**
+
+- **A (reranker):** spike STOPPED at step 1. Retrieval already places the expected chunk in the evidence for 31 of 32 answerable cases; see `docs/evaluations/reranker-spike-2026-10-02.md`.
+- **B (speculative decoding):** PROPOSED, not approved.
 
 There are two independent changes here, and each is approved and merged on its own:
 
