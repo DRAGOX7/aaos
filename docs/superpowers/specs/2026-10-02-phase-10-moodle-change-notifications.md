@@ -1,6 +1,6 @@
 # Phase 10 Spec — Moodle Change Notifications via Telegram
 
-**Status: DRAFT for owner approval. No code until it is approved.**
+**Status: APPROVED by the owner on 2026-10-02 ("approve it and start building"), with the defaults 07:00–24:00 active hours and a digest above 5 events.**
 
 - **Plan:** `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md` (owner decisions in §10).
 - **Scope:** notification events, delivery store, Telegram adapter, monitor entry point, scheduling, operations.
