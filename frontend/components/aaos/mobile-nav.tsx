@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { GraduationCap, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 
+import { AaosMark } from "@/components/aaos/aaos-mark";
 import {
   AAOS_NAVIGATION,
 } from "@/components/aaos/app-sidebar";
@@ -39,12 +40,7 @@ export function MobileNav() {
         </SheetTitle>
 
         <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-          <div
-            aria-hidden="true"
-            className="flex size-10 items-center justify-center rounded-xl bg-hero text-white"
-          >
-            <GraduationCap className="size-5" strokeWidth={2} />
-          </div>
+          <AaosMark className="size-10 shrink-0" />
 
           <div>
             <p className="text-base font-semibold tracking-tight">

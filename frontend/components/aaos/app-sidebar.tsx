@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
-  GraduationCap,
   HeartPulse,
   LayoutDashboard,
   ListTodo,
@@ -16,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { AaosMark } from "@/components/aaos/aaos-mark";
 import { cn } from "@/lib/utils";
 
 type NavigationItem = Readonly<{
@@ -105,12 +105,7 @@ export function AppSidebar({
       )}
     >
       <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-        <div
-          aria-hidden="true"
-          className="flex size-10 items-center justify-center rounded-xl bg-hero text-white"
-        >
-          <GraduationCap className="size-5" strokeWidth={2} />
-        </div>
+        <AaosMark className="size-10 shrink-0" />
 
         <div className="min-w-0">
           <p className="text-[17px] font-extrabold tracking-[-0.01em] text-sidebar-foreground">
