@@ -1,6 +1,9 @@
 "use client";
 
+import { History, SearchX } from "lucide-react";
+
 import type { AcademicAskResponse, AcademicAskSource, RagProvenance } from "@/lib/api/ask";
+import { splitAnswerText } from "@/lib/ask/answer-text";
 import {
   CalendarProposalCard,
   MoodleChangeCard,
@@ -9,12 +12,33 @@ import {
   StudyTaskCard,
 } from "@/components/aaos/ask-result-cards";
 
-function AnswerText({ text }: { text: string | null | undefined }) {
+function AnswerText({
+  text,
+  provenance,
+}: {
+  text: string | null | undefined;
+  provenance: RagProvenance | null;
+}) {
   if (!text) return null;
+  const { notice, body } = splitAnswerText(text, {
+    hasCitations: provenance !== null && "citations" in provenance && provenance.citations.length > 0,
+    fromPastCourse: provenance !== null && "from_past_course" in provenance
+      && provenance.from_past_course === true,
+  });
   return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-      {text}
-    </p>
+    <div dir="auto" className="flex flex-col gap-3">
+      {notice ? (
+        <p
+          className="inline-flex items-center gap-1.5 self-start rounded-full bg-warning-soft px-3 py-1 text-xs font-semibold text-[#8a5300]"
+        >
+          <History aria-hidden="true" className="size-3.5" strokeWidth={2.2} />
+          {notice}
+        </p>
+      ) : null}
+      <p dir="auto" className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground">
+        {body}
+      </p>
+    </div>
   );
 }
 
@@ -23,17 +47,25 @@ function RefusalState({ response }: { response: AcademicAskResponse }) {
   return (
     <section
       aria-label={insufficient ? "Insufficient evidence" : "Request refused"}
-      className="rounded-xl border border-border bg-muted/60 px-4 py-3"
+      className="flex gap-3 rounded-xl bg-muted px-4 py-3.5"
       role="note"
     >
-      <h3 className="text-sm font-semibold text-foreground">
-        {insufficient ? "Not enough evidence" : "Request could not be completed"}
-      </h3>
-      {response.answer_text ? (
-        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">
-          {response.answer_text}
-        </p>
-      ) : null}
+      <SearchX aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" strokeWidth={2} />
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-foreground">
+          {insufficient ? "Not enough evidence" : "Request could not be completed"}
+        </h3>
+        {response.answer_text ? (
+          <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">
+            {response.answer_text}
+          </p>
+        ) : null}
+        {insufficient ? (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            AAOS only answers what your course files support. Try naming the course or asking more specifically.
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -177,7 +209,7 @@ export function AskResponseRenderer({ response }: { response: AcademicAskRespons
 
   return (
     <div className="min-w-0 space-y-4">
-      <AnswerText text={response.answer_text} />
+      <AnswerText text={response.answer_text} provenance={ragProvenance} />
       {response.calendar_proposal ? (
         <CalendarProposalCard proposal={response.calendar_proposal} />
       ) : null}

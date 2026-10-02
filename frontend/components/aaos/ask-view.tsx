@@ -2,7 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { LoaderCircle, Plus, Send, Square } from "lucide-react";
+import {
+  ArrowUp,
+  CalendarClock,
+  FileText,
+  ListChecks,
+  LoaderCircle,
+  MessageCircle,
+  Plus,
+  RefreshCw,
+  Square,
+  type LucideIcon,
+} from "lucide-react";
 
 import { AskConversation, type AskIssueKind, type AskThreadEntry } from "@/components/aaos/ask-conversation";
 import { Button } from "@/components/ui/button";
@@ -72,6 +83,14 @@ function createRequestId(): string | null {
   if (typeof globalThis.crypto?.randomUUID !== "function") return null;
   return globalThis.crypto.randomUUID();
 }
+
+// Starting points that map to what AAOS can actually answer.
+const ASK_SUGGESTIONS: readonly { topic: string; question: string; icon: LucideIcon }[] = [
+  { topic: "Course files", question: "What does the syllabus say about the final exam?", icon: FileText },
+  { topic: "Deadlines", question: "What's due this week?", icon: CalendarClock },
+  { topic: "Moodle changes", question: "What changed in Moodle since yesterday?", icon: RefreshCw },
+  { topic: "Study planning", question: "Plan my study week", icon: ListChecks },
+];
 
 export function AskView() {
   const [question, setQuestion] = useState("");
@@ -212,21 +231,21 @@ export function AskView() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
+    <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
             Ask AAOS
           </h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Ask about courses, documents, tasks, Moodle changes, and study plans.
+          <p className="mt-1 text-sm text-muted-foreground">
+            Answers from your course files, Moodle data and tasks, with their sources.
           </p>
         </div>
         {entries.length > 0 ? (
           <Button
             type="button"
             variant="outline"
-            className="mt-1"
+            className="mt-1 rounded-xl"
             onClick={startNewConversation}
             disabled={pending}
           >
@@ -237,64 +256,95 @@ export function AskView() {
       </div>
 
       {entries.length === 0 ? (
-        <section className="rounded-2xl border border-border bg-[color:var(--aaos-surface-glass)] px-5 py-8 shadow-[var(--aaos-shadow-card)] sm:px-8">
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">
-            What would you like to work on?
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Ask a question or continue a bounded conversation about your academic data.
-            AAOS can answer from trusted sources, review changes, manage StudyTasks,
-            prepare Calendar proposals, and recommend study plans.
-          </p>
+        <section aria-labelledby="ask-empty-title" className="flex flex-col items-center gap-6 py-6 text-center sm:py-10">
+          <span
+            aria-hidden="true"
+            className="flex size-14 items-center justify-center rounded-2xl bg-hero text-white shadow-[0_14px_30px_rgb(16_33_75_/_0.22)]"
+          >
+            <MessageCircle className="size-6" strokeWidth={2} />
+          </span>
+          <div className="flex flex-col gap-2">
+            <h2 id="ask-empty-title" className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+              What would you like to work on?
+            </h2>
+            <p className="mx-auto max-w-xl text-sm leading-6 text-muted-foreground">
+              Ask about your courses, deadlines and Moodle changes, or plan your week.
+              AAOS says so when your files do not support an answer.
+            </p>
+          </div>
+          <ul aria-label="Suggested questions" className="grid w-full gap-3 text-left sm:grid-cols-2">
+            {ASK_SUGGESTIONS.map(({ topic, question: suggestion, icon: Icon }) => (
+              <li key={suggestion}>
+                <button
+                  type="button"
+                  onClick={() => void submitQuestion(suggestion)}
+                  className="flex h-full w-full items-start gap-3 rounded-2xl border border-border bg-white p-4 text-left transition-[border-color,box-shadow] duration-200 hover:border-[#bcd3f4] hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                    <Icon aria-hidden="true" className="size-[18px]" strokeWidth={2} />
+                  </span>
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-xs font-semibold text-muted-foreground">{topic}</span>
+                    <span className="text-sm font-semibold text-foreground">{suggestion}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
 
       <AskConversation entries={entries} pending={pending} />
 
-      <div className="sticky bottom-0 z-10 -mx-2 border-t border-border/80 bg-[color:var(--aaos-surface-glass)] px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
-        <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-5xl items-end gap-2">
-          <label className="min-w-0 flex-1 space-y-1.5 text-sm font-medium" htmlFor="ask-composer">
+      <div className="sticky bottom-0 z-10 mt-auto bg-[linear-gradient(to_top,var(--aaos-background)_70%,transparent)] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
+        <form
+          onSubmit={handleSubmit}
+          className="flex items-end gap-2 rounded-2xl border border-border bg-white p-2 shadow-[0_14px_34px_rgb(16_33_75_/_0.1)]"
+        >
+          <label className="min-w-0 flex-1" htmlFor="ask-composer">
             <span className="sr-only">Your message</span>
             <textarea
               id="ask-composer"
               aria-describedby={validationMessage ? "ask-validation ask-session-note" : "ask-session-note"}
               autoComplete="off"
-              className="min-h-14 max-h-40 w-full resize-y rounded-xl border border-input bg-white px-4 py-3 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              dir="auto"
+              rows={1}
+              className="block max-h-40 min-h-11 w-full resize-none rounded-xl bg-transparent px-3 py-2.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-text-subtle focus-visible:ring-2 focus-visible:ring-ring [field-sizing:content]"
               maxLength={4096}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleComposerKeyDown}
-              placeholder="Ask about courses, documents, tasks, Moodle changes, or study plans…"
+              placeholder="Ask about your courses, deadlines or files…"
               value={question}
             />
           </label>
-          <Button type="submit" disabled={pending} className="h-12 min-w-12 px-4">
-            {pending ? (
-              <LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
-            ) : (
-              <Send aria-hidden="true" />
-            )}
-            <span className="sr-only">{pending ? "Sending" : "Send"}</span>
-          </Button>
           {pending ? (
             <Button
               type="button"
               variant="outline"
-              className="h-12"
+              className="h-11 rounded-xl"
               onClick={stopWaiting}
             >
               <Square aria-hidden="true" />
               Stop waiting
             </Button>
           ) : null}
+          <Button type="submit" disabled={pending} className="size-11 shrink-0 rounded-xl">
+            {pending ? (
+              <LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+            ) : (
+              <ArrowUp aria-hidden="true" strokeWidth={2.4} />
+            )}
+            <span className="sr-only">{pending ? "Sending" : "Send"}</span>
+          </Button>
         </form>
         {validationMessage ? (
-          <p id="ask-validation" className="mx-auto mt-2 w-full max-w-5xl text-sm text-destructive" role="alert">
+          <p id="ask-validation" className="mt-2 text-sm text-destructive" role="alert">
             {validationMessage}
           </p>
         ) : null}
-        <p id="ask-session-note" className="mx-auto mt-2 w-full max-w-5xl text-xs text-muted-foreground">
+        <p id="ask-session-note" className="mt-2 text-center text-xs text-muted-foreground">
           This conversation stays in this page and is not restored after refresh.
-          {pending ? "" : " Press Enter to send; use Shift+Enter for a new line."}
+          {pending ? "" : " Enter to send · Shift+Enter for a new line."}
         </p>
         <p aria-live="polite" className="sr-only">
           {pending ? "AAOS is thinking." : ""}

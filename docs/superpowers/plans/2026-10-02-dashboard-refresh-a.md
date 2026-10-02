@@ -86,3 +86,32 @@ Each can return when the backend provides it.
 - `npm run test`, `npm run typecheck`, `npm run lint`.
 - Screenshots of Overview, Courses and Ask at 1440×900 and 390×844, before and after.
 - A manual accessibility pass: keyboard through the Overview, focus visible, labels present.
+
+## Slice 2 — Ask page (built 2026-10-02)
+
+The owner approved this in chat: "merge it and start the Ask page redesign".
+
+### Audit of the old page
+
+- Every citation appeared twice: as `[n] …` lines in the answer and again in Sources.
+- The past-course notice was plain text.
+- The composer floated under the conversation.
+- The empty state was a paragraph with no starting points.
+- Arabic answers were laid out left-to-right.
+
+### Decisions
+
+| Decision | Rule |
+|---|---|
+| Layout | One centered 48rem column. The composer is docked at the bottom with a visible focus ring. |
+| Empty state | Four suggestion cards that map to real capabilities (course files, deadlines, Moodle changes, study planning). A card sends its question. |
+| Messages | The user's messages are on the navy hero surface. AAOS answers carry the AAOS mark. Every message body uses `dir="auto"`, so Arabic reads right-to-left. |
+| Answer text | `splitAnswerText` lifts the past-course notice into an amber label and drops `[n]` citation lines **only when** the Sources list shows those citations. Inline `[n]` markers stay. A body that would be empty keeps the original text. |
+| Sources | Numbered to match the `[n]` markers. The citation text is unchanged. |
+| Refusals | A calm note with one tip ("try naming the course"). The wording of failure guidance is unchanged. |
+
+### Invariants kept
+
+- The labels "Your message", "Send", "Stop waiting", "AAOS is thinking…" and "New conversation" are unchanged.
+- The conversation is still not persisted.
+- Backend text is only re-laid out, never reworded.
