@@ -137,7 +137,7 @@ def _migrated_phase3_setup(
     database_path = tmp_path / "database" / "phase3.db"
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("aaos.database_path", str(database_path))
-    command.upgrade(config, "0003_phase3_document_ingestion")
+    command.upgrade(config, "0014_archived_courses")
     return env, DocumentRuntimePaths(
         database_path=database_path,
         content_store_root=tmp_path / "documents",
@@ -554,7 +554,7 @@ def test_missing_canonical_database_is_not_replaced_by_runtime_root_database(
     alternate_db.parent.mkdir()
     alternate_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     alternate_config.set_main_option("aaos.database_path", str(alternate_db))
-    command.upgrade(alternate_config, "0003_phase3_document_ingestion")
+    command.upgrade(alternate_config, "0014_archived_courses")
     canonical_db = tmp_path / "application" / "data" / "database" / "aaos.db"
     env = environment(runtime_root)
 
@@ -577,8 +577,9 @@ def test_missing_canonical_database_is_not_replaced_by_runtime_root_database(
     ("revision", "accepted"),
     [
         ("0002_phase1_academic_domain", False),
-        ("0003_phase3_document_ingestion", True),
-        ("0007_phase8_visual_provenance", True),
+        ("0003_phase3_document_ingestion", False),
+        ("0013_rag_document_summaries", False),
+        ("0014_archived_courses", True),
         ("unknown_revision", False),
     ],
 )

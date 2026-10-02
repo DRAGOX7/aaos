@@ -20,23 +20,20 @@ def _upgrade_database(database_path: Path, revision: str) -> None:
     command.upgrade(config, revision)
 
 
-def test_phase4_revision_is_accepted(tmp_path: Path) -> None:
+def test_archived_courses_revision_is_accepted(tmp_path: Path) -> None:
     database_path = tmp_path / "aaos.db"
-    _upgrade_database(database_path, "0004_phase4_local_rag")
+    _upgrade_database(database_path, "0014_archived_courses")
 
     validate_rag_database(database_path)
 
 
-def test_current_phase8_revision_is_accepted(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "revision",
+    ["0003_phase3_document_ingestion", "0004_phase4_local_rag", "0013_rag_document_summaries"],
+)
+def test_revision_without_archive_columns_is_rejected(tmp_path: Path, revision: str) -> None:
     database_path = tmp_path / "aaos.db"
-    _upgrade_database(database_path, "0007_phase8_visual_provenance")
-
-    validate_rag_database(database_path)
-
-
-def test_pre_phase4_revision_is_rejected(tmp_path: Path) -> None:
-    database_path = tmp_path / "aaos.db"
-    _upgrade_database(database_path, "0003_phase3_document_ingestion")
+    _upgrade_database(database_path, revision)
 
     with pytest.raises(RagDatabaseConfigurationError):
         validate_rag_database(database_path)
@@ -74,7 +71,7 @@ def test_database_disappearing_after_validation_is_not_recreated(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "aaos.db"
-    _upgrade_database(database_path, "0007_phase8_visual_provenance")
+    _upgrade_database(database_path, "0014_archived_courses")
 
     validate_rag_database(database_path)
     database_path.unlink()
