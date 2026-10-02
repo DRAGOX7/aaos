@@ -277,6 +277,9 @@ class ConversationContextSnapshot:
     # The conversation is about past (archived) courses, so a follow-up that
     # names no course keeps searching them.
     past_focus: bool = False
+    # A question AAOS asked the user to complete by naming a course; it is
+    # kept for the next turn only.
+    pending_question: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.conversation_id, UUID):
@@ -321,6 +324,8 @@ class ConversationContextUpdate:
     study_plan: StudyPlanContext | None = None
     # None preserves the conversation's past-course focus.
     past_focus: bool | None = None
+    # Replaced every turn: a waiting question lasts one turn.
+    pending_question: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entities, tuple) or any(
@@ -437,6 +442,7 @@ class ConversationContextStore:
                 session.snapshot.active_course,
                 session.snapshot.study_plan,
                 session.snapshot.past_focus,
+                session.snapshot.pending_question,
             )
             return ConversationContextLease(conversation_id, turn_number, token, snapshot)
 
@@ -479,6 +485,7 @@ class ConversationContextStore:
                 active_course,
                 update.study_plan or session.snapshot.study_plan,
                 session.snapshot.past_focus if update.past_focus is None else update.past_focus,
+                update.pending_question,
             )
             session.snapshot = snapshot
             session.pending_token = None

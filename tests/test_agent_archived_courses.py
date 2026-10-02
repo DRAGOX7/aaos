@@ -330,3 +330,36 @@ def test_past_focus_is_remembered_by_the_conversation_store() -> None:
     assert third.snapshot.past_focus is True
     store.finish_turn(third, ConversationContextUpdate(past_focus=False))
     assert store.begin_turn(first.conversation_id).snapshot.past_focus is False
+
+
+def test_replying_with_a_course_name_asks_the_waiting_question_about_it() -> None:
+    """Regression: replying "SE440 · Project Management" to the prompt was refused."""
+    ask, rag = _conversation(*_world(current_documents=False))
+
+    first = ask("what is knime?")
+    reply = ask("SE440 · Project Management")
+
+    assert "Reply with one" in (first.answer_text or "")
+    assert [query.scope for query in rag.queries] == [CourseScope(PAST_SE440.id)]
+    assert "knime" in rag.queries[0].question.casefold()
+    assert reply.status is AcademicAskStatus.ANSWERED
+    assert (reply.answer_text or "").startswith("From a past course")
+
+
+def test_a_reply_that_is_not_a_course_name_does_not_reuse_the_question() -> None:
+    ask, rag = _conversation(*_world(current_documents=False))
+
+    ask("what is knime?")
+    ask("what courses am I registered in?")
+
+    assert rag.queries == []
+
+
+def test_the_waiting_question_is_used_once() -> None:
+    ask, rag = _conversation(*_world(current_documents=False))
+
+    ask("what is knime?")
+    ask("SE440")
+    ask("SE440")
+
+    assert len(rag.queries) == 1
