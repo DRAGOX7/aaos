@@ -137,12 +137,12 @@ describe("AAOS document read views", () => {
         "href",
         "/documents/7",
       );
-      expect(within(rows[0]!).getByText("Pages: 12")).toBeInTheDocument();
-      expect(within(rows[0]!).getByText("Ingestion: Ready")).toBeInTheDocument();
-      expect(screen.getByText("Extraction: Partial")).toBeInTheDocument();
-      expect(screen.getByText("Index readiness: Preparing")).toBeInTheDocument();
-      expect(screen.getByText("Index readiness: Failed")).toBeInTheDocument();
-      expect(screen.getByText("Index coverage: None")).toBeInTheDocument();
+      // One student-facing status per file; the detail page keeps every field.
+      expect(within(rows[0]!).getByText("12 pages")).toBeInTheDocument();
+      expect(within(rows[0]!).getByText("Searchable")).toBeInTheDocument();
+      expect(within(rows[1]!).getByText("Being indexed")).toBeInTheDocument();
+      expect(within(rows[2]!).getByText("Can't be searched")).toBeInTheDocument();
+      expect(within(rows[3]!).getByText("Can't be searched")).toBeInTheDocument();
       expect(screen.queryByText(/page content|citation|traceback|SQL/i)).not.toBeInTheDocument();
     });
 
@@ -163,11 +163,9 @@ describe("AAOS document read views", () => {
 
       render(<DocumentList />);
 
-      expect(screen.getByText("Extraction: Not available yet")).toBeInTheDocument();
-      expect(screen.getByText("Index readiness: Not available yet")).toBeInTheDocument();
-      expect(screen.getByText("Index coverage: Not available yet")).toBeInTheDocument();
+      expect(screen.getByText("Not indexed yet")).toBeInTheDocument();
       expect(screen.queryByText(/UNKNOWN|UNAVAILABLE/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Pages:/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/pages?$/)).not.toBeInTheDocument();
     });
 
     it("renders bounded not-found and generic errors without backend details", () => {

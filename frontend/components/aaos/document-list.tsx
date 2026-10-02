@@ -1,8 +1,10 @@
 "use client";
 
+import { FileText } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { DocumentRow } from "@/components/aaos/document-row";
+import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,9 +41,14 @@ export function DocumentList({ courseId }: DocumentListProps) {
             Academic data is temporarily unavailable.
           </p>
         ) : query.data?.documents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No documents found.</p>
+          <EmptyState
+            icon={FileText}
+            title="No documents found."
+            description="Files from your current courses appear here once they are synced from Moodle and indexed. Past course files are on each past course's page."
+            action={{ href: "/courses", label: "Browse courses" }}
+          />
         ) : (
-          <ul aria-label="Documents" className="space-y-3">
+          <ul aria-label="Documents" className="divide-y divide-border">
             {query.data?.documents.map((document) => (
               <DocumentRow key={document.id} document={document} />
             ))}

@@ -1,8 +1,10 @@
 "use client";
 
+import { ClipboardList } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { AssignmentRow } from "@/components/aaos/assignment-row";
+import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,9 +55,11 @@ export function AssignmentList({
             Academic data is temporarily unavailable.
           </p>
         ) : assignmentQuery.data?.assignments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No assignments found.
-          </p>
+          <EmptyState
+            icon={ClipboardList}
+            title="No assignments found."
+            description="Assignments and their deadlines appear here after your next Moodle sync."
+          />
         ) : (
           <ul aria-label="Assignments" className="space-y-3">
             {assignmentQuery.data?.assignments.map((assignment) => {
