@@ -56,3 +56,7 @@ This is the run-to-run variation documented in `rag-coverage-flips-2026-10-02.md
 - The change is strictly additive and fail-closed, accepted no wrong claim, and moves both target questions from unreliable to reliable under repeatable inputs.
 - Criterion 2 is missed by one case because of generator wording outside v1's scope.
 - **Owner decision:** accept with criterion 2 recorded as missed, or keep it unmerged.
+
+## Owner decision (2026-10-02)
+
+Accepted and merged, with criterion 2 (`se440-weights` 3/5 at production settings) recorded as missed.
