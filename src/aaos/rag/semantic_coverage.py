@@ -53,6 +53,7 @@ from .evidence_segments import (
     resolve_segment_selection,
     segment_selected_evidence,
 )
+from .table_claims import table_row_supports
 
 SPAN_EXTRACTION_MAX_COMPLETION_TOKENS = 384
 _SEGMENT_SELECTION_KEYS = frozenset({"segment_ids"})
@@ -424,6 +425,8 @@ class IndependentClaimEntailmentVerifier:
 
     def __init__(self, classifier: EntailmentClassifier | None = None) -> None:
         self._classifier = classifier or PinnedCpuNliClassifier()
+        # Claims accepted by the table-row rule, read by evaluation traces.
+        self.table_rule_acceptances = 0
         if not callable(getattr(self._classifier, "classify", None)):
             raise ValueError("classifier must implement classify")
         if not callable(getattr(self._classifier, "close", None)):
@@ -499,7 +502,19 @@ class IndependentClaimEntailmentVerifier:
         verdict = self._classify_windowed(f"{titles}\n\n{premise}", claim.text, depth=0)
         if verdict is _ClaimVerdict.ENTAILED:
             return EntailmentResult.ENTAILED
-        if verdict is _ClaimVerdict.CONTRADICTED or not validated_requirement_spans:
+        if verdict is _ClaimVerdict.CONTRADICTED:
+            return EntailmentResult.NOT_ENTAILED
+        # The NLI reads a header-value table row ("Final Exam (40%)") as
+        # neutral to a true sentence about it. A claim stating exactly one
+        # cited row's percentage, and nothing more, is supported by that row.
+        if table_row_supports(
+            claim.text,
+            tuple(item.exact_text for item in bound_evidence),
+            tuple(item.document_title for item in bound_evidence),
+        ):
+            self.table_rule_acceptances += 1
+            return EntailmentResult.ENTAILED
+        if not validated_requirement_spans:
             return EntailmentResult.NOT_ENTAILED
         # A neutral span verdict may only mean the support lies just outside
         # the span. Re-check a bounded number of windows of the chunks the
