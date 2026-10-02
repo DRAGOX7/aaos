@@ -363,3 +363,33 @@ def test_ask_source_projection_rejects_values_outside_browser_contract(
             ],
             source_turn=1,
         )
+
+
+def test_rag_provenance_carries_the_past_course_label() -> None:
+    from aaos.web.routes import _academic_ask_rag_provenance_view
+
+    payload = {
+        "answer_text": "Grounded answer",
+        "citations": [
+            {
+                "claim_id": "claim-1",
+                "document_version_id": 12,
+                "document_title": "Syllabus",
+                "page_start": 1,
+                "page_end": 1,
+            }
+        ],
+        "content_revision": 3,
+        "generation_id": 7,
+        "language": "en",
+        "rendered_text": "Grounded answer",
+        "status": "ANSWER",
+    }
+
+    current = _academic_ask_rag_provenance_view(payload)
+    past = _academic_ask_rag_provenance_view({**payload, "from_past_course": True})
+
+    assert isinstance(current, AcademicAskRagAnswerProvenanceView)
+    assert current.from_past_course is False
+    assert isinstance(past, AcademicAskRagAnswerProvenanceView)
+    assert past.from_past_course is True

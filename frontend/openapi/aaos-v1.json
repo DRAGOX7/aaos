@@ -31,6 +31,11 @@
             "title": "Content Revision",
             "type": "integer"
           },
+          "from_past_course": {
+            "default": false,
+            "title": "From Past Course",
+            "type": "boolean"
+          },
           "generation_id": {
             "exclusiveMinimum": 0.0,
             "title": "Generation Id",

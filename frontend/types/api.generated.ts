@@ -311,6 +311,11 @@ export interface components {
             citations: (components["schemas"]["AcademicAskRagPageCitationView"] | components["schemas"]["AcademicAskRagStructuralCitationView"])[];
             /** Content Revision */
             content_revision: number;
+            /**
+             * From Past Course
+             * @default false
+             */
+            from_past_course: boolean;
             /** Generation Id */
             generation_id: number;
             /** Language */

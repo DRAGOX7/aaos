@@ -206,6 +206,7 @@ describe("unified Ask view", () => {
         language: "en",
         rendered_text: "Grounded answer.",
         status: "ANSWER",
+        from_past_course: false,
       },
     }));
     render(<AskView />);

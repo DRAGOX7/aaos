@@ -6,12 +6,15 @@ import { CourseCard } from "@/components/aaos/course-card";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isPastCourse } from "@/lib/api/courses";
 import { courseListQueryOptions } from "@/lib/query/courses";
 
 export function CourseListView() {
   const { data, isError, isPending } = useQuery(
     courseListQueryOptions(),
   );
+  const currentCourses = data?.courses.filter((course) => !isPastCourse(course)) ?? [];
+  const pastCourses = data?.courses.filter(isPastCourse) ?? [];
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
@@ -31,18 +34,28 @@ export function CourseListView() {
           <p className="text-sm text-muted-foreground">
             Academic data is temporarily unavailable.
           </p>
-        ) : data?.courses.length === 0 ? (
+        ) : currentCourses.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No active courses found.
           </p>
         ) : (
           <ul aria-label="Active courses" className="divide-y divide-border">
-            {data?.courses.map((course) => (
+            {currentCourses.map((course) => (
               <CourseCard key={course.id} course={course} />
             ))}
           </ul>
         )}
       </SectionCard>
+
+      {pastCourses.length > 0 ? (
+        <SectionCard title="Past courses">
+          <ul aria-label="Past courses" className="divide-y divide-border">
+            {pastCourses.map((course) => (
+              <CourseCard key={course.id} course={course} />
+            ))}
+          </ul>
+        </SectionCard>
+      ) : null}
     </div>
   );
 }

@@ -195,6 +195,8 @@ class AcademicAskRagAnswerProvenanceView(BaseModel):
     language: str = Field(min_length=1, max_length=32)
     rendered_text: str = Field(min_length=1, max_length=16384)
     status: Literal["ANSWER", "PARTIAL_ANSWER", "INSUFFICIENT_EVIDENCE"]
+    # The answer drew only on archived (past) courses; the client labels sources.
+    from_past_course: bool = False
 
 
 class AcademicAskRagProvenanceSummaryView(BaseModel):

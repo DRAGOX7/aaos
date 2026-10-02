@@ -1,12 +1,18 @@
 import Link from "next/link";
 
-import type { CourseSummary } from "@/lib/api/courses";
+import {
+  formatArchivedDate,
+  isPastCourse,
+  type CourseSummary,
+} from "@/lib/api/courses";
 
 type CourseCardProps = Readonly<{
   course: CourseSummary;
 }>;
 
 export function CourseCard({ course }: CourseCardProps) {
+  const archived = isPastCourse(course) ? formatArchivedDate(course.archived_at) : null;
+
   return (
     <li className="py-4 first:pt-0 last:pb-0">
       <Link
@@ -22,6 +28,12 @@ export function CourseCard({ course }: CourseCardProps) {
             {course.description ? (
               <p className="mt-1 text-sm text-muted-foreground">
                 {course.description}
+              </p>
+            ) : null}
+
+            {archived ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {"Archived " + archived}
               </p>
             ) : null}
           </div>

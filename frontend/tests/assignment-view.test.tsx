@@ -29,6 +29,7 @@ const course42: CourseSummary = {
   code: "CS-42",
   description: null,
   updated_at: null,
+  status: "current",
 };
 
 const course7: CourseSummary = {
@@ -37,6 +38,7 @@ const course7: CourseSummary = {
   code: null,
   description: null,
   updated_at: null,
+  status: "current",
 };
 
 const courses: CourseListResponse = {
