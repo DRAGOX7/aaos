@@ -389,19 +389,49 @@ def test_invalid_status_or_missing_fields_are_schema_failures(payload: str) -> N
     assert len(gateway.requests) == 2
 
 
-def test_unknown_evidence_id_is_not_repaired_and_fails_closed() -> None:
-    payload = (
-        '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
-        '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
-        '"evidence_ids":["invented"]}]}'
-    )
-    gateway = FakeGateway([_response(payload)])
+_INVENTED_EVIDENCE = (
+    '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
+    '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+    '"evidence_ids":["invented"]}]}'
+)
+_VALID_ANSWER = (
+    '{"status":"ANSWER","answer_text":"Friday.","language":"en",'
+    '"claims":[{"claim_id":"claim-1","text":"The deadline is Friday.",'
+    '"evidence_ids":["ev-1"]}]}'
+)
+
+
+def test_unknown_evidence_id_is_never_repaired_and_fails_closed_after_one_fresh_retry() -> None:
+    gateway = FakeGateway([_response(_INVENTED_EVIDENCE), _response(_INVENTED_EVIDENCE)])
 
     with pytest.raises(RagOperationalError) as error:
         _run(GroundedAnswerGenerator(gateway), _request(), _decision())
 
     assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
-    assert len(gateway.requests) == 1
+    assert len(gateway.requests) == 2
+    # The retry is a fresh request: the invented output is never fed back.
+    assert gateway.requests[1].messages == gateway.requests[0].messages
+
+
+def test_an_invented_citation_is_discarded_and_a_fresh_answer_is_used() -> None:
+    """Regression: one invented evidence id failed the whole answer."""
+    gateway = FakeGateway([_response(_INVENTED_EVIDENCE), _response(_VALID_ANSWER)])
+
+    output = _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert output.status is RagAnswerStatus.ANSWER
+    assert output.claims[0].evidence_ids == ("ev-1",)
+    assert len(gateway.requests) == 2
+
+
+def test_a_repaired_answer_that_invents_a_citation_still_fails_closed() -> None:
+    gateway = FakeGateway([_response("not json"), _response(_INVENTED_EVIDENCE)])
+
+    with pytest.raises(RagOperationalError) as error:
+        _run(GroundedAnswerGenerator(gateway), _request(), _decision())
+
+    assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
+    assert len(gateway.requests) == 2
 
 
 def test_claims_may_preserve_conflicting_supplied_evidence() -> None:
@@ -940,13 +970,15 @@ def test_insufficient_verdict_with_supporting_claims_returns_fixed_refusal() -> 
 
 def test_insufficient_verdict_with_invented_evidence_still_fails_closed() -> None:
     payload = _INSUFFICIENT_WITH_CLAIMS.replace('"ev-1"', '"invented"')
-    gateway = FakeGateway([_response(payload)])
+    gateway = FakeGateway([_response(payload), _response(payload)])
 
     with pytest.raises(RagOperationalError) as error:
         _run(GroundedAnswerGenerator(gateway), _request(), _decision())
 
     assert error.value.code is RagErrorCode.INVALID_EVIDENCE_REFERENCE
-    assert len(gateway.requests) == 1
+    # One fresh retry, never a repair; the invented output is not fed back.
+    assert len(gateway.requests) == 2
+    assert gateway.requests[1].messages == gateway.requests[0].messages
 
 
 def test_insufficient_verdict_with_claims_still_requires_partial_status_when_partial() -> None:

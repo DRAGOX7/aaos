@@ -84,6 +84,14 @@ class _SchemaInvalid(ValueError):
     """Internal marker for output that is eligible for one repair attempt."""
 
 
+class _InventedEvidence(Exception):
+    """Internal marker: a claim cites evidence the model was not given.
+
+    This is a grounding violation, not a format slip, so the output is never
+    repaired or reused; the generator may only discard it and ask once more.
+    """
+
+
 class GroundedAnswerGenerator:
     """Generate one structured grounded output with at most one schema repair."""
 
@@ -126,6 +134,22 @@ class GroundedAnswerGenerator:
         )
         response = await self._call_gateway(initial_request)
         try:
+            return await self._parse_or_repair(response, request)
+        except _InventedEvidence:
+            # Discard the output that cited evidence it was not given (it is
+            # never repaired, reused, or shown) and ask once more from the same
+            # trusted request. A second invented citation fails closed.
+            retry_response = await self._call_gateway(initial_request)
+            try:
+                return await self._parse_or_repair(retry_response, request)
+            except _InventedEvidence:
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE) from None
+
+    async def _parse_or_repair(
+        self, response: ChatResponse, request: GroundedAnswerRequest
+    ) -> GroundedModelOutput:
+        """Parse one output, repairing a schema slip once; invented evidence propagates."""
+        try:
             return _parse_output(response, request)
         except _SchemaInvalid:
             repair_request = ChatRequest(
@@ -141,6 +165,8 @@ class GroundedAnswerGenerator:
                 return _parse_output(repaired_response, request)
             except _SchemaInvalid:
                 raise RagOperationalError(RagErrorCode.INVALID_STRUCTURED_OUTPUT) from None
+            except _InventedEvidence:
+                raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE) from None
 
     async def _call_gateway(self, request: ChatRequest) -> ChatResponse:
         """Call the sole model boundary and translate failures to safe codes."""
@@ -1102,7 +1128,7 @@ def _parse_claim(raw_claim: Any, allowed_ids: frozenset[str]) -> RagClaim:
     ):
         raise _SchemaInvalid
     if any(evidence_id not in allowed_ids for evidence_id in evidence_ids):
-        raise RagOperationalError(RagErrorCode.INVALID_EVIDENCE_REFERENCE)
+        raise _InventedEvidence
     try:
         return RagClaim(claim_id, text, tuple(evidence_ids))
     except (TypeError, ValueError):
