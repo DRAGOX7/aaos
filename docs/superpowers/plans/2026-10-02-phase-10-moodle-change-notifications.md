@@ -1,6 +1,6 @@
 # Phase 10 — Moodle Change Notifications (Telegram) — Plan
 
-**Status: PROPOSED. Not authorized. No code written.**
+**Status: AUTHORIZED by the owner (2026-10-02). Next: the Phase 10 spec (slice 10A). No code written.**
 
 - **Source:** the owner's proposed design (2026-10-02), reviewed against the repository and revised here.
 - **Before any implementation:**
@@ -154,3 +154,13 @@ Course names use the readable display names (`AI380 · Optimization Algorithms`)
 3. **Consent to send** course, assignment and announcement titles and dates through Telegram's servers.
 4. **Digest threshold.** Proposed: more than 5 events from one sync become one message.
 5. **Authorization to start Phase 10** ahead of the open Phase 0 and Phase 5 gates.
+
+## 10. Owner decisions (2026-10-02)
+
+| # | Decision |
+|---|---|
+| 1 | Check every **15 minutes**. Active hours are not stated; the spec proposes 07:00–24:00 Asia/Amman as a configurable default. |
+| 2 | **A visible Edge window per run is acceptable.** The headless-browsing boundary stays unchanged. |
+| 3 | **Consent given** to send course, assignment and announcement titles and dates through Telegram. |
+| 4 | Digest threshold not stated; the spec uses the proposed default of more than 5 events per sync, configurable. |
+| 5 | **Phase 10 is authorized now.** The open Phase 0 and Phase 5 gates are deferred, not resolved. |
