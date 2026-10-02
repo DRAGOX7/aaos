@@ -3056,6 +3056,11 @@ class ReadOnlyAcademicAssistant:
 
         lease_active = True
         try:
+            waiting = lease.snapshot.pending_question
+            if waiting is not None and self._is_course_name_reply(question):
+                # AAOS asked the user to name a course; the reply names one,
+                # so ask the waiting question about it.
+                question = f"{waiting} — {question.strip()}"
             if is_plan_explanation_request(question.strip(), lease.snapshot.study_plan):
                 plan_context = lease.snapshot.study_plan
                 assert plan_context is not None
@@ -3154,6 +3159,7 @@ class ReadOnlyAcademicAssistant:
                 plan_context: StudyPlanContext | None = None,
                 plan_entities: tuple[TrustedContextEntity, ...] = (),
                 plan_collection: tuple[TrustedContextEntity, ...] | None = None,
+                pending_question: str | None = None,
             ) -> AcademicAskResult:
                 nonlocal lease_active
                 answer = AcademicAskResult(
@@ -3175,6 +3181,7 @@ class ReadOnlyAcademicAssistant:
                         active_entity=lease.snapshot.active_entity,
                         active_course=lease.snapshot.active_course,
                         study_plan=plan_context,
+                        pending_question=pending_question,
                     ),
                 )
                 lease_active = False
@@ -3467,7 +3474,8 @@ class ReadOnlyAcademicAssistant:
                 past_with_documents = self._past_courses_when_no_current_documents()
                 if past_with_documents:
                     return direct_answer(
-                        _no_current_documents_message(question, past_with_documents)
+                        _no_current_documents_message(question, past_with_documents),
+                        pending_question=question.strip(),
                     )
             routed_change_request = (
                 routed_tool is not None and routed_tool[0] is ToolName.MOODLE_LIST_CHANGES
@@ -3557,6 +3565,7 @@ class ReadOnlyAcademicAssistant:
                 )
             if runtime.past_answer_archived_dates is not None:
                 result = _with_past_course_notice(result, runtime.past_answer_archived_dates)
+            waiting_question: str | None = None
             if (
                 runtime.unscoped_document_search
                 and result.status is AcademicAskStatus.FAILED
@@ -3567,6 +3576,7 @@ class ReadOnlyAcademicAssistant:
                 # instead of "This course has no indexed documents".
                 past_with_documents = self._past_courses_when_no_current_documents()
                 if past_with_documents:
+                    waiting_question = question.strip()
                     result = AcademicAskResult(
                         AcademicAskStatus.ANSWERED,
                         answer_text=_no_current_documents_message(question, past_with_documents),
@@ -3598,13 +3608,32 @@ class ReadOnlyAcademicAssistant:
                 past_focus = False
             elif asks_about_past(question) or runtime.past_answer_archived_dates is not None:
                 past_focus = True
-            self._context_store.finish_turn(lease, replace(update, past_focus=past_focus))
+            self._context_store.finish_turn(
+                lease,
+                replace(update, past_focus=past_focus, pending_question=waiting_question),
+            )
             lease_active = False
             return response
         except BaseException:
             if lease_active:
                 self._context_store.abort_turn(lease)
             raise
+
+    def _is_course_name_reply(self, message: str) -> bool:
+        """A short reply that names one course and asks nothing else."""
+        text = message.strip()
+        if len(text.split()) > 12 or route_intent(text) is not RoutedIntent.UNROUTED:
+            return False
+        try:
+            courses = self._academic.list_courses(limit=MAX_ACADEMIC_RECORDS + 1)
+        except Exception:
+            return False
+        if not isinstance(courses, tuple) or any(
+            not isinstance(course, CourseSummary) for course in courses
+        ):
+            return False
+        mention = find_course_mention(text, courses)
+        return mention.course_name is not None and not mention.ambiguous
 
     def _past_courses_when_no_current_documents(self) -> tuple[CourseSummary, ...]:
         """Past courses with indexed documents, when current courses have none.
@@ -4019,11 +4048,11 @@ def _no_current_documents_message(question: str, courses: tuple[CourseSummary, .
         return (
             "لا توجد مستندات مفهرسة لموادك الحالية بعد. "
             f"مواد سابقة تحتوي على مستندات: {names}. "
-            "اذكر اسم المادة في سؤالك للبحث فيها."
+            "أرسل اسم إحداها للبحث فيها."
         )
     return (
         "Your current courses have no indexed documents yet, so there is nothing to search. "
-        f"Past courses with documents: {names}. Name one in your question to search it."
+        f"Past courses with documents: {names}. Reply with one to search it."
     )
 
 
