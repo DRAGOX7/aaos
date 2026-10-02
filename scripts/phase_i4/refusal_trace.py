@@ -20,10 +20,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from aaos.rag.contracts import GlobalScope, RagOperationalError, RagQuery
+from aaos.rag.contracts import RagOperationalError, RagQuery
 from aaos.rag.factory import build_configured_phase4_runtime
 
-from .arabic_retrieval_eval import MANIFEST, _matches
+from .arabic_retrieval_eval import MANIFEST, _matches, evaluation_scope
 
 EXCERPT_CHARACTERS = 160
 
@@ -161,6 +161,7 @@ async def _trace(runtime: Any, cases: list[dict[str, Any]], runs: int) -> list[A
     service = runtime.service
     record: dict[str, Any] = {}
     _install(service, record)
+    scope = evaluation_scope()
     rows = []
     for run in range(1, runs + 1):
         for case in cases:
@@ -170,7 +171,7 @@ async def _trace(runtime: Any, cases: list[dict[str, Any]], runs: int) -> list[A
                 record.clear()
                 started = time.monotonic()
                 try:
-                    response = await service.ask(RagQuery(case[language], GlobalScope()))
+                    response = await service.ask(RagQuery(case[language], scope))
                     record["status"] = response.answer.status.value
                     record["answer_hit"] = any(
                         _matches(
