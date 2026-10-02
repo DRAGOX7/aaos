@@ -53,6 +53,8 @@ class CourseORM(Base):
         Boolean, nullable=False, default=True, server_default="1"
     )
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Set when a complete sync archives the course (with its items); see the archived-courses spec.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class AssignmentORM(Base):
@@ -74,6 +76,8 @@ class AssignmentORM(Base):
         Boolean, nullable=False, default=True, server_default="1"
     )
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Set when a complete sync archives the course (with its items); see the archived-courses spec.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class AnnouncementORM(Base):
@@ -95,6 +99,8 @@ class AnnouncementORM(Base):
         Boolean, nullable=False, default=True, server_default="1"
     )
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Set when a complete sync archives the course (with its items); see the archived-courses spec.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class RemoteFileORM(Base):
@@ -115,3 +121,5 @@ class RemoteFileORM(Base):
         Boolean, nullable=False, default=True, server_default="1"
     )
     source_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Set when a complete sync archives the course (with its items); see the archived-courses spec.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
