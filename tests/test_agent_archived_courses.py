@@ -264,3 +264,69 @@ def test_an_unscoped_model_search_without_current_files_names_the_past_courses()
     assert result.status is AcademicAskStatus.ANSWERED
     assert "current courses have no indexed documents" in (result.answer_text or "")
     assert "SE440 · Project Management" in (result.answer_text or "")
+
+
+def _conversation(academic: FakeAcademicReader, documents: VisibleDocuments) -> Any:
+    assistant, _gateway, rag = _assistant(academic, documents)
+    state: dict[str, Any] = {"conversation_id": None}
+
+    def ask(question: str) -> Any:
+        result = asyncio.run(assistant.ask(question, conversation_id=state["conversation_id"]))
+        state["conversation_id"] = result.conversation_id
+        return result
+
+    return ask, rag
+
+
+def test_a_follow_up_keeps_searching_past_courses() -> None:
+    """Regression: "tell me what knime is" after a past-course answer searched current courses."""
+    ask, rag = _conversation(*_world())
+
+    ask("what is knime from my previous semester?")
+    ask("tell me what knime is")
+
+    assert [query.scope for query in rag.queries] == [
+        HistoricalScope((202,)),
+        HistoricalScope((202,)),
+    ]
+
+
+def test_current_wording_ends_the_past_focus() -> None:
+    ask, rag = _conversation(*_world())
+
+    ask("what is knime from my previous semester?")
+    ask("what is knime this semester?")
+
+    assert [query.scope for query in rag.queries] == [HistoricalScope((202,)), GlobalScope()]
+
+
+def test_searching_a_current_course_ends_the_past_focus() -> None:
+    ask, rag = _conversation(*_world())
+
+    ask("what is knime from my previous semester?")
+    ask("What does the Deep Learning syllabus say about exams?")
+    ask("tell me what knime is")
+
+    assert [query.scope for query in rag.queries] == [
+        HistoricalScope((202,)),
+        CourseScope(7),
+        GlobalScope(),
+    ]
+
+
+def test_past_focus_is_remembered_by_the_conversation_store() -> None:
+    from aaos.agent.conversation_context import (
+        ConversationContextStore,
+        ConversationContextUpdate,
+    )
+
+    store = ConversationContextStore()
+    first = store.begin_turn()
+    store.finish_turn(first, ConversationContextUpdate(past_focus=True))
+    second = store.begin_turn(first.conversation_id)
+    assert second.snapshot.past_focus is True
+    store.finish_turn(second, ConversationContextUpdate())  # None keeps it
+    third = store.begin_turn(first.conversation_id)
+    assert third.snapshot.past_focus is True
+    store.finish_turn(third, ConversationContextUpdate(past_focus=False))
+    assert store.begin_turn(first.conversation_id).snapshot.past_focus is False

@@ -274,6 +274,9 @@ class ConversationContextSnapshot:
     active_entity: TrustedContextEntity | None = None
     active_course: TrustedContextEntity | None = None
     study_plan: StudyPlanContext | None = None
+    # The conversation is about past (archived) courses, so a follow-up that
+    # names no course keeps searching them.
+    past_focus: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.conversation_id, UUID):
@@ -316,6 +319,8 @@ class ConversationContextUpdate:
     active_course: TrustedContextEntity | None = None
     # None preserves the last typed plan reference; no prose is retained.
     study_plan: StudyPlanContext | None = None
+    # None preserves the conversation's past-course focus.
+    past_focus: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entities, tuple) or any(
@@ -431,6 +436,7 @@ class ConversationContextStore:
                 session.snapshot.active_entity,
                 session.snapshot.active_course,
                 session.snapshot.study_plan,
+                session.snapshot.past_focus,
             )
             return ConversationContextLease(conversation_id, turn_number, token, snapshot)
 
@@ -472,6 +478,7 @@ class ConversationContextStore:
                 active_entity,
                 active_course,
                 update.study_plan or session.snapshot.study_plan,
+                session.snapshot.past_focus if update.past_focus is None else update.past_focus,
             )
             session.snapshot = snapshot
             session.pending_token = None
