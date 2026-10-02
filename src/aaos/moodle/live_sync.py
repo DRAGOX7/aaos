@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -112,15 +112,28 @@ def _render_failure(stage: str) -> int:
 
 def run_configured_moodle_sync() -> int:
     """Run one complete browser collection, then one normal-DB synchronization."""
+    return run_configured_moodle_sync_outcome().exit_code
+
+
+@dataclass(frozen=True, slots=True)
+class SyncOutcome:
+    """The CLI exit code plus, for browser failures, the fixed non-sensitive stage."""
+
+    exit_code: int
+    browser_stage: str | None = None
+
+
+def run_configured_moodle_sync_outcome() -> SyncOutcome:
+    """The same sync as ``run_configured_moodle_sync``, reporting why it failed."""
     try:
         environment = load_runtime_moodle_environment()
         database_path = _normal_database_path()
     except (ReceiverError, OSError, TypeError, ValueError):
-        return _render_failure("CONFIGURATION")
+        return SyncOutcome(_render_failure("CONFIGURATION"))
     try:
         _database_is_present(database_path)
     except ValueError:
-        return _render_failure("DATABASE")
+        return SyncOutcome(_render_failure("DATABASE"))
 
     engine: Engine | None = None
     try:
@@ -136,29 +149,29 @@ def run_configured_moodle_sync() -> int:
             TypeError,
             ValueError,
         ):
-            return _render_failure("PERSISTENCE")
+            return SyncOutcome(_render_failure("PERSISTENCE"))
 
         try:
             collection = collect_configured_snapshot(environment)
-        except BrowserSmokeFailure:
+        except BrowserSmokeFailure as error:
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
-            return _render_failure("BROWSER")
+            return SyncOutcome(_render_failure("BROWSER"), browser_stage=str(error.stage))
         except (OSError, RuntimeError, TypeError, ValueError):
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
-            return _render_failure("COLLECTION")
+            return SyncOutcome(_render_failure("COLLECTION"))
         except Exception as error:
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
             _LOGGER.error(
                 "Moodle collection failed with unexpected exception type %s",
                 type(error).__name__,
             )
-            return _render_failure("COLLECTION")
+            return SyncOutcome(_render_failure("COLLECTION"))
 
         if isinstance(collection, SourceCollectionFailure) or not isinstance(
             collection, CompleteSourceSnapshot
         ):
             history.fail(sync_attempt_id, MoodleSyncFailureCode.COLLECTION_INCOMPLETE)
-            return _render_failure("COLLECTION")
+            return SyncOutcome(_render_failure("COLLECTION"))
 
         try:
             _database_is_present(database_path)
@@ -175,17 +188,22 @@ def run_configured_moodle_sync() -> int:
             TypeError,
             ValueError,
         ):
-            return _render_failure("PERSISTENCE")
+            return SyncOutcome(_render_failure("PERSISTENCE"))
 
         print("MOODLE_SYNC_PASS")
         print(f"COURSE_COUNT={len(collection.courses)}")
         print(f"ASSIGNMENT_COUNT={len(collection.assignments)}")
         print(f"ANNOUNCEMENT_COUNT={len(collection.announcements)}")
         print(f"REMOTE_FILE_COUNT={len(collection.remote_files)}")
-        return 0
+        return SyncOutcome(0)
     finally:
         if engine is not None:
             engine.dispose()
 
 
-__all__ = ["collect_configured_snapshot", "run_configured_moodle_sync"]
+__all__ = [
+    "SyncOutcome",
+    "collect_configured_snapshot",
+    "run_configured_moodle_sync",
+    "run_configured_moodle_sync_outcome",
+]

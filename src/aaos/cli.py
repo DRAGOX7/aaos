@@ -44,6 +44,14 @@ def main() -> int:
         return run_documents_command(sys.argv[2:])
     if sys.argv[1:2] == ["rag"]:
         return _run_configured_rag(sys.argv[2:])
+    if sys.argv[1:2] == ["notify"]:
+        from aaos.notifications.cli import run_notify_command
+
+        return run_notify_command(sys.argv[2:])
+    if sys.argv[1:2] == ["monitor"]:
+        from aaos.notifications.cli import run_monitor_command
+
+        return run_monitor_command(sys.argv[2:])
     if sys.argv[1:] == ["moodle", "bootstrap"]:
         return _run_configured_moodle_bootstrap()
     if sys.argv[1:] == ["moodle", "bootstrap", "--auth-host", "system"]:
