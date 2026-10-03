@@ -63,9 +63,9 @@ This summary is not independent implementation authorization.
 This document describes the intended architecture and the following
 evidence-qualified status: Phase 0 acceptance is unresolved; Phase 1 is
 **FROZEN** at `phase-01-passed` / `8728aee00f4d6cddc8d1cc9b8f1d41a1c4684fef`;
-Phase 2 is **ACCEPTED, NOT FROZEN** at
-`736c8498ab1fe2c1d4d425ba4625774eaf791e93` with no historical
-`phase-02-passed` tag; Phase 3 is **FROZEN** at `phase-03-passed` /
+Phase 2 is **FROZEN** at `phase-02-passed` /
+`736c8498ab1fe2c1d4d425ba4625774eaf791e93` (freeze tag added at
+project-owner request on 2026-09-30); Phase 3 is **FROZEN** at `phase-03-passed` /
 `12a27f7a77ed79a3e638d9fc6bf4509840a9b326`; Phase 4 is **FROZEN** at
 `phase-04-passed` / `e99c494628952e0a1ebcafa2450c87611b4dc6c8`; and Phase 5 is
 **PARTIALLY IMPLEMENTED / CORRECTIVE REVIEW REQUIRED** (Slices 1–5 human

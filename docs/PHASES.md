@@ -52,9 +52,9 @@ final-acceptance planning commit. Repository evidence does not establish
 completed Phase 0G/0H acceptance, so Phase 0 acceptance remains unresolved.
 The historical tag is preserved pending explicit governance action.
 
-Phase 2 is accepted at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`, but no
-historical `phase-02-passed` tag is recorded. It is therefore classified
-**ACCEPTED, NOT FROZEN**.
+Phase 2 was accepted at `736c8498ab1fe2c1d4d425ba4625774eaf791e93`. The
+`phase-02-passed` freeze tag was added to that revision at project-owner
+request on 2026-09-30, so Phase 2 is **FROZEN**.
 
 ## PHASE 0 — Foundation and Local Runtime
 
@@ -164,9 +164,9 @@ Build normalized academic domain models and a deterministic mock portal before t
 
 ## PHASE 2 — Real Moodle Authentication and Read-Only Synchronization
 
-**Current status: ACCEPTED, NOT FROZEN** at
-`736c8498ab1fe2c1d4d425ba4625774eaf791e93`. No historical
-`phase-02-passed` tag is recorded.
+**Current status: FROZEN** at `phase-02-passed` /
+`736c8498ab1fe2c1d4d425ba4625774eaf791e93` (freeze tag added at
+project-owner request on 2026-09-30).
 
 ### Purpose
 
