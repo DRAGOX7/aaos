@@ -7,6 +7,10 @@ It syncs your courses read-only, answers questions from your own course files wi
 keeps your study tasks, and tells you on Telegram when something changes.
 Everything runs on your machine. The AI model proposes; trusted code decides.
 
+<a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-poster.png" alt="AAOS demo video — Answers you can check." width="720"></a>
+
+**▶ [Watch the 50-second demo](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
+
 </div>
 
 ![AAOS architecture](docs/images/aaos-architecture.png)
