@@ -117,6 +117,7 @@ from .conversation_context import (
 from .course_names import arabic_date, course_code_token, course_display_title
 from .intent_router import (
     RoutedIntent,
+    asks_about_assistant,
     asks_about_current,
     asks_about_past,
     asks_next_seven_days,
@@ -2614,6 +2615,27 @@ class _AcademicToolRuntime:
 
 
 _ARABIC_LETTER = re.compile(r"[\u0600-\u06ff]")
+
+# What AAOS is and does, for questions about the assistant itself.
+_ABOUT_AAOS_EN = (
+    "I'm AAOS, your academic assistant for JUST Moodle. My goal is to keep you on "
+    "top of your courses without digging through Moodle yourself.\n"
+    "I can answer questions from your course files and show the sources, list "
+    "your courses, assignments, deadlines and announcements, tell you what changed "
+    "on Moodle, and help you plan your study week. Moodle changes can also reach "
+    "you on Telegram.\n"
+    "I only read Moodle: I never submit, post or change anything there, and I answer "
+    "course questions only from what your files support."
+)
+_ABOUT_AAOS_AR = (
+    "أنا AAOS، مساعدك الأكاديمي لمودل جامعة العلوم والتكنولوجيا. هدفي أن أبقيك "
+    "على اطلاع بموادك دون أن تبحث في مودل بنفسك.\n"
+    "أستطيع الإجابة عن أسئلتك من ملفات موادك مع ذكر المصادر، وعرض موادك وواجباتك "
+    "ومواعيد التسليم والإعلانات، وإخبارك بما تغيّر على مودل، ومساعدتك في تنظيم "
+    "أسبوع دراستك. ويمكن أن تصلك تغييرات مودل على تيليجرام.\n"
+    "أنا أقرأ من مودل فقط: لا أسلّم ولا أنشر ولا أغيّر أي شيء فيه، وأجيب عن أسئلة "
+    "المواد فقط بما تدعمه ملفاتك."
+)
 _TITLE_TOKEN = re.compile(r"\w+")
 _TITLE_STOP_TOKENS = frozenset(
     {"the", "and", "for", "of", "course", "pdf", "doc", "docx", "ppt", "pptx"}
@@ -3186,6 +3208,12 @@ class ReadOnlyAcademicAssistant:
                 )
                 lease_active = False
                 return answer
+
+            if asks_about_assistant(question.strip()):
+                # A fixed description: nothing to search, and the past-course
+                # focus is kept for the next question.
+                arabic = _ARABIC_LETTER.search(question) is not None
+                return direct_answer(_ABOUT_AAOS_AR if arabic else _ABOUT_AAOS_EN)
 
             if has_unsupported_calendar_operation(question.strip()):
                 return direct_refusal(

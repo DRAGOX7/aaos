@@ -248,6 +248,30 @@ _CONCEPT = _any(
 _PERSONAL = _any((r"\b(?:my|mine|me)\b(?! what)", r"(?:علامتي|درجتي|معدلي)"))
 
 
+# Questions about the assistant itself ("what is AAOS", "what is your goal").
+# They have a fixed answer, so they must not search course files. Anchored to
+# the whole short question so "what is the goal of lab 2" stays a course question.
+_ABOUT_ASSISTANT = _any(
+    (
+        r"^(?:who|what) (?:are|r) (?:you|u)(?: for)?$",
+        r"^what(?:'s| is) (?:aaos|your (?:goal|goals|purpose|job|role|mission|aim|name))$",
+        r"^what (?:does aaos do|do you do|can (?:you|aaos) do( for me)?|are you able to do)$",
+        r"^(?:tell me )?about (?:you|yourself|aaos)$",
+        r"^(?:introduce yourself|how does aaos work|how do you work)$",
+        r"^(?:مين|من) (?:انت|انتي|انتا)$",
+        r"^(?:شو|ما) (?:هو |هي )?(?:aaos|انت|انتي)$",
+        r"^(?:شو|ما) (?:هو |هي )?(?:هدفك|دورك|وظيفتك|مهمتك|شغلك|اسمك)$",
+        r"^(?:شو بتعمل|شو بتقدر تعمل|ماذا تفعل|ماذا تستطيع ان تفعل|عرف عن نفسك|عرفني على نفسك)$",
+    )
+)
+
+
+def asks_about_assistant(question: str) -> bool:
+    """Whether a question asks what AAOS is, does, or is for."""
+    text = normalize_arabic(question).strip(" ?!.,")
+    return _ABOUT_ASSISTANT.search(text) is not None
+
+
 def route_intent(question: str) -> RoutedIntent:
     """Classify a question into one closed intent, or UNROUTED.
 
@@ -259,6 +283,8 @@ def route_intent(question: str) -> RoutedIntent:
     """
     text = normalize_arabic(question)
     if not text or has_bilingual_write_intent(text) or _TASK_OR_CALENDAR.search(text):
+        return RoutedIntent.UNROUTED
+    if asks_about_assistant(question):
         return RoutedIntent.UNROUTED
 
     summary = _SUMMARY.search(text) is not None
