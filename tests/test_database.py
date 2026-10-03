@@ -134,6 +134,9 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
         fts_shadow_tables = {table for table in tables if table.startswith("rag_chunks_fts_")}
         assert tables - fts_shadow_tables == {
             "alembic_version",
+            "notification_state",
+            "notification_events",
+            "notification_deliveries",
             "courses",
             "assignments",
             "announcements",
@@ -172,3 +175,16 @@ def test_alembic_baseline_round_trip(tmp_path: Path) -> None:
 
     command.upgrade(config, "head")
     assert current_revision(database_path) == head_revision
+
+
+def test_an_in_process_migration_keeps_existing_loggers(tmp_path: Path) -> None:
+    """Regression: alembic's fileConfig disabled every logger created before a migration."""
+    import logging
+
+    from aaos.moodle.integration import build_isolated_database
+
+    logger = logging.getLogger("aaos.regression.existing_logger")
+    engine, _sessions = build_isolated_database(tmp_path / "loggers.db")
+    engine.dispose()
+
+    assert logger.disabled is False

@@ -12,6 +12,7 @@ from aaos.persistence import (
     approval_models,  # noqa: F401
     document_models,  # noqa: F401
     moodle_sync_models,  # noqa: F401
+    notification_models,  # noqa: F401
     rag_models,  # noqa: F401
     study_task_models,  # noqa: F401
     task_models,  # noqa: F401
@@ -26,7 +27,9 @@ from aaos.persistence.database import (
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers that already exist (for example an AAOS module imported before an
+    # in-process migration): fileConfig would otherwise silence them.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

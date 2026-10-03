@@ -143,7 +143,9 @@ def test_database_disappearing_after_collection_fails_closed_without_replacement
     persistence_calls: list[object] = []
     events: list[str] = []
 
-    def collect(_environment: RuntimeMoodleEnvironment) -> CompleteSourceSnapshot:
+    def collect(
+        _environment: RuntimeMoodleEnvironment, **_kwargs: object
+    ) -> CompleteSourceSnapshot:
         events.append("collect")
         database_path.unlink()
         return _complete_snapshot()
@@ -229,7 +231,9 @@ def test_complete_collection_is_persisted_only_after_all_collection_finishes(
     events: list[str] = []
     engine = type("EngineProbe", (), {"dispose": lambda self: events.append("dispose")})()
 
-    def collect(_environment: RuntimeMoodleEnvironment) -> CompleteSourceSnapshot:
+    def collect(
+        _environment: RuntimeMoodleEnvironment, **_kwargs: object
+    ) -> CompleteSourceSnapshot:
         events.append("collect")
         return _complete_snapshot()
 
@@ -297,7 +301,7 @@ def test_missing_normal_database_does_not_select_moodle_runtime_database(
     monkeypatch.setattr(
         live_sync,
         "collect_configured_snapshot",
-        lambda _environment: _complete_snapshot(),
+        lambda _environment, **_kwargs: _complete_snapshot(),
     )
     monkeypatch.setattr(
         live_sync,
@@ -323,7 +327,9 @@ def test_incomplete_collection_is_recorded_and_blocks_persistence(
     events: list[str] = []
     environment = _environment(tmp_path)
 
-    def collect(_environment: RuntimeMoodleEnvironment) -> SourceCollectionFailure:
+    def collect(
+        _environment: RuntimeMoodleEnvironment, **_kwargs: object
+    ) -> SourceCollectionFailure:
         events.append("collect")
         return SourceCollectionFailure("moodle:fixture:live-sync", "browser_entity_incomplete")
 
@@ -364,7 +370,9 @@ def test_missing_database_fails_before_collection_or_engine(
     environment = _environment(tmp_path)
     database_path = tmp_path / "database" / "aaos.db"
 
-    def forbidden_collect(_environment: RuntimeMoodleEnvironment) -> SourceCollection:
+    def forbidden_collect(
+        _environment: RuntimeMoodleEnvironment, **_kwargs: object
+    ) -> SourceCollection:
         events.append("collect")
         raise AssertionError("collection must not run")
 
@@ -397,7 +405,9 @@ def test_collection_failure_is_not_retried_and_exception_text_is_not_rendered(
     calls = 0
     events: list[str] = []
 
-    def collect(_environment: RuntimeMoodleEnvironment) -> SourceCollectionFailure:
+    def collect(
+        _environment: RuntimeMoodleEnvironment, **_kwargs: object
+    ) -> SourceCollectionFailure:
         nonlocal calls
         calls += 1
         raise LookupError("secret-token-and-private-html")
@@ -483,6 +493,96 @@ def test_same_context_collection_failure_still_cleans_context(
     assert context.closed is True
 
 
+@pytest.mark.parametrize(("unattended", "wait_seconds"), [(True, 90), (False, 600)])
+def test_only_an_unattended_sync_shortens_the_sign_in_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unattended: bool, wait_seconds: int
+) -> None:
+    from aaos.moodle import live_sync
+
+    database_path = tmp_path / "database" / "aaos.db"
+    database_path.parent.mkdir()
+    database_path.write_bytes(b"already-migrated")
+    environment = _environment(tmp_path)
+    budgets: list[object] = []
+    engine = type("EngineProbe", (), {"dispose": lambda self: None})()
+
+    def collect(_environment: RuntimeMoodleEnvironment, **kwargs: object) -> CompleteSourceSnapshot:
+        budgets.append(kwargs["auth_wait_seconds"])
+        return _complete_snapshot()
+
+    monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
+    monkeypatch.setattr(live_sync, "collect_configured_snapshot", collect)
+    _patch_database_path(monkeypatch, database_path)
+    monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
+    _patch_sync_history(monkeypatch, [])
+    monkeypatch.setattr(live_sync, "create_session_factory", lambda _engine: lambda: object())
+    monkeypatch.setattr(live_sync, "sync_moodle_snapshot", lambda *_args, **_kwargs: None)
+
+    assert live_sync.run_configured_moodle_sync_outcome(unattended=unattended).exit_code == 0
+    assert budgets == [wait_seconds]
+
+
+def test_collection_continues_a_remembered_sign_in_from_the_login_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aaos.academic.source import CompleteSourceSnapshot
+    from aaos.moodle import browser
+
+    context = _SignInContext(after_sso=_ORIGIN + "/current/my/")
+    monkeypatch.setattr(
+        browser,
+        "collect_complete",
+        lambda source, *, source_system: _record_collection_call([], source, source_system),
+    )
+
+    result = browser._run_same_context_complete_collection(
+        settings=MoodleSettings(
+            source_system="moodle:fixture:live-sync",
+            base_origin=_ORIGIN,
+            mode="browser",
+            auth_alias="fixture",
+        ),
+        paths=AuthPaths(tmp_path / "credential", tmp_path / "auth"),
+        launch_persistent_context=lambda **_kwargs: context,
+        canonical_wwwroot=_ORIGIN + "/current",
+        auth_wait_seconds=90,
+    )
+
+    assert isinstance(result, CompleteSourceSnapshot)
+    assert context.visited == [_LOGIN, _SSO, _COURSES]
+    assert context.closed is True
+
+
+def test_a_sign_in_prompt_ends_the_collection_as_login_needed_without_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aaos.moodle import browser
+
+    context = _SignInContext(after_sso="https://login.microsoftonline.com/common/login")
+    monkeypatch.setattr(
+        browser,
+        "collect_complete",
+        lambda *_args, **_kwargs: pytest.fail("nothing is collected without a sign-in"),
+    )
+
+    with pytest.raises(browser.BrowserSmokeFailure) as failure:
+        browser._run_same_context_complete_collection(
+            settings=MoodleSettings(
+                source_system="moodle:fixture:live-sync",
+                base_origin=_ORIGIN,
+                mode="browser",
+                auth_alias="fixture",
+            ),
+            paths=AuthPaths(tmp_path / "credential", tmp_path / "auth"),
+            launch_persistent_context=lambda **_kwargs: context,
+            auth_wait_seconds=1,
+        )
+
+    assert failure.value.stage == "AUTH_TIMEOUT"
+    assert context.visited == [_LOGIN, _SSO]  # one follow; nothing on the Microsoft page
+    assert context.closed is True
+
+
 def test_collection_reads_every_course_bundle_before_sync(tmp_path: Path) -> None:
     events: list[str] = []
 
@@ -525,7 +625,9 @@ def test_no_alembic_upgrade_is_called_by_sync_command(
 
     monkeypatch.setattr(live_sync, "load_runtime_moodle_environment", lambda: environment)
     monkeypatch.setattr(
-        live_sync, "collect_configured_snapshot", lambda _environment: _complete_snapshot()
+        live_sync,
+        "collect_configured_snapshot",
+        lambda _environment, **_kwargs: _complete_snapshot(),
     )
     _patch_database_path(monkeypatch, database_path)
     monkeypatch.setattr(live_sync, "_create_existing_database_engine", lambda _path: engine)
@@ -577,3 +679,47 @@ class _FakePage:
 
     def close(self) -> None:
         self._context.pages.remove(self)
+
+
+_ORIGIN = "https://moodle.example.edu"
+_LOGIN = _ORIGIN + "/current/login/index.php"
+_SSO = _ORIGIN + "/current/auth/oauth2/login.php?id=1&sesskey=abc"
+_COURSES = _ORIGIN + "/current/my/courses.php"
+
+
+class _SignInContext(_FakeContext):
+    """The auth page lands on Moodle's login page; the SSO link leads to ``after_sso``."""
+
+    def __init__(self, after_sso: str) -> None:
+        super().__init__()
+        self.after_sso = after_sso
+        self.visited: list[str] = []
+
+    def new_page(self) -> "_FakePage":
+        if self.pages:
+            return super().new_page()
+        page = _SignInPage(self)
+        self.pages.append(page)
+        return page
+
+
+class _SignInPage(_FakePage):
+    def __init__(self, context: _SignInContext) -> None:
+        super().__init__(context, "auth")
+        self._sign_in = context
+
+    def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+        assert wait_until == "domcontentloaded"
+        assert 0 < timeout <= 600_000
+        self._sign_in.visited.append(url)
+        self.url = self._sign_in.after_sso if url == _SSO else url
+
+    def content(self) -> str:
+        if self.url == _LOGIN:
+            return f'<a href="{_SSO.replace("&", "&amp;")}">Log in with Microsoft</a>'
+        if self.url == _COURSES:
+            return "<body class='page-mycourses'></body>"
+        return "<form><input name='passwd'></form>"
+
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(f"the sign-in step must not use page.{name}")

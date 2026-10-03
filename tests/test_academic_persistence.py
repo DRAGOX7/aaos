@@ -27,6 +27,10 @@ from aaos.persistence.document_models import (
 
 
 def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
+    # Imported here so the shared metadata is the same in any test order.
+    import aaos.persistence.notification_models  # noqa: F401
+
+    phase10_tables = {"notification_state", "notification_events", "notification_deliveries"}
     phase6a_tables = {
         "prepared_actions",
         "action_lifecycles",
@@ -43,7 +47,10 @@ def test_shared_metadata_contains_exact_phase1_and_document_tables() -> None:
     assert agentic_study_task_tables | agentic_moodle_change_tables <= set(
         CourseORM.metadata.tables
     )
-    assert set(CourseORM.metadata.tables) - phase6a_tables - phase7e_tables - phase8_tables - (
+    assert phase10_tables <= set(CourseORM.metadata.tables)
+    assert set(
+        CourseORM.metadata.tables
+    ) - phase6a_tables - phase7e_tables - phase8_tables - phase10_tables - (
         agentic_study_task_tables | agentic_moodle_change_tables
     ) == {
         "courses",
