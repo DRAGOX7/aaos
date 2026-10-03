@@ -610,3 +610,47 @@ def test_persistence_failure_cannot_be_rendered_as_success(
 
     assert result.status is AcademicAskStatus.FAILED
     assert result.answer_text is None or "created" not in result.answer_text.casefold()
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "I WANT YOU TO MAKE A STUDY TASK",
+        "make a task",
+        "can you create a study task for me?",
+        "add a new study task please",
+        "\u0628\u062f\u064a \u062a\u0639\u0645\u0644 \u0645\u0647\u0645\u0629 \u062f\u0631\u0627\u0633\u064a\u0629",
+    ),
+)
+def test_a_task_request_without_details_asks_what_the_task_is(
+    task_service: StudyTaskService, question: str
+) -> None:
+    """Regression: the model guessed a course for a bare request and failed COURSE_NOT_FOUND."""
+    gateway = FakeGateway()
+    assistant, _academic = _assistant(gateway, task_service)
+
+    result = asyncio.run(
+        assistant.ask(question, request_id=UUID("10000000-0000-4000-8000-000000000099"))
+    )
+
+    assert result.status is AcademicAskStatus.ANSWERED
+    assert "add a study task:" in (result.answer_text or "") or "\u0645\u0647\u0645\u0629" in (
+        result.answer_text or ""
+    )
+    assert gateway.requests == []  # the model is not asked to guess
+    assert task_service.list() == ()
+
+
+@pytest.mark.parametrize(
+    "question",
+    (
+        "add a study task: review chapter 2",
+        "make a study task called practice SQL",
+        "create a task for AI380 midterm",
+        "what is a task",
+    ),
+)
+def test_a_task_request_with_details_is_not_treated_as_bare(question: str) -> None:
+    from aaos.agent.intent_router import is_bare_task_request
+
+    assert not is_bare_task_request(question)

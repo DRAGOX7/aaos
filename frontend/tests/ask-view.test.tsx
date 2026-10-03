@@ -576,6 +576,19 @@ describe("unified Ask view", () => {
     expect(screen.queryByText(/secret summary details/)).not.toBeInTheDocument();
   });
 
+  it("names an unknown course instead of a generic failure", async () => {
+    askMock.mockResolvedValueOnce(response({
+      status: "FAILED",
+      failure_code: "COURSE_NOT_FOUND",
+      failure_message: "The requested course was not found.",
+    }));
+    render(<AskView />);
+
+    fillAndSend("Add a study task for XYZ999");
+    expect(await screen.findByText("AAOS couldn't find that course.")).toBeVisible();
+    expect(screen.getByText(/course code or name/)).toBeVisible();
+  });
+
   it("prevents duplicate in-flight submission and exposes truthful loading state", async () => {
     let resolveAsk: ((value: AcademicAskResponse) => void) | undefined;
     askMock.mockReturnValueOnce(new Promise<AcademicAskResponse>((resolve) => {

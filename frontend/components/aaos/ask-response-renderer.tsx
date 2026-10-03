@@ -83,6 +83,10 @@ const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }
     title: "AAOS could not search academic documents.",
     detail: "The document search failed. Try again, or ask a question that does not need document evidence.",
   },
+  COURSE_NOT_FOUND: {
+    title: "AAOS couldn't find that course.",
+    detail: "Check the course code or name, for example AI380 or Natural Language Processing, and try again.",
+  },
   NO_INDEXED_DOCUMENTS: {
     title: "This course has no indexed documents yet.",
     detail: "There is nothing to search for this course. Sync and ingest its materials first, or ask about another course.",

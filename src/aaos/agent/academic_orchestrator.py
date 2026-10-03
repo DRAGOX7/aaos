@@ -123,6 +123,7 @@ from .intent_router import (
     asks_next_seven_days,
     extract_topic,
     find_course_mention,
+    is_bare_task_request,
     normalize_arabic,
     route_intent,
     without_scope_wording,
@@ -2628,6 +2629,18 @@ _ABOUT_AAOS_EN = (
     "I only read Moodle: I never submit, post or change anything there, and I answer "
     "course questions only from what your files support."
 )
+_TASK_DETAILS_EN = (
+    "Sure. What should the task be? Say it in one message, for example:\n"
+    "\"add a study task: review chapter 2 for Natural Language Processing\"\n"
+    "You can add a priority (low, normal or high). The task is saved in AAOS only, "
+    "never on Moodle."
+)
+_TASK_DETAILS_AR = (
+    "أكيد. ما هي المهمة؟ اكتبها في رسالة واحدة، مثلاً:\n"
+    "\"أضف مهمة دراسية: مراجعة الفصل الثاني لمادة معالجة اللغات الطبيعية\"\n"
+    "يمكنك إضافة أولوية (منخفضة أو عادية أو عالية). تُحفظ المهمة في AAOS فقط، "
+    "وليس على مودل."
+)
 _ABOUT_AAOS_AR = (
     "أنا AAOS، مساعدك الأكاديمي لمودل جامعة العلوم والتكنولوجيا. هدفي أن أبقيك "
     "على اطلاع بموادك دون أن تبحث في مودل بنفسك.\n"
@@ -3215,6 +3228,11 @@ class ReadOnlyAcademicAssistant:
                 # focus is kept for the next question.
                 arabic = _ARABIC_LETTER.search(question) is not None
                 return direct_answer(_ABOUT_AAOS_AR if arabic else _ABOUT_AAOS_EN)
+
+            if self._study_task_service is not None and is_bare_task_request(question.strip()):
+                # Nothing says what the task is; ask rather than let the model guess.
+                arabic = _ARABIC_LETTER.search(question) is not None
+                return direct_answer(_TASK_DETAILS_AR if arabic else _TASK_DETAILS_EN)
 
             if has_unsupported_calendar_operation(question.strip()):
                 return direct_refusal(

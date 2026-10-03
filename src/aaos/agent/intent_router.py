@@ -297,6 +297,25 @@ _ABOUT_ASSISTANT = _any(
 )
 
 
+# "Make a study task" with nothing about what the task is. The model would
+# have to invent the task (and once invented a course), so AAOS asks instead.
+_BARE_TASK_REQUEST = _any(
+    (
+        r"^(?:please |pls |)(?:i want you to |i want to |i need to |can you |could you |"
+        r"help me |let's |lets |)(?:please |)(?:make|create|add|set up|setup|new)(?: me)?"
+        r"(?: a| an| one)?(?: new)?(?: study)? task(?: for me)?(?: please)?$",
+        r"^(?:بدي |اريد |ممكن |لو سمحت |)(?:تعمل|تعملي|تضيف|تضيفلي|تنشي|انشي|اعمل|اعملي|ضيف|ضيفلي|"
+        r"اضف|اضافه)(?: لي)? (?:مهمه|تاسك)(?: دراسيه| جديده)?$",
+    )
+)
+
+
+def is_bare_task_request(question: str) -> bool:
+    """A request to create a study task that says nothing about the task."""
+    text = normalize_arabic(question).strip(" ?!.,")
+    return _BARE_TASK_REQUEST.search(text) is not None
+
+
 def asks_about_assistant(question: str) -> bool:
     """Whether a question asks what AAOS is, does, or is for."""
     text = normalize_arabic(question).strip(" ?!.,")
