@@ -125,6 +125,7 @@ from .intent_router import (
     find_course_mention,
     normalize_arabic,
     route_intent,
+    without_scope_wording,
 )
 from .orchestrator import AgentOrchestrator
 from .phase4_adapter import (
@@ -2460,7 +2461,7 @@ class _AcademicToolRuntime:
         else:
             scope_value = {"kind": "global"}
         inner_fields: list[tuple[str, object]] = [
-            ("question", self._request_text[:MAX_RAG_QUERY_CHARACTERS]),
+            ("question", without_scope_wording(self._request_text)[:MAX_RAG_QUERY_CHARACTERS]),
             ("scope", scope_value),
         ]
         if context is not None and context.title:
