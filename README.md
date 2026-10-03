@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/aaos-logo.svg" alt="AAOS logo" width="96">
+
 # AAOS — Academic AI OS
 
 **A local-first academic assistant for university Moodle.**
@@ -7,13 +9,11 @@ It syncs your courses read-only, answers questions from your own course files wi
 keeps your study tasks, and tells you on Telegram when something changes.
 Everything runs on your machine. The AI model proposes; trusted code decides.
 
-<a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-poster.png" alt="AAOS demo video — Answers you can check." width="720"></a>
+<a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-preview.gif" alt="AAOS demo: kinetic opening, then the Ask page answering in English and Arabic with sources" width="720"></a>
 
-**▶ [Watch the 50-second demo](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
+**▶ [Watch the full 50-second demo with sound](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
 
 </div>
-
-![AAOS architecture](docs/images/aaos-architecture.png)
 
 ---
 
@@ -60,6 +60,8 @@ Everything runs on your machine. The AI model proposes; trusted code decides.
 7. **Built in gated phases.** Each phase has a written acceptance gate. A phase is frozen with a git tag only after human acceptance.
 
 ## Architecture
+
+![AAOS system context](docs/images/aaos-architecture.png)
 
 ![AAOS component architecture](docs/images/aaos-components.png)
 
