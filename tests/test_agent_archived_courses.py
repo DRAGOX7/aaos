@@ -376,6 +376,9 @@ def test_scope_wording_is_removed_from_the_searched_question() -> None:
         "ما هو knime بناء على كورساتي السابقة": "ما هو knime",
         "ما هو knime بناءً على كورساتي السابقة": "ما هو knime",
         "شو يعني KNIME من الفصل الماضي": "شو يعني KNIME",
+        "what did my past courses say about knime?": "what did my courses say about knime?",
+        "موادي السابقة شو بتقول عن knime": "موادي شو بتقول عن knime",
+        "شو قالت موادي السابقة عن knime": "شو قالت موادي عن knime",
         # Nothing left to ask, or scope-like words that are course content: unchanged.
         "based on my past courses": "based on my past courses",
         "what was covered in the past lectures": "what was covered in the past lectures",
@@ -396,3 +399,33 @@ def test_a_past_course_question_searches_without_its_scope_wording() -> None:
         ("what is knime", HistoricalScope((202,))),
         ("ما هو knime", HistoricalScope((202,))),
     ]
+
+
+def test_what_past_courses_say_about_a_topic_searches_past_course_files() -> None:
+    """Regression: "what did my past courses say about X" listed the past courses."""
+    from aaos.agent.intent_router import RoutedIntent, route_intent
+
+    questions = (
+        "what did my past courses say about quantum computing?",
+        "What do my previous courses say about makeup exams?",
+        "شو قالت موادي السابقة عن الحوسبة الكمية؟",
+    )
+    for question in questions:
+        assert route_intent(question) is RoutedIntent.DOCUMENT_QUESTION, question
+    # Asking for the past courses themselves is still a course listing.
+    for question in ("list my past courses", "what were my past courses", "شو موادي السابقة"):
+        assert route_intent(question) is not RoutedIntent.DOCUMENT_QUESTION, question
+    assert route_intent("شو موادي السابقة") is RoutedIntent.COURSE_FACTS
+
+    academic, documents = _world()
+    assistant, gateway, rag = _assistant(academic, documents)
+    for question in questions:
+        asyncio.run(assistant.ask(question))
+
+    # The scope word is applied as the search scope, not searched for.
+    assert [(query.question, query.scope) for query in rag.queries] == [
+        ("what did my courses say about quantum computing?", HistoricalScope((202,))),
+        ("What do my courses say about makeup exams?", HistoricalScope((202,))),
+        ("شو قالت موادي عن الحوسبة الكمية؟", HistoricalScope((202,))),
+    ]
+    assert gateway.requests == []
