@@ -33,7 +33,9 @@ def test_claims_require_bounded_evidence_and_closed_scope() -> None:
         PortfolioClaim("bad-scope", "Bounded", ("evidence",), "LIVE_PROVIDER")  # type: ignore[arg-type]
 
 
-def test_repository_status_truthfully_records_phase8_frozen_and_phase9_in_progress() -> None:
+def test_repository_status_truthfully_records_phase8_and_phase9_frozen() -> None:
+    # Phase 9 was human-accepted and tagged phase-09-passed (GOVERNANCE_LEDGER.md).
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
     assert "Phase 8: **FROZEN**" in readme
-    assert "Phase 9: **IN PROGRESS**" in readme
+    assert "Phase 9: **FROZEN**" in readme
+    assert "Phase 9: **IN PROGRESS**" not in readme
