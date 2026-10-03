@@ -654,3 +654,25 @@ def test_a_task_request_with_details_is_not_treated_as_bare(question: str) -> No
     from aaos.agent.intent_router import is_bare_task_request
 
     assert not is_bare_task_request(question)
+
+
+@pytest.mark.parametrize(
+    ("question", "course_id"),
+    (
+        ("add a study task: revise chapter 3 for Deep Learning", 7),
+        ("create a study task to practice joins for CS301", 8),
+        ("make a study task called practice SQL", None),
+        ("add a study task to compare Deep Learning and Databases", None),
+    ),
+)
+def test_a_created_task_links_the_one_course_the_request_names(
+    task_service: StudyTaskService, question: str, course_id: int | None
+) -> None:
+    """Regression: "...for Natural Language Processing" was saved without its course."""
+    gateway = FakeGateway(_tool("study_task.create", '{"title":"The task"}'), _answer("read-1"))
+    assistant, _academic = _assistant(gateway, task_service)
+
+    asyncio.run(assistant.ask(question, request_id=UUID("10000000-0000-4000-8000-000000000098")))
+
+    (task,) = task_service.list()
+    assert task.course_id == course_id

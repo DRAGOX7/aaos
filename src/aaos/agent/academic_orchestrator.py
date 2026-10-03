@@ -2027,6 +2027,15 @@ class _AcademicToolRuntime:
         try:
             context = self._context_entity(arguments, ignore_task_resolution=True)
             course_id = self._resolve_course_link(context, values.get("course_name"))
+            if (
+                course_id is None
+                and context is None
+                and values.get("course_name") is None
+                and values.get("assignment_ref") is None
+                and values.get("assignment_title") is None
+            ):
+                # The model named no course; link the one the owner's own words name.
+                course_id = self._course_named_in_request()
             assignment_id: int | None = None
             assignment_ref = values.get("assignment_ref")
             assignment_title = values.get("assignment_title")
@@ -2233,6 +2242,33 @@ class _AcademicToolRuntime:
         if len(matches) > 1:
             raise _LookupFailure(AgentErrorCode.AMBIGUOUS_STUDY_TASK)
         return matches[0]
+
+    def _course_named_in_request(self) -> int | None:
+        """The one current course the request itself names, or None.
+
+        Linking is optional, so anything unclear (no mention, several courses,
+        a failed read) leaves the task unlinked instead of failing the request.
+        """
+        try:
+            courses = self._read(self._academic.list_courses, limit=MAX_ACADEMIC_RECORDS + 1)
+            if not isinstance(courses, tuple) or any(
+                not isinstance(course, CourseSummary) for course in courses
+            ):
+                return None
+            current = tuple(course for course in courses if course.status != "past")
+            mention = find_course_mention(self._request_text, current)
+            if mention.course_name is None or mention.ambiguous:
+                return None
+            _courses, matches, _exact = self._course_matches(mention.course_name)
+        except (_LookupFailure, _InvalidReadOutput, _ReadOperationFailed):
+            return None
+        candidates = [course for course in matches if course.status != "past"]
+        if len(candidates) > 1:
+            # Moodle section entries: the "All Sections" entry stands for the course.
+            candidates = [
+                course for course in candidates if "all sections" in course.title.casefold()
+            ]
+        return candidates[0].id if len(candidates) == 1 else None
 
     def _resolve_course_link(
         self,
