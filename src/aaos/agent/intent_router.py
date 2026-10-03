@@ -213,7 +213,7 @@ _PAST_COURSES = _any(
         r"\b(?:my\s+)?(?:previous|past|prior|old|earlier)\s+(?:courses?|classes|subjects)\b",
         r"\bmy\s+previous\b",
         r"(?:الفصل|الترم|السمستر)\s+(?:الماضي|السابق|الفائت)",
-        r"(?:المواد|المساقات|موادي|مساقاتي)\s+(?:السابقه|الماضيه|القديمه)",
+        r"(?:المواد|المساقات|موادي|مساقاتي|كورساتي|الكورسات)\s+(?:السابقه|الماضيه|القديمه)",
     )
 )
 
@@ -232,6 +232,37 @@ def asks_about_current(question: str) -> bool:
     return _CURRENT_COURSES.search(normalize_arabic(question)) is not None
 
 
+# Scope wording inside a question ("based on my past courses"). The scope is
+# applied separately, so this wording is removed from the text that is searched
+# and checked for coverage; otherwise it counts as an unanswered part.
+# Runs on the original text, so Arabic spelling variants are spelled out.
+_SCOPE_WORDS = r"(?:last|previous|past|prior|old|earlier|current|this)"
+_SCOPE_NOUNS = r"(?:semester|term|courses?|classes|subjects)"
+_AR_COURSES = r"(?:كورساتي|موادي|مساقاتي|المواد|المساقات|الكورسات)"
+_AR_PAST = r"(?:السابق[ةه]|الماضي[ةه]|القديم[ةه]|الحالي[ةه])"
+_AR_TERM = r"(?:الفصل|الترم|السمستر)"
+_AR_TERM_WHEN = r"(?:الماضي|السابق|الفائت|الحالي)"
+_SCOPE_PHRASE = re.compile(
+    "|".join(
+        (
+            rf",?\s*\b(?:based on|according to|from|in|for|using)\s+(?:my\s+|the\s+)?{_SCOPE_WORDS}"
+            rf"\s+{_SCOPE_NOUNS}(?:'s)?(?:\s+(?:courses?|files|notes|materials))?\b",
+            r",?\s*\b(?:this|last|previous|past|current)\s+(?:semester|term)\b",
+            # "بناء على" may carry tanween (U+064B..U+0652).
+            rf",?\s*(?:ب?نا[ءئ]ا?[\u064b-\u0652]*|حسب|من|في)\s+(?:على\s+)?{_AR_COURSES}\s+{_AR_PAST}",
+            rf",?\s*(?:من|في)\s+{_AR_TERM}\s+{_AR_TERM_WHEN}",
+        )
+    ),
+    re.IGNORECASE,
+)
+
+
+def without_scope_wording(question: str) -> str:
+    """The question without its past/current scope phrase, for searching."""
+    stripped = " ".join(_SCOPE_PHRASE.sub("", question).split()).strip(" ,")
+    return stripped if stripped.strip(" ?؟.!") else question
+
+
 def asks_about_past(question: str) -> bool:
     """Whether a question explicitly asks about past (archived) courses."""
     return _PAST_COURSES.search(normalize_arabic(question)) is not None
@@ -248,6 +279,49 @@ _CONCEPT = _any(
 _PERSONAL = _any((r"\b(?:my|mine|me)\b(?! what)", r"(?:علامتي|درجتي|معدلي)"))
 
 
+# Questions about the assistant itself ("what is AAOS", "what is your goal").
+# They have a fixed answer, so they must not search course files. Anchored to
+# the whole short question so "what is the goal of lab 2" stays a course question.
+_ABOUT_ASSISTANT = _any(
+    (
+        r"^(?:who|what) (?:are|r) (?:you|u)(?: for)?$",
+        r"^what(?:'s| is) (?:aaos|your (?:goal|goals|purpose|job|role|mission|aim|name))$",
+        r"^what (?:does aaos do|do you do|can (?:you|aaos) do( for me)?|are you able to do)$",
+        r"^(?:tell me )?about (?:you|yourself|aaos)$",
+        r"^(?:introduce yourself|how does aaos work|how do you work)$",
+        r"^(?:مين|من) (?:انت|انتي|انتا)$",
+        r"^(?:شو|ما) (?:هو |هي )?(?:aaos|انت|انتي)$",
+        r"^(?:شو|ما) (?:هو |هي )?(?:هدفك|دورك|وظيفتك|مهمتك|شغلك|اسمك)$",
+        r"^(?:شو بتعمل|شو بتقدر تعمل|ماذا تفعل|ماذا تستطيع ان تفعل|عرف عن نفسك|عرفني على نفسك)$",
+    )
+)
+
+
+# "Make a study task" with nothing about what the task is. The model would
+# have to invent the task (and once invented a course), so AAOS asks instead.
+_BARE_TASK_REQUEST = _any(
+    (
+        r"^(?:please |pls |)(?:i want you to |i want to |i need to |can you |could you |"
+        r"help me |let's |lets |)(?:please |)(?:make|create|add|set up|setup|new)(?: me)?"
+        r"(?: a| an| one)?(?: new)?(?: study)? task(?: for me)?(?: please)?$",
+        r"^(?:بدي |اريد |ممكن |لو سمحت |)(?:تعمل|تعملي|تضيف|تضيفلي|تنشي|انشي|اعمل|اعملي|ضيف|ضيفلي|"
+        r"اضف|اضافه)(?: لي)? (?:مهمه|تاسك)(?: دراسيه| جديده)?$",
+    )
+)
+
+
+def is_bare_task_request(question: str) -> bool:
+    """A request to create a study task that says nothing about the task."""
+    text = normalize_arabic(question).strip(" ?!.,")
+    return _BARE_TASK_REQUEST.search(text) is not None
+
+
+def asks_about_assistant(question: str) -> bool:
+    """Whether a question asks what AAOS is, does, or is for."""
+    text = normalize_arabic(question).strip(" ?!.,")
+    return _ABOUT_ASSISTANT.search(text) is not None
+
+
 def route_intent(question: str) -> RoutedIntent:
     """Classify a question into one closed intent, or UNROUTED.
 
@@ -259,6 +333,8 @@ def route_intent(question: str) -> RoutedIntent:
     """
     text = normalize_arabic(question)
     if not text or has_bilingual_write_intent(text) or _TASK_OR_CALENDAR.search(text):
+        return RoutedIntent.UNROUTED
+    if asks_about_assistant(question):
         return RoutedIntent.UNROUTED
 
     summary = _SUMMARY.search(text) is not None

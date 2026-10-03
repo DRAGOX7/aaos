@@ -245,6 +245,33 @@ describe("AAOS document read views", () => {
       expect(screen.getByText("Pages: 12")).toBeInTheDocument();
     });
 
+    it("shows the original PDF and links to it", () => {
+      setQueryState({ data: readyDocument });
+
+      render(<DocumentDetailView documentId={7} />);
+
+      expect(screen.getByRole("link", { name: "Open file" })).toHaveAttribute(
+        "href",
+        "/api/v1/documents/7/file",
+      );
+      expect(screen.getByTitle("Operating Systems notes preview")).toHaveAttribute(
+        "src",
+        "/api/v1/documents/7/file",
+      );
+    });
+
+    it("offers a Word file as a download without a preview", () => {
+      setQueryState({ data: { ...readyDocument, title: "Lab sheet.docx" } });
+
+      render(<DocumentDetailView documentId={7} />);
+
+      expect(screen.getByRole("link", { name: "Download file" })).toHaveAttribute(
+        "href",
+        "/api/v1/documents/7/file",
+      );
+      expect(screen.queryByTitle("Lab sheet.docx preview")).not.toBeInTheDocument();
+    });
+
     it("renders bounded invalid, not-found, and generic detail states", () => {
       render(<DocumentDetailView documentId={null} />);
       expect(screen.getByText("The document link is invalid.")).toBeInTheDocument();

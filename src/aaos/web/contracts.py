@@ -724,6 +724,30 @@ class ApprovalDetail(ApprovalSummary):
     decision_reason: str | None = Field(default=None, max_length=64)
 
 
+class StudyTaskView(BaseModel):
+    """One local study task (AAOS only; never on Moodle)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    id: int = Field(gt=0)
+    title: str = Field(max_length=512)
+    status: Literal["OPEN", "COMPLETED"]
+    priority: Literal["LOW", "NORMAL", "HIGH"]
+    course_id: int | None = Field(gt=0)
+    course_title: str | None = Field(max_length=512)
+    assignment_id: int | None = Field(gt=0)
+    assignment_title: str | None = Field(max_length=512)
+    due_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StudyTaskListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    study_tasks: tuple[StudyTaskView, ...]
+
+
 class TaskListResponse(BaseModel):
     """Browser-safe durable task collection response."""
 

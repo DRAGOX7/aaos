@@ -3,12 +3,13 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   fetchApproval,
   fetchApprovals,
+  fetchStudyTasks,
   fetchTask,
   fetchTasks,
 } from "@/lib/api/tasks";
-import { approvalKeys, taskKeys } from "@/lib/query/keys";
+import { approvalKeys, studyTaskKeys, taskKeys } from "@/lib/query/keys";
 
-export { approvalKeys, taskKeys } from "@/lib/query/keys";
+export { approvalKeys, studyTaskKeys, taskKeys } from "@/lib/query/keys";
 
 export function taskListQueryOptions() {
   return queryOptions({
@@ -35,5 +36,12 @@ export function approvalQueryOptions(approvalId: string) {
   return queryOptions({
     queryKey: approvalKeys.detail(approvalId),
     queryFn: ({ signal }) => fetchApproval(approvalId, signal),
+  });
+}
+
+export function studyTaskListQueryOptions() {
+  return queryOptions({
+    queryKey: studyTaskKeys.list,
+    queryFn: ({ signal }) => fetchStudyTasks(signal),
   });
 }

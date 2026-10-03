@@ -208,6 +208,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Document File
+         * @description The original file: PDFs open in the browser, Word files download.
+         */
+        get: operations["get_document_file_api_v1_documents__document_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/rag/queries": {
         parameters: {
             query?: never;
@@ -219,6 +239,26 @@ export interface paths {
         put?: never;
         /** Ask Rag */
         post: operations["ask_rag_api_v1_rag_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/study-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Study Tasks
+         * @description Local study tasks, read-only.
+         */
+        get: operations["list_study_tasks_api_v1_study_tasks_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1137,6 +1177,51 @@ export interface components {
          * @enum {string}
          */
         StudyRationaleCodeView: "DEADLINE_NEAR" | "OPEN_TASK" | "RECENT_MOODLE_CHANGE" | "USER_FOCUS" | "GENERAL_REVIEW";
+        /** StudyTaskListResponse */
+        StudyTaskListResponse: {
+            /** Study Tasks */
+            study_tasks: components["schemas"]["StudyTaskView"][];
+        };
+        /**
+         * StudyTaskView
+         * @description One local study task (AAOS only; never on Moodle).
+         */
+        StudyTaskView: {
+            /** Assignment Id */
+            assignment_id: number | null;
+            /** Assignment Title */
+            assignment_title: string | null;
+            /** Course Id */
+            course_id: number | null;
+            /** Course Title */
+            course_title: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Due At */
+            due_at: string | null;
+            /** Id */
+            id: number;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "LOW" | "NORMAL" | "HIGH";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "OPEN" | "COMPLETED";
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** SystemHealthResponse */
         SystemHealthResponse: {
             /**
@@ -1624,6 +1709,37 @@ export interface operations {
             };
         };
     };
+    get_document_file_api_v1_documents__document_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     ask_rag_api_v1_rag_queries_post: {
         parameters: {
             query?: never;
@@ -1653,6 +1769,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_study_tasks_api_v1_study_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyTaskListResponse"];
                 };
             };
         };

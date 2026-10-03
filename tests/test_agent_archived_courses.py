@@ -363,3 +363,36 @@ def test_the_waiting_question_is_used_once() -> None:
     ask("SE440")
 
     assert len(rag.queries) == 1
+
+
+def test_scope_wording_is_removed_from_the_searched_question() -> None:
+    from aaos.agent.intent_router import without_scope_wording
+
+    cases = {
+        "what is knime based on my past courses": "what is knime",
+        "what is knime from my previous semester?": "what is knime?",
+        "Explain KNIME, based on my previous courses": "Explain KNIME",
+        "what is knime this semester?": "what is knime?",
+        "ما هو knime بناء على كورساتي السابقة": "ما هو knime",
+        "ما هو knime بناءً على كورساتي السابقة": "ما هو knime",
+        "شو يعني KNIME من الفصل الماضي": "شو يعني KNIME",
+        # Nothing left to ask, or scope-like words that are course content: unchanged.
+        "based on my past courses": "based on my past courses",
+        "what was covered in the past lectures": "what was covered in the past lectures",
+    }
+    for question, searched in cases.items():
+        assert without_scope_wording(question) == searched, question
+
+
+def test_a_past_course_question_searches_without_its_scope_wording() -> None:
+    """Regression: "based on my past courses" was treated as an unanswered part."""
+    academic, documents = _world()
+    assistant, _gateway, rag = _assistant(academic, documents)
+
+    asyncio.run(assistant.ask("what is knime based on my past courses"))
+    asyncio.run(assistant.ask("ما هو knime بناء على كورساتي السابقة"))
+
+    assert [(query.question, query.scope) for query in rag.queries] == [
+        ("what is knime", HistoricalScope((202,))),
+        ("ما هو knime", HistoricalScope((202,))),
+    ]

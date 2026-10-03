@@ -6,6 +6,8 @@ export type TaskListResponse = components["schemas"]["TaskListResponse"];
 export type TaskDetail = components["schemas"]["TaskDetail"];
 export type ApprovalListResponse = components["schemas"]["ApprovalListResponse"];
 export type ApprovalDetail = components["schemas"]["ApprovalDetail"];
+export type StudyTaskListResponse = components["schemas"]["StudyTaskListResponse"];
+export type StudyTask = components["schemas"]["StudyTaskView"];
 
 function requireIdentifier(value: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)) {
@@ -39,6 +41,10 @@ async function postJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw await createApiError(response, "approval");
   }
   return (await response.json()) as T;
+}
+
+export function fetchStudyTasks(signal?: AbortSignal): Promise<StudyTaskListResponse> {
+  return getJson<StudyTaskListResponse>("/api/v1/study-tasks", signal);
 }
 
 export function fetchTasks(signal?: AbortSignal): Promise<TaskListResponse> {

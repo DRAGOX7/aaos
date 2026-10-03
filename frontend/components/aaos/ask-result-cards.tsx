@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -141,16 +142,23 @@ export function MoodleChangeCard({ source }: { source: AcademicAskSource }) {
   );
 }
 
+const TASK_PRIORITY_LABELS: Record<string, string> = { LOW: "Low", NORMAL: "Normal", HIGH: "High" };
+
 export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
+  const status = source.study_task_status;
   return (
     <article className="min-w-0 rounded-xl border border-border bg-white/75 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-words font-semibold text-foreground">
           {source.title || "Study task"}
         </h3>
-        {source.study_task_status ? (
-          <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs font-semibold text-foreground">
-            {source.study_task_status}
+        {status ? (
+          <span
+            className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+              status === "COMPLETED" ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-strong"
+            }`}
+          >
+            {status === "COMPLETED" ? "Done" : "To do"}
           </span>
         ) : null}
       </div>
@@ -158,7 +166,9 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
         {source.study_task_priority ? (
           <div>
             <dt className="text-muted-foreground">Priority</dt>
-            <dd className="font-medium text-foreground">{source.study_task_priority}</dd>
+            <dd className="font-medium text-foreground">
+              {TASK_PRIORITY_LABELS[source.study_task_priority] ?? source.study_task_priority}
+            </dd>
           </div>
         ) : null}
         {source.study_task_due_at ? (
@@ -192,6 +202,14 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
           </div>
         ) : null}
       </dl>
+      {source.entity_id != null ? (
+        <Link
+          href={`/tasks#study-task-${source.entity_id}`}
+          className="mt-3 inline-flex text-sm font-semibold text-primary-strong underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          View in Tasks
+        </Link>
+      ) : null}
     </article>
   );
 }

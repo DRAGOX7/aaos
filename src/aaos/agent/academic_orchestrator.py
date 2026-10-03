@@ -117,13 +117,16 @@ from .conversation_context import (
 from .course_names import arabic_date, course_code_token, course_display_title
 from .intent_router import (
     RoutedIntent,
+    asks_about_assistant,
     asks_about_current,
     asks_about_past,
     asks_next_seven_days,
     extract_topic,
     find_course_mention,
+    is_bare_task_request,
     normalize_arabic,
     route_intent,
+    without_scope_wording,
 )
 from .orchestrator import AgentOrchestrator
 from .phase4_adapter import (
@@ -2024,6 +2027,15 @@ class _AcademicToolRuntime:
         try:
             context = self._context_entity(arguments, ignore_task_resolution=True)
             course_id = self._resolve_course_link(context, values.get("course_name"))
+            if (
+                course_id is None
+                and context is None
+                and values.get("course_name") is None
+                and values.get("assignment_ref") is None
+                and values.get("assignment_title") is None
+            ):
+                # The model named no course; link the one the owner's own words name.
+                course_id = self._course_named_in_request()
             assignment_id: int | None = None
             assignment_ref = values.get("assignment_ref")
             assignment_title = values.get("assignment_title")
@@ -2230,6 +2242,33 @@ class _AcademicToolRuntime:
         if len(matches) > 1:
             raise _LookupFailure(AgentErrorCode.AMBIGUOUS_STUDY_TASK)
         return matches[0]
+
+    def _course_named_in_request(self) -> int | None:
+        """The one current course the request itself names, or None.
+
+        Linking is optional, so anything unclear (no mention, several courses,
+        a failed read) leaves the task unlinked instead of failing the request.
+        """
+        try:
+            courses = self._read(self._academic.list_courses, limit=MAX_ACADEMIC_RECORDS + 1)
+            if not isinstance(courses, tuple) or any(
+                not isinstance(course, CourseSummary) for course in courses
+            ):
+                return None
+            current = tuple(course for course in courses if course.status != "past")
+            mention = find_course_mention(self._request_text, current)
+            if mention.course_name is None or mention.ambiguous:
+                return None
+            _courses, matches, _exact = self._course_matches(mention.course_name)
+        except (_LookupFailure, _InvalidReadOutput, _ReadOperationFailed):
+            return None
+        candidates = [course for course in matches if course.status != "past"]
+        if len(candidates) > 1:
+            # Moodle section entries: the "All Sections" entry stands for the course.
+            candidates = [
+                course for course in candidates if "all sections" in course.title.casefold()
+            ]
+        return candidates[0].id if len(candidates) == 1 else None
 
     def _resolve_course_link(
         self,
@@ -2459,7 +2498,7 @@ class _AcademicToolRuntime:
         else:
             scope_value = {"kind": "global"}
         inner_fields: list[tuple[str, object]] = [
-            ("question", self._request_text[:MAX_RAG_QUERY_CHARACTERS]),
+            ("question", without_scope_wording(self._request_text)[:MAX_RAG_QUERY_CHARACTERS]),
             ("scope", scope_value),
         ]
         if context is not None and context.title:
@@ -2614,6 +2653,39 @@ class _AcademicToolRuntime:
 
 
 _ARABIC_LETTER = re.compile(r"[\u0600-\u06ff]")
+
+# What AAOS is and does, for questions about the assistant itself.
+_ABOUT_AAOS_EN = (
+    "I'm AAOS, your academic assistant for JUST Moodle. My goal is to keep you on "
+    "top of your courses without digging through Moodle yourself.\n"
+    "I can answer questions from your course files and show the sources, list "
+    "your courses, assignments, deadlines and announcements, tell you what changed "
+    "on Moodle, and help you plan your study week. Moodle changes can also reach "
+    "you on Telegram.\n"
+    "I only read Moodle: I never submit, post or change anything there, and I answer "
+    "course questions only from what your files support."
+)
+_TASK_DETAILS_EN = (
+    "Sure. What should the task be? Say it in one message, for example:\n"
+    "\"add a study task: review chapter 2 for Natural Language Processing\"\n"
+    "You can add a priority (low, normal or high). The task is saved in AAOS only, "
+    "never on Moodle."
+)
+_TASK_DETAILS_AR = (
+    "أكيد. ما هي المهمة؟ اكتبها في رسالة واحدة، مثلاً:\n"
+    "\"أضف مهمة دراسية: مراجعة الفصل الثاني لمادة معالجة اللغات الطبيعية\"\n"
+    "يمكنك إضافة أولوية (منخفضة أو عادية أو عالية). تُحفظ المهمة في AAOS فقط، "
+    "وليس على مودل."
+)
+_ABOUT_AAOS_AR = (
+    "أنا AAOS، مساعدك الأكاديمي لمودل جامعة العلوم والتكنولوجيا. هدفي أن أبقيك "
+    "على اطلاع بموادك دون أن تبحث في مودل بنفسك.\n"
+    "أستطيع الإجابة عن أسئلتك من ملفات موادك مع ذكر المصادر، وعرض موادك وواجباتك "
+    "ومواعيد التسليم والإعلانات، وإخبارك بما تغيّر على مودل، ومساعدتك في تنظيم "
+    "أسبوع دراستك. ويمكن أن تصلك تغييرات مودل على تيليجرام.\n"
+    "أنا أقرأ من مودل فقط: لا أسلّم ولا أنشر ولا أغيّر أي شيء فيه، وأجيب عن أسئلة "
+    "المواد فقط بما تدعمه ملفاتك."
+)
 _TITLE_TOKEN = re.compile(r"\w+")
 _TITLE_STOP_TOKENS = frozenset(
     {"the", "and", "for", "of", "course", "pdf", "doc", "docx", "ppt", "pptx"}
@@ -3186,6 +3258,17 @@ class ReadOnlyAcademicAssistant:
                 )
                 lease_active = False
                 return answer
+
+            if asks_about_assistant(question.strip()):
+                # A fixed description: nothing to search, and the past-course
+                # focus is kept for the next question.
+                arabic = _ARABIC_LETTER.search(question) is not None
+                return direct_answer(_ABOUT_AAOS_AR if arabic else _ABOUT_AAOS_EN)
+
+            if self._study_task_service is not None and is_bare_task_request(question.strip()):
+                # Nothing says what the task is; ask rather than let the model guess.
+                arabic = _ARABIC_LETTER.search(question) is not None
+                return direct_answer(_TASK_DETAILS_AR if arabic else _TASK_DETAILS_EN)
 
             if has_unsupported_calendar_operation(question.strip()):
                 return direct_refusal(
