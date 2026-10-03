@@ -107,6 +107,10 @@ _DOCUMENT = _any(
         r"\bcourse materials?\b|\bmaterials?\b",
         r"منهج|الخطه الدراسيه|ملاحظات|محاضر|ملف|مستند|وثيقه|شرائح",
         r"مواد (?:ال)?مساق|مواد (?:ال)?ماده",
+        # What courses say about a topic is in their files, not the course list.
+        r"\b(?:courses?|classes|subjects)\s+(?:\w+\s+)?(?:say|says|said)\b",
+        r"(?:^|\s)(?:قال|ب?تقول|ب?يقول|ذكر)\S*\s+(?:\S+\s+)?(?:موادي|مساقاتي|كورساتي|المواد|المساقات|الكورسات)",
+        r"(?:موادي|مساقاتي|كورساتي|المواد|المساقات|الكورسات)\s+(?:\S+\s+)?(?:قالت|ب?تقول|ذكرت)",
     )
 )
 # Course details that only the syllabus states. They count as a document
@@ -257,9 +261,28 @@ _SCOPE_PHRASE = re.compile(
 )
 
 
+# "what did my past courses say about X": the scope word sits inside the
+# subject, so only the word is removed ("what did my courses say about X").
+_AR_SAY = r"(?:قال|قالت|ب?تقول|ب?يقول|ذكر|ذكرت)"
+_SUBJECT_SCOPE_WORD = (
+    (
+        re.compile(
+            rf"\b(my|the)\s+{_SCOPE_WORDS}\s+({_SCOPE_NOUNS}\s+(?:\w+\s+)?(?:say|says|said)\b)",
+            re.IGNORECASE,
+        ),
+        r"\1 \2",
+    ),
+    (re.compile(rf"((?:^|\s){_AR_SAY}\s+{_AR_COURSES})\s+{_AR_PAST}"), r"\1"),
+    (re.compile(rf"({_AR_COURSES})\s+{_AR_PAST}(?=\s+(?:\S+\s+)?{_AR_SAY}(?:\s|$))"), r"\1"),
+)
+
+
 def without_scope_wording(question: str) -> str:
     """The question without its past/current scope phrase, for searching."""
-    stripped = " ".join(_SCOPE_PHRASE.sub("", question).split()).strip(" ,")
+    text = _SCOPE_PHRASE.sub("", question)
+    for pattern, replacement in _SUBJECT_SCOPE_WORD:
+        text = pattern.sub(replacement, text)
+    stripped = " ".join(text.split()).strip(" ,")
     return stripped if stripped.strip(" ?؟.!") else question
 
 
