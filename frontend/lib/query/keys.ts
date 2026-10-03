@@ -35,6 +35,10 @@ export const taskKeys = {
   detail: (taskId: string) => ["tasks", "detail", taskId] as const,
 };
 
+export const studyTaskKeys = {
+  list: ["study-tasks", "list"] as const,
+};
+
 export const approvalKeys = {
   list: ["approvals", "list"] as const,
   detail: (approvalId: string) => ["approvals", "detail", approvalId] as const,

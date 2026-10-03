@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
     from aaos.web.activity_read import ActivityReadService
+    from aaos.web.document_files import DocumentFile, DocumentFileService
     from aaos.web.health_read import SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
         ActivityReader,
         ApprovedCalendarTaskExecutor,
         CourseReader,
+        DocumentFileReader,
         DocumentReader,
         SystemHealthReader,
         TaskApprovalCommands,
@@ -379,6 +382,38 @@ class _LazyDefaultAcademicAskService:
             await self._gateway.aclose()
 
 
+def _document_content_root() -> Path:
+    """The served app runs from the data folder; files live under data/documents."""
+    from aaos.documents.config import resolve_document_runtime_paths
+
+    return resolve_document_runtime_paths(Path("data").resolve()).content_store_root
+
+
+class _LazyDefaultDocumentFileService:
+    """Open the database only when a document file is first requested."""
+
+    def __init__(self) -> None:
+        self._engine: Engine | None = None
+        self._delegate: DocumentFileService | None = None
+
+    def open_document_file(self, document_id: int) -> DocumentFile:
+        if self._delegate is None:
+            from aaos.persistence.database import create_database_engine, create_session_factory
+            from aaos.web.document_files import DocumentFileService
+
+            self._engine = create_database_engine()
+            self._delegate = DocumentFileService(
+                create_session_factory(self._engine), _document_content_root()
+            )
+        return self._delegate.open_document_file(document_id)
+
+    def dispose(self) -> None:
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+            self._delegate = None
+
+
 class _LazyDefaultStudyTaskService:
     """Create local StudyTask persistence only when an ask uses task tools."""
 
@@ -662,6 +697,7 @@ def create_app(
     resolved_ask_service = ask_service
     resolved_moodle_change_reader = moodle_change_reader
     resolved_study_task_service = study_task_service
+    document_file_reader: DocumentFileReader
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
@@ -678,6 +714,9 @@ def create_app(
         resolved_system_health_reader = lazy_system_health_reader
         lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
         resolved_task_commands = lazy_task_commands
+        lazy_document_files = _LazyDefaultDocumentFileService()
+        document_file_reader = lazy_document_files
+        application.router.add_event_handler("shutdown", lazy_document_files.dispose)
         if resolved_study_task_service is None:
             lazy_study_tasks = _LazyDefaultStudyTaskService()
             resolved_study_task_service = lazy_study_tasks
@@ -731,6 +770,9 @@ def create_app(
         )
         if resolved_study_task_service is None:
             resolved_study_task_service = StudyTaskService(StudyTaskRepository(session_factory))
+        from aaos.web.document_files import DocumentFileService
+
+        document_file_reader = DocumentFileService(session_factory, _document_content_root())
 
     if resolved_rag_reader is None:
         lazy_rag_reader = _LazyDefaultRagReader(session_factory)
@@ -781,6 +823,8 @@ def create_app(
             principal_provider=resolved_principal_provider,
             ask_service=resolved_ask_service,
             calendar_task_executor=calendar_task_executor,
+            study_task_reader=resolved_study_task_service,
+            document_file_reader=document_file_reader,
         )
     )
 

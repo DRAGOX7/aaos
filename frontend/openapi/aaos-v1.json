@@ -2693,6 +2693,141 @@
         "title": "StudyRationaleCodeView",
         "type": "string"
       },
+      "StudyTaskListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "study_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/StudyTaskView"
+            },
+            "title": "Study Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "study_tasks"
+        ],
+        "title": "StudyTaskListResponse",
+        "type": "object"
+      },
+      "StudyTaskView": {
+        "additionalProperties": false,
+        "description": "One local study task (AAOS only; never on Moodle).",
+        "properties": {
+          "assignment_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Id"
+          },
+          "assignment_title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Title"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Id",
+            "type": "integer"
+          },
+          "priority": {
+            "enum": [
+              "LOW",
+              "NORMAL",
+              "HIGH"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "OPEN",
+              "COMPLETED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "priority",
+          "course_id",
+          "course_title",
+          "assignment_id",
+          "assignment_title",
+          "due_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "StudyTaskView",
+        "type": "object"
+      },
       "SystemHealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3481,6 +3616,45 @@
         "summary": "Get Document"
       }
     },
+    "/api/v1/documents/{document_id}/file": {
+      "get": {
+        "description": "The original file: PDFs open in the browser, Word files download.",
+        "operationId": "get_document_file_api_v1_documents__document_id__file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Document Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document File"
+      }
+    },
     "/api/v1/rag/queries": {
       "post": {
         "operationId": "ask_rag_api_v1_rag_queries_post",
@@ -3517,6 +3691,25 @@
           }
         },
         "summary": "Ask Rag"
+      }
+    },
+    "/api/v1/study-tasks": {
+      "get": {
+        "description": "Local study tasks, read-only.",
+        "operationId": "list_study_tasks_api_v1_study_tasks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyTaskListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Study Tasks"
       }
     },
     "/api/v1/system-health": {

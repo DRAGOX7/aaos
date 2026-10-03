@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 
 import { DocumentReadiness } from "@/components/aaos/document-readiness";
 import { SectionCard } from "@/components/aaos/section-card";
@@ -54,8 +55,43 @@ function DocumentDetailQuery({ documentId }: { documentId: number }) {
           {data.title}
         </h1>
         <DocumentReadiness document={data} />
+        <DocumentFile documentId={documentId} title={data.title} />
       </article>
     </SectionCard>
+  );
+}
+
+/**
+ * The original file. AAOS stores PDF and Word files only: a PDF is shown
+ * here, a Word file downloads (browsers cannot display it).
+ */
+function DocumentFile({ documentId, title }: { documentId: number; title: string }) {
+  const fileUrl = `/api/v1/documents/${documentId}/file`;
+  const word = /\.docx?$/i.test(title.trim());
+  return (
+    <div className="mt-6 flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <ExternalLink aria-hidden="true" className="size-4" strokeWidth={2} />
+          {word ? "Download file" : "Open file"}
+        </a>
+        {word ? (
+          <p className="text-sm text-muted-foreground">Word files open in Word after downloading.</p>
+        ) : null}
+      </div>
+      {word ? null : (
+        <iframe
+          title={`${title} preview`}
+          src={fileUrl}
+          className="h-[75vh] min-h-[28rem] w-full rounded-xl border border-border bg-muted"
+        />
+      )}
+    </div>
   );
 }
 

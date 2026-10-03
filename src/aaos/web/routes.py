@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Path, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from aaos.agent.academic_orchestrator import AcademicAskResult
 from aaos.agent.study_plan_contracts import StudyPlan, StudyPlanSourceReference
@@ -52,6 +52,7 @@ from aaos.web.contracts import (
     StudyPlanTaskFactView,
     StudyPlanView,
     StudyRationaleCodeView,
+    StudyTaskListResponse,
     TaskDetail,
     TaskListResponse,
     TaskSummary,
@@ -62,8 +63,22 @@ from aaos.web.mutation_security import MutationRequestRejected, enforce_mutation
 
 if TYPE_CHECKING:
     from aaos.approval.contracts import ApprovalId, Phase6ErrorCode, TrustedApproverContext
+    from aaos.study_tasks.contracts import StudyTask
+    from aaos.web.document_files import DocumentFile
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader
+
+
+class DocumentFileReader(Protocol):
+    """The original file of one visible document."""
+
+    def open_document_file(self, document_id: int) -> DocumentFile: ...
+
+
+class StudyTaskReader(Protocol):
+    """Read-only access to local study tasks."""
+
+    def list(self) -> tuple[StudyTask, ...]: ...
 
 
 class TaskReader(Protocol):
@@ -192,6 +207,8 @@ def create_api_v1_router(
     principal_provider: LocalApproverContextProvider | None = None,
     ask_service: AcademicAskService | None = None,
     calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
+    study_task_reader: StudyTaskReader | None = None,
+    document_file_reader: DocumentFileReader | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -447,6 +464,38 @@ def create_api_v1_router(
                 conversation_id=result.conversation_id,
                 request_id=body.request_id,
             )
+
+    if document_file_reader is not None:
+
+        @router.get("/documents/{document_id}/file")
+        def get_document_file(document_id: int = Path(..., gt=0)) -> Response:
+            """The original file: PDFs open in the browser, Word files download."""
+            from urllib.parse import quote
+
+            document = document_file_reader.open_document_file(document_id)
+            disposition = "inline" if document.media_type == "application/pdf" else "attachment"
+            ascii_name = document.filename.encode("ascii", "replace").decode().replace('"', "")
+            return Response(
+                content=document.body,
+                media_type=document.media_type,
+                headers={
+                    "Content-Disposition": (
+                        f'{disposition}; filename="{ascii_name}"; '
+                        f"filename*=UTF-8''{quote(document.filename)}"
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "private, max-age=300",
+                },
+            )
+
+    if study_task_reader is not None:
+
+        @router.get("/study-tasks", response_model=StudyTaskListResponse)
+        def list_study_tasks() -> StudyTaskListResponse:
+            """Local study tasks, read-only."""
+            from aaos.web.study_tasks import study_task_list_response
+
+            return study_task_list_response(study_task_reader.list())
 
     if task_reader is not None:
 

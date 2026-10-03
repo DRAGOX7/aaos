@@ -310,8 +310,12 @@ describe("unified Ask view", () => {
 
     fillAndSend("Mark Review graph algorithms complete");
 
-    expect(await screen.findByText("COMPLETED")).toBeVisible();
-    expect(screen.getByText("HIGH")).toBeVisible();
+    expect(await screen.findByText("Done")).toBeVisible();
+    expect(screen.getByText("High")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View in Tasks" })).toHaveAttribute(
+      "href",
+      "/tasks#study-task-41",
+    );
     expect(screen.getByText("Algorithms")).toBeVisible();
     expect(screen.getByText("Homework 2")).toBeVisible();
     expect(screen.getByText("2026-10-02 10:30:00+00:00")).toBeVisible();
@@ -327,7 +331,7 @@ describe("unified Ask view", () => {
     fillAndSend("Complete Review graph algorithms");
 
     expect(screen.getByText("AAOS is thinking…")).toBeVisible();
-    expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+    expect(screen.queryByText("Done")).not.toBeInTheDocument();
     await act(async () => {
       resolveAsk?.(response({
         sources: [
@@ -341,7 +345,7 @@ describe("unified Ask view", () => {
         ],
       }));
     });
-    expect(await screen.findByText("COMPLETED")).toBeVisible();
+    expect(await screen.findByText("Done")).toBeVisible();
   });
 
   it("renders a Calendar proposal as pending approval", async () => {

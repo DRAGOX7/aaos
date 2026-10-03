@@ -26,6 +26,44 @@ describe("task list view", () => {
     expect(screen.queryByText(/provider|scope|permission|credential|sql/i)).not.toBeInTheDocument();
   });
 
+  it("lists study tasks with plain status, priority and course link", () => {
+    useQueryMock.mockImplementation((options?: { queryKey?: readonly unknown[] }) =>
+      options?.queryKey?.[0] === "study-tasks"
+        ? {
+            data: {
+              study_tasks: [
+                {
+                  id: 3, title: "review chapter 2", status: "OPEN", priority: "NORMAL",
+                  course_id: 9, course_title: "AI445 · Natural Language Processing",
+                  assignment_id: null, assignment_title: null, due_at: null,
+                  created_at: "2026-10-03T09:00:00Z", updated_at: "2026-10-03T09:00:00Z",
+                },
+                {
+                  id: 1, title: "practice SQL", status: "COMPLETED", priority: "HIGH",
+                  course_id: null, course_title: null,
+                  assignment_id: null, assignment_title: null, due_at: null,
+                  created_at: "2026-10-02T09:00:00Z", updated_at: "2026-10-02T09:00:00Z",
+                },
+              ],
+            },
+            isPending: false,
+            isError: false,
+          }
+        : { data: { tasks: [] }, isPending: false, isError: false },
+    );
+    render(<TaskListView />);
+
+    const list = screen.getByRole("list", { name: "Study tasks" });
+    expect(list.querySelector("#study-task-3")).not.toBeNull();
+    expect(screen.getByText("To do")).toBeInTheDocument();
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText(/High priority/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "AI445 · Natural Language Processing" }),
+    ).toHaveAttribute("href", "/courses/9");
+    expect(screen.queryByText("No tasks found.")).not.toBeInTheDocument();
+  });
+
   it("keeps unknown outcome visibly distinct from confirmed success", () => {
     useQueryMock.mockReturnValue({
       data: {

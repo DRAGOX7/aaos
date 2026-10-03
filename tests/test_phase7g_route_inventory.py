@@ -19,6 +19,9 @@ EXPECTED_API_PATHS = {
     "/api/v1/activity",
     "/api/v1/activity/stream",
     "/api/v1/system-health",
+    # Read-only: local study tasks, and a document's original file.
+    "/api/v1/study-tasks",
+    "/api/v1/documents/{document_id}/file",
 }
 
 
