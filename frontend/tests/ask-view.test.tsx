@@ -545,7 +545,7 @@ describe("unified Ask view", () => {
     render(<AskView />);
 
     fillAndSend("Make a study plan");
-    expect(await screen.findByText("The required local model is unavailable.")).toBeVisible();
+    expect(await screen.findByText("The answering model is unavailable.")).toBeVisible();
     expect(screen.queryByText(/secret internal provider details/)).not.toBeInTheDocument();
     fillAndSend("Explain this lecture note");
     expect(await screen.findByText("AAOS could not search academic documents.")).toBeVisible();

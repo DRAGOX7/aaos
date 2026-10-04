@@ -72,8 +72,9 @@ function RefusalState({ response }: { response: AcademicAskResponse }) {
 
 const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }>> = {
   MODEL_UNAVAILABLE: {
-    title: "The required local model is unavailable.",
-    detail: "Try again after the model is available.",
+    title: "The answering model is unavailable.",
+    detail:
+      "Try again after the model is available. With Gemini selected, open the model badge at the top of the page to see the last problem it reported.",
   },
   MODEL_TIMEOUT: {
     title: "The model response timed out.",

@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx2
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.inference.factory import (
+    NoOpModelLifecycle,
+    active_model_identifier,
+    build_model_gateway,
+)
+from aaos.inference.gateway import ModelGateway
 from aaos.inference.lm_studio import LMStudioGateway
 from aaos.rag.config import RagIndexConfig, resolve_rag_runtime_paths
 from aaos.rag.contracts import LocalRagService, RagErrorCode, RagOperationalError
@@ -26,6 +33,11 @@ from aaos.rag.runtime import (
     Phase4RagRuntime,
     build_phase4_runtime,
     cpu_query_embedding_factory,
+)
+from aaos.rag.semantic_coverage import (
+    AtomicRequirementDecomposer,
+    EvidenceSpanExtractor,
+    RequirementCoverageClassifier,
 )
 
 
@@ -65,10 +77,38 @@ class ConfiguredPhase4Runtime:
             await result
 
 
+def _semantic_factories_for(identity: str) -> dict[str, object]:
+    """Factories for the three semantic steps, expecting ``identity`` as the model."""
+    approved = frozenset({identity})
+
+    def decomposer(gateway: ModelGateway) -> AtomicRequirementDecomposer:
+        return AtomicRequirementDecomposer(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    def extractor(gateway: ModelGateway) -> EvidenceSpanExtractor:
+        return EvidenceSpanExtractor(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    def coverage(gateway: ModelGateway) -> RequirementCoverageClassifier:
+        return RequirementCoverageClassifier(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    return {
+        "atomic_requirement_decomposer_factory": decomposer,
+        "evidence_span_extractor_factory": extractor,
+        "requirement_coverage_factory": coverage,
+    }
+
+
 def build_configured_phase4_runtime(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
     data_root: Path | None = None,
+    on_model_failure: Callable[[str], None] | None = None,
+    on_model_success: Callable[[], None] | None = None,
 ) -> ConfiguredPhase4Runtime:
     """Build the approved local Phase 4 runtime at an explicit call site."""
 
@@ -93,15 +133,28 @@ def build_configured_phase4_runtime(
     paths = resolve_rag_runtime_paths((data_root or Path("data")).resolve())
     validate_rag_database(paths.database_path)
 
-    gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
+    cloud_options: dict[str, object] = {}
+    if settings.model_provider == "gemini":
+        # Opt-in cloud model: there is no local model to load or free.
+        gateway = build_model_gateway(
+            settings, on_failure=on_model_failure, on_success=on_model_success
+        )
+        cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
+        # The semantic steps reject any reply that is not from the model they expect.
+        # They expect the approved local model by default; name the Gemini model
+        # explicitly so its replies are accepted, and nothing else is.
+        cloud_options.update(_semantic_factories_for(active_model_identifier(settings)))
+    else:
+        gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
     try:
         runtime = build_phase4_runtime(
             paths=paths,
             config=config,
             gateway=gateway,
             database_engine_factory=create_existing_rag_database_engine,
-            summary_model_identifier=settings.lm_studio_model,
+            summary_model_identifier=active_model_identifier(settings),
             query_embedding_factory=cpu_query_embedding_factory,
+            **cloud_options,  # type: ignore[arg-type]
         )
     except Exception:
         try:

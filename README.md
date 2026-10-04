@@ -189,6 +189,33 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+**Optional: answer with a Gemini model instead of the local one.** This is off by default and
+changes the privacy model: your questions and the excerpts of your course files used to answer them
+are sent to Google. Embeddings and the claim checker still run locally. Set these in the backend's
+terminal before starting it (the key lives only in that terminal's environment, never in a file):
+
+```powershell
+$env:AAOS_MODEL_PROVIDER = 'gemini'
+$env:AAOS_GEMINI_MODEL   = '<model name from Google AI Studio>'
+$env:GEMINI_API_KEY      = '<your key>'
+```
+
+The backend logs `CLOUD MODEL ACTIVE` at startup. Open a new terminal, or remove the variables, to
+return to the local model.
+
+You can also start on the local model and switch from the page. Set only `AAOS_GEMINI_MODEL` and
+`GEMINI_API_KEY` before starting the backend: a badge in the top bar always shows which model is
+answering (`Local · …` or `Cloud · Gemini · …`), and clicking it opens a panel to switch. Going to
+Gemini asks for an explicit confirmation first, a switch is refused while a question is running, and
+the choice resets to the local model whenever the backend restarts. The page never asks for the key.
+
+Free Gemini keys have low request limits (a few requests per minute for the newest models), and one
+question about your files makes several model calls. AAOS waits out a per-minute limit for as long as
+Google asks (never on a daily limit, and never more than 30 s at a time) and retries a short
+"high demand" error. To avoid hitting the limit at all, set `AAOS_GEMINI_MIN_INTERVAL_SECONDS` (for
+example `7`) to leave that many seconds between requests; the default is no spacing, which suits a paid
+key. `scripts/gemini_probe.py` sends one request per format AAOS uses and reports each in safe words.
+
 **Connect Moodle and index your files** (from the data folder):
 
 ```powershell

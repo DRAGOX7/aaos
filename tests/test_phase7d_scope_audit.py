@@ -45,6 +45,8 @@ def test_phase7d_boundary_remains_closed_after_later_phase_additions() -> None:
         ("GET", "/documents/{document_id}"),
         ("GET", "/documents/{document_id}/file"),
         ("GET", "/study-tasks"),
+        ("GET", "/model"),
+        ("POST", "/model"),
         ("POST", "/ask"),
         ("POST", "/rag/queries"),
         ("GET", "/tasks"),

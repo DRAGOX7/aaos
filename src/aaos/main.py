@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
@@ -15,6 +16,8 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.inference.factory import warn_if_cloud_model
+from aaos.inference.selection import ModelSelection
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
 from aaos.web.contracts import (
@@ -47,8 +50,9 @@ if TYPE_CHECKING:
         ReadOnlyAcademicAssistant,
         StudyTaskPort,
     )
+    from aaos.agent.conversation_context import ConversationContextStore
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
-    from aaos.inference.lm_studio import LMStudioGateway
+    from aaos.inference.factory import ClosableModelGateway
     from aaos.moodle.changes import MoodleChangeSet
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
@@ -202,11 +206,21 @@ class _LazyDefaultMoodleChangeReader:
         )
 
 
+@asynccontextmanager
+async def _no_model_use() -> AsyncIterator[None]:
+    yield
+
+
 class _LazyDefaultRagReader:
     """Create the Phase 4 RAG runtime only when the browser asks a question."""
 
-    def __init__(self, sessions: sessionmaker[Session] | None = None) -> None:
+    def __init__(
+        self,
+        sessions: sessionmaker[Session] | None = None,
+        selection: ModelSelection | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._selection = selection
         self._engine: Engine | None = None
         self._runtime: ConfiguredPhase4Runtime | None = None
         self._delegate: RagReadService | None = None
@@ -228,7 +242,15 @@ class _LazyDefaultRagReader:
                 if sessions is None:
                     self._engine = create_database_engine()
                     sessions = create_session_factory(self._engine)
-                self._runtime = build_configured_phase4_runtime()
+                self._runtime = (
+                    build_configured_phase4_runtime()
+                    if self._selection is None
+                    else build_configured_phase4_runtime(
+                        self._selection.effective_settings(),
+                        on_model_failure=self._selection.record_failure,
+                        on_model_success=self._selection.record_success,
+                    )
+                )
                 self._delegate = RagReadService(self._runtime.service, sessions)
             return self._delegate
 
@@ -246,13 +268,35 @@ class _LazyDefaultRagReader:
         self._warm_up_task = asyncio.create_task(asyncio.to_thread(self._warm_up))
         await asyncio.sleep(0)
 
+    def _model_use(self) -> AbstractAsyncContextManager[None]:
+        return self._selection.use() if self._selection is not None else _no_model_use()
+
+    async def reset(self) -> None:
+        """Drop the model-bound runtime; the next question rebuilds it for the current model."""
+        if self._warm_up_task is not None:
+            await asyncio.gather(self._warm_up_task, return_exceptions=True)
+
+        def detach() -> ConfiguredPhase4Runtime | None:
+            with self._build_lock:
+                runtime, self._runtime, self._delegate = self._runtime, None, None
+                return runtime
+
+        runtime = await asyncio.to_thread(detach)
+        if runtime is not None:
+            await runtime.aclose()
+        if self._warm_up_task is not None:
+            # Warm the new runtime as at startup, so the first question is not the slow one.
+            self._warm_up_task = asyncio.create_task(asyncio.to_thread(self._warm_up))
+
     async def ask(self, request: RagQueryRequest) -> RagAnswerResponse:
-        return await self._ensure_delegate().ask(request)
+        async with self._model_use():
+            return await self._ensure_delegate().ask(request)
 
     async def ask_trusted(self, query: RagQuery) -> RenderedRagResponse:
-        self._ensure_delegate()
-        assert self._runtime is not None
-        return await self._runtime.service.ask(query)
+        async with self._model_use():
+            self._ensure_delegate()
+            assert self._runtime is not None
+            return await self._runtime.service.ask(query)
 
     async def summarize_course(
         self,
@@ -261,14 +305,17 @@ class _LazyDefaultRagReader:
         *,
         deadline: float | None = None,
     ) -> SummaryResult:
-        self._ensure_delegate()
-        assert self._runtime is not None
-        summarizer = self._runtime.runtime.summarizer
-        if summarizer is None:
-            from aaos.rag.contracts import RagErrorCode, RagOperationalError
+        async with self._model_use():
+            self._ensure_delegate()
+            assert self._runtime is not None
+            summarizer = self._runtime.runtime.summarizer
+            if summarizer is None:
+                from aaos.rag.contracts import RagErrorCode, RagOperationalError
 
-            raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
-        return await summarizer.summarize_course(document_version_ids, language, deadline=deadline)
+                raise RagOperationalError(RagErrorCode.MODEL_UNAVAILABLE)
+            return await summarizer.summarize_course(
+                document_version_ids, language, deadline=deadline
+            )
 
     async def dispose(self) -> None:
         if self._warm_up_task is not None:
@@ -324,8 +371,12 @@ class _LazyDefaultAcademicAskService:
         *,
         announcement_reader: AnnouncementReadPort | None = None,
         summarizer: DocumentSummaryPort | None = None,
+        selection: ModelSelection | None = None,
     ) -> None:
         self._settings = settings
+        self._selection = selection
+        # Kept across a model switch so "that course" still resolves afterwards.
+        self._context_store: ConversationContextStore | None = None
         self._announcement_reader = announcement_reader
         self._summarizer = summarizer
         self._academic_reader = academic_reader
@@ -335,17 +386,27 @@ class _LazyDefaultAcademicAskService:
         self._calendar_task_service = calendar_task_service
         self._calendar_timezone = calendar_timezone
         self._moodle_change_reader = moodle_change_reader
-        self._gateway: LMStudioGateway | None = None
+        self._gateway: ClosableModelGateway | None = None
         self._assistant: ReadOnlyAcademicAssistant | None = None
 
     def _ensure_assistant(self) -> ReadOnlyAcademicAssistant:
         if self._assistant is None:
-            import httpx2
-
             from aaos.agent.academic_orchestrator import ReadOnlyAcademicAssistant
-            from aaos.inference.lm_studio import LMStudioGateway
+            from aaos.agent.conversation_context import ConversationContextStore
+            from aaos.inference.factory import build_model_gateway
 
-            self._gateway = LMStudioGateway(self._settings, httpx2.AsyncHTTPTransport())
+            if self._context_store is None:
+                self._context_store = ConversationContextStore()
+            settings = (
+                self._selection.effective_settings()
+                if self._selection is not None
+                else self._settings
+            )
+            self._gateway = build_model_gateway(
+                settings,
+                on_failure=self._selection.record_failure if self._selection else None,
+                on_success=self._selection.record_success if self._selection else None,
+            )
             self._assistant = ReadOnlyAcademicAssistant(
                 self._gateway,
                 self._academic_reader,
@@ -358,6 +419,7 @@ class _LazyDefaultAcademicAskService:
                 intent_routing=True,
                 announcement_reader=self._announcement_reader,
                 summarizer=self._summarizer,
+                context_store=self._context_store,
             )
         assert self._assistant is not None
         return self._assistant
@@ -370,12 +432,19 @@ class _LazyDefaultAcademicAskService:
         conversation_id: UUID | None = None,
         request_id: UUID | None = None,
     ) -> AcademicAskResult:
-        return await self._ensure_assistant().ask(
-            question,
-            cancel_event,
-            conversation_id=conversation_id,
-            request_id=request_id,
-        )
+        async with self._selection.use() if self._selection is not None else _no_model_use():
+            return await self._ensure_assistant().ask(
+                question,
+                cancel_event,
+                conversation_id=conversation_id,
+                request_id=request_id,
+            )
+
+    async def reset(self) -> None:
+        """Drop the model-bound assistant; the next question builds one for the current model."""
+        gateway, self._gateway, self._assistant = self._gateway, None, None
+        if gateway is not None:
+            await gateway.aclose()
 
     async def dispose(self) -> None:
         if self._gateway is not None:
@@ -678,6 +747,8 @@ def create_app(
     if calendar_task_service is not None and calendar_task_executor is None:
         raise ValueError("Calendar proposals require execution through the approval endpoint")
 
+    warn_if_cloud_model(settings)
+    model_selection = ModelSelection(settings)
     application = FastAPI(
         title=settings.application_name,
         version=settings.application_version,
@@ -775,15 +846,17 @@ def create_app(
         document_file_reader = DocumentFileService(session_factory, _document_content_root())
 
     if resolved_rag_reader is None:
-        lazy_rag_reader = _LazyDefaultRagReader(session_factory)
+        lazy_rag_reader = _LazyDefaultRagReader(session_factory, model_selection)
         resolved_rag_reader = lazy_rag_reader
+        model_selection.add_listener(lazy_rag_reader.reset)
         application.router.add_event_handler("shutdown", lazy_rag_reader.dispose)
 
     if resolved_ask_service is None:
         if isinstance(resolved_rag_reader, _LazyDefaultRagReader):
             agent_rag_reader = resolved_rag_reader
         else:
-            agent_rag_reader = _LazyDefaultRagReader(session_factory)
+            agent_rag_reader = _LazyDefaultRagReader(session_factory, model_selection)
+            model_selection.add_listener(agent_rag_reader.reset)
             application.router.add_event_handler("shutdown", agent_rag_reader.dispose)
         if warm_rag_on_startup:
             # Only the served app warms up, so imports and tests stay inert.
@@ -803,7 +876,9 @@ def create_app(
                 else None
             ),
             summarizer=_DefaultAgentSummaryService(agent_rag_reader),
+            selection=model_selection,
         )
+        model_selection.add_listener(resolved_ask_service.reset)
         application.router.add_event_handler("shutdown", resolved_ask_service.dispose)
 
     # Imported here so module import stays inert: the route graph pulls in the
@@ -825,6 +900,7 @@ def create_app(
             calendar_task_executor=calendar_task_executor,
             study_task_reader=resolved_study_task_service,
             document_file_reader=document_file_reader,
+            model_selection=model_selection,
         )
     )
 
