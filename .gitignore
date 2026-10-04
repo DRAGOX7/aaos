@@ -48,3 +48,13 @@ Thumbs.db
 Desktop.ini
 frontend/node_modules/
 frontend/*.tsbuildinfo
+
+# Local AI-assistant tooling and notes: kept on the owner's PC, not part of the project
+.claude/
+.impeccable/
+.superpowers/
+AGENTS.md
+CLAUDE.md
+LEARNING.md
+docs/AI_MODEL_ROUTING.md
+docs/AI_ENGINEERING_PLAYBOOK.md
