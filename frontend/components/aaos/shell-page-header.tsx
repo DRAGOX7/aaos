@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 
 import { MobileNav } from "@/components/aaos/mobile-nav";
+import { ModelBadge } from "@/components/aaos/model-badge";
 import { systemHealthQueryOptions } from "@/lib/query/health";
 import { cn } from "@/lib/utils";
 
@@ -35,7 +36,7 @@ function HealthPill() {
   );
 }
 
-/** The one global top bar: navigation on phones, search, health and identity. */
+/** The one global top bar: navigation on phones, search, answering model, health and identity. */
 export function ShellPageHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-border/70 bg-[color:var(--aaos-surface-glass)] backdrop-blur-xl">
@@ -60,6 +61,7 @@ export function ShellPageHeader() {
         </label>
 
         <div className="ml-auto flex items-center gap-3">
+          <ModelBadge />
           <HealthPill />
           <span
             className="flex size-10 items-center justify-center rounded-full bg-hero text-sm font-bold text-white"

@@ -762,3 +762,30 @@ class ApprovalListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     approvals: tuple[ApprovalSummary, ...]
+
+
+ModelProviderView = Literal["lm_studio", "gemini"]
+ModelGeminiBlockerView = Literal["GEMINI_API_KEY_MISSING", "GEMINI_MODEL_MISSING"]
+
+
+class ModelStatusResponse(BaseModel):
+    """Which model answers now. Names only: the Gemini API key never appears here."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    provider: ModelProviderView
+    model: str = Field(max_length=200)
+    cloud: bool
+    local_model: str = Field(max_length=200)
+    gemini_model: str | None = Field(default=None, max_length=200)
+    gemini_ready: bool
+    gemini_blocker: ModelGeminiBlockerView | None = None
+
+
+class ModelSelectRequest(BaseModel):
+    """Closed request to change the answering model; the browser never sends a key."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    provider: ModelProviderView
+    confirm_cloud: bool = False

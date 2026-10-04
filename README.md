@@ -203,6 +203,12 @@ $env:GEMINI_API_KEY      = '<your key>'
 The backend logs `CLOUD MODEL ACTIVE` at startup. Open a new terminal, or remove the variables, to
 return to the local model.
 
+You can also start on the local model and switch from the page. Set only `AAOS_GEMINI_MODEL` and
+`GEMINI_API_KEY` before starting the backend: a badge in the top bar always shows which model is
+answering (`Local · …` or `Cloud · Gemini · …`), and clicking it opens a panel to switch. Going to
+Gemini asks for an explicit confirmation first, a switch is refused while a question is running, and
+the choice resets to the local model whenever the backend restarts. The page never asks for the key.
+
 **Connect Moodle and index your files** (from the data folder):
 
 ```powershell

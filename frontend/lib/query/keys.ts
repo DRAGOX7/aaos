@@ -10,6 +10,10 @@ export const systemHealthKeys = {
   all: ["system-health"] as const,
 };
 
+export const modelKeys = {
+  all: ["model"] as const,
+};
+
 export const academicKeys = {
   course: (courseId: number) => [
     ...courseKeys.all,

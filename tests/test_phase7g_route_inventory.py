@@ -22,6 +22,8 @@ EXPECTED_API_PATHS = {
     # Read-only: local study tasks, and a document's original file.
     "/api/v1/study-tasks",
     "/api/v1/documents/{document_id}/file",
+    # The answering model: which one is running, and the confirmed local/Gemini switch.
+    "/api/v1/model",
 }
 
 
@@ -47,4 +49,7 @@ def test_phase7_mutation_inventory_is_closed() -> None:
         ("/api/v1/ask", "POST"),
         ("/api/v1/approvals/{approval_id}/approve", "POST"),
         ("/api/v1/approvals/{approval_id}/reject", "POST"),
+        # Changes where questions are processed; fenced to the local page, needs confirmation
+        # for the cloud model, and never carries a key.
+        ("/api/v1/model", "POST"),
     }

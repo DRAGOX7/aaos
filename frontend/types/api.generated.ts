@@ -228,6 +228,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model
+         * @description Which model is answering, read-only.
+         */
+        get: operations["get_model_api_v1_model_get"];
+        put?: never;
+        /**
+         * Select Model
+         * @description Switch between the local model and Gemini (cloud needs confirmation).
+         */
+        post: operations["select_model_api_v1_model_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/rag/queries": {
         parameters: {
             query?: never;
@@ -866,6 +890,45 @@ export interface components {
          * @enum {string}
          */
         HealthStatus: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
+        /**
+         * ModelSelectRequest
+         * @description Closed request to change the answering model; the browser never sends a key.
+         */
+        ModelSelectRequest: {
+            /**
+             * Confirm Cloud
+             * @default false
+             */
+            confirm_cloud: boolean;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "lm_studio" | "gemini";
+        };
+        /**
+         * ModelStatusResponse
+         * @description Which model answers now. Names only: the Gemini API key never appears here.
+         */
+        ModelStatusResponse: {
+            /** Cloud */
+            cloud: boolean;
+            /** Gemini Blocker */
+            gemini_blocker?: ("GEMINI_API_KEY_MISSING" | "GEMINI_MODEL_MISSING") | null;
+            /** Gemini Model */
+            gemini_model?: string | null;
+            /** Gemini Ready */
+            gemini_ready: boolean;
+            /** Local Model */
+            local_model: string;
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "lm_studio" | "gemini";
+        };
         /** OperationActivityContext */
         OperationActivityContext: {
             /**
@@ -1727,6 +1790,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_api_v1_model_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelStatusResponse"];
+                };
+            };
+        };
+    };
+    select_model_api_v1_model_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelSelectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelStatusResponse"];
                 };
             };
             /** @description Validation Error */

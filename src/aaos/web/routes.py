@@ -13,6 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from aaos.agent.academic_orchestrator import AcademicAskResult
 from aaos.agent.study_plan_contracts import StudyPlan, StudyPlanSourceReference
+from aaos.inference.selection import ModelSelectionError
 from aaos.tasks.contracts import BrowserTaskState
 from aaos.web.activity import (
     ActivityCursor,
@@ -40,6 +41,8 @@ from aaos.web.contracts import (
     CourseSummary,
     DocumentListResponse,
     DocumentSummary,
+    ModelSelectRequest,
+    ModelStatusResponse,
     OperationState,
     PlanFactKindView,
     RagAnswerResponse,
@@ -63,10 +66,37 @@ from aaos.web.mutation_security import MutationRequestRejected, enforce_mutation
 
 if TYPE_CHECKING:
     from aaos.approval.contracts import ApprovalId, Phase6ErrorCode, TrustedApproverContext
+    from aaos.inference.selection import ModelStatus
     from aaos.study_tasks.contracts import StudyTask
     from aaos.web.document_files import DocumentFile
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader
+
+
+# (code, HTTP status, browser-safe message) for each refused model switch.
+_MODEL_SELECTION_FAILURES = {
+    "INVALID_PROVIDER": (422, "INVALID_REQUEST", "The request is invalid."),
+    "CLOUD_CONFIRMATION_REQUIRED": (
+        422,
+        "CLOUD_CONFIRMATION_REQUIRED",
+        "Confirm that your questions and file excerpts may be sent to Google.",
+    ),
+    "GEMINI_NOT_READY": (
+        409,
+        "GEMINI_NOT_READY",
+        "Gemini is not set up in the backend's environment yet.",
+    ),
+    "MODEL_BUSY": (409, "MODEL_BUSY", "A question is running. Try again when it has finished."),
+    "MODEL_SWITCH_FAILED": (500, "MODEL_SWITCH_FAILED", "AAOS could not switch the model."),
+}
+
+
+class ModelSelectionPort(Protocol):
+    """Which model answers, and the guarded switch between local and Gemini."""
+
+    def status(self) -> ModelStatus: ...
+
+    async def switch(self, provider: str, *, confirm_cloud: bool = False) -> ModelStatus: ...
 
 
 class DocumentFileReader(Protocol):
@@ -209,6 +239,7 @@ def create_api_v1_router(
     calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
     study_task_reader: StudyTaskReader | None = None,
     document_file_reader: DocumentFileReader | None = None,
+    model_selection: ModelSelectionPort | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -487,6 +518,48 @@ def create_api_v1_router(
                     "Cache-Control": "private, max-age=300",
                 },
             )
+
+    if model_selection is not None:
+
+        def _model_response(status: ModelStatus) -> ModelStatusResponse:
+            return ModelStatusResponse(
+                provider=status.provider,  # type: ignore[arg-type]
+                model=status.model,
+                cloud=status.cloud,
+                local_model=status.local_model,
+                gemini_model=status.gemini_model,
+                gemini_ready=status.gemini_ready,
+                gemini_blocker=status.gemini_blocker,
+            )
+
+        @router.get("/model", response_model=ModelStatusResponse)
+        def get_model() -> ModelStatusResponse:
+            """Which model is answering, read-only."""
+            return _model_response(model_selection.status())
+
+        @router.post("/model", response_model=ModelStatusResponse)
+        async def select_model(request: Request, body: ModelSelectRequest) -> ModelStatusResponse:
+            """Switch between the local model and Gemini (cloud needs confirmation)."""
+            try:
+                enforce_mutation_fence(
+                    host=request.headers.get("host"),
+                    origin=request.headers.get("origin"),
+                    content_type=request.headers.get("content-type"),
+                )
+            except MutationRequestRejected as error:
+                raise Phase7ApiError(
+                    403,
+                    "MUTATION_NOT_ALLOWED",
+                    "The model can only be changed from the local AAOS page.",
+                ) from error
+            try:
+                status = await model_selection.switch(
+                    body.provider, confirm_cloud=body.confirm_cloud
+                )
+            except ModelSelectionError as error:
+                http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]
+                raise Phase7ApiError(http_status, code, message) from None
+            return _model_response(status)
 
     if study_task_reader is not None:
 

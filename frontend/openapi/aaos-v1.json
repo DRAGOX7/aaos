@@ -1677,6 +1677,98 @@
         "title": "HealthStatus",
         "type": "string"
       },
+      "ModelSelectRequest": {
+        "additionalProperties": false,
+        "description": "Closed request to change the answering model; the browser never sends a key.",
+        "properties": {
+          "confirm_cloud": {
+            "default": false,
+            "title": "Confirm Cloud",
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "lm_studio",
+              "gemini"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "ModelSelectRequest",
+        "type": "object"
+      },
+      "ModelStatusResponse": {
+        "additionalProperties": false,
+        "description": "Which model answers now. Names only: the Gemini API key never appears here.",
+        "properties": {
+          "cloud": {
+            "title": "Cloud",
+            "type": "boolean"
+          },
+          "gemini_blocker": {
+            "anyOf": [
+              {
+                "enum": [
+                  "GEMINI_API_KEY_MISSING",
+                  "GEMINI_MODEL_MISSING"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Blocker"
+          },
+          "gemini_model": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Model"
+          },
+          "gemini_ready": {
+            "title": "Gemini Ready",
+            "type": "boolean"
+          },
+          "local_model": {
+            "maxLength": 200,
+            "title": "Local Model",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 200,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "lm_studio",
+              "gemini"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "cloud",
+          "local_model",
+          "gemini_ready"
+        ],
+        "title": "ModelStatusResponse",
+        "type": "object"
+      },
       "OperationActivityContext": {
         "additionalProperties": false,
         "properties": {
@@ -3653,6 +3745,62 @@
           }
         },
         "summary": "Get Document File"
+      }
+    },
+    "/api/v1/model": {
+      "get": {
+        "description": "Which model is answering, read-only.",
+        "operationId": "get_model_api_v1_model_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Model"
+      },
+      "post": {
+        "description": "Switch between the local model and Gemini (cloud needs confirmation).",
+        "operationId": "select_model_api_v1_model_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelSelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Model"
       }
     },
     "/api/v1/rag/queries": {
