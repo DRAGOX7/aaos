@@ -10,6 +10,11 @@ from pathlib import Path
 import httpx2
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.inference.factory import (
+    NoOpModelLifecycle,
+    active_model_identifier,
+    build_model_gateway,
+)
 from aaos.inference.lm_studio import LMStudioGateway
 from aaos.rag.config import RagIndexConfig, resolve_rag_runtime_paths
 from aaos.rag.contracts import LocalRagService, RagErrorCode, RagOperationalError
@@ -93,15 +98,22 @@ def build_configured_phase4_runtime(
     paths = resolve_rag_runtime_paths((data_root or Path("data")).resolve())
     validate_rag_database(paths.database_path)
 
-    gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
+    cloud_options: dict[str, object] = {}
+    if settings.model_provider == "gemini":
+        # Opt-in cloud model: there is no local model to load or free.
+        gateway = build_model_gateway(settings)
+        cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
+    else:
+        gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
     try:
         runtime = build_phase4_runtime(
             paths=paths,
             config=config,
             gateway=gateway,
             database_engine_factory=create_existing_rag_database_engine,
-            summary_model_identifier=settings.lm_studio_model,
+            summary_model_identifier=active_model_identifier(settings),
             query_embedding_factory=cpu_query_embedding_factory,
+            **cloud_options,  # type: ignore[arg-type]
         )
     except Exception:
         try:

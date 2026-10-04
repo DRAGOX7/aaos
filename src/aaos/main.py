@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.inference.factory import warn_if_cloud_model
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
 from aaos.web.contracts import (
@@ -48,7 +49,7 @@ if TYPE_CHECKING:
         StudyTaskPort,
     )
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
-    from aaos.inference.lm_studio import LMStudioGateway
+    from aaos.inference.factory import ClosableModelGateway
     from aaos.moodle.changes import MoodleChangeSet
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
@@ -335,17 +336,15 @@ class _LazyDefaultAcademicAskService:
         self._calendar_task_service = calendar_task_service
         self._calendar_timezone = calendar_timezone
         self._moodle_change_reader = moodle_change_reader
-        self._gateway: LMStudioGateway | None = None
+        self._gateway: ClosableModelGateway | None = None
         self._assistant: ReadOnlyAcademicAssistant | None = None
 
     def _ensure_assistant(self) -> ReadOnlyAcademicAssistant:
         if self._assistant is None:
-            import httpx2
-
             from aaos.agent.academic_orchestrator import ReadOnlyAcademicAssistant
-            from aaos.inference.lm_studio import LMStudioGateway
+            from aaos.inference.factory import build_model_gateway
 
-            self._gateway = LMStudioGateway(self._settings, httpx2.AsyncHTTPTransport())
+            self._gateway = build_model_gateway(self._settings)
             self._assistant = ReadOnlyAcademicAssistant(
                 self._gateway,
                 self._academic_reader,
@@ -678,6 +677,7 @@ def create_app(
     if calendar_task_service is not None and calendar_task_executor is None:
         raise ValueError("Calendar proposals require execution through the approval endpoint")
 
+    warn_if_cloud_model(settings)
     application = FastAPI(
         title=settings.application_name,
         version=settings.application_version,

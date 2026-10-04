@@ -189,6 +189,20 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+**Optional: answer with a Gemini model instead of the local one.** This is off by default and
+changes the privacy model: your questions and the excerpts of your course files used to answer them
+are sent to Google. Embeddings and the claim checker still run locally. Set these in the backend's
+terminal before starting it (the key lives only in that terminal's environment, never in a file):
+
+```powershell
+$env:AAOS_MODEL_PROVIDER = 'gemini'
+$env:AAOS_GEMINI_MODEL   = '<model name from Google AI Studio>'
+$env:GEMINI_API_KEY      = '<your key>'
+```
+
+The backend logs `CLOUD MODEL ACTIVE` at startup. Open a new terminal, or remove the variables, to
+return to the local model.
+
 **Connect Moodle and index your files** (from the data folder):
 
 ```powershell
