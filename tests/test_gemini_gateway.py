@@ -302,7 +302,7 @@ def test_a_rejected_schema_is_retried_once_without_it() -> None:
     assert ["response_format" in body for body in bodies] == [True, False]
 
 
-def test_only_a_400_on_a_structured_request_is_retried() -> None:
+def test_only_a_400_is_retried_and_never_with_more_than_before() -> None:
     calls: list[int] = []
 
     def server_error(request: httpx2.Request) -> httpx2.Response:
@@ -326,7 +326,63 @@ def test_only_a_400_on_a_structured_request_is_retried() -> None:
 
     with pytest.raises(InferenceBackendError):
         _run(_gateway(plain_400), REQUEST)
-    assert calls == [1]  # nothing to drop on a plain request
+    assert calls == [1, 1]  # a plain request is retried once, without reasoning_effort
+
+
+def test_a_model_that_rejects_reasoning_effort_is_retried_without_it() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "reasoning_effort" in body:
+            return httpx2.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
+        return _ok("fine")
+
+    assert _run(_gateway(handler), REQUEST).content == "fine"
+    assert ["reasoning_effort" in body for body in bodies] == [True, False]
+
+
+def test_a_structured_request_walks_down_to_the_plainest_one_that_works() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "response_format" in body or "reasoning_effort" in body:
+            return httpx2.Response(400)
+        return _ok('{"action": "ANSWER"}')
+
+    structured = ChatRequest(
+        messages=(ChatMessage("user", "pick a tool"),),
+        structured_output="json_schema",
+        structured_output_schema="read_only_academic_decision",
+    )
+    _run(_gateway(handler), structured)
+
+    assert [("response_format" in b, "reasoning_effort" in b) for b in bodies] == [
+        (True, True),
+        (False, True),
+        (False, False),
+    ]
+
+
+def test_a_failure_is_logged_with_its_safe_facts_in_the_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            429, json={"error": {"status": "RESOURCE_EXHAUSTED", "message": f"quota {KEY}"}}
+        )
+
+    with caplog.at_level(logging.WARNING, logger="aaos.inference.gemini"):
+        with pytest.raises(InferenceBackendError):
+            _run(_gateway(handler), REQUEST)
+
+    assert "http_status=429" in caplog.text
+    assert "http_429_RESOURCE_EXHAUSTED" in caplog.text
+    assert "INFERENCE_BACKEND_ERROR" in caplog.text
+    assert KEY not in caplog.text and "What is KNIME" not in caplog.text
 
 
 # --- choosing the gateway ------------------------------------------------------------------

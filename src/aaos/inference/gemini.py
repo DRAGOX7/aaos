@@ -13,6 +13,7 @@ excerpts, to Google's Gemini API. Guard rails that keep it narrow:
 
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 from typing import Any
@@ -40,6 +41,8 @@ from .telemetry import (
     safe_error_code,
     safe_exception_type,
 )
+
+_LOGGER = logging.getLogger("aaos.inference.gemini")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
@@ -190,27 +193,28 @@ class GeminiGateway:
                 _STRUCTURED_RESPONSE_FORMATS[request.structured_output_schema]
             )
 
-        try:
-            response = await self._send(
-                "POST",
-                "chat/completions",
-                operation="generation",
-                payload=payload,
-                timeout_seconds=request.request_timeout_seconds,
-            )
-        except GeminiHTTPError as error:
-            if error.http_status != 400 or "response_format" not in payload:
-                raise
-            # Gemini accepts only part of JSON Schema and may reject a structured
-            # request. Retry once without it: AAOS validates every reply itself.
-            del payload["response_format"]
-            response = await self._send(
-                "POST",
-                "chat/completions",
-                operation="generation",
-                payload=payload,
-                timeout_seconds=request.request_timeout_seconds,
-            )
+        # Gemini accepts only part of what AAOS asks for and answers HTTP 400 when a
+        # setting is not supported by the chosen model. Retry with less, never more:
+        # first without the JSON schema, then also without reasoning_effort. AAOS
+        # validates every reply itself, so a reply from a reduced request is still
+        # checked exactly the same way.
+        attempts = [payload]
+        if "response_format" in payload:
+            attempts.append({k: v for k, v in payload.items() if k != "response_format"})
+        attempts.append({k: v for k, v in attempts[-1].items() if k != "reasoning_effort"})
+        for index, attempt in enumerate(attempts):
+            try:
+                response = await self._send(
+                    "POST",
+                    "chat/completions",
+                    operation="generation",
+                    payload=attempt,
+                    timeout_seconds=request.request_timeout_seconds,
+                )
+                break
+            except GeminiHTTPError as error:
+                if error.http_status != 400 or index == len(attempts) - 1:
+                    raise
         try:
             return _parse_generation(response.json())
         except (TypeError, ValueError):
@@ -299,6 +303,12 @@ class GeminiGateway:
         http_status: int | None = None,
         backend_category: str | None = None,
     ) -> None:
+        # GeminiHTTPError is a subclass the shared name table does not know.
+        error_code = (
+            "INFERENCE_BACKEND_ERROR"
+            if isinstance(error, InferenceBackendError)
+            else safe_error_code(error)
+        )
         self._emit(
             LocalInferenceTelemetryEvent(
                 operation="INFERENCE_REQUEST",
@@ -306,10 +316,21 @@ class GeminiGateway:
                 model_role="answer",
                 lifecycle_state=f"failed:{operation}",
                 exception_type=safe_exception_type(error),
-                safe_error_code=safe_error_code(error),
+                safe_error_code=error_code,
                 http_status=http_status,
                 backend_category=backend_category,
             )
+        )
+        # The telemetry event above carries structured fields that the default log format
+        # does not print, so say the safe facts in the message itself: no prompt, reply,
+        # key or provider text, only the operation, status, category and error kind.
+        _LOGGER.warning(
+            "Gemini request failed: operation=%s model=%s http_status=%s category=%s error=%s",
+            operation,
+            self._model,
+            http_status,
+            backend_category,
+            error_code,
         )
 
     def _emit(self, event: LocalInferenceTelemetryEvent) -> None:
