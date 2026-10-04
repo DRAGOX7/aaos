@@ -163,6 +163,7 @@ from .study_planning import (
     render_plan_context_explanation,
     resolve_plan_explanation,
 )
+from .task_requests import TaskRequest, parse_task_request
 
 MAX_ACADEMIC_QUESTION_CHARACTERS = 4096
 MAX_ACADEMIC_RECORDS = 50
@@ -2677,6 +2678,18 @@ _TASK_DETAILS_AR = (
     "يمكنك إضافة أولوية (منخفضة أو عادية أو عالية). تُحفظ المهمة في AAOS فقط، "
     "وليس على مودل."
 )
+_TASK_NEEDS_TITLE_EN = "I found the course {course}, but not what the task is.\n"
+_TASK_NEEDS_TITLE_AR = "وجدت المادة {course}، لكن لم أعرف ما هي المهمة.\n"
+_TASK_UNKNOWN_COURSE_EN = (
+    "I couldn't find a course matching \u201c{code}\u201d.\n"
+    "Your current courses: {courses}.\n"
+    "Name one of them, or leave the course out and I'll save the task without a course."
+)
+_TASK_UNKNOWN_COURSE_AR = (
+    "لم أجد مادة تطابق «{code}».\n"
+    "موادك الحالية: {courses}.\n"
+    "اذكر إحداها، أو احذف اسم المادة وسأحفظ المهمة بدون مادة."
+)
 _ABOUT_AAOS_AR = (
     "أنا AAOS، مساعدك الأكاديمي لمودل جامعة العلوم والتكنولوجيا. هدفي أن أبقيك "
     "على اطلاع بموادك دون أن تبحث في مودل بنفسك.\n"
@@ -3270,6 +3283,19 @@ class ReadOnlyAcademicAssistant:
                 arabic = _ARABIC_LETTER.search(question) is not None
                 return direct_answer(_TASK_DETAILS_AR if arabic else _TASK_DETAILS_EN)
 
+            task_request: TaskRequest | None = None
+            task_courses: tuple[CourseSummary, ...] = ()
+            if self._study_task_service is not None:
+                task_request, task_courses = self._task_request(question.strip())
+            if task_request is not None:
+                clarification = _task_clarification(
+                    task_request,
+                    task_courses,
+                    arabic=_ARABIC_LETTER.search(question) is not None,
+                )
+                if clarification is not None:
+                    return direct_answer(clarification)
+
             if has_unsupported_calendar_operation(question.strip()):
                 return direct_refusal(
                     "Calendar updates, moves, and deletions are not supported. "
@@ -3540,7 +3566,10 @@ class ReadOnlyAcademicAssistant:
                 lease.snapshot.past_focus and not asks_about_current(question)
             )
             routed_tool = (
-                self._routed_tool_call(question.strip(), past=past_requested)
+                (
+                    _routed_task_create(task_request)
+                    or self._routed_tool_call(question.strip(), past=past_requested)
+                )
                 if self._intent_routing
                 and context_resolution is None
                 and not calendar_intent
@@ -3746,6 +3775,25 @@ class ReadOnlyAcademicAssistant:
         except Exception:
             return ()
 
+    def _task_request(
+        self, question: str
+    ) -> tuple[TaskRequest | None, tuple[CourseSummary, ...]]:
+        """Parse an explicit "add a study task" sentence against trusted course records.
+
+        Any failure to read the courses leaves the request to the model loop.
+        """
+        try:
+            courses = self._academic.list_courses(limit=MAX_ACADEMIC_RECORDS + 1)
+        except Exception:
+            return None, ()
+        if (
+            not isinstance(courses, tuple)
+            or len(courses) > MAX_ACADEMIC_RECORDS
+            or any(not isinstance(course, CourseSummary) for course in courses)
+        ):
+            return None, ()
+        return parse_task_request(question, courses), courses
+
     def _routed_tool_call(
         self, question: str, *, past: bool | None = None
     ) -> tuple[ToolName, dict[str, object]] | None:
@@ -3889,6 +3937,54 @@ _ROUTED_TOOLS: Mapping[RoutedIntent, ToolName] = {
     RoutedIntent.MOODLE_CHANGES: ToolName.MOODLE_LIST_CHANGES,
     RoutedIntent.ANNOUNCEMENTS: ToolName.ACADEMIC_LIST_ANNOUNCEMENTS,
 }
+
+
+def _routed_task_create(request: TaskRequest | None) -> tuple[ToolName, dict[str, object]] | None:
+    """The one study_task.create call an explicit, complete task request stands for."""
+    if request is None or request.title is None or request.unknown_course is not None:
+        return None
+    arguments: dict[str, object] = {"title": request.title}
+    if request.course_name is not None:
+        arguments["course_name"] = request.course_name
+    if request.priority is not None:
+        arguments["priority"] = request.priority
+    return ToolName.STUDY_TASK_CREATE, arguments
+
+
+def _current_course_labels(courses: tuple[CourseSummary, ...]) -> str:
+    labels: list[str] = []
+    for course in courses:
+        if course.status == "past":
+            continue
+        label = course_display_title(course.title)
+        if label not in labels:
+            labels.append(label)
+    return "; ".join(labels[:10])
+
+
+def _task_clarification(
+    request: TaskRequest, courses: tuple[CourseSummary, ...], *, arabic: bool
+) -> str | None:
+    """What to ask the owner when a task request cannot be saved as written, else None."""
+    if request.title is None:
+        if request.course_name is None:
+            return _TASK_DETAILS_AR if arabic else _TASK_DETAILS_EN
+        label = request.course_name
+        for course in courses:
+            if course.status != "past" and request.course_name in (
+                course_code_token(course.title),
+                course.title,
+            ):
+                label = course_display_title(course.title)
+                break
+        opening = _TASK_NEEDS_TITLE_AR if arabic else _TASK_NEEDS_TITLE_EN
+        return opening.format(course=label) + (_TASK_DETAILS_AR if arabic else _TASK_DETAILS_EN)
+    if request.unknown_course is not None:
+        template = _TASK_UNKNOWN_COURSE_AR if arabic else _TASK_UNKNOWN_COURSE_EN
+        return template.format(
+            code=request.unknown_course, courses=_current_course_labels(courses)
+        )
+    return None
 
 
 class _RoutedDecisionAdapter(AcademicDecisionAdapter):

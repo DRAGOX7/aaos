@@ -56,6 +56,31 @@ def normalize_arabic(text: str) -> str:
     return " ".join(folded.split())
 
 
+def fold_with_offsets(text: str) -> tuple[str, list[int]]:
+    """normalize_arabic(text) plus, per folded character, its index in ``text``.
+
+    Lets a caller match on the folded text and still cut the owner's original
+    wording (case, Arabic letter forms) out of the question.
+    """
+    folded_chars: list[str] = []
+    origins: list[int] = []
+    pending_space = False
+    for position, char in enumerate(text):
+        folded = unicodedata.normalize("NFKC", char).casefold()
+        folded = _ARABIC_DIACRITICS.sub("", folded).translate(_ARABIC_LETTER_FOLDS)
+        for piece in folded:
+            if piece.isspace():
+                pending_space = bool(folded_chars)
+                continue
+            if pending_space:
+                folded_chars.append(" ")
+                origins.append(position)
+                pending_space = False
+            folded_chars.append(piece)
+            origins.append(position)
+    return "".join(folded_chars), origins
+
+
 def _any(patterns: Iterable[str]) -> re.Pattern[str]:
     return re.compile("|".join(f"(?:{pattern})" for pattern in patterns))
 
@@ -421,10 +446,24 @@ def _course_aliases(course: CourseSummary) -> tuple[str, ...]:
     return tuple(alias for alias in aliases if alias)
 
 
-def _mentions(text: str, alias: str) -> bool:
+def _alias_regex(alias: str) -> re.Pattern[str]:
     # A code may be written with a space or hyphen before its digits ("AI 495C").
     pattern = re.sub(r"(?<=[a-z])(?=\d)", r"[\\s-]?", re.escape(alias), count=1)
-    return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
+    return re.compile(rf"(?<!\w){pattern}(?!\w)")
+
+
+def _mentions(text: str, alias: str) -> bool:
+    return _alias_regex(alias).search(text) is not None
+
+
+def course_alias_patterns(course: CourseSummary) -> tuple[re.Pattern[str], ...]:
+    """Patterns for every way a question can name ``course``, longest alias first.
+
+    They run on ``fold_with_offsets`` output, the same folded text
+    ``find_course_mention`` matches against.
+    """
+    aliases = sorted(_course_aliases(course), key=len, reverse=True)
+    return tuple(_alias_regex(alias) for alias in aliases)
 
 
 def find_course_mention(question: str, courses: Iterable[CourseSummary]) -> CourseMention:
