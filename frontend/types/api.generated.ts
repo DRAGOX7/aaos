@@ -919,6 +919,8 @@ export interface components {
             gemini_model?: string | null;
             /** Gemini Ready */
             gemini_ready: boolean;
+            /** Last Failure */
+            last_failure?: string | null;
             /** Local Model */
             local_model: string;
             /** Model */

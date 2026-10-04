@@ -780,6 +780,8 @@ class ModelStatusResponse(BaseModel):
     gemini_model: str | None = Field(default=None, max_length=200)
     gemini_ready: bool
     gemini_blocker: ModelGeminiBlockerView | None = None
+    # The last model problem in safe words, so the page can say why an answer failed.
+    last_failure: str | None = Field(default=None, max_length=200)
 
 
 class ModelSelectRequest(BaseModel):

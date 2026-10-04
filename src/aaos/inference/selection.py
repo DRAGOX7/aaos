@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -55,6 +56,8 @@ class ModelStatus:
     gemini_model: str | None
     gemini_ready: bool
     gemini_blocker: GeminiBlocker | None
+    # The last model problem, as safe words only (never a prompt, reply or key).
+    last_failure: str | None = None
 
 
 Listener = Callable[[], Awaitable[None]]
@@ -69,6 +72,7 @@ class ModelSelection:
         self._provider = settings.model_provider
         self._listeners: list[Listener] = []
         self._active = 0
+        self._last_failure: str | None = None
         self._select_lock = asyncio.Lock()
         self._gate = asyncio.Event()
         self._gate.set()
@@ -97,6 +101,7 @@ class ModelSelection:
             gemini_model=gemini_model,
             gemini_ready=blocker is None,
             gemini_blocker=blocker,
+            last_failure=self._last_failure,
         )
 
     def effective_settings(self) -> AppSettings:
@@ -104,6 +109,15 @@ class ModelSelection:
         if self._provider == "gemini":
             return replace(self._base, model_provider="gemini", gemini_model=self._gemini_model())
         return replace(self._base, model_provider="lm_studio", gemini_model=None)
+
+    def record_failure(self, summary: str) -> None:
+        """Remember the last model problem for the page; only safe characters are kept."""
+        cleaned = re.sub(r"[^A-Za-z0-9_ .:=()/-]", "", summary).strip()[:200]
+        self._last_failure = cleaned or None
+
+    def record_success(self) -> None:
+        """A model call worked: the earlier problem no longer describes the situation."""
+        self._last_failure = None
 
     # --- use tracking ------------------------------------------------------------------
 
@@ -153,4 +167,5 @@ class ModelSelection:
                 raise ModelSelectionError("MODEL_SWITCH_FAILED") from None
             finally:
                 self._gate.set()
+            self._last_failure = None  # a new model starts with a clean slate
             return self.status()

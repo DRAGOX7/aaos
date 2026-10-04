@@ -181,6 +181,27 @@ def test_a_question_that_arrives_during_a_switch_waits_for_it() -> None:
     assert asyncio.run(scenario()) == ["reset-start", "reset-end", "question"]
 
 
+def test_the_last_problem_is_kept_in_safe_words_and_cleared_by_a_success_or_a_switch() -> None:
+    async def scenario() -> None:
+        selection = _selection(READY)
+        selection.record_failure(f"Gemini generation failed: http_429_RESOURCE_EXHAUSTED {KEY}<b>")
+        shown = selection.status().last_failure
+        assert shown is not None and shown.startswith("Gemini generation failed: http_429")
+        assert "<" not in shown and ">" not in shown
+
+        selection.record_failure("x" * 500)
+        assert len(selection.status().last_failure or "") == 200
+
+        selection.record_success()
+        assert selection.status().last_failure is None
+
+        selection.record_failure("Gemini generation failed: http_503_UNAVAILABLE")
+        await selection.switch("gemini", confirm_cloud=True)
+        assert selection.status().last_failure is None  # a new model, a clean slate
+
+    asyncio.run(scenario())
+
+
 # --- the API ---------------------------------------------------------------------------
 
 LOCAL_PAGE = {"Host": "localhost:8000", "Origin": "http://localhost:3000"}
@@ -206,8 +227,18 @@ def test_get_model_reports_names_only() -> None:
         "gemini_model": "gemini-test-flash",
         "gemini_ready": True,
         "gemini_blocker": None,
+        "last_failure": None,
     }
     assert KEY not in str(body)
+
+
+def test_get_model_shows_the_last_problem() -> None:
+    selection = _selection(READY)
+    selection.record_failure("Gemini generation failed: http_503_UNAVAILABLE")
+
+    body = _client(selection).get("/api/v1/model").json()
+
+    assert body["last_failure"] == "Gemini generation failed: http_503_UNAVAILABLE"
 
 
 def test_post_model_switches_with_confirmation_from_the_local_page() -> None:

@@ -245,7 +245,11 @@ class _LazyDefaultRagReader:
                 self._runtime = (
                     build_configured_phase4_runtime()
                     if self._selection is None
-                    else build_configured_phase4_runtime(self._selection.effective_settings())
+                    else build_configured_phase4_runtime(
+                        self._selection.effective_settings(),
+                        on_model_failure=self._selection.record_failure,
+                        on_model_success=self._selection.record_success,
+                    )
                 )
                 self._delegate = RagReadService(self._runtime.service, sessions)
             return self._delegate
@@ -398,7 +402,11 @@ class _LazyDefaultAcademicAskService:
                 if self._selection is not None
                 else self._settings
             )
-            self._gateway = build_model_gateway(settings)
+            self._gateway = build_model_gateway(
+                settings,
+                on_failure=self._selection.record_failure if self._selection else None,
+                on_success=self._selection.record_success if self._selection else None,
+            )
             self._assistant = ReadOnlyAcademicAssistant(
                 self._gateway,
                 self._academic_reader,

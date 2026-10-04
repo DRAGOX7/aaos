@@ -1740,6 +1740,18 @@
             "title": "Gemini Ready",
             "type": "boolean"
           },
+          "last_failure": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Failure"
+          },
           "local_model": {
             "maxLength": 200,
             "title": "Local Model",

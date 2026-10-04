@@ -76,6 +76,8 @@ export function ModelBadge() {
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        // Opening the panel refreshes it, so the last problem is the latest one.
+        if (next) void query.refetch();
         if (!next) {
           setConfirming(false);
           mutation.reset();
@@ -107,6 +109,15 @@ export function ModelBadge() {
         </SheetHeader>
 
         <div className="flex flex-col gap-3 px-4">
+          {status.last_failure ? (
+            <p
+              className="rounded-xl border border-destructive/30 bg-[#fdecee] p-3 text-sm text-[#a62a33]"
+              role="status"
+            >
+              Last problem: {status.last_failure}
+            </p>
+          ) : null}
+
           <Button
             type="button"
             variant={cloud ? "outline" : "default"}

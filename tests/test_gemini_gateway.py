@@ -38,6 +38,9 @@ SETTINGS = AppSettings(model_provider="gemini", gemini_model="models/gemini-test
 def _gateway(
     handler: Callable[[httpx2.Request], httpx2.Response],
     events: list[LocalInferenceTelemetryEvent] | None = None,
+    *,
+    on_failure: Callable[[str], None] | None = None,
+    on_success: Callable[[], None] | None = None,
 ) -> GeminiGateway:
     return GeminiGateway(
         SETTINGS,
@@ -45,6 +48,8 @@ def _gateway(
         api_key=KEY,
         diagnostic_sink=events.append if events is not None else None,
         overload_retry_delays=(0.0, 0.0),
+        on_failure=on_failure,
+        on_success=on_success,
     )
 
 
@@ -422,6 +427,103 @@ def test_only_a_503_is_waited_on_not_a_rate_limit_or_a_bad_key() -> None:
         with pytest.raises(InferenceError):
             _run(_gateway(handler), REQUEST)
         assert len(calls) == 1, status
+
+
+def test_a_reply_with_extra_fields_and_odd_usage_is_still_read() -> None:
+    """Only the answer text matters; whatever else Google adds must not fail an answer."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "model": "models/gemini-test-flash",
+                "object": "chat.completion",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": "KNIME is a data analytics platform.",
+                            "reasoning_content": "thinking summary Google may add",
+                            "extra_content": {"google": {"thought": True}},
+                            "tool_calls": [],
+                        },
+                    }
+                ],
+                # Thinking models can report usage without a completion count.
+                "usage": {"prompt_tokens": 12, "total_tokens": 80},
+            },
+        )
+
+    response = _run(_gateway(handler), REQUEST)
+
+    assert response.content == "KNIME is a data analytics platform."
+    assert response.model_identifier == "models/gemini-test-flash"
+    assert response.usage is None  # unreadable usage is dropped, not fatal
+
+
+def test_content_given_as_parts_is_joined() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": [{"text": "A "}, {"text": "B"}]}}
+                ]
+            },
+        )
+
+    assert _run(_gateway(handler), REQUEST).content == "A B"
+
+
+def test_an_empty_answer_is_reported_with_its_finish_reason() -> None:
+    summaries: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "length", "message": {"role": "assistant", "content": None}}
+                ]
+            },
+        )
+
+    with pytest.raises(InferenceProtocolError):
+        _run(_gateway(handler, on_failure=summaries.append), REQUEST)
+
+    assert summaries and "empty_content finish_reason=length" in summaries[-1]
+
+
+def test_failures_and_successes_are_reported_in_safe_words() -> None:
+    failures: list[str] = []
+    successes: list[int] = []
+
+    def limited(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            429, json={"error": {"status": "RESOURCE_EXHAUSTED", "message": f"quota {KEY}"}}
+        )
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(limited, on_failure=failures.append), REQUEST)
+    assert failures == ["Gemini generation failed: http_429_RESOURCE_EXHAUSTED"]
+    assert KEY not in failures[0]
+
+    _run(_gateway(lambda request: _ok(), on_success=lambda: successes.append(1)), REQUEST)
+    assert successes == [1]
+
+
+def test_a_broken_report_callback_never_breaks_an_answer() -> None:
+    def explode(*_: object) -> None:
+        raise RuntimeError("callback bug")
+
+    assert (
+        _run(_gateway(lambda request: _ok("fine"), on_success=explode), REQUEST).content == "fine"
+    )
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(lambda request: httpx2.Response(401), on_failure=explode), REQUEST)
 
 
 # --- choosing the gateway ------------------------------------------------------------------

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
@@ -33,8 +34,8 @@ from .gateway import (
     ModelUnavailableError,
     UnsupportedInferenceFeatureError,
 )
-from .lm_studio import _STRUCTURED_RESPONSE_FORMATS, _estimate_prompt_tokens, _parse_generation
-from .models import ChatRequest, ChatResponse, ModelAvailability
+from .lm_studio import _STRUCTURED_RESPONSE_FORMATS, _estimate_prompt_tokens, _parse_usage
+from .models import ChatRequest, ChatResponse, ModelAvailability, TokenUsage
 from .telemetry import (
     LocalInferenceTelemetryEvent,
     TelemetrySink,
@@ -71,6 +72,7 @@ _SUPPORTED_SCHEMA_KEYS = frozenset(
 # short. Two retries at most, so a real outage still fails promptly.
 _OVERLOAD_RETRY_DELAYS = (1.0, 3.0)
 _GOOGLE_STATUS = re.compile(r"^[A-Z_]{3,40}$")
+_FINISH_REASON = re.compile(r"^[A-Za-z_]{1,30}$")
 
 
 class GeminiHTTPError(InferenceBackendError):
@@ -122,6 +124,8 @@ class GeminiGateway:
         api_key: str,
         diagnostic_sink: TelemetrySink | None = None,
         overload_retry_delays: tuple[float, ...] = _OVERLOAD_RETRY_DELAYS,
+        on_failure: Callable[[str], None] | None = None,
+        on_success: Callable[[], None] | None = None,
     ) -> None:
         if settings.model_provider != "gemini" or settings.gemini_model is None:
             raise ValueError("settings must select the gemini provider")
@@ -139,6 +143,8 @@ class GeminiGateway:
         )
         self._diagnostic_sink = diagnostic_sink or emit_local_inference_telemetry
         self._overload_retry_delays = overload_retry_delays
+        self._on_failure = on_failure
+        self._on_success = on_success
         self._closed = False
 
     def __repr__(self) -> str:
@@ -218,13 +224,18 @@ class GeminiGateway:
                 if error.http_status != 400 or index == len(attempts) - 1:
                     raise
         try:
-            return _parse_generation(response.json())
-        except (TypeError, ValueError):
+            body: object = response.json()
+        except ValueError:
+            body = None
+        reply, reason = _read_reply(body, self._model)
+        if reply is None:
             protocol_error = InferenceProtocolError(
                 "Gemini returned invalid data during generation"
             )
-            self._emit_failure("generation", protocol_error)
+            self._emit_failure("generation", protocol_error, detail=f"reply unreadable: {reason}")
             raise protocol_error from None
+        self._report(self._on_success)
+        return reply
 
     async def _post_with_overload_retry(
         self, payload: dict[str, object], timeout_seconds: float | None
@@ -324,6 +335,7 @@ class GeminiGateway:
         *,
         http_status: int | None = None,
         backend_category: str | None = None,
+        detail: str | None = None,
     ) -> None:
         # GeminiHTTPError is a subclass the shared name table does not know.
         error_code = (
@@ -347,13 +359,29 @@ class GeminiGateway:
         # does not print, so say the safe facts in the message itself: no prompt, reply,
         # key or provider text, only the operation, status, category and error kind.
         _LOGGER.warning(
-            "Gemini request failed: operation=%s model=%s http_status=%s category=%s error=%s",
+            "Gemini request failed: operation=%s model=%s http_status=%s category=%s error=%s"
+            " detail=%s",
             operation,
             self._model,
             http_status,
             backend_category,
             error_code,
+            detail,
         )
+        # The same safe facts, for the model panel in the page: no prompt, reply or key.
+        what = backend_category or error_code.lower()
+        self._report(
+            self._on_failure,
+            f"Gemini {operation} failed: {what}" + (f" ({detail})" if detail else ""),
+        )
+
+    def _report(self, callback: Callable[..., None] | None, *args: str) -> None:
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception:
+            return
 
     def _emit(self, event: LocalInferenceTelemetryEvent) -> None:
         try:
@@ -366,6 +394,44 @@ class GeminiGateway:
             return
         self._closed = True
         await self._client.aclose()
+
+
+def _read_reply(payload: object, configured_model: str) -> tuple[ChatResponse | None, str]:
+    """Take the answer text from a reply and ignore everything else Google adds.
+
+    Only ``choices[0].message.content`` matters. Extra fields (thinking summaries,
+    tool-call stubs, per-model usage details) are not errors, and token usage is
+    best-effort: it is informational, so a missing or odd count never fails an answer.
+    Returns the reply, or None and a short safe reason.
+    """
+    if not isinstance(payload, dict):
+        return None, "not_an_object"
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None, "no_choices"
+    first = choices[0]
+    finish = first.get("finish_reason")
+    finish_text = (
+        f" finish_reason={finish}"
+        if isinstance(finish, str) and _FINISH_REASON.match(finish)
+        else ""
+    )
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return None, "no_message" + finish_text
+    content = message.get("content")
+    if isinstance(content, list):  # OpenAI-style content parts
+        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    if not isinstance(content, str) or not content.strip():
+        return None, "empty_content" + finish_text
+    model = payload.get("model")
+    model_id = model.strip() if isinstance(model, str) and model.strip() else configured_model
+    usage: TokenUsage | None
+    try:
+        usage = _parse_usage(payload.get("usage"))
+    except (TypeError, ValueError):
+        usage = None
+    return ChatResponse(content=content, model_identifier=model_id, usage=usage), "ok"
 
 
 def _category(response: httpx2.Response) -> str:

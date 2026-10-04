@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,6 +75,8 @@ def build_configured_phase4_runtime(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
     data_root: Path | None = None,
+    on_model_failure: Callable[[str], None] | None = None,
+    on_model_success: Callable[[], None] | None = None,
 ) -> ConfiguredPhase4Runtime:
     """Build the approved local Phase 4 runtime at an explicit call site."""
 
@@ -101,7 +104,9 @@ def build_configured_phase4_runtime(
     cloud_options: dict[str, object] = {}
     if settings.model_provider == "gemini":
         # Opt-in cloud model: there is no local model to load or free.
-        gateway = build_model_gateway(settings)
+        gateway = build_model_gateway(
+            settings, on_failure=on_model_failure, on_success=on_model_success
+        )
         cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
     else:
         gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())

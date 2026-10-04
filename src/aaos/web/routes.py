@@ -530,6 +530,7 @@ def create_api_v1_router(
                 gemini_model=status.gemini_model,
                 gemini_ready=status.gemini_ready,
                 gemini_blocker=status.gemini_blocker,
+                last_failure=status.last_failure,
             )
 
         @router.get("/model", response_model=ModelStatusResponse)

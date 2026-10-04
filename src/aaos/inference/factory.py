@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from typing import Protocol
 
 import httpx2
@@ -51,7 +52,12 @@ class NoOpModelLifecycle:
         return None
 
 
-def build_model_gateway(settings: AppSettings) -> ClosableModelGateway:
+def build_model_gateway(
+    settings: AppSettings,
+    *,
+    on_failure: Callable[[str], None] | None = None,
+    on_success: Callable[[], None] | None = None,
+) -> ClosableModelGateway:
     """Build the gateway for ``settings``; the Gemini key is read here, from the environment."""
     if settings.model_provider == "gemini":
         from .gemini import GeminiGateway
@@ -60,7 +66,13 @@ def build_model_gateway(settings: AppSettings) -> ClosableModelGateway:
         if not api_key:
             raise InferenceError(f"{GEMINI_API_KEY_ENVIRONMENT_KEY} is not set")
         warn_if_cloud_model(settings)
-        return GeminiGateway(settings, httpx2.AsyncHTTPTransport(), api_key=api_key)
+        return GeminiGateway(
+            settings,
+            httpx2.AsyncHTTPTransport(),
+            api_key=api_key,
+            on_failure=on_failure,
+            on_success=on_success,
+        )
 
     from .lm_studio import LMStudioGateway
 

@@ -23,6 +23,28 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Route requests by method: reads return the current status (opening the panel
+ * refreshes it, so the number of reads is not part of the contract), and each
+ * switch request takes the next scripted response.
+ */
+function mockApi(initial: ModelStatus, ...switches: Response[]) {
+  let current = initial;
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      const next = switches.shift();
+      if (!next) throw new Error("unexpected switch request");
+      if (next.ok) current = (await next.clone().json()) as ModelStatus;
+      return next;
+    }
+    return json(current);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const switchRequests = () =>
+    fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+  return { fetchMock, switchRequests };
+}
+
 function renderBadge() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -73,14 +95,14 @@ describe("model transport", () => {
 
 describe("model badge", () => {
   it("says the local model is answering", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(LOCAL)));
+    mockApi(LOCAL);
     renderBadge();
 
     expect(await screen.findByText("Local · qwen/qwen3.5-4b")).toBeInTheDocument();
   });
 
   it("says plainly when the cloud model is answering", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(CLOUD)));
+    mockApi(CLOUD);
     renderBadge();
 
     expect(await screen.findByText("Cloud · Gemini · gemini-test-flash")).toBeInTheDocument();
@@ -95,12 +117,7 @@ describe("model badge", () => {
   });
 
   it("explains how to enable Gemini, and never asks for the key in the page", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        json({ ...LOCAL, gemini_ready: false, gemini_blocker: "GEMINI_API_KEY_MISSING" }),
-      ),
-    );
+    mockApi({ ...LOCAL, gemini_ready: false, gemini_blocker: "GEMINI_API_KEY_MISSING" });
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
 
@@ -111,29 +128,26 @@ describe("model badge", () => {
   });
 
   it("needs an explicit confirmation before anything goes to Google", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(json(LOCAL))
-      .mockResolvedValueOnce(json(CLOUD));
-    vi.stubGlobal("fetch", fetchMock);
+    const { switchRequests } = mockApi(LOCAL, json(CLOUD));
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
 
     fireEvent.click(await screen.findByRole("button", { name: /^Gemini/ }));
     expect(await screen.findByText("Send your data to Google?")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1); // choosing Gemini alone sends nothing
+    expect(switchRequests()).toHaveLength(0); // choosing Gemini alone sends nothing
 
     fireEvent.click(screen.getByRole("button", { name: "Send my data to Google" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const [, init] = fetchMock.mock.calls[1];
-    expect(JSON.parse(init.body)).toEqual({ provider: "gemini", confirm_cloud: true });
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
+      provider: "gemini",
+      confirm_cloud: true,
+    });
     expect(await screen.findByText("Cloud · Gemini · gemini-test-flash")).toBeInTheDocument();
   });
 
   it("cancelling the confirmation changes nothing", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(json(LOCAL));
-    vi.stubGlobal("fetch", fetchMock);
+    const { switchRequests } = mockApi(LOCAL);
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Gemini/ }));
@@ -141,12 +155,11 @@ describe("model badge", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByText("Send your data to Google?")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(switchRequests()).toHaveLength(0);
   });
 
   it("keeps the active choice enabled, and choosing it again changes nothing", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(json(LOCAL));
-    vi.stubGlobal("fetch", fetchMock);
+    const { switchRequests } = mockApi(LOCAL);
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
 
@@ -155,22 +168,37 @@ describe("model badge", () => {
     expect(active).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(active);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(switchRequests()).toHaveLength(0);
+  });
+
+  it("shows the last problem the model reported, in the panel", async () => {
+    mockApi({ ...CLOUD, last_failure: "Gemini generation failed: http_429_RESOURCE_EXHAUSTED" });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+
+    expect(
+      await screen.findByText(/Last problem: Gemini generation failed: http_429_RESOURCE_EXHAUSTED/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no problem line when nothing has gone wrong", async () => {
+    mockApi(CLOUD);
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+
+    await screen.findByText("Answering model");
+    expect(screen.queryByText(/Last problem/)).not.toBeInTheDocument();
   });
 
   it("goes back to the local model without a confirmation", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(json(CLOUD))
-      .mockResolvedValueOnce(json(LOCAL));
-    vi.stubGlobal("fetch", fetchMock);
+    const { switchRequests } = mockApi(CLOUD, json(LOCAL));
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
 
     fireEvent.click(await screen.findByRole("button", { name: /^Local model/ }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
       provider: "lm_studio",
       confirm_cloud: false,
     });
@@ -178,13 +206,7 @@ describe("model badge", () => {
   });
 
   it("tells the owner when a question is running and keeps the current model", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(json(LOCAL))
-        .mockResolvedValueOnce(json({ error: { code: "MODEL_BUSY", message: "busy" } }, 409)),
-    );
+    mockApi(LOCAL, json({ error: { code: "MODEL_BUSY", message: "busy" } }, 409));
     renderBadge();
     fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Gemini/ }));
