@@ -69,8 +69,9 @@ _SUPPORTED_SCHEMA_KEYS = frozenset(
     }
 )
 # Seconds to wait before each retry of a 503: Google's "high demand" spikes are
-# short. Two retries at most, so a real outage still fails promptly.
-_OVERLOAD_RETRY_DELAYS = (1.0, 3.0)
+# short but can outlast a few seconds. Three retries at most (10 s in all), so a real
+# outage still fails promptly.
+_OVERLOAD_RETRY_DELAYS = (1.0, 3.0, 6.0)
 _GOOGLE_STATUS = re.compile(r"^[A-Z_]{3,40}$")
 _FINISH_REASON = re.compile(r"^[A-Za-z_]{1,30}$")
 
@@ -440,8 +441,11 @@ def _category(response: httpx2.Response) -> str:
     """http_<status>, plus Google's own error.status word when it is a safe token."""
     category = f"http_{response.status_code}"
     try:
-        status = response.json()["error"]["status"]
-    except (TypeError, ValueError, KeyError):
+        body = response.json()
+        if isinstance(body, list) and body:  # Google sometimes wraps the error in a list
+            body = body[0]
+        status = body["error"]["status"]
+    except (TypeError, ValueError, KeyError, IndexError):
         return category
     if isinstance(status, str) and _GOOGLE_STATUS.match(status):
         return f"{category}_{status}"

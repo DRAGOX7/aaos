@@ -391,6 +391,20 @@ def test_a_failure_is_logged_with_its_safe_facts_in_the_message(
     assert KEY not in caplog.text and "What is KNIME" not in caplog.text
 
 
+def test_a_google_error_wrapped_in_a_list_is_still_categorised() -> None:
+    summaries: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            400, json=[{"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "x"}}]
+        )
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(handler, on_failure=summaries.append), REQUEST)
+
+    assert summaries[-1] == "Gemini generation failed: http_400_INVALID_ARGUMENT"
+
+
 def test_a_short_overload_is_waited_out() -> None:
     calls: list[int] = []
 
