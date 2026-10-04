@@ -459,8 +459,24 @@ def test_a_reply_with_extra_fields_and_odd_usage_is_still_read() -> None:
     response = _run(_gateway(handler), REQUEST)
 
     assert response.content == "KNIME is a data analytics platform."
-    assert response.model_identifier == "models/gemini-test-flash"
+    assert response.model_identifier == "gemini-test-flash"  # the model asked for
     assert response.usage is None  # unreadable usage is dropped, not fatal
+
+
+def test_the_reply_is_named_after_the_model_asked_for_not_what_google_echoes() -> None:
+    """Callers check which model answered; an alias or dated name must not fail that."""
+    for echoed in ("models/gemini-test-flash", "gemini-test-flash-001", "gemini-flash-latest"):
+
+        def handler(request: httpx2.Request, name: str = echoed) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                json={
+                    "model": name,
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                },
+            )
+
+        assert _run(_gateway(handler), REQUEST).model_identifier == "gemini-test-flash"
 
 
 def test_content_given_as_parts_is_joined() -> None:

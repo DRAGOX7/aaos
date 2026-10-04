@@ -16,6 +16,7 @@ from aaos.inference.factory import (
     active_model_identifier,
     build_model_gateway,
 )
+from aaos.inference.gateway import ModelGateway
 from aaos.inference.lm_studio import LMStudioGateway
 from aaos.rag.config import RagIndexConfig, resolve_rag_runtime_paths
 from aaos.rag.contracts import LocalRagService, RagErrorCode, RagOperationalError
@@ -32,6 +33,11 @@ from aaos.rag.runtime import (
     Phase4RagRuntime,
     build_phase4_runtime,
     cpu_query_embedding_factory,
+)
+from aaos.rag.semantic_coverage import (
+    AtomicRequirementDecomposer,
+    EvidenceSpanExtractor,
+    RequirementCoverageClassifier,
 )
 
 
@@ -71,6 +77,32 @@ class ConfiguredPhase4Runtime:
             await result
 
 
+def _semantic_factories_for(identity: str) -> dict[str, object]:
+    """Factories for the three semantic steps, expecting ``identity`` as the model."""
+    approved = frozenset({identity})
+
+    def decomposer(gateway: ModelGateway) -> AtomicRequirementDecomposer:
+        return AtomicRequirementDecomposer(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    def extractor(gateway: ModelGateway) -> EvidenceSpanExtractor:
+        return EvidenceSpanExtractor(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    def coverage(gateway: ModelGateway) -> RequirementCoverageClassifier:
+        return RequirementCoverageClassifier(
+            gateway, model_identifier=identity, approved_identifiers=approved
+        )
+
+    return {
+        "atomic_requirement_decomposer_factory": decomposer,
+        "evidence_span_extractor_factory": extractor,
+        "requirement_coverage_factory": coverage,
+    }
+
+
 def build_configured_phase4_runtime(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
@@ -108,6 +140,10 @@ def build_configured_phase4_runtime(
             settings, on_failure=on_model_failure, on_success=on_model_success
         )
         cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
+        # The semantic steps reject any reply that is not from the model they expect.
+        # They expect the approved local model by default; name the Gemini model
+        # explicitly so its replies are accepted, and nothing else is.
+        cloud_options.update(_semantic_factories_for(active_model_identifier(settings)))
     else:
         gateway = LMStudioGateway(settings, httpx2.AsyncHTTPTransport())
     try:

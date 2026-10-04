@@ -156,8 +156,11 @@ class RequirementDecomposer:
         *,
         max_output_tokens: int = DECOMPOSITION_MAX_COMPLETION_TOKENS,
         model_identifier: str = DECOMPOSITION_MODEL_IDENTIFIER,
+        approved_identifiers: frozenset[str] = frozenset(),
     ) -> None:
-        _validate_semantic_constructor(gateway, max_output_tokens, model_identifier)
+        _validate_semantic_constructor(
+            gateway, max_output_tokens, model_identifier, approved_identifiers
+        )
         self._gateway = gateway
         self._max_output_tokens = max_output_tokens
         self._model_identifier = model_identifier
@@ -238,8 +241,11 @@ class EvidenceSpanExtractor:
         *,
         max_output_tokens: int = SPAN_EXTRACTION_MAX_COMPLETION_TOKENS,
         model_identifier: str = DECOMPOSITION_MODEL_IDENTIFIER,
+        approved_identifiers: frozenset[str] = frozenset(),
     ) -> None:
-        _validate_semantic_constructor(gateway, max_output_tokens, model_identifier)
+        _validate_semantic_constructor(
+            gateway, max_output_tokens, model_identifier, approved_identifiers
+        )
         self._gateway, self._max_output_tokens, self._model_identifier = (
             gateway,
             max_output_tokens,
@@ -628,8 +634,11 @@ class RequirementCoverageClassifier:
         *,
         max_output_tokens: int = COVERAGE_MAX_COMPLETION_TOKENS,
         model_identifier: str = DECOMPOSITION_MODEL_IDENTIFIER,
+        approved_identifiers: frozenset[str] = frozenset(),
     ) -> None:
-        _validate_semantic_constructor(gateway, max_output_tokens, model_identifier)
+        _validate_semantic_constructor(
+            gateway, max_output_tokens, model_identifier, approved_identifiers
+        )
         self._gateway = gateway
         self._max_output_tokens = max_output_tokens
         self._model_identifier = model_identifier
@@ -721,6 +730,7 @@ def _validate_semantic_constructor(
     gateway: ModelGateway,
     max_output_tokens: int,
     model_identifier: str,
+    approved_identifiers: frozenset[str] = frozenset(),
 ) -> None:
     if not isinstance(gateway, ModelGateway):
         raise ValueError("gateway must implement ModelGateway")
@@ -731,7 +741,11 @@ def _validate_semantic_constructor(
         or max_output_tokens > 512
     ):
         raise ValueError("max_output_tokens must be between one and 512")
-    if model_identifier != DECOMPOSITION_MODEL_IDENTIFIER:
+    # The approved local model is the only identity unless the composition root names
+    # another one explicitly (the opt-in Gemini model); anything else is still refused.
+    if model_identifier != DECOMPOSITION_MODEL_IDENTIFIER and (
+        not isinstance(model_identifier, str) or model_identifier not in approved_identifiers
+    ):
         raise ValueError("model_identifier must be the approved Qwen model")
 
 

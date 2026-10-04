@@ -424,8 +424,10 @@ def _read_reply(payload: object, configured_model: str) -> tuple[ChatResponse | 
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     if not isinstance(content, str) or not content.strip():
         return None, "empty_content" + finish_text
-    model = payload.get("model")
-    model_id = model.strip() if isinstance(model, str) and model.strip() else configured_model
+    # The identity is the model that was asked for: Google may echo an alias or a
+    # dated variant ("models/gemini-...", "...-001"), and the callers that check
+    # which model answered compare against the configured name.
+    model_id = configured_model
     usage: TokenUsage | None
     try:
         usage = _parse_usage(payload.get("usage"))
