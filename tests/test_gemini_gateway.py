@@ -44,6 +44,7 @@ def _gateway(
         httpx2.MockTransport(handler),
         api_key=KEY,
         diagnostic_sink=events.append if events is not None else None,
+        overload_retry_delays=(0.0, 0.0),
     )
 
 
@@ -383,6 +384,44 @@ def test_a_failure_is_logged_with_its_safe_facts_in_the_message(
     assert "http_429_RESOURCE_EXHAUSTED" in caplog.text
     assert "INFERENCE_BACKEND_ERROR" in caplog.text
     assert KEY not in caplog.text and "What is KNIME" not in caplog.text
+
+
+def test_a_short_overload_is_waited_out() -> None:
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx2.Response(503, json={"error": {"status": "UNAVAILABLE"}})
+        return _ok("finally")
+
+    assert _run(_gateway(handler), REQUEST).content == "finally"
+    assert len(calls) == 3  # two 503s, then the answer
+
+
+def test_a_lasting_overload_fails_after_two_retries() -> None:
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        return httpx2.Response(503, json={"error": {"status": "UNAVAILABLE"}})
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(handler), REQUEST)
+    assert len(calls) == 3
+
+
+def test_only_a_503_is_waited_on_not_a_rate_limit_or_a_bad_key() -> None:
+    for status in (401, 403, 404, 429, 500):
+        calls: list[int] = []
+
+        def handler(request: httpx2.Request, code: int = status) -> httpx2.Response:
+            calls.append(1)
+            return httpx2.Response(code)
+
+        with pytest.raises(InferenceError):
+            _run(_gateway(handler), REQUEST)
+        assert len(calls) == 1, status
 
 
 # --- choosing the gateway ------------------------------------------------------------------

@@ -13,6 +13,7 @@ excerpts, to Google's Gemini API. Guard rails that keep it narrow:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from copy import deepcopy
@@ -66,6 +67,9 @@ _SUPPORTED_SCHEMA_KEYS = frozenset(
         "nullable",
     }
 )
+# Seconds to wait before each retry of a 503: Google's "high demand" spikes are
+# short. Two retries at most, so a real outage still fails promptly.
+_OVERLOAD_RETRY_DELAYS = (1.0, 3.0)
 _GOOGLE_STATUS = re.compile(r"^[A-Z_]{3,40}$")
 
 
@@ -117,6 +121,7 @@ class GeminiGateway:
         *,
         api_key: str,
         diagnostic_sink: TelemetrySink | None = None,
+        overload_retry_delays: tuple[float, ...] = _OVERLOAD_RETRY_DELAYS,
     ) -> None:
         if settings.model_provider != "gemini" or settings.gemini_model is None:
             raise ValueError("settings must select the gemini provider")
@@ -133,6 +138,7 @@ class GeminiGateway:
             trust_env=False,
         )
         self._diagnostic_sink = diagnostic_sink or emit_local_inference_telemetry
+        self._overload_retry_delays = overload_retry_delays
         self._closed = False
 
     def __repr__(self) -> str:
@@ -204,12 +210,8 @@ class GeminiGateway:
         attempts.append({k: v for k, v in attempts[-1].items() if k != "reasoning_effort"})
         for index, attempt in enumerate(attempts):
             try:
-                response = await self._send(
-                    "POST",
-                    "chat/completions",
-                    operation="generation",
-                    payload=attempt,
-                    timeout_seconds=request.request_timeout_seconds,
+                response = await self._post_with_overload_retry(
+                    attempt, request.request_timeout_seconds
                 )
                 break
             except GeminiHTTPError as error:
@@ -223,6 +225,26 @@ class GeminiGateway:
             )
             self._emit_failure("generation", protocol_error)
             raise protocol_error from None
+
+    async def _post_with_overload_retry(
+        self, payload: dict[str, object], timeout_seconds: float | None
+    ) -> httpx2.Response:
+        """POST one chat request, waiting out a short 503 "high demand" spike."""
+        delays = self._overload_retry_delays
+        for attempt_number in range(len(delays) + 1):
+            try:
+                return await self._send(
+                    "POST",
+                    "chat/completions",
+                    operation="generation",
+                    payload=payload,
+                    timeout_seconds=timeout_seconds,
+                )
+            except GeminiHTTPError as error:
+                if error.http_status != 503 or attempt_number == len(delays):
+                    raise
+                await asyncio.sleep(delays[attempt_number])
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def _send(
         self,
