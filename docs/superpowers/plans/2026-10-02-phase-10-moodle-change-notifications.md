@@ -1,6 +1,6 @@
 # Phase 10 — Moodle Change Notifications (Telegram) — Plan
 
-**Status: AUTHORIZED by the owner (2026-10-02). Next: the Phase 10 spec (slice 10A). No code written.**
+**Status: IMPLEMENTED / VERIFIED (2026-10-04); human acceptance pending. See `docs/GOVERNANCE_LEDGER.md`.**
 
 - **Source:** the owner's proposed design (2026-10-02), reviewed against the repository and revised here.
 - **Before any implementation:**

@@ -43,7 +43,7 @@ terminology, not evidence of a freeze tag.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
-- Phase 10 — **AUTHORIZED / SPEC PENDING**: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
+- Phase 10 — **IMPLEMENTED / VERIFIED; HUMAN ACCEPTANCE PENDING** (no freeze tag): Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. The notification tests pass (`tests/test_notification_*.py`). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 
 ### Historical status notes
 

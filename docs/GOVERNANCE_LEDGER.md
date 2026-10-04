@@ -431,3 +431,9 @@ PLANNED / NOT STARTED.
 - **What AAOS may do:** follow Moodle's own same-origin "Log in with Microsoft" link once per run, so a Microsoft sign-in remembered by the browser profile completes.
 - **What AAOS never does:** type into, click on, read or store anything on any sign-in page.
 - **Waiting budget:** unattended runs end as `AUTH_REQUIRED` after 90 s; runs with the owner present keep 10 minutes.
+
+## Phase 10 status note (2026-10-04)
+
+- **State:** IMPLEMENTED / VERIFIED. The Telegram sender, the `notify` and `monitor` commands and the event pipeline are merged to `main`; `tests/test_notification_*.py` pass.
+- **Not recorded:** whole-phase human acceptance and a `phase-10-passed` tag. Phase 10 is therefore not FROZEN.
+- **Still open and unchanged:** Phase 0 acceptance (0G/0H) and Phase 5 Slice 6 remain deferred by the 2026-10-02 authorization. Quiz changes are not notified.
