@@ -29,7 +29,8 @@ _LEADER = re.compile(
     r"(?:(?:can|could|would) you |i want you to |i want to |i need to |i would like to |"
     r"i'd like to |let's |lets |help me |)"
     r"(?:please )?(?:add|create|make|set up|setup|start|new)(?: me)?(?: a| an| one| another)?"
-    r"(?: new)?(?: study)? (?:task|todo|to-do)(?: for me)?(?: please)?(?![\w])"
+    r"(?: new)?(?: (?P<adjective>high[ -]priority|low[ -]priority|normal[ -]priority|urgent|important))?"
+    r"(?: study)? (?:task|todo|to-do)(?: for me)?(?: please)?(?![\w])"
     r"|"
     r"^(?:بدي |اريد |ممكن |لو سمحت |)"
     r"(?:تعمل|تعملي|تضيف|تضيفلي|تنشي|انشي|اعمل|اعملي|ضيف|ضيفلي|اضف|اضافه)(?: لي)? "
@@ -51,6 +52,14 @@ _PRIORITY = re.compile(
     r"(?<!\w)(?:(low|normal|high)[\s-]priority|priority\s*[:=]?\s*(low|normal|high))(?!\w)",
     re.IGNORECASE,
 )
+# A priority written before the noun: "make a high-priority study task for ...".
+_ADJECTIVE_PRIORITY = {
+    "high priority": "HIGH",
+    "urgent": "HIGH",
+    "important": "HIGH",
+    "normal priority": "NORMAL",
+    "low priority": "LOW",
+}
 _COURSE_SECTION_LEFTOVER = re.compile(r"\(\s*(?:all sections|\d+)\s*\)", re.IGNORECASE)
 _EMPTY_PARENTHESES = re.compile(r"\(\s*\)")
 _CONNECTORS = (
@@ -81,7 +90,11 @@ def parse_task_request(question: str, courses: Sequence[CourseSummary]) -> TaskR
     """Parse a plain, explicit request to add a study task; None if it is not one."""
     folded, origins = fold_with_offsets(question)
     leader = _LEADER.match(folded)
+    leader_priority: str | None = None
     if leader is not None:
+        adjective = leader.group("adjective")
+        if adjective is not None:
+            leader_priority = _ADJECTIVE_PRIORITY[adjective.replace("-", " ")]
         start = leader.end()
         stop = len(folded)
     else:
@@ -92,17 +105,19 @@ def parse_task_request(question: str, courses: Sequence[CourseSummary]) -> TaskR
     if _DEFERS_TO_MODEL.search(folded[start:stop]) is not None:
         return None
     if start >= stop:
-        return TaskRequest()
+        return TaskRequest(priority=leader_priority)
     rest = question[origins[start] : origins[stop - 1] + 1]
 
     current = tuple(course for course in courses if course.status != "past")
-    mention = find_course_mention(rest, current)
+    mention = find_course_mention(rest, current, loose=True)
     if mention.course_name is not None:
         folded_rest = fold_with_offsets(rest)[0]
         named = tuple(
             course
             for course in current
-            if any(pattern.search(folded_rest) for pattern in course_alias_patterns(course))
+            if any(
+                pattern.search(folded_rest) for pattern in course_alias_patterns(course, loose=True)
+            )
         )
         rest = _without_course(rest, named)
     rest, priority = _without_priority(rest)
@@ -117,13 +132,15 @@ def parse_task_request(question: str, courses: Sequence[CourseSummary]) -> TaskR
         title=title,
         course_name=mention.course_name,
         unknown_course=unknown,
-        priority=priority,
+        priority=priority or leader_priority,
     )
 
 
 def _without_course(text: str, courses: Sequence[CourseSummary]) -> str:
     """Cut every way the named courses are written out of ``text``."""
-    patterns = [pattern for course in courses for pattern in course_alias_patterns(course)]
+    patterns = [
+        pattern for course in courses for pattern in course_alias_patterns(course, loose=True)
+    ]
     for _ in range(_MAX_COURSE_CUTS):
         folded, origins = fold_with_offsets(text)
         match = next((m for m in (p.search(folded) for p in patterns) if m is not None), None)

@@ -2257,7 +2257,7 @@ class _AcademicToolRuntime:
             ):
                 return None
             current = tuple(course for course in courses if course.status != "past")
-            mention = find_course_mention(self._request_text, current)
+            mention = find_course_mention(self._request_text, current, loose=True)
             if mention.course_name is None or mention.ambiguous:
                 return None
             _courses, matches, _exact = self._course_matches(mention.course_name)

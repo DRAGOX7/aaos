@@ -14,6 +14,8 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
+from itertools import permutations
 
 from aaos.web.contracts import CourseSummary
 
@@ -446,6 +448,39 @@ def _course_aliases(course: CourseSummary) -> tuple[str, ...]:
     return tuple(alias for alias in aliases if alias)
 
 
+_FUZZY_STOPWORDS = frozenset({"of", "to", "and", "in", "the", "for", "a", "an", "on", "with"})
+_FUZZY_MAX_WORDS = 4
+
+
+@lru_cache(maxsize=256)
+def _fuzzy_alias_patterns(title: str) -> tuple[re.Pattern[str], ...]:
+    """Ways a student writes a course's name in a different word order or with plurals.
+
+    "Optimization Algorithms" is also "algorithm optimization". Only the content words
+    of a Moodle title's descriptive part are used, in any order, each allowing a plural
+    ending, with small joining words allowed between. Names with fewer than two or more
+    than four content words keep exact matching only (too loose or too many orders).
+
+    Used only where the owner links a task to a course in their own words; a question
+    such as "what is the optimization algorithm for training" must not become a scope.
+    """
+    folded = normalize_arabic(title)
+    descriptive = folded.split("-", 1)[1] if "-" in folded else ""
+    descriptive = _TRAILING_PARENTHETICALS.sub("", descriptive).strip()
+    words = [w for w in re.findall(r"[a-z0-9]+", descriptive) if w not in _FUZZY_STOPWORDS]
+    if not 2 <= len(words) <= _FUZZY_MAX_WORDS:
+        return ()
+    stems = [
+        w[:-1] if w.endswith("s") and not w.endswith("ss") and len(w) > 3 else w for w in words
+    ]
+    joiner = r"\s+(?:(?:of|to|and|in|the|for)\s+)?"
+    patterns = []
+    for order in dict.fromkeys(permutations(stems)):
+        body = joiner.join(rf"{re.escape(word)}(?:s|es)?" for word in order)
+        patterns.append(re.compile(rf"(?<!\w){body}(?!\w)"))
+    return tuple(patterns)
+
+
 def _alias_regex(alias: str) -> re.Pattern[str]:
     # A code may be written with a space or hyphen before its digits ("AI 495C").
     pattern = re.sub(r"(?<=[a-z])(?=\d)", r"[\\s-]?", re.escape(alias), count=1)
@@ -456,17 +491,22 @@ def _mentions(text: str, alias: str) -> bool:
     return _alias_regex(alias).search(text) is not None
 
 
-def course_alias_patterns(course: CourseSummary) -> tuple[re.Pattern[str], ...]:
+def course_alias_patterns(
+    course: CourseSummary, *, loose: bool = False
+) -> tuple[re.Pattern[str], ...]:
     """Patterns for every way a question can name ``course``, longest alias first.
 
     They run on ``fold_with_offsets`` output, the same folded text
     ``find_course_mention`` matches against.
     """
     aliases = sorted(_course_aliases(course), key=len, reverse=True)
-    return tuple(_alias_regex(alias) for alias in aliases)
+    fuzzy = _fuzzy_alias_patterns(course.title) if loose else ()
+    return (*(_alias_regex(alias) for alias in aliases), *fuzzy)
 
 
-def find_course_mention(question: str, courses: Iterable[CourseSummary]) -> CourseMention:
+def find_course_mention(
+    question: str, courses: Iterable[CourseSummary], *, loose: bool = False
+) -> CourseMention:
     """Find which course the question names, using trusted course records only.
 
     Courses sharing a code (Moodle section entries) count as one mention and
@@ -476,7 +516,9 @@ def find_course_mention(question: str, courses: Iterable[CourseSummary]) -> Cour
     text = normalize_arabic(question)
     groups: dict[str, str] = {}
     for course in courses:
-        if any(_mentions(text, alias) for alias in _course_aliases(course)):
+        if any(_mentions(text, alias) for alias in _course_aliases(course)) or (
+            loose and any(p.search(text) for p in _fuzzy_alias_patterns(course.title))
+        ):
             code = course_code_token(course.title)
             key = code if code is not None else f"id:{course.id}"
             groups[key] = code if code is not None else course.title
