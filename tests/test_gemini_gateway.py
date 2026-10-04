@@ -48,6 +48,7 @@ def _gateway(
         api_key=KEY,
         diagnostic_sink=events.append if events is not None else None,
         overload_retry_delays=(0.0, 0.0),
+        rate_limit_default_wait=0.0,
         on_failure=on_failure,
         on_success=on_success,
     )
@@ -430,8 +431,8 @@ def test_a_lasting_overload_fails_after_two_retries() -> None:
     assert len(calls) == 3
 
 
-def test_only_a_503_is_waited_on_not_a_rate_limit_or_a_bad_key() -> None:
-    for status in (401, 403, 404, 429, 500):
+def test_a_bad_key_a_missing_model_and_a_server_error_are_not_waited_on() -> None:
+    for status in (401, 403, 404, 500):
         calls: list[int] = []
 
         def handler(request: httpx2.Request, code: int = status) -> httpx2.Response:
@@ -537,7 +538,8 @@ def test_failures_and_successes_are_reported_in_safe_words() -> None:
 
     with pytest.raises(InferenceBackendError):
         _run(_gateway(limited, on_failure=failures.append), REQUEST)
-    assert failures == ["Gemini generation failed: http_429_RESOURCE_EXHAUSTED"]
+    # A 429 is retried twice, and each rejected attempt is reported.
+    assert failures == ["Gemini generation failed: http_429_RESOURCE_EXHAUSTED"] * 3
     assert KEY not in failures[0]
 
     _run(_gateway(lambda request: _ok(), on_success=lambda: successes.append(1)), REQUEST)
@@ -554,6 +556,159 @@ def test_a_broken_report_callback_never_breaks_an_answer() -> None:
 
     with pytest.raises(InferenceBackendError):
         _run(_gateway(lambda request: httpx2.Response(401), on_failure=explode), REQUEST)
+
+
+def _limited(details: object = None, calls: list[int] | None = None):  # type: ignore[no-untyped-def]
+    """A handler answering 429 with Google's own error shape (details optional)."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if calls is not None:
+            calls.append(1)
+        error: dict[str, object] = {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "x"}
+        if details is not None:
+            error["details"] = details
+        return httpx2.Response(429, json=[{"error": error}])
+
+    return handler
+
+
+RETRY_IN_0S = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"}]
+PER_DAY = [
+    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"},
+    {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}],
+    },
+]
+
+
+def test_a_per_minute_limit_is_waited_out_as_long_as_google_asks() -> None:
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) < 3:
+            return _limited(RETRY_IN_0S)(request)
+        return _ok("after the wait")
+
+    assert _run(_gateway(handler), REQUEST).content == "after the wait"
+    assert len(calls) == 3  # two 429s, then the answer
+
+
+def test_the_wait_google_asks_for_is_really_observed() -> None:
+    import time
+
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return _limited(
+                [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.2s"}]
+            )(request)
+        return _ok()
+
+    started = time.monotonic()
+    _run(_gateway(handler), REQUEST)
+    assert time.monotonic() - started >= 0.18
+
+
+def test_a_daily_limit_is_not_waited_on() -> None:
+    calls: list[int] = []
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(_limited(PER_DAY, calls)), REQUEST)
+
+    assert len(calls) == 1
+
+
+def test_a_wait_longer_than_the_cap_is_not_waited_on() -> None:
+    calls: list[int] = []
+    long_wait = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "120s"}]
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(_limited(long_wait, calls)), REQUEST)
+
+    assert len(calls) == 1
+
+
+def test_a_limit_with_no_stated_wait_is_retried_twice_then_reported() -> None:
+    calls: list[int] = []
+    failures: list[str] = []
+
+    with pytest.raises(InferenceBackendError):
+        _run(_gateway(_limited(None, calls), on_failure=failures.append), REQUEST)
+
+    assert len(calls) == 3
+    assert failures[-1] == "Gemini generation failed: http_429_RESOURCE_EXHAUSTED"
+
+
+def test_google_error_details_are_read_in_both_shapes_and_odd_ones_are_ignored() -> None:
+    from aaos.inference.gemini import _rate_limit_hint
+
+    def reply(body: object) -> httpx2.Response:
+        return httpx2.Response(429, json=body)
+
+    wait_26 = [{"retryDelay": "26s"}]
+    assert _rate_limit_hint(reply({"error": {"details": wait_26}})) == (26.0, False)
+    assert _rate_limit_hint(reply([{"error": {"details": [{"retryDelay": "26.5s"}]}}])) == (
+        26.5,
+        False,
+    )
+    assert _rate_limit_hint(reply([{"error": {"details": PER_DAY}}])) == (0.0, True)
+    per_minute = [{"violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel"}]}]
+    assert _rate_limit_hint(reply({"error": {"details": per_minute}})) == (None, False)
+    for odd in ({}, [], "text", {"error": {"details": "x"}}, {"error": {"details": [1, "a"]}}):
+        assert _rate_limit_hint(reply(odd)) == (None, False)
+    assert _rate_limit_hint(reply({"error": {"details": [{"retryDelay": "soon"}]}})) == (
+        None,
+        False,
+    )
+
+
+def test_requests_can_be_spaced_out_to_stay_under_a_per_minute_limit() -> None:
+    import time
+
+    gateway = GeminiGateway(
+        SETTINGS,
+        httpx2.MockTransport(lambda request: _ok()),
+        api_key=KEY,
+        min_interval_seconds=0.15,
+    )
+
+    async def scenario() -> float:
+        started = time.monotonic()
+        try:
+            for _ in range(3):
+                await gateway.generate(REQUEST)
+        finally:
+            await gateway.aclose()
+        return time.monotonic() - started
+
+    assert asyncio.run(scenario()) >= 0.27  # three requests, two gaps of 0.15 s
+
+
+def test_spacing_is_read_from_the_environment_and_bad_values_mean_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aaos.inference.factory import (
+        GEMINI_MIN_INTERVAL_ENVIRONMENT_KEY,
+        _min_interval_from_environment,
+    )
+
+    for raw, expected in (
+        ("7", 7.0),
+        (" 2.5 ", 2.5),
+        ("", 0.0),
+        ("abc", 0.0),
+        ("-3", 0.0),
+        ("nan", 0.0),
+        ("1000", 60.0),
+    ):
+        monkeypatch.setenv(GEMINI_MIN_INTERVAL_ENVIRONMENT_KEY, raw)
+        assert _min_interval_from_environment() == expected, raw
+    monkeypatch.delenv(GEMINI_MIN_INTERVAL_ENVIRONMENT_KEY)
+    assert _min_interval_from_environment() == 0.0
 
 
 # --- choosing the gateway ------------------------------------------------------------------

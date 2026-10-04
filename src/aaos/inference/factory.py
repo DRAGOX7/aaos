@@ -52,6 +52,20 @@ class NoOpModelLifecycle:
         return None
 
 
+GEMINI_MIN_INTERVAL_ENVIRONMENT_KEY = "AAOS_GEMINI_MIN_INTERVAL_SECONDS"
+_MAX_MIN_INTERVAL = 60.0
+
+
+def _min_interval_from_environment() -> float:
+    """Seconds to leave between Gemini requests (0 = no pacing); bad values mean none."""
+    raw = os.environ.get(GEMINI_MIN_INTERVAL_ENVIRONMENT_KEY, "").strip()
+    try:
+        value = float(raw) if raw else 0.0
+    except ValueError:
+        return 0.0
+    return min(max(value, 0.0), _MAX_MIN_INTERVAL) if value == value else 0.0
+
+
 def build_model_gateway(
     settings: AppSettings,
     *,
@@ -63,6 +77,7 @@ def build_model_gateway(
         from .gemini import GeminiGateway
 
         api_key = os.environ.get(GEMINI_API_KEY_ENVIRONMENT_KEY, "").strip()
+        min_interval = _min_interval_from_environment()
         if not api_key:
             raise InferenceError(f"{GEMINI_API_KEY_ENVIRONMENT_KEY} is not set")
         warn_if_cloud_model(settings)
@@ -72,6 +87,7 @@ def build_model_gateway(
             api_key=api_key,
             on_failure=on_failure,
             on_success=on_success,
+            min_interval_seconds=min_interval,
         )
 
     from .lm_studio import LMStudioGateway

@@ -81,6 +81,7 @@ async def _main() -> int:
         httpx2.AsyncHTTPTransport(),
         api_key=key,
         overload_retry_delays=(1.0, 3.0),
+        rate_limit_retries=0,  # show a 429 as it is instead of waiting it out
         on_failure=failures.append,
     )
     try:

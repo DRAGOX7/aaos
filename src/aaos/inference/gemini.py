@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
@@ -72,6 +73,12 @@ _SUPPORTED_SCHEMA_KEYS = frozenset(
 # short but can outlast a few seconds. Three retries at most (10 s in all), so a real
 # outage still fails promptly.
 _OVERLOAD_RETRY_DELAYS = (1.0, 3.0, 6.0)
+# A 429 on the free tier is usually a per-minute limit: Google says how long to wait. Wait
+# that long (never longer than the cap) at most twice; a daily limit fails at once.
+_RATE_LIMIT_RETRIES = 2
+_RATE_LIMIT_DEFAULT_WAIT = 12.0
+_RATE_LIMIT_WAIT_CAP = 30.0
+_RETRY_DELAY = re.compile(r"^(\d+(?:\.\d+)?)s$")
 _GOOGLE_STATUS = re.compile(r"^[A-Z_]{3,40}$")
 _FINISH_REASON = re.compile(r"^[A-Za-z_]{1,30}$")
 
@@ -79,9 +86,46 @@ _FINISH_REASON = re.compile(r"^[A-Za-z_]{1,30}$")
 class GeminiHTTPError(InferenceBackendError):
     """A Gemini HTTP failure that keeps its status code (never its body)."""
 
-    def __init__(self, message: str, *, http_status: int) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int,
+        retry_after: float | None = None,
+        daily_limit: bool = False,
+    ) -> None:
         super().__init__(message)
         self.http_status = http_status
+        # For a 429: how long Google asked us to wait, and whether the limit is per day.
+        self.retry_after = retry_after
+        self.daily_limit = daily_limit
+
+
+class _RequestPacer:
+    """Space requests out so a free-tier per-minute limit is not hit in the first place.
+
+    Process-wide on purpose: the assistant and the document runtime hold separate
+    gateways but share one API key and therefore one limit.
+    """
+
+    def __init__(self) -> None:
+        self._lock: asyncio.Lock | None = None
+        self._next_slot = 0.0
+
+    async def wait(self, min_interval: float) -> None:
+        if min_interval <= 0:
+            return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            now = time.monotonic()
+            delay = self._next_slot - now
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._next_slot = max(now, self._next_slot) + min_interval
+
+
+_PACER = _RequestPacer()
 
 
 def gemini_response_format(openai_format: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +171,10 @@ class GeminiGateway:
         overload_retry_delays: tuple[float, ...] = _OVERLOAD_RETRY_DELAYS,
         on_failure: Callable[[str], None] | None = None,
         on_success: Callable[[], None] | None = None,
+        min_interval_seconds: float = 0.0,
+        rate_limit_retries: int = _RATE_LIMIT_RETRIES,
+        rate_limit_default_wait: float = _RATE_LIMIT_DEFAULT_WAIT,
+        rate_limit_wait_cap: float = _RATE_LIMIT_WAIT_CAP,
     ) -> None:
         if settings.model_provider != "gemini" or settings.gemini_model is None:
             raise ValueError("settings must select the gemini provider")
@@ -146,6 +194,10 @@ class GeminiGateway:
         self._overload_retry_delays = overload_retry_delays
         self._on_failure = on_failure
         self._on_success = on_success
+        self._min_interval = max(0.0, float(min_interval_seconds))
+        self._rate_limit_retries = rate_limit_retries
+        self._rate_limit_default_wait = rate_limit_default_wait
+        self._rate_limit_wait_cap = rate_limit_wait_cap
         self._closed = False
 
     def __repr__(self) -> str:
@@ -241,9 +293,15 @@ class GeminiGateway:
     async def _post_with_overload_retry(
         self, payload: dict[str, object], timeout_seconds: float | None
     ) -> httpx2.Response:
-        """POST one chat request, waiting out a short 503 "high demand" spike."""
-        delays = self._overload_retry_delays
-        for attempt_number in range(len(delays) + 1):
+        """POST one chat request, waiting out a 503 "high demand" spike or a 429 limit.
+
+        A 503 is retried after short fixed waits. A 429 waits as long as Google asks
+        (capped), at most twice, and never on a daily limit; everything else fails now.
+        """
+        overloads = 0
+        rate_limits = 0
+        while True:
+            await _PACER.wait(self._min_interval)
             try:
                 return await self._send(
                     "POST",
@@ -253,10 +311,25 @@ class GeminiGateway:
                     timeout_seconds=timeout_seconds,
                 )
             except GeminiHTTPError as error:
-                if error.http_status != 503 or attempt_number == len(delays):
+                if error.http_status == 503 and overloads < len(self._overload_retry_delays):
+                    delay = self._overload_retry_delays[overloads]
+                    overloads += 1
+                elif (
+                    error.http_status == 429
+                    and not error.daily_limit
+                    and (rate_limits < self._rate_limit_retries)
+                ):
+                    delay = (
+                        error.retry_after
+                        if error.retry_after is not None
+                        else self._rate_limit_default_wait
+                    )
+                    if delay > self._rate_limit_wait_cap:
+                        raise
+                    rate_limits += 1
+                else:
                     raise
-                await asyncio.sleep(delays[attempt_number])
-        raise AssertionError("unreachable")  # pragma: no cover
+                await asyncio.sleep(delay)
 
     async def _send(
         self,
@@ -320,9 +393,12 @@ class GeminiGateway:
         if status == 404:
             return ModelUnavailableError(f"Gemini model '{model}' is unavailable")
         if status == 429:
+            retry_after, daily_limit = _rate_limit_hint(response)
             return GeminiHTTPError(
                 f"Gemini rate limit or quota reached during {operation} (status 429)",
                 http_status=status,
+                retry_after=retry_after,
+                daily_limit=daily_limit,
             )
         return GeminiHTTPError(
             f"Gemini backend failed during {operation} for model '{model}' (status {status})",
@@ -435,6 +511,35 @@ def _read_reply(payload: object, configured_model: str) -> tuple[ChatResponse | 
     except (TypeError, ValueError):
         usage = None
     return ChatResponse(content=content, model_identifier=model_id, usage=usage), "ok"
+
+
+def _rate_limit_hint(response: httpx2.Response) -> tuple[float | None, bool]:
+    """How long Google asked us to wait, and whether the exhausted limit is per day.
+
+    Reads only Google's standard error details (RetryInfo and QuotaFailure); anything
+    missing or odd gives (None, False) and the caller falls back to its default wait.
+    """
+    try:
+        body = response.json()
+        if isinstance(body, list) and body:
+            body = body[0]
+        details = body["error"].get("details", [])
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None, False
+    retry_after: float | None = None
+    daily = False
+    for item in details if isinstance(details, list) else []:
+        if not isinstance(item, dict):
+            continue
+        delay = item.get("retryDelay")
+        if isinstance(delay, str) and (match := _RETRY_DELAY.match(delay)):
+            retry_after = float(match.group(1))
+        violations = item.get("violations")
+        for violation in violations if isinstance(violations, list) else []:
+            quota = violation.get("quotaId") if isinstance(violation, dict) else None
+            if isinstance(quota, str) and "perday" in quota.replace("_", "").lower():
+                daily = True
+    return retry_after, daily
 
 
 def _category(response: httpx2.Response) -> str:
