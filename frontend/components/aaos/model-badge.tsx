@@ -20,7 +20,7 @@ import {
   type ModelStatus,
   type ModelSwitchFailure,
 } from "@/lib/api/model";
-import { modelKeys, modelQueryOptions } from "@/lib/query/model";
+import { geminiModelsQueryOptions, modelKeys, modelQueryOptions } from "@/lib/query/model";
 import { cn } from "@/lib/utils";
 
 const BLOCKER_TEXT: Record<NonNullable<ModelStatus["gemini_blocker"]>, string> = {
@@ -36,6 +36,8 @@ const FAILURE_TEXT: Record<ModelSwitchFailure, string> = {
   MODEL_BUSY: "A question is running. Try again when it has finished.",
   MODEL_SWITCH_FAILED: "AAOS could not switch the model. The previous model is still in use.",
   MUTATION_NOT_ALLOWED: "The model can only be changed from the local AAOS page.",
+  INVALID_MODEL: "That is not one of the Gemini models your key can use.",
+  MODEL_LIST_FAILED: "AAOS could not get the list of Gemini models.",
   UNKNOWN: "AAOS could not switch the model. Nothing was changed.",
 };
 
@@ -45,13 +47,21 @@ export function ModelBadge() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [chosenModel, setChosenModel] = useState<string | null>(null);
+
+  const geminiReady = query.data?.gemini_ready === true;
+  const modelList = useQuery({
+    ...geminiModelsQueryOptions(),
+    enabled: open && geminiReady,
+  });
 
   const mutation = useMutation<
     ModelStatus,
     ModelSwitchError | Error,
-    { provider: ModelProvider; confirmCloud: boolean }
+    { provider: ModelProvider; confirmCloud: boolean; geminiModel?: string }
   >({
-    mutationFn: ({ provider, confirmCloud }) => selectModel(provider, confirmCloud),
+    mutationFn: ({ provider, confirmCloud, geminiModel }) =>
+      selectModel(provider, confirmCloud, geminiModel),
     onSuccess: (status) => {
       queryClient.setQueryData(modelKeys.all, status);
       setConfirming(false);
@@ -62,6 +72,11 @@ export function ModelBadge() {
   if (!status || typeof status !== "object") return null;
 
   const cloud = status.cloud;
+  // The model shown in the picker: the owner's pick, else the configured one.
+  const pickedModel = chosenModel ?? status.gemini_model ?? "";
+  const pickable = Array.from(
+    new Set([...(modelList.data ?? []), ...(status.gemini_model ? [status.gemini_model] : [])]),
+  ).sort();
   const label = cloud ? `Cloud · Gemini · ${status.model}` : `Local · ${status.model}`;
   const Icon = cloud ? Cloud : HardDrive;
   const failure =
@@ -80,6 +95,7 @@ export function ModelBadge() {
         if (next) void query.refetch();
         if (!next) {
           setConfirming(false);
+          setChosenModel(null);
           mutation.reset();
         }
       }}
@@ -140,8 +156,38 @@ export function ModelBadge() {
               if (!cloud) setConfirming(true);
             }}
           >
-            <Cloud aria-hidden="true" /> Gemini{status.gemini_model ? ` · ${status.gemini_model}` : ""}
+            <Cloud aria-hidden="true" /> Gemini{pickedModel ? ` · ${pickedModel}` : ""}
           </Button>
+
+          {status.gemini_ready ? (
+            <label className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+              Gemini model
+              <select
+                aria-label="Gemini model"
+                className="h-9 rounded-xl border border-border bg-white px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                disabled={mutation.isPending || modelList.isPending}
+                value={pickedModel}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setChosenModel(next);
+                  // Already in the cloud: the data goes to Google anyway, so the model
+                  // changes at once. From local, the pick waits for the confirmation.
+                  if (cloud && next !== status.gemini_model) {
+                    mutation.mutate({ provider: "gemini", confirmCloud: true, geminiModel: next });
+                  }
+                }}
+              >
+                {pickable.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              {modelList.isError ? (
+                <span role="note">The model list could not be loaded; showing the configured model.</span>
+              ) : null}
+            </label>
+          ) : null}
 
           {!status.gemini_ready && status.gemini_blocker ? (
             <p className="text-sm text-muted-foreground" role="note">
@@ -167,7 +213,13 @@ export function ModelBadge() {
                   type="button"
                   size="sm"
                   disabled={mutation.isPending}
-                  onClick={() => mutation.mutate({ provider: "gemini", confirmCloud: true })}
+                  onClick={() =>
+                    mutation.mutate({
+                      provider: "gemini",
+                      confirmCloud: true,
+                      geminiModel: pickedModel || undefined,
+                    })
+                  }
                 >
                   Send my data to Google
                 </Button>

@@ -66,6 +66,16 @@ def _min_interval_from_environment() -> float:
     return min(max(value, 0.0), _MAX_MIN_INTERVAL) if value == value else 0.0
 
 
+async def list_gemini_models() -> tuple[str, ...]:
+    """The chat models the configured Gemini key can use; the key is read from the environment."""
+    from .gemini import fetch_gemini_model_names
+
+    api_key = os.environ.get(GEMINI_API_KEY_ENVIRONMENT_KEY, "").strip()
+    if not api_key:
+        raise InferenceError(f"{GEMINI_API_KEY_ENVIRONMENT_KEY} is not set")
+    return await fetch_gemini_model_names(api_key)
+
+
 def build_model_gateway(
     settings: AppSettings,
     *,

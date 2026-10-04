@@ -12,6 +12,7 @@ export const systemHealthKeys = {
 
 export const modelKeys = {
   all: ["model"] as const,
+  geminiModels: ["model", "gemini-models"] as const,
 };
 
 export const academicKeys = {

@@ -17,7 +17,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from typing import Any
 
@@ -126,6 +126,68 @@ class _RequestPacer:
 
 
 _PACER = _RequestPacer()
+
+
+# Names in Google's model list that are not chat models (speech, images, live audio,
+# embeddings, video, music, agents): never offered as the answering model.
+_NON_CHAT_TOKENS = (
+    "tts",
+    "image",
+    "live",
+    "embedding",
+    "transcribe",
+    "robotics",
+    "computer-use",
+    "native-audio",
+    "veo",
+    "lyria",
+    "aqa",
+    "deep-research",
+    "antigravity",
+    "nano-banana",
+)
+
+
+def chat_model_names(names: Iterable[str]) -> tuple[str, ...]:
+    """The Gemini and Gemma chat models in ``names``, sorted, without the "models/" prefix."""
+    kept = {
+        name
+        for name in (raw.removeprefix("models/") for raw in names)
+        if name.startswith(("gemini", "gemma")) and not any(t in name for t in _NON_CHAT_TOKENS)
+    }
+    return tuple(sorted(kept))
+
+
+async def fetch_gemini_model_names(
+    api_key: str, transport: httpx2.AsyncBaseTransport | None = None
+) -> tuple[str, ...]:
+    """List the chat models this key can use (the same fixed endpoint, no redirects)."""
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("a Gemini API key is required")
+    try:
+        async with httpx2.AsyncClient(
+            transport=transport or httpx2.AsyncHTTPTransport(),
+            base_url=GEMINI_BASE_URL,
+            timeout=15.0,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.get(
+                "models", headers={"Authorization": f"Bearer {api_key.strip()}"}
+            )
+    except httpx2.HTTPError:
+        raise InferenceConnectionError("Gemini model list could not be reached") from None
+    if not response.is_success:
+        raise InferenceBackendError(f"Gemini model list failed (status {response.status_code})")
+    try:
+        ids = [
+            str(entry["id"])
+            for entry in response.json()["data"]
+            if isinstance(entry, dict) and str(entry.get("id", "")).strip()
+        ]
+    except (TypeError, ValueError, KeyError):
+        raise InferenceProtocolError("Gemini returned an unreadable model list") from None
+    return chat_model_names(ids)
 
 
 def gemini_response_format(openai_format: dict[str, Any]) -> dict[str, Any]:
