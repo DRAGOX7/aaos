@@ -252,6 +252,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/model/gemini-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Gemini Models
+         * @description The Gemini chat models the configured key can use (names only).
+         */
+        get: operations["get_gemini_models_api_v1_model_gemini_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/rag/queries": {
         parameters: {
             query?: never;
@@ -891,6 +911,14 @@ export interface components {
          */
         HealthStatus: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
         /**
+         * ModelOptionsResponse
+         * @description The Gemini chat models the configured key can use. Names only.
+         */
+        ModelOptionsResponse: {
+            /** Models */
+            models: string[];
+        };
+        /**
          * ModelSelectRequest
          * @description Closed request to change the answering model; the browser never sends a key.
          */
@@ -900,6 +928,8 @@ export interface components {
              * @default false
              */
             confirm_cloud: boolean;
+            /** Gemini Model */
+            gemini_model?: string | null;
             /**
              * Provider
              * @enum {string}
@@ -1854,6 +1884,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_gemini_models_api_v1_model_gemini_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelOptionsResponse"];
                 };
             };
         };

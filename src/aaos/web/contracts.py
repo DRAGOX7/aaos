@@ -791,3 +791,13 @@ class ModelSelectRequest(BaseModel):
 
     provider: ModelProviderView
     confirm_cloud: bool = False
+    # Which Gemini model to use (only with provider "gemini"); a name from the list below.
+    gemini_model: str | None = Field(default=None, max_length=100)
+
+
+class ModelOptionsResponse(BaseModel):
+    """The Gemini chat models the configured key can use. Names only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    models: tuple[str, ...] = Field(max_length=200)

@@ -10,6 +10,8 @@ export type ModelSwitchFailure =
   | "MODEL_BUSY"
   | "MODEL_SWITCH_FAILED"
   | "MUTATION_NOT_ALLOWED"
+  | "INVALID_MODEL"
+  | "MODEL_LIST_FAILED"
   | "UNKNOWN";
 
 const KNOWN_FAILURES = new Set<string>([
@@ -18,6 +20,8 @@ const KNOWN_FAILURES = new Set<string>([
   "MODEL_BUSY",
   "MODEL_SWITCH_FAILED",
   "MUTATION_NOT_ALLOWED",
+  "INVALID_MODEL",
+  "MODEL_LIST_FAILED",
 ]);
 
 export class ModelSwitchError extends Error {
@@ -41,18 +45,36 @@ export async function fetchModelStatus(signal?: AbortSignal): Promise<ModelStatu
 }
 
 /**
- * Ask the backend to switch the answering model. The request carries the provider
- * and the cloud confirmation only: the Gemini API key lives in the backend's
+ * Ask the backend to switch the answering model (and, for Gemini, which one). The
+ * request carries the provider, the cloud confirmation and a model name only: the Gemini API key lives in the backend's
  * environment and is never sent from, or shown in, the browser.
  */
+export async function fetchGeminiModels(signal?: AbortSignal): Promise<string[]> {
+  const response = await fetch("/api/v1/model/gemini-models", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("AAOS could not get the list of Gemini models.");
+  const body = (await response.json()) as { models?: unknown };
+  return Array.isArray(body.models)
+    ? body.models.filter((name): name is string => typeof name === "string")
+    : [];
+}
+
 export async function selectModel(
   provider: ModelProvider,
   confirmCloud: boolean,
+  geminiModel?: string,
 ): Promise<ModelStatus> {
   const response = await fetch("/api/v1/model", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, confirm_cloud: confirmCloud }),
+    body: JSON.stringify(
+      geminiModel === undefined
+        ? { provider, confirm_cloud: confirmCloud }
+        : { provider, confirm_cloud: confirmCloud, gemini_model: geminiModel },
+    ),
   });
   if (!response.ok) {
     let code: unknown;

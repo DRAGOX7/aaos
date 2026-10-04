@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ModelBadge } from "@/components/aaos/model-badge";
@@ -30,7 +30,11 @@ function json(body: unknown, status = 200): Response {
  */
 function mockApi(initial: ModelStatus, ...switches: Response[]) {
   let current = initial;
-  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+  let models: string[] | null = ["gemini-3.1-flash-lite", "gemini-3.7-flash", "gemini-test-flash"];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/gemini-models")) {
+      return models === null ? new Response("", { status: 503 }) : json({ models });
+    }
     if (init?.method === "POST") {
       const next = switches.shift();
       if (!next) throw new Error("unexpected switch request");
@@ -42,7 +46,13 @@ function mockApi(initial: ModelStatus, ...switches: Response[]) {
   vi.stubGlobal("fetch", fetchMock);
   const switchRequests = () =>
     fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
-  return { fetchMock, switchRequests };
+  return {
+    fetchMock,
+    switchRequests,
+    setModels: (next: string[] | null) => {
+      models = next;
+    },
+  };
 }
 
 function renderBadge() {
@@ -142,6 +152,7 @@ describe("model badge", () => {
     expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
       provider: "gemini",
       confirm_cloud: true,
+      gemini_model: "gemini-test-flash", // the configured model, named explicitly
     });
     expect(await screen.findByText("Cloud · Gemini · gemini-test-flash")).toBeInTheDocument();
   });
@@ -169,6 +180,79 @@ describe("model badge", () => {
     fireEvent.click(active);
 
     expect(switchRequests()).toHaveLength(0);
+  });
+
+  it("offers the models the key can use, with the configured one selected", async () => {
+    mockApi(LOCAL);
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+
+    const picker = await screen.findByRole("combobox", { name: "Gemini model" });
+    await waitFor(() => expect(picker).toBeEnabled());
+    expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "gemini-3.1-flash-lite",
+      "gemini-3.7-flash",
+      "gemini-test-flash",
+    ]);
+    expect(picker).toHaveValue("gemini-test-flash");
+  });
+
+  it("has no picker until Gemini is set up in the backend", async () => {
+    mockApi({ ...LOCAL, gemini_ready: false, gemini_blocker: "GEMINI_API_KEY_MISSING" });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+
+    await screen.findByText("Answering model");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("sends the picked model with the confirmed switch from local", async () => {
+    const { switchRequests } = mockApi(LOCAL, json({ ...CLOUD, model: "gemini-3.7-flash" }));
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    const picker = await screen.findByRole("combobox", { name: "Gemini model" });
+    await waitFor(() => expect(picker).toBeEnabled());
+
+    fireEvent.change(picker, { target: { value: "gemini-3.7-flash" } });
+    expect(switchRequests()).toHaveLength(0); // picking alone changes nothing from local
+    fireEvent.click(await screen.findByRole("button", { name: /^Gemini · gemini-3.7-flash/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send my data to Google" }));
+
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
+      provider: "gemini",
+      confirm_cloud: true,
+      gemini_model: "gemini-3.7-flash",
+    });
+  });
+
+  it("changes the model at once while already in the cloud", async () => {
+    const { switchRequests } = mockApi(CLOUD, json({ ...CLOUD, model: "gemini-3.1-flash-lite" }));
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    const picker = await screen.findByRole("combobox", { name: "Gemini model" });
+    await waitFor(() => expect(picker).toBeEnabled());
+
+    fireEvent.change(picker, { target: { value: "gemini-3.1-flash-lite" } });
+
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
+      provider: "gemini",
+      confirm_cloud: true,
+      gemini_model: "gemini-3.1-flash-lite",
+    });
+    expect(await screen.findByText("Cloud · Gemini · gemini-3.1-flash-lite")).toBeInTheDocument();
+  });
+
+  it("falls back to the configured model when the list cannot be loaded", async () => {
+    const { setModels } = mockApi(LOCAL);
+    setModels(null);
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+
+    expect(await screen.findByText(/model list could not be loaded/i)).toBeInTheDocument();
+    const picker = screen.getByRole("combobox", { name: "Gemini model" });
+    expect(within(picker).getAllByRole("option")).toHaveLength(1);
   });
 
   it("shows the last problem the model reported, in the panel", async () => {

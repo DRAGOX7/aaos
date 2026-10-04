@@ -41,6 +41,7 @@ from aaos.web.contracts import (
     CourseSummary,
     DocumentListResponse,
     DocumentSummary,
+    ModelOptionsResponse,
     ModelSelectRequest,
     ModelStatusResponse,
     OperationState,
@@ -88,6 +89,16 @@ _MODEL_SELECTION_FAILURES = {
     ),
     "MODEL_BUSY": (409, "MODEL_BUSY", "A question is running. Try again when it has finished."),
     "MODEL_SWITCH_FAILED": (500, "MODEL_SWITCH_FAILED", "AAOS could not switch the model."),
+    "INVALID_MODEL": (
+        422,
+        "INVALID_MODEL",
+        "That is not one of the Gemini models your key can use.",
+    ),
+    "MODEL_LIST_FAILED": (
+        503,
+        "MODEL_LIST_FAILED",
+        "AAOS could not get the list of Gemini models.",
+    ),
 }
 
 
@@ -96,7 +107,11 @@ class ModelSelectionPort(Protocol):
 
     def status(self) -> ModelStatus: ...
 
-    async def switch(self, provider: str, *, confirm_cloud: bool = False) -> ModelStatus: ...
+    async def switch(
+        self, provider: str, *, confirm_cloud: bool = False, gemini_model: str | None = None
+    ) -> ModelStatus: ...
+
+    async def gemini_models(self) -> tuple[str, ...]: ...
 
 
 class DocumentFileReader(Protocol):
@@ -538,6 +553,15 @@ def create_api_v1_router(
             """Which model is answering, read-only."""
             return _model_response(model_selection.status())
 
+        @router.get("/model/gemini-models", response_model=ModelOptionsResponse)
+        async def get_gemini_models() -> ModelOptionsResponse:
+            """The Gemini chat models the configured key can use (names only)."""
+            try:
+                return ModelOptionsResponse(models=await model_selection.gemini_models())
+            except ModelSelectionError as error:
+                http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]
+                raise Phase7ApiError(http_status, code, message) from None
+
         @router.post("/model", response_model=ModelStatusResponse)
         async def select_model(request: Request, body: ModelSelectRequest) -> ModelStatusResponse:
             """Switch between the local model and Gemini (cloud needs confirmation)."""
@@ -555,7 +579,9 @@ def create_api_v1_router(
                 ) from error
             try:
                 status = await model_selection.switch(
-                    body.provider, confirm_cloud=body.confirm_cloud
+                    body.provider,
+                    confirm_cloud=body.confirm_cloud,
+                    gemini_model=body.gemini_model,
                 )
             except ModelSelectionError as error:
                 http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]

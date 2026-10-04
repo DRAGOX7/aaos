@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -34,6 +35,8 @@ SelectionErrorCode = Literal[
     "GEMINI_NOT_READY",
     "MODEL_BUSY",
     "MODEL_SWITCH_FAILED",
+    "INVALID_MODEL",
+    "MODEL_LIST_FAILED",
 ]
 
 
@@ -61,13 +64,30 @@ class ModelStatus:
 
 
 Listener = Callable[[], Awaitable[None]]
+GeminiLister = Callable[[], Awaitable[tuple[str, ...]]]
+
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_MODEL_LIST_TTL_SECONDS = 300.0
+
+
+def _normalize_model(name: str) -> str | None:
+    cleaned = name.strip().removeprefix("models/")
+    return cleaned if _MODEL_NAME.match(cleaned) else None
 
 
 class ModelSelection:
     """Shared, in-memory model choice for one running AAOS process."""
 
-    def __init__(self, settings: AppSettings, environment: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        environment: Mapping[str, str] | None = None,
+        gemini_lister: GeminiLister | None = None,
+    ) -> None:
         self._base = settings
+        self._gemini_lister = gemini_lister
+        self._gemini_override: str | None = None
+        self._models_cache: tuple[float, tuple[str, ...]] | None = None
         self._environment = environment if environment is not None else os.environ
         self._provider = settings.model_provider
         self._listeners: list[Listener] = []
@@ -80,7 +100,11 @@ class ModelSelection:
     # --- reading ------------------------------------------------------------------------
 
     def _gemini_model(self) -> str | None:
-        configured = self._base.gemini_model or self._environment.get(GEMINI_MODEL_ENVIRONMENT_KEY)
+        configured = (
+            self._gemini_override
+            or self._base.gemini_model
+            or self._environment.get(GEMINI_MODEL_ENVIRONMENT_KEY)
+        )
         if configured is None or not configured.strip():
             return None
         return configured.strip().removeprefix("models/")
@@ -119,6 +143,32 @@ class ModelSelection:
         """A model call worked: the earlier problem no longer describes the situation."""
         self._last_failure = None
 
+    async def gemini_models(self) -> tuple[str, ...]:
+        """The chat models the Gemini key can use, fetched on demand and kept for 5 minutes."""
+        if not self._environment.get(GEMINI_API_KEY_ENVIRONMENT_KEY, "").strip():
+            raise ModelSelectionError("GEMINI_NOT_READY")
+        if self._models_cache is not None:
+            fetched_at, names = self._models_cache
+            if time.monotonic() - fetched_at < _MODEL_LIST_TTL_SECONDS:
+                return names
+        if self._gemini_lister is None:
+            raise ModelSelectionError("MODEL_LIST_FAILED")
+        try:
+            names = tuple(await self._gemini_lister())
+        except Exception:
+            raise ModelSelectionError("MODEL_LIST_FAILED") from None
+        self._models_cache = (time.monotonic(), names)
+        return names
+
+    async def _check_listed(self, model: str) -> None:
+        """Refuse a model Google does not list for this key (when the list can be read)."""
+        try:
+            names = await self.gemini_models()
+        except ModelSelectionError:
+            return  # cannot verify; Google answers 404 and the panel shows the problem
+        if names and model not in names:
+            raise ModelSelectionError("INVALID_MODEL")
+
     # --- use tracking ------------------------------------------------------------------
 
     @asynccontextmanager
@@ -137,28 +187,56 @@ class ModelSelection:
         """Register something that must drop its model-bound state after a switch."""
         self._listeners.append(listener)
 
-    async def switch(self, provider: str, *, confirm_cloud: bool = False) -> ModelStatus:
+    async def switch(
+        self,
+        provider: str,
+        *,
+        confirm_cloud: bool = False,
+        gemini_model: str | None = None,
+    ) -> ModelStatus:
+        """Change the answering model: local or Gemini, and which Gemini model.
+
+        Moving into the cloud needs confirmation; changing the Gemini model while already
+        in the cloud does not (the data already goes there). A switch is refused while a
+        question runs, and a failed rebuild puts everything back.
+        """
         if provider not in MODEL_PROVIDERS:
             raise ModelSelectionError("INVALID_PROVIDER")
+        wanted_model: str | None = None
+        if gemini_model is not None:
+            wanted_model = _normalize_model(gemini_model) if provider == "gemini" else None
+            if wanted_model is None:
+                raise ModelSelectionError("INVALID_MODEL")
         async with self._select_lock:
-            if provider == self._provider:
+            changing_model = (
+                provider == "gemini"
+                and wanted_model is not None
+                and wanted_model != self._gemini_model()
+            )
+            if provider == self._provider and not changing_model:
                 return self.status()
             if provider == "gemini":
-                if not confirm_cloud:
+                if self._provider != "gemini" and not confirm_cloud:
                     raise ModelSelectionError("CLOUD_CONFIRMATION_REQUIRED")
-                if not self.status().gemini_ready:
+                if not self._environment.get(GEMINI_API_KEY_ENVIRONMENT_KEY, "").strip() or (
+                    wanted_model is None and self._gemini_model() is None
+                ):
                     raise ModelSelectionError("GEMINI_NOT_READY")
+                if wanted_model is not None:
+                    await self._check_listed(wanted_model)
             if self._active > 0:
                 raise ModelSelectionError("MODEL_BUSY")
 
-            previous = self._provider
+            previous = (self._provider, self._gemini_override)
             self._gate.clear()
             try:
                 self._provider = provider
+                if wanted_model is not None:
+                    self._gemini_override = wanted_model
                 for listener in self._listeners:
                     await listener()
             except Exception:
-                self._provider = previous
+                self._provider, self._gemini_override = previous
                 for listener in self._listeners:
                     try:
                         await listener()

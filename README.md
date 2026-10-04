@@ -7,11 +7,11 @@
 **A local-first academic assistant for university Moodle.**
 It syncs your courses read-only, answers questions from your own course files with citations,
 keeps your study tasks, and tells you on Telegram when something changes.
-Everything runs on your machine. The AI model proposes; trusted code decides.
+By default everything runs on your machine; an optional Gemini cloud model can be switched on from the app. The AI model proposes; trusted code decides.
 
 <a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-preview.gif" alt="AAOS demo: kinetic opening, then the Ask page answering in English and Arabic with sources" width="720"></a>
 
-**▶ [Watch the full 50-second demo with sound](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
+**▶ [Watch the full 51-second demo with sound](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
 
 </div>
 
@@ -20,6 +20,7 @@ Everything runs on your machine. The AI model proposes; trusted code decides.
 ## Contents
 
 - [What AAOS does](#what-aaos-does)
+- [See it working](#see-it-working)
 - [Design principles](#design-principles)
 - [Architecture](#architecture)
 - [How a question is answered](#how-a-question-is-answered)
@@ -49,9 +50,21 @@ Everything runs on your machine. The AI model proposes; trusted code decides.
 | **Dashboard** | A Next.js dashboard for courses, deadlines, documents (with an in-page PDF viewer), tasks, approvals, activity and system health. |
 | **Past courses** | Archived semesters stay searchable and are clearly labelled as past. |
 
+## See it working
+
+Real screens from a running AAOS connected to a real Moodle account. They were captured with the
+optional Gemini model selected, which is why the top bar shows the cloud badge; the default is the
+local model, and the badge then reads `Local · …`.
+
+| | |
+|---|---|
+| ![Overview: this semester's courses and a box to ask a question](docs/images/screens/overview.png)<br>**Overview.** The semester's courses at a glance, with one place to ask. | ![An answer to a question about past-course files, with its sources listed](docs/images/screens/ask-answer-with-sources.png)<br>**Answers from your own files.** The reply says it comes from a past course and lists the file and page of every source. |
+| ![AAOS describing itself and what it can and cannot do](docs/images/screens/ask-about-aaos.png)<br>**It knows its limits.** Questions about AAOS itself get a fixed answer; it only reads Moodle. | ![A study task created from a sentence](docs/images/screens/task-created.png)<br>**Tasks from a sentence.** "Make a high-priority study task…" creates a local task, kept in AAOS only. |
+| ![The Tasks page listing study tasks with priority and course](docs/images/screens/tasks.png)<br>**Tasks page.** Study tasks with status, priority and the course they belong to. | ![A document page with its ingestion status and the PDF opened in the browser](docs/images/screens/document-viewer.png)<br>**Open any file.** Ingestion and index status, and the original PDF in the built-in viewer. |
+
 ## Design principles
 
-1. **Local-first.** The database, documents, search index and models run on your machine. The only outside calls are Moodle itself, and Telegram and Google Calendar when you turn them on.
+1. **Local-first.** The database, documents, search index and models run on your machine. The only outside calls are Moodle itself, Telegram and Google Calendar when you turn them on, and Google's Gemini API if you opt in to the cloud model (off by default, confirmed in the app before anything is sent).
 2. **The model has no authority.** The local LLM only *proposes* a structured action. Trusted code validates its arguments against a schema, checks permissions and runs it. Model output, retrieved text and tool results are treated as untrusted input.
 3. **Read-only toward Moodle.** Synchronization reads; it never writes.
 4. **Grounded or nothing.** An answer cites its evidence, or AAOS says it cannot answer. It does not invent deadlines, files or facts.

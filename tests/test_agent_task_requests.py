@@ -108,6 +108,73 @@ def test_other_sentences_are_left_to_the_existing_flow(question: str) -> None:
     assert parse_task_request(question, COURSES) is None
 
 
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    (
+        # A priority written before the noun is understood by the rules.
+        (
+            "make a high-priority study task to review chapter 2 for AI445",
+            TaskRequest(title="review chapter 2", course_name="ai445", priority="HIGH"),
+        ),
+        (
+            "add an urgent task: read the BERT paper for natural language processing",
+            TaskRequest(title="read the BERT paper", course_name="ai445", priority="HIGH"),
+        ),
+        (
+            "create a low priority study task: tidy my notes",
+            TaskRequest(title="tidy my notes", priority="LOW"),
+        ),
+        (
+            "add a normal-priority task to practise sorting",
+            TaskRequest(title="practise sorting", priority="NORMAL"),
+        ),
+        # A word order or plural the student actually types still links the course;
+        # the owner named only a course, so the task itself is asked for.
+        (
+            "MAKE A HIGH-PRIORITY STUDY TASK FOR ALGORITHM OPTIMIZATION",
+            TaskRequest(course_name="ai380", priority="HIGH"),
+        ),
+        (
+            "make a study task for optimization algorithm: read chapter 4",
+            TaskRequest(title="read chapter 4", course_name="ai380"),
+        ),
+        (
+            "make a study task to finish the lab for robotics introduction",
+            TaskRequest(title="finish the lab", course_name="rb201"),
+        ),
+    ),
+)
+def test_a_priority_before_the_noun_and_a_looser_course_name_are_understood(
+    question: str, expected: TaskRequest
+) -> None:
+    assert parse_task_request(question, COURSES) == expected
+
+
+def test_the_looser_course_match_is_for_linking_tasks_not_for_scoping_questions() -> None:
+    from aaos.agent.intent_router import find_course_mention
+
+    current = tuple(course for course in COURSES if course.status != "past")
+    question = "what is the optimization algorithm for training a network"
+
+    assert find_course_mention(question, current).course_name is None  # a question stays unscoped
+    assert find_course_mention(question, current, loose=True).course_name == "ai380"
+
+
+@pytest.mark.parametrize(
+    "phrase", ("optimization only", "algorithms only", "language processing", "introduction")
+)
+def test_a_single_word_or_a_partial_name_never_links_a_course(phrase: str) -> None:
+    request = parse_task_request(f"add a study task: read about {phrase}", COURSES)
+
+    assert request is not None and request.course_name is None
+
+
+def test_a_bare_priority_task_request_asks_what_the_task_is() -> None:
+    assert parse_task_request("make a high-priority study task", COURSES) == TaskRequest(
+        priority="HIGH"
+    )
+
+
 def test_folding_keeps_offsets_into_the_original_text() -> None:
     text = "  Add   A Study TASK:  مراجعة الفصل  "
     folded, origins = fold_with_offsets(text)

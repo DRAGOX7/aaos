@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from aaos.config import DEFAULT_SETTINGS, AppSettings
-from aaos.inference.factory import warn_if_cloud_model
+from aaos.inference.factory import list_gemini_models, warn_if_cloud_model
 from aaos.inference.selection import ModelSelection
 from aaos.study_tasks.contracts import StudyTask, StudyTaskPriority, StudyTaskStatus
 from aaos.web.activity import ActivityCursor, ActivityEvent, ActivityHistoryResponse
@@ -748,7 +748,7 @@ def create_app(
         raise ValueError("Calendar proposals require execution through the approval endpoint")
 
     warn_if_cloud_model(settings)
-    model_selection = ModelSelection(settings)
+    model_selection = ModelSelection(settings, gemini_lister=list_gemini_models)
     application = FastAPI(
         title=settings.application_name,
         version=settings.application_version,

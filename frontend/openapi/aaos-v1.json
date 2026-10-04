@@ -1677,6 +1677,25 @@
         "title": "HealthStatus",
         "type": "string"
       },
+      "ModelOptionsResponse": {
+        "additionalProperties": false,
+        "description": "The Gemini chat models the configured key can use. Names only.",
+        "properties": {
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "ModelOptionsResponse",
+        "type": "object"
+      },
       "ModelSelectRequest": {
         "additionalProperties": false,
         "description": "Closed request to change the answering model; the browser never sends a key.",
@@ -1685,6 +1704,18 @@
             "default": false,
             "title": "Confirm Cloud",
             "type": "boolean"
+          },
+          "gemini_model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Model"
           },
           "provider": {
             "enum": [
@@ -3813,6 +3844,25 @@
           }
         },
         "summary": "Select Model"
+      }
+    },
+    "/api/v1/model/gemini-models": {
+      "get": {
+        "description": "The Gemini chat models the configured key can use (names only).",
+        "operationId": "get_gemini_models_api_v1_model_gemini_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Gemini Models"
       }
     },
     "/api/v1/rag/queries": {

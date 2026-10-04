@@ -24,6 +24,7 @@ EXPECTED_API_PATHS = {
     "/api/v1/documents/{document_id}/file",
     # The answering model: which one is running, and the confirmed local/Gemini switch.
     "/api/v1/model",
+    "/api/v1/model/gemini-models",
 }
 
 
