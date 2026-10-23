@@ -70,7 +70,7 @@ export function AskConversation({
         ) : (
           <article aria-label="AAOS answer" className="flex gap-3" key={entry.id}>
             <AssistantMark />
-            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-white px-5 py-4">
+            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-card px-5 py-4">
               {entry.kind === "assistant"
                 ? <AskResponseRenderer response={entry.response} />
                 : <AskIssueMessage kind={entry.issue.kind} message={entry.issue.message} />}
@@ -81,7 +81,7 @@ export function AskConversation({
       {pending ? (
         <div aria-live="polite" className="flex items-center gap-3">
           <AssistantMark />
-          <p className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-white px-4 py-3 text-sm text-muted-foreground">
+          <p className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
             <span aria-hidden="true" className="flex gap-1">
               <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.3s] motion-reduce:animate-none" />
               <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.15s] motion-reduce:animate-none" />

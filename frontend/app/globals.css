@@ -19,6 +19,7 @@
   --aaos-text-subtle: #6e7e9f;
   --aaos-border: #dfe8f4;
   --aaos-border-strong: #cbd9ed;
+  --aaos-border-hover: #bcd3f4;
 
   --aaos-primary: #1677f2;
   --aaos-primary-strong: #1361d6;
@@ -33,9 +34,13 @@
 
   --aaos-success: #0aa56f;
   --aaos-success-soft: #e7f8f0;
+  --aaos-success-strong: #066b47;
   --aaos-warning: #ee9412;
   --aaos-warning-soft: #fff5df;
+  --aaos-warning-strong: #8a5300;
   --aaos-danger: #e5484d;
+  --aaos-danger-soft: #fdecee;
+  --aaos-danger-strong: #a62a33;
   --aaos-purple: #7657d9;
   --aaos-purple-soft: #f0ecff;
 
@@ -88,6 +93,52 @@
   --sidebar-ring: var(--aaos-primary);
 }
 
+/* Dark theme: the same tokens, redefined. The class is set on <html> before first
+   paint by the inline script in app/layout.tsx, from the saved choice or the OS. */
+.dark {
+  color-scheme: dark;
+
+  --aaos-background: #0b1120;
+  --aaos-surface: #131c2e;
+  --aaos-surface-soft: #18233a;
+  --aaos-surface-glass: rgb(19 28 46 / 0.86);
+
+  --aaos-text: #e6ecf7;
+  --aaos-primary-deep: #cfe0ff;
+  --aaos-text-muted: #9dadc9;
+  --aaos-text-subtle: #8090ae;
+  --aaos-border: #243250;
+  --aaos-border-strong: #2f4066;
+  --aaos-border-hover: #3b5687;
+
+  --aaos-primary: #3b8cff;
+  --aaos-primary-strong: #6ea8ff;
+
+  --aaos-hero: #172a57;
+  --aaos-hero-muted: #afc3e6;
+  --aaos-primary-soft: #16294a;
+
+  --aaos-teal: #35c6cf;
+  --aaos-teal-soft: #0f2d33;
+
+  --aaos-success: #2bc48a;
+  --aaos-success-soft: #0f2e24;
+  --aaos-success-strong: #6edcae;
+  --aaos-warning: #f5a83a;
+  --aaos-warning-soft: #33260e;
+  --aaos-warning-strong: #f6c56f;
+  --aaos-danger: #f0656a;
+  --aaos-danger-soft: #3a1a1f;
+  --aaos-danger-strong: #ff9ea2;
+  --aaos-purple: #a18bf2;
+  --aaos-purple-soft: #241c45;
+
+  --aaos-shadow-card:
+    0 1px 2px rgb(0 0 0 / 0.3);
+  --aaos-shadow-float:
+    0 20px 54px rgb(0 0 0 / 0.45);
+}
+
 @theme inline {
   --font-heading: var(--font-jakarta);
   --font-sans: var(--font-jakarta);
@@ -109,11 +160,15 @@
   --color-hero: var(--aaos-hero);
   --color-hero-muted: var(--aaos-hero-muted);
   --color-success-soft: var(--aaos-success-soft);
+  --color-success-strong: var(--aaos-success-strong);
   --color-teal: var(--aaos-teal);
   --color-teal-soft: var(--aaos-teal-soft);
   --color-success: var(--aaos-success);
   --color-warning: var(--aaos-warning);
   --color-warning-soft: var(--aaos-warning-soft);
+  --color-warning-strong: var(--aaos-warning-strong);
+  --color-danger-soft: var(--aaos-danger-soft);
+  --color-danger-strong: var(--aaos-danger-strong);
   --color-purple: var(--aaos-purple);
   --color-purple-soft: var(--aaos-purple-soft);
 
@@ -130,6 +185,7 @@
 
   --color-border: var(--border);
   --color-border-strong: var(--aaos-border-strong);
+  --color-border-hover: var(--aaos-border-hover);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-text-subtle: var(--aaos-text-subtle);

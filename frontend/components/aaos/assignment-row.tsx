@@ -7,8 +7,8 @@ import { courseDisplayName } from "@/lib/courses/display";
 import { cn } from "@/lib/utils";
 
 const DUE_LOOK: Record<AssignmentDueBucket, { label: string; pill: string }> = {
-  OVERDUE: { label: "Overdue", pill: "bg-[#fdecee] text-[#a62a33]" },
-  DUE_SOON: { label: "Due soon", pill: "bg-warning-soft text-[#8a5300]" },
+  OVERDUE: { label: "Overdue", pill: "bg-danger-soft text-danger-strong" },
+  DUE_SOON: { label: "Due soon", pill: "bg-warning-soft text-warning-strong" },
   THIS_WEEK: { label: "This week", pill: "bg-primary-soft text-primary-strong" },
   LATER: { label: "Later", pill: "bg-muted text-muted-foreground" },
   NO_DUE_DATE: { label: "No due date", pill: "bg-muted text-muted-foreground" },
@@ -55,7 +55,7 @@ export function AssignmentRow({
   );
 
   return (
-    <li className="rounded-xl border border-border bg-white p-4">
+    <li className="rounded-xl border border-border bg-card p-4">
       <article>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

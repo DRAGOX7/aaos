@@ -4,6 +4,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import { AppShell } from "@/components/aaos/app-shell";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 import "./globals.css";
@@ -28,10 +29,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // The inline script sets the theme class before first paint, so <html>
+    // differs from the server HTML on purpose.
     <html
       lang="en"
       className={cn("font-sans", jakarta.variable)}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>
         <QueryProvider>
           <TooltipProvider>

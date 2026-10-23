@@ -27,10 +27,10 @@ const COMPONENT_NAMES: Record<HealthComponentName, string> = {
 type StatusLook = Readonly<{ label: string; pill: string; dot: string }>;
 
 const STATUS: Record<string, StatusLook> = {
-  HEALTHY: { label: "Healthy", pill: "bg-success-soft text-[#066b47]", dot: "bg-success" },
-  DEGRADED: { label: "Degraded", pill: "bg-warning-soft text-[#8a5300]", dot: "bg-warning" },
+  HEALTHY: { label: "Healthy", pill: "bg-success-soft text-success-strong", dot: "bg-success" },
+  DEGRADED: { label: "Degraded", pill: "bg-warning-soft text-warning-strong", dot: "bg-warning" },
   NOT_CONFIGURED: { label: "Not configured", pill: "bg-muted text-muted-foreground", dot: "bg-text-subtle" },
-  UNAVAILABLE: { label: "Unavailable", pill: "bg-[#fdecee] text-[#a62a33]", dot: "bg-destructive" },
+  UNAVAILABLE: { label: "Unavailable", pill: "bg-danger-soft text-danger-strong", dot: "bg-destructive" },
 };
 
 function statusLook(status: string): StatusLook {
@@ -112,8 +112,8 @@ function ComponentGroup({ title, components }: { title: string; components: Heal
 }
 
 const OVERALL: Record<string, { title: string; icon: LucideIcon; tone: string }> = {
-  HEALTHY: { title: "All systems healthy", icon: CircleCheck, tone: "bg-success-soft text-[#066b47]" },
-  DEGRADED: { title: "Some systems are degraded", icon: CircleAlert, tone: "bg-warning-soft text-[#8a5300]" },
+  HEALTHY: { title: "All systems healthy", icon: CircleCheck, tone: "bg-success-soft text-success-strong" },
+  DEGRADED: { title: "Some systems are degraded", icon: CircleAlert, tone: "bg-warning-soft text-warning-strong" },
 };
 
 const checkedFormat = new Intl.DateTimeFormat("en-GB", {
@@ -129,7 +129,7 @@ export function SystemHealthView() {
   const optional = query.data?.components.filter((component) => !component.required) ?? [];
   const overall = query.data ? (query.data.overall as HealthStatus) : null;
   const summary = overall
-    ? (OVERALL[overall] ?? { title: "Systems need attention", icon: CircleDashed, tone: "bg-[#fdecee] text-[#a62a33]" })
+    ? (OVERALL[overall] ?? { title: "Systems need attention", icon: CircleDashed, tone: "bg-danger-soft text-danger-strong" })
     : null;
 
   return (

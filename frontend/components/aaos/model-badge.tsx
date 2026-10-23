@@ -141,7 +141,7 @@ export function ModelBadge() {
           title={label}
           className={cn(
             "hidden h-9 max-w-[16rem] items-center gap-2 rounded-full px-3 text-[13px] font-semibold transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex",
-            cloud ? "bg-warning-soft text-[#8a5300]" : "bg-muted text-foreground",
+            cloud ? "bg-warning-soft text-warning-strong" : "bg-muted text-foreground",
           )}
         >
           <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.9} />
@@ -161,7 +161,7 @@ export function ModelBadge() {
         <div className="flex flex-col gap-3 px-4">
           {status.last_failure ? (
             <p
-              className="rounded-xl border border-destructive/30 bg-[#fdecee] p-3 text-sm text-[#a62a33]"
+              className="rounded-xl border border-destructive/30 bg-danger-soft p-3 text-sm text-danger-strong"
               role="status"
             >
               Last problem: {status.last_failure}
@@ -198,7 +198,7 @@ export function ModelBadge() {
               Gemini model
               <select
                 aria-label="Gemini model"
-                className="h-9 rounded-xl border border-border bg-white px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                className="h-9 rounded-xl border border-border bg-card px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 disabled={mutation.isPending || geminiList.isPending}
                 value={pickedGemini}
                 onChange={(event) => {
@@ -246,7 +246,7 @@ export function ModelBadge() {
               ChatGPT plan model
               <select
                 aria-label="ChatGPT plan model"
-                className="h-9 rounded-xl border border-border bg-white px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                className="h-9 rounded-xl border border-border bg-card px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 disabled={mutation.isPending || planList.isPending}
                 value={pickedPlan}
                 onChange={(event) => {
@@ -285,7 +285,7 @@ export function ModelBadge() {
             <div
               role="alertdialog"
               aria-labelledby="cloud-confirm-title"
-              className="flex flex-col gap-3 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm text-[#8a5300]"
+              className="flex flex-col gap-3 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm text-warning-strong"
             >
               <p id="cloud-confirm-title" className="font-semibold">
                 Send your data to {CLOUD[confirming].company}?
