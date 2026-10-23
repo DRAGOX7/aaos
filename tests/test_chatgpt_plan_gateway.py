@@ -205,17 +205,19 @@ def test_an_unnamed_rejection_is_retried_with_less_never_more(tmp_path: Path) ->
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
-        if len(seen) < 4:
+        if len(seen) < 5:
             return _rejected("x")
         return _completed('{"status": "INSUFFICIENT_EVIDENCE"}')
 
     _run(_gateway(tmp_path, handler), STRUCTURED)
     bodies = _bodies(seen)
-    assert [("text" in b, b.get("reasoning", {}).get("effort")) for b in bodies] == [
-        (True, "none"),
-        (False, "none"),
-        (False, "low"),
-        (False, None),
+    strictness = [b.get("text", {}).get("format", {}).get("strict") for b in bodies]
+    assert [(s, b.get("reasoning", {}).get("effort")) for s, b in zip(strictness, bodies)] == [
+        (True, "none"),  # strict schema
+        (False, "none"),  # the same schema, not strict
+        (None, "none"),  # no schema
+        (None, "low"),
+        (None, None),
     ]
 
 
@@ -274,7 +276,9 @@ def test_a_rejected_schema_is_dropped_for_that_schema_only(tmp_path: Path) -> No
 
     asyncio.run(both())
     bodies = _bodies(seen)
-    assert ["text" in b for b in bodies] == [True, False, False, True]
+    strictness = [b.get("text", {}).get("format", {}).get("strict") for b in bodies]
+    # strict, then not strict, then no schema; remembered for that schema only.
+    assert strictness == [True, False, None, None, True]
     assert all(b["reasoning"]["effort"] == "none" for b in bodies)
 
 
@@ -579,3 +583,77 @@ def test_the_rag_runtime_gets_a_no_op_lifecycle_and_names_the_plan_model(
         assert callable(decomposer)
     finally:
         configured.close()
+
+
+# --- union schemas (Phase 11 defect fix, 2026-10-23) -----------------------------------------
+
+
+def _structured(schema: str) -> ChatRequest:
+    return ChatRequest(
+        messages=(ChatMessage("user", "q"),),
+        structured_output="json_schema",
+        structured_output_schema=schema,  # type: ignore[arg-type]
+        max_output_tokens=512,
+    )
+
+
+def test_a_union_schema_is_wrapped_in_an_object_and_the_reply_unwrapped(tmp_path: Path) -> None:
+    # OpenAI refuses a top-level oneOf; AAOS's agent decision schemas have one.
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return _completed('{"decision": {"kind": "example", "value": 1}}')
+
+    reply = _run(_gateway(tmp_path, handler), _structured("calendar_proposal_decision"))
+    sent = _bodies(seen)[0]["text"]["format"]
+    assert sent["schema"]["type"] == "object"
+    assert sent["schema"]["required"] == ["decision"]
+    assert sent["schema"]["additionalProperties"] is False
+    assert '"oneOf"' not in json.dumps(sent["schema"])
+    assert json.loads(reply.content) == {"kind": "example", "value": 1}
+
+
+def test_an_object_schema_is_sent_unwrapped_and_its_reply_untouched(tmp_path: Path) -> None:
+    from aaos.inference.lm_studio import _STRUCTURED_RESPONSE_FORMATS
+
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return _completed('{"decision": "kept as is"}')
+
+    reply = _run(_gateway(tmp_path, handler), _structured("grounded_answer"))
+    sent = _bodies(seen)[0]["text"]["format"]
+    original = _STRUCTURED_RESPONSE_FORMATS["grounded_answer"]["json_schema"]["schema"]
+    assert sent["schema"] == original and sent["strict"] is True
+    assert reply.content == '{"decision": "kept as is"}'
+
+
+def test_every_aaos_schema_is_sent_with_an_object_root_and_no_one_of() -> None:
+    from aaos.inference.chatgpt_plan import openai_schema
+    from aaos.inference.lm_studio import _STRUCTURED_RESPONSE_FORMATS
+
+    for name, wrapper in _STRUCTURED_RESPONSE_FORMATS.items():
+        schema, wrapped = openai_schema(name)
+        assert schema["type"] == "object", name
+        assert "anyOf" not in schema and "oneOf" not in schema, name
+        assert '"oneOf"' not in json.dumps(schema), name
+        if not wrapped:
+            # Only the oneOf keyword is renamed; nothing else changes.
+            original = json.dumps(wrapper["json_schema"]["schema"], sort_keys=True)
+            assert json.dumps(schema, sort_keys=True) == original.replace('"oneOf"', '"anyOf"'), (
+                name
+            )
+
+
+def test_a_wrapped_reply_that_is_not_the_expected_shape_is_left_for_aaos_to_reject(
+    tmp_path: Path,
+) -> None:
+    for text in ("not json at all", '{"decision": 1, "extra": 2}', '["decision"]'):
+
+        def handler(request: httpx2.Request, text: str = text) -> httpx2.Response:
+            return _completed(text)
+
+        reply = _run(_gateway(tmp_path, handler), _structured("calendar_proposal_decision"))
+        assert reply.content == text

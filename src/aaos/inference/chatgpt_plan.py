@@ -26,7 +26,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 import httpx2
@@ -133,12 +133,64 @@ def _slug(name: object) -> str | None:
     return name if isinstance(name, str) and _MODEL_SLUG.match(name) else None
 
 
+# OpenAI's structured output requires the top level of a schema to be a plain object and
+# does not support oneOf. AAOS's agent decision schemas choose between decision kinds with a
+# top-level oneOf, so they are sent wrapped as {"decision": <schema>} with oneOf renamed to
+# anyOf, and the reply's "decision" value is handed back. AAOS's own strict parsers still
+# check every reply, so this loosens nothing (Phase 11 defect fix, 2026-10-23).
+WRAPPER_KEY = "decision"
+
+
+def _rename_one_of(node: Any) -> Any:
+    """Copy ``node`` with every ``oneOf`` keyword renamed ``anyOf`` (property names kept)."""
+    if isinstance(node, list):
+        return [_rename_one_of(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    renamed: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "properties" and isinstance(value, dict):
+            renamed[key] = {name: _rename_one_of(sub) for name, sub in value.items()}
+        else:
+            renamed["anyOf" if key == "oneOf" else key] = _rename_one_of(value)
+    return renamed
+
+
+def openai_schema(schema_name: str) -> tuple[dict[str, Any], bool]:
+    """The schema as sent to OpenAI, and whether it was wrapped in a ``decision`` object."""
+    original = _STRUCTURED_RESPONSE_FORMATS[schema_name]["json_schema"]["schema"]
+    schema = _rename_one_of(original)
+    if schema.get("type") == "object" and "anyOf" not in schema:
+        return schema, False
+    return (
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [WRAPPER_KEY],
+            "properties": {WRAPPER_KEY: schema},
+        },
+        True,
+    )
+
+
+def unwrap_reply(text: str) -> str:
+    """The ``decision`` value of a wrapped reply; anything else is returned unchanged."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return text
+    if isinstance(parsed, dict) and set(parsed) == {WRAPPER_KEY}:
+        return json.dumps(parsed[WRAPPER_KEY], ensure_ascii=False)
+    return text
+
+
 def build_payload(
     model: str,
     request: ChatRequest,
     *,
     with_schema: bool,
     reasoning_effort: str | None = None,
+    strict: bool = True,
 ) -> dict[str, Any]:
     """The Responses API body for ``request``: streamed, unstored, and without tools."""
     payload: dict[str, Any] = {
@@ -156,12 +208,13 @@ def build_payload(
     }
     if with_schema and request.structured_output == "json_schema":
         wrapper = _STRUCTURED_RESPONSE_FORMATS[request.structured_output_schema]["json_schema"]
+        schema, _ = openai_schema(request.structured_output_schema)
         payload["text"] = {
             "format": {
                 "type": "json_schema",
                 "name": wrapper["name"],
-                "schema": wrapper["schema"],
-                "strict": bool(wrapper.get("strict", True)),
+                "schema": schema,
+                "strict": strict and bool(wrapper.get("strict", True)),
             }
         }
     if reasoning_effort is not None:
@@ -169,7 +222,7 @@ def build_payload(
     return payload
 
 
-async def _sse_events(response: httpx2.Response) -> AsyncIterator[dict[str, Any]]:
+async def _sse_events(response: httpx2.Response) -> AsyncGenerator[dict[str, Any], None]:
     """Server-sent events as JSON objects; the event name fills in a missing ``type``."""
     name: str | None = None
     data: list[str] = []
@@ -289,9 +342,10 @@ class ChatGPTPlanGateway:
         self._owned_closers = owned_closers
         self._closed = False
         # What the server rejected so far, so later requests do not repeat it: an index
-        # into the reasoning efforts (len = send none), and schemas it refused.
+        # into the reasoning efforts (len = send none), and per schema how far it stepped
+        # down (0 = strict, 1 = not strict, 2 = no schema).
         self._effort_index = 0
-        self._rejected_schemas: set[str] = set()
+        self._schema_levels: dict[str, int] = {}
 
     def __repr__(self) -> str:
         return f"ChatGPTPlanGateway(model={self._model!r})"
@@ -327,18 +381,24 @@ class ChatGPTPlanGateway:
         schema = request.structured_output_schema
         structured = request.structured_output == "json_schema"
         # Retry with less, never more: each HTTP 400 removes exactly what it names (the
-        # reasoning effort steps down, or this schema is dropped). A 400 that names
-        # nothing drops the schema first, then the reasoning setting. Every step sends
-        # less, so the loop ends; AAOS's own parsers still check every reply.
+        # reasoning effort steps down, or this schema steps from strict to not strict to
+        # none). A 400 that names nothing steps the schema down first, then the reasoning
+        # setting. Every step sends less, so the loop ends; AAOS's own parsers still check
+        # every reply.
         while True:
-            with_schema = structured and schema not in self._rejected_schemas
+            level = self._schema_levels.get(schema, 0) if structured else 2
+            with_schema = level < 2
             effort = (
                 REASONING_EFFORTS[self._effort_index]
                 if self._effort_index < len(REASONING_EFFORTS)
                 else None
             )
             payload = build_payload(
-                self._model, request, with_schema=with_schema, reasoning_effort=effort
+                self._model,
+                request,
+                with_schema=with_schema,
+                reasoning_effort=effort,
+                strict=level == 0,
             )
             try:
                 text, usage = await self._post_with_retry(payload, request)
@@ -349,14 +409,14 @@ class ChatGPTPlanGateway:
                 param = error.param or ""
                 if param.startswith("reasoning") and effort is not None:
                     self._effort_index += 1
-                elif param.startswith("text") and with_schema:
-                    self._rejected_schemas.add(schema)
                 elif with_schema:
-                    self._rejected_schemas.add(schema)
+                    self._schema_levels[schema] = level + 1
                 elif effort is not None:
                     self._effort_index += 1
                 else:
                     raise
+        if with_schema and openai_schema(schema)[1]:
+            text = unwrap_reply(text)
         self._report(self._on_success)
         return ChatResponse(content=text, model_identifier=self._model, usage=usage)
 
