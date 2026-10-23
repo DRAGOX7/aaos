@@ -348,7 +348,44 @@ All automated tests use fake transports. No real OpenAI call runs in the suite.
 
 ## 13. Probe findings
 
-To be filled in by 11C before 11D starts. Empty in this draft.
+Not yet run. The probe script exists (`scripts/chatgpt_plan_probe.py`), and it needs the owner
+present and a real sign-in. Fill this in from its output.
+
+## 14. Implementation notes (2026-10-23)
+
+These are differences from the text above, or details the text left open. Each was decided from
+OpenAI's published Sign in with ChatGPT pages, read on 2026-10-23.
+
+- **Order (D4):** the owner asked to finish all of Phase 11 in one go, so 11D was built before the
+  probe ran.
+  - To keep that safe, the gateway falls back step by step: the JSON schema is dropped on an HTTP
+    400, then the reasoning setting.
+  - The probe output still decides whether anything in §7 changes.
+- **System messages:** they are sent as `developer` input items. OpenAI's preview rejects `system`
+  items.
+- **Reasoning:** the lowest effort is requested as `reasoning.effort = "none"`. The probe tries
+  `none`, `minimal` and `low`.
+- **Fields never sent:** OpenAI's preview limitations list the fields it rejects. None of them is
+  sent, including `max_output_tokens`, `temperature`, `top_p`, `truncation`, `user`, `metadata` and
+  `previous_response_id`.
+- **Callback port:** 1455 is tried first, and a free port is used if 1455 is busy. OpenAI's sign-in
+  page allows only the port to vary.
+- **Sign-out (§4, §5):** sign-out also revokes the refresh token at the `revocation_endpoint` from
+  OpenAI's discovery document, as OpenAI's profiles page asks. The tokens are removed from the file,
+  and the host id and issued client id are kept. OpenAI asks that both be reused for later sign-ins
+  on the same install.
+- **Not stored:** the ID token is not stored (§4), so later sign-ins send no `id_token_hint`, and
+  OpenAI shows its account selector instead. The verified `sub` is stored as the account identity.
+- **Error codes:** OpenAI's error codes are mapped as in §7.
+  - `subscription_sharing_user_not_eligible` and the `chatpass_v2_*` codes become `NOT_ELIGIBLE`.
+  - `subscription_sharing_usage_unavailable` and `subscription_sharing_user_unavailable` are waited
+    out, like a 503.
+  - Only lowercase error words are ever kept, so a token echoed by a server never reaches a log.
+- **Refresh failures:** these refresh errors mark the sign-in as needing a new one:
+  `invalid_grant`, `refresh_token_reused`, `refresh_token_expired` and `invalid_client`, or any 400,
+  401 or 403 from the token endpoint. A network failure or a 5xx keeps the sign-in.
+- **Release scan:** `scripts/phase9/public_release.py` also flags a JSON-stored token
+  (`"refresh_token": "<20+ characters>"`) and a bare JWT.
 
 ## Acceptance gate
 

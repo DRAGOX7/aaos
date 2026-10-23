@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx2
 
-from aaos.config import DEFAULT_SETTINGS, AppSettings
+from aaos.config import CLOUD_MODEL_PROVIDERS, DEFAULT_SETTINGS, AppSettings
 from aaos.inference.factory import (
     NoOpModelLifecycle,
     active_model_identifier,
@@ -134,14 +134,14 @@ def build_configured_phase4_runtime(
     validate_rag_database(paths.database_path)
 
     cloud_options: dict[str, object] = {}
-    if settings.model_provider == "gemini":
+    if settings.model_provider in CLOUD_MODEL_PROVIDERS:
         # Opt-in cloud model: there is no local model to load or free.
         gateway = build_model_gateway(
             settings, on_failure=on_model_failure, on_success=on_model_success
         )
         cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
         # The semantic steps reject any reply that is not from the model they expect.
-        # They expect the approved local model by default; name the Gemini model
+        # They expect the approved local model by default; name the cloud model
         # explicitly so its replies are accepted, and nothing else is.
         cloud_options.update(_semantic_factories_for(active_model_identifier(settings)))
     else:

@@ -13,7 +13,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 _LOCAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
-MODEL_PROVIDERS = ("lm_studio", "gemini")
+MODEL_PROVIDERS = ("lm_studio", "gemini", "chatgpt_plan")
+# Providers that send prompts off this computer.
+CLOUD_MODEL_PROVIDERS = frozenset({"gemini", "chatgpt_plan"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +32,11 @@ class AppSettings:
     # Which model answers. "lm_studio" (default) is fully local. "gemini" is an
     # explicit opt-in that sends prompts, including course excerpts, to Google; its
     # API key is never a setting: it is read from the environment by the gateway only.
+    # "chatgpt_plan" is the same kind of opt-in, sending prompts to OpenAI on the owner's
+    # ChatGPT plan; its sign-in lives in an owner-only credential file, never a setting.
     model_provider: str = "lm_studio"
     gemini_model: str | None = None
+    chatgpt_plan_model: str | None = None
     local_approver_identity: str | None = None
     local_approver_context_id: str | None = None
     calendar_timezone: str | None = None
@@ -90,6 +95,14 @@ class AppSettings:
             object.__setattr__(self, "gemini_model", self.gemini_model.strip())
         elif self.gemini_model is not None:
             raise ValueError("gemini_model is only valid when model_provider is gemini")
+        if self.model_provider == "chatgpt_plan":
+            if not isinstance(self.chatgpt_plan_model, str) or not self.chatgpt_plan_model.strip():
+                raise ValueError(
+                    "chatgpt_plan_model must be set when model_provider is chatgpt_plan"
+                )
+            object.__setattr__(self, "chatgpt_plan_model", self.chatgpt_plan_model.strip())
+        elif self.chatgpt_plan_model is not None:
+            raise ValueError("chatgpt_plan_model is only valid when model_provider is chatgpt_plan")
 
         identity, context_id = self.local_approver_identity, self.local_approver_context_id
         if (identity is None) != (context_id is None):
@@ -119,6 +132,7 @@ CALENDAR_TIMEZONE_ENVIRONMENT_KEY = "AAOS_CALENDAR_TIMEZONE"
 MODEL_PROVIDER_ENVIRONMENT_KEY = "AAOS_MODEL_PROVIDER"
 GEMINI_MODEL_ENVIRONMENT_KEY = "AAOS_GEMINI_MODEL"
 GEMINI_API_KEY_ENVIRONMENT_KEY = "GEMINI_API_KEY"
+CHATGPT_PLAN_MODEL_ENVIRONMENT_KEY = "AAOS_CHATGPT_PLAN_MODEL"
 
 
 def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
@@ -130,6 +144,8 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
     The provider defaults to the local LM Studio model. Choosing ``gemini`` is an
     explicit opt-in that needs ``AAOS_GEMINI_MODEL`` and a ``GEMINI_API_KEY`` that
     is present in the environment; the key itself is never stored in the settings.
+    Choosing ``chatgpt_plan`` needs ``AAOS_CHATGPT_PLAN_MODEL``; its sign-in is read
+    from the owner-only credential file when the gateway is built, never from here.
     """
     values: dict[str, object] = {}
 
@@ -157,6 +173,8 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
                     f"when {MODEL_PROVIDER_ENVIRONMENT_KEY}=gemini"
                 )
             values["gemini_model"] = environment.get(GEMINI_MODEL_ENVIRONMENT_KEY, "")
+        if provider == "chatgpt_plan":
+            values["chatgpt_plan_model"] = environment.get(CHATGPT_PLAN_MODEL_ENVIRONMENT_KEY, "")
 
     try:
         return AppSettings(**values)  # type: ignore[arg-type]
@@ -169,6 +187,11 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
             raise ValueError(
                 f"{GEMINI_MODEL_ENVIRONMENT_KEY} must name a Gemini model when "
                 f"{MODEL_PROVIDER_ENVIRONMENT_KEY}=gemini"
+            ) from error
+        if "chatgpt_plan_model" in str(error):
+            raise ValueError(
+                f"{CHATGPT_PLAN_MODEL_ENVIRONMENT_KEY} must name a model when "
+                f"{MODEL_PROVIDER_ENVIRONMENT_KEY}=chatgpt_plan"
             ) from error
         raise
 

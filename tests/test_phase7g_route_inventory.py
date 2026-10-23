@@ -25,6 +25,7 @@ EXPECTED_API_PATHS = {
     # The answering model: which one is running, and the confirmed local/Gemini switch.
     "/api/v1/model",
     "/api/v1/model/gemini-models",
+    "/api/v1/model/chatgpt-plan-models",
 }
 
 

@@ -7,6 +7,7 @@ export type ModelProvider = ModelStatus["provider"];
 export type ModelSwitchFailure =
   | "CLOUD_CONFIRMATION_REQUIRED"
   | "GEMINI_NOT_READY"
+  | "CHATGPT_PLAN_NOT_READY"
   | "MODEL_BUSY"
   | "MODEL_SWITCH_FAILED"
   | "MUTATION_NOT_ALLOWED"
@@ -17,6 +18,7 @@ export type ModelSwitchFailure =
 const KNOWN_FAILURES = new Set<string>([
   "CLOUD_CONFIRMATION_REQUIRED",
   "GEMINI_NOT_READY",
+  "CHATGPT_PLAN_NOT_READY",
   "MODEL_BUSY",
   "MODEL_SWITCH_FAILED",
   "MUTATION_NOT_ALLOWED",
@@ -62,19 +64,39 @@ export async function fetchGeminiModels(signal?: AbortSignal): Promise<string[]>
     : [];
 }
 
+/**
+ * The models the signed-in ChatGPT plan offers (names only). The sign-in itself happens in
+ * a terminal (`aaos model chatgpt-plan sign-in`); no token ever reaches the browser.
+ */
+export async function fetchChatGPTPlanModels(signal?: AbortSignal): Promise<string[]> {
+  const response = await fetch("/api/v1/model/chatgpt-plan-models", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("AAOS could not get the list of ChatGPT plan models.");
+  const body = (await response.json()) as { models?: unknown };
+  return Array.isArray(body.models)
+    ? body.models.filter((name): name is string => typeof name === "string")
+    : [];
+}
+
 export async function selectModel(
   provider: ModelProvider,
   confirmCloud: boolean,
-  geminiModel?: string,
+  model?: string,
 ): Promise<ModelStatus> {
+  // The model name goes in the field of the provider it belongs to; nothing else is sent.
+  const modelField =
+    model === undefined
+      ? {}
+      : provider === "chatgpt_plan"
+        ? { chatgpt_plan_model: model }
+        : { gemini_model: model };
   const response = await fetch("/api/v1/model", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(
-      geminiModel === undefined
-        ? { provider, confirm_cloud: confirmCloud }
-        : { provider, confirm_cloud: confirmCloud, gemini_model: geminiModel },
-    ),
+    body: JSON.stringify({ provider, confirm_cloud: confirmCloud, ...modelField }),
   });
   if (!response.ok) {
     let code: unknown;

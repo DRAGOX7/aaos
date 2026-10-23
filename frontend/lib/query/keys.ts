@@ -13,6 +13,7 @@ export const systemHealthKeys = {
 export const modelKeys = {
   all: ["model"] as const,
   geminiModels: ["model", "gemini-models"] as const,
+  chatgptPlanModels: ["model", "chatgpt-plan-models"] as const,
 };
 
 export const academicKeys = {

@@ -764,12 +764,17 @@ class ApprovalListResponse(BaseModel):
     approvals: tuple[ApprovalSummary, ...]
 
 
-ModelProviderView = Literal["lm_studio", "gemini"]
+ModelProviderView = Literal["lm_studio", "gemini", "chatgpt_plan"]
 ModelGeminiBlockerView = Literal["GEMINI_API_KEY_MISSING", "GEMINI_MODEL_MISSING"]
+ModelChatGPTPlanBlockerView = Literal[
+    "CHATGPT_PLAN_SIGN_IN_REQUIRED",
+    "CHATGPT_PLAN_USAGE_NOT_GRANTED",
+    "CHATGPT_PLAN_MODEL_MISSING",
+]
 
 
 class ModelStatusResponse(BaseModel):
-    """Which model answers now. Names only: the Gemini API key never appears here."""
+    """Which model answers now. Names only: no Gemini API key or ChatGPT token appears here."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -782,6 +787,10 @@ class ModelStatusResponse(BaseModel):
     gemini_blocker: ModelGeminiBlockerView | None = None
     # The last model problem in safe words, so the page can say why an answer failed.
     last_failure: str | None = Field(default=None, max_length=200)
+    # The ChatGPT-plan option (Phase 11): signed in or not, and which model it would use.
+    chatgpt_plan_model: str | None = Field(default=None, max_length=200)
+    chatgpt_plan_ready: bool = False
+    chatgpt_plan_blocker: ModelChatGPTPlanBlockerView | None = None
 
 
 class ModelSelectRequest(BaseModel):
@@ -793,10 +802,12 @@ class ModelSelectRequest(BaseModel):
     confirm_cloud: bool = False
     # Which Gemini model to use (only with provider "gemini"); a name from the list below.
     gemini_model: str | None = Field(default=None, max_length=100)
+    # Which ChatGPT-plan model to use (only with provider "chatgpt_plan").
+    chatgpt_plan_model: str | None = Field(default=None, max_length=100)
 
 
 class ModelOptionsResponse(BaseModel):
-    """The Gemini chat models the configured key can use. Names only."""
+    """The models a cloud provider offers (Gemini key or ChatGPT plan). Names only."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 

@@ -47,6 +47,7 @@ def test_phase7d_boundary_remains_closed_after_later_phase_additions() -> None:
         ("GET", "/study-tasks"),
         ("GET", "/model"),
         ("GET", "/model/gemini-models"),
+        ("GET", "/model/chatgpt-plan-models"),
         ("POST", "/model"),
         ("POST", "/ask"),
         ("POST", "/rag/queries"),

@@ -20,8 +20,21 @@ import {
   type ModelStatus,
   type ModelSwitchFailure,
 } from "@/lib/api/model";
-import { geminiModelsQueryOptions, modelKeys, modelQueryOptions } from "@/lib/query/model";
+import {
+  chatgptPlanModelsQueryOptions,
+  geminiModelsQueryOptions,
+  modelKeys,
+  modelQueryOptions,
+} from "@/lib/query/model";
 import { cn } from "@/lib/utils";
+
+type CloudProvider = Exclude<ModelProvider, "lm_studio">;
+
+/** How each cloud option is named, and which company receives the data. */
+const CLOUD: Record<CloudProvider, { name: string; company: string; where: string }> = {
+  gemini: { name: "Gemini", company: "Google", where: "Google's cloud" },
+  chatgpt_plan: { name: "ChatGPT plan", company: "OpenAI", where: "OpenAI's cloud, on your ChatGPT plan" },
+};
 
 const BLOCKER_TEXT: Record<NonNullable<ModelStatus["gemini_blocker"]>, string> = {
   GEMINI_API_KEY_MISSING:
@@ -30,41 +43,57 @@ const BLOCKER_TEXT: Record<NonNullable<ModelStatus["gemini_blocker"]>, string> =
     "To enable Gemini, set AAOS_GEMINI_MODEL in the terminal that runs the AAOS backend, then restart it.",
 };
 
+const PLAN_BLOCKER_TEXT: Record<NonNullable<ModelStatus["chatgpt_plan_blocker"]>, string> = {
+  CHATGPT_PLAN_SIGN_IN_REQUIRED:
+    "To use your ChatGPT plan, run `aaos model chatgpt-plan sign-in` in a terminal, then reopen this panel. Signing in never happens in this page.",
+  CHATGPT_PLAN_USAGE_NOT_GRANTED:
+    "The ChatGPT sign-in does not allow plan usage. Run `aaos model chatgpt-plan sign-in` again and allow AAOS to use your plan.",
+  CHATGPT_PLAN_MODEL_MISSING: "Pick a ChatGPT plan model below.",
+};
+
 const FAILURE_TEXT: Record<ModelSwitchFailure, string> = {
-  CLOUD_CONFIRMATION_REQUIRED: "Confirm that your data may be sent to Google first.",
+  CLOUD_CONFIRMATION_REQUIRED: "Confirm that your data may be sent to the cloud provider first.",
   GEMINI_NOT_READY: "Gemini is not set up in the backend yet.",
+  CHATGPT_PLAN_NOT_READY:
+    "Sign in first: run `aaos model chatgpt-plan sign-in` in a terminal, then pick a model.",
   MODEL_BUSY: "A question is running. Try again when it has finished.",
   MODEL_SWITCH_FAILED: "AAOS could not switch the model. The previous model is still in use.",
   MUTATION_NOT_ALLOWED: "The model can only be changed from the local AAOS page.",
-  INVALID_MODEL: "That is not one of the Gemini models your key can use.",
-  MODEL_LIST_FAILED: "AAOS could not get the list of Gemini models.",
+  INVALID_MODEL: "That is not one of the models available to you.",
+  MODEL_LIST_FAILED: "AAOS could not get the list of models.",
   UNKNOWN: "AAOS could not switch the model. Nothing was changed.",
 };
 
-/** Whether answers are produced on this computer or sent to Google, always visible. */
+function sortedChoices(listed: string[] | undefined, configured: string | null | undefined) {
+  return Array.from(new Set([...(listed ?? []), ...(configured ? [configured] : [])])).sort();
+}
+
+/** Whether answers are produced on this computer or sent to a cloud provider, always visible. */
 export function ModelBadge() {
   const query = useQuery(modelQueryOptions());
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [chosenModel, setChosenModel] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<CloudProvider | null>(null);
+  const [chosenGemini, setChosenGemini] = useState<string | null>(null);
+  const [chosenPlan, setChosenPlan] = useState<string | null>(null);
 
   const geminiReady = query.data?.gemini_ready === true;
-  const modelList = useQuery({
-    ...geminiModelsQueryOptions(),
-    enabled: open && geminiReady,
-  });
+  // Signed in is enough to list the plan's models, even before one is chosen.
+  const planSignedIn =
+    query.data?.chatgpt_plan_ready === true ||
+    query.data?.chatgpt_plan_blocker === "CHATGPT_PLAN_MODEL_MISSING";
+  const geminiList = useQuery({ ...geminiModelsQueryOptions(), enabled: open && geminiReady });
+  const planList = useQuery({ ...chatgptPlanModelsQueryOptions(), enabled: open && planSignedIn });
 
   const mutation = useMutation<
     ModelStatus,
     ModelSwitchError | Error,
-    { provider: ModelProvider; confirmCloud: boolean; geminiModel?: string }
+    { provider: ModelProvider; confirmCloud: boolean; model?: string }
   >({
-    mutationFn: ({ provider, confirmCloud, geminiModel }) =>
-      selectModel(provider, confirmCloud, geminiModel),
+    mutationFn: ({ provider, confirmCloud, model }) => selectModel(provider, confirmCloud, model),
     onSuccess: (status) => {
       queryClient.setQueryData(modelKeys.all, status);
-      setConfirming(false);
+      setConfirming(null);
     },
   });
 
@@ -72,12 +101,14 @@ export function ModelBadge() {
   if (!status || typeof status !== "object") return null;
 
   const cloud = status.cloud;
-  // The model shown in the picker: the owner's pick, else the configured one.
-  const pickedModel = chosenModel ?? status.gemini_model ?? "";
-  const pickable = Array.from(
-    new Set([...(modelList.data ?? []), ...(status.gemini_model ? [status.gemini_model] : [])]),
-  ).sort();
-  const label = cloud ? `Cloud · Gemini · ${status.model}` : `Local · ${status.model}`;
+  const active: CloudProvider | null =
+    status.provider === "gemini" || status.provider === "chatgpt_plan" ? status.provider : null;
+  // The model shown in each picker: the owner's pick, else the configured one.
+  const pickedGemini = chosenGemini ?? status.gemini_model ?? "";
+  const pickedPlan = chosenPlan ?? status.chatgpt_plan_model ?? "";
+  const geminiChoices = sortedChoices(geminiList.data, status.gemini_model);
+  const planChoices = sortedChoices(planList.data, status.chatgpt_plan_model);
+  const label = active ? `Cloud · ${CLOUD[active].name} · ${status.model}` : `Local · ${status.model}`;
   const Icon = cloud ? Cloud : HardDrive;
   const failure =
     mutation.error instanceof ModelSwitchError
@@ -85,6 +116,8 @@ export function ModelBadge() {
       : mutation.error
         ? FAILURE_TEXT.UNKNOWN
         : null;
+  const pickedFor = (provider: CloudProvider) =>
+    (provider === "gemini" ? pickedGemini : pickedPlan) || undefined;
 
   return (
     <Sheet
@@ -94,8 +127,9 @@ export function ModelBadge() {
         // Opening the panel refreshes it, so the last problem is the latest one.
         if (next) void query.refetch();
         if (!next) {
-          setConfirming(false);
-          setChosenModel(null);
+          setConfirming(null);
+          setChosenGemini(null);
+          setChosenPlan(null);
           mutation.reset();
         }
       }}
@@ -118,8 +152,8 @@ export function ModelBadge() {
         <SheetHeader>
           <SheetTitle>Answering model</SheetTitle>
           <SheetDescription>
-            {cloud
-              ? `Answers come from Gemini (${status.model}) in Google's cloud. Your questions and excerpts of your course files are sent to Google.`
+            {active
+              ? `Answers come from ${CLOUD[active].name} (${status.model}) in ${CLOUD[active].where}. Your questions and excerpts of your course files are sent to ${CLOUD[active].company}.`
               : `Answers come from the local model (${status.local_model}) on this computer. Nothing is sent anywhere.`}
           </SheetDescription>
         </SheetHeader>
@@ -149,14 +183,14 @@ export function ModelBadge() {
 
           <Button
             type="button"
-            variant={cloud ? "default" : "outline"}
+            variant={active === "gemini" ? "default" : "outline"}
             disabled={mutation.isPending || !status.gemini_ready}
-            aria-pressed={cloud}
+            aria-pressed={active === "gemini"}
             onClick={() => {
-              if (!cloud) setConfirming(true);
+              if (active !== "gemini") setConfirming("gemini");
             }}
           >
-            <Cloud aria-hidden="true" /> Gemini{pickedModel ? ` · ${pickedModel}` : ""}
+            <Cloud aria-hidden="true" /> Gemini{pickedGemini ? ` · ${pickedGemini}` : ""}
           </Button>
 
           {status.gemini_ready ? (
@@ -165,25 +199,25 @@ export function ModelBadge() {
               <select
                 aria-label="Gemini model"
                 className="h-9 rounded-xl border border-border bg-white px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                disabled={mutation.isPending || modelList.isPending}
-                value={pickedModel}
+                disabled={mutation.isPending || geminiList.isPending}
+                value={pickedGemini}
                 onChange={(event) => {
                   const next = event.target.value;
-                  setChosenModel(next);
-                  // Already in the cloud: the data goes to Google anyway, so the model
-                  // changes at once. From local, the pick waits for the confirmation.
-                  if (cloud && next !== status.gemini_model) {
-                    mutation.mutate({ provider: "gemini", confirmCloud: true, geminiModel: next });
+                  setChosenGemini(next);
+                  // Already on Gemini: the data goes to Google anyway, so the model changes
+                  // at once. From elsewhere, the pick waits for the confirmation.
+                  if (active === "gemini" && next !== status.gemini_model) {
+                    mutation.mutate({ provider: "gemini", confirmCloud: true, model: next });
                   }
                 }}
               >
-                {pickable.map((name) => (
+                {geminiChoices.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
                 ))}
               </select>
-              {modelList.isError ? (
+              {geminiList.isError ? (
                 <span role="note">The model list could not be loaded; showing the configured model.</span>
               ) : null}
             </label>
@@ -195,18 +229,71 @@ export function ModelBadge() {
             </p>
           ) : null}
 
-          {confirming && !cloud ? (
+          <Button
+            type="button"
+            variant={active === "chatgpt_plan" ? "default" : "outline"}
+            disabled={mutation.isPending || !planSignedIn || !pickedPlan}
+            aria-pressed={active === "chatgpt_plan"}
+            onClick={() => {
+              if (active !== "chatgpt_plan") setConfirming("chatgpt_plan");
+            }}
+          >
+            <Cloud aria-hidden="true" /> ChatGPT plan{pickedPlan ? ` · ${pickedPlan}` : ""}
+          </Button>
+
+          {planSignedIn ? (
+            <label className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+              ChatGPT plan model
+              <select
+                aria-label="ChatGPT plan model"
+                className="h-9 rounded-xl border border-border bg-white px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                disabled={mutation.isPending || planList.isPending}
+                value={pickedPlan}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setChosenPlan(next);
+                  if (active === "chatgpt_plan" && next !== status.chatgpt_plan_model) {
+                    mutation.mutate({ provider: "chatgpt_plan", confirmCloud: true, model: next });
+                  }
+                }}
+              >
+                {pickedPlan ? null : (
+                  <option value="" disabled>
+                    Choose a model
+                  </option>
+                )}
+                {planChoices.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              {planList.isError ? (
+                <span role="note">The ChatGPT plan model list could not be loaded.</span>
+              ) : null}
+            </label>
+          ) : null}
+
+          {status.chatgpt_plan_blocker &&
+          status.chatgpt_plan_blocker !== "CHATGPT_PLAN_MODEL_MISSING" ? (
+            <p className="text-sm text-muted-foreground" role="note">
+              {PLAN_BLOCKER_TEXT[status.chatgpt_plan_blocker]}
+            </p>
+          ) : null}
+
+          {confirming && active !== confirming ? (
             <div
               role="alertdialog"
               aria-labelledby="cloud-confirm-title"
               className="flex flex-col gap-3 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm text-[#8a5300]"
             >
               <p id="cloud-confirm-title" className="font-semibold">
-                Send your data to Google?
+                Send your data to {CLOUD[confirming].company}?
               </p>
               <p>
                 Your questions and the excerpts of your course files used to answer them will be
-                sent to Google. AAOS returns to the local model whenever the backend restarts.
+                sent to {CLOUD[confirming].company}. AAOS returns to the local model whenever the
+                backend restarts.
               </p>
               <div className="flex gap-2">
                 <Button
@@ -215,20 +302,20 @@ export function ModelBadge() {
                   disabled={mutation.isPending}
                   onClick={() =>
                     mutation.mutate({
-                      provider: "gemini",
+                      provider: confirming,
                       confirmCloud: true,
-                      geminiModel: pickedModel || undefined,
+                      model: pickedFor(confirming),
                     })
                   }
                 >
-                  Send my data to Google
+                  Send my data to {CLOUD[confirming].company}
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   disabled={mutation.isPending}
-                  onClick={() => setConfirming(false)}
+                  onClick={() => setConfirming(null)}
                 >
                   Cancel
                 </Button>

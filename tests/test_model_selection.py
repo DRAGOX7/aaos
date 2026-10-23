@@ -228,6 +228,9 @@ def test_get_model_reports_names_only() -> None:
         "gemini_ready": True,
         "gemini_blocker": None,
         "last_failure": None,
+        "chatgpt_plan_model": None,
+        "chatgpt_plan_ready": False,
+        "chatgpt_plan_blocker": "CHATGPT_PLAN_SIGN_IN_REQUIRED",
     }
     assert KEY not in str(body)
 

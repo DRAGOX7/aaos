@@ -243,9 +243,29 @@ export interface paths {
         put?: never;
         /**
          * Select Model
-         * @description Switch between the local model and Gemini (cloud needs confirmation).
+         * @description Switch between the local model and a cloud model (cloud needs confirmation).
          */
         post: operations["select_model_api_v1_model_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model/chatgpt-plan-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Chatgpt Plan Models
+         * @description The models the signed-in ChatGPT plan offers (names only).
+         */
+        get: operations["get_chatgpt_plan_models_api_v1_model_chatgpt_plan_models_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -912,7 +932,7 @@ export interface components {
         HealthStatus: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
         /**
          * ModelOptionsResponse
-         * @description The Gemini chat models the configured key can use. Names only.
+         * @description The models a cloud provider offers (Gemini key or ChatGPT plan). Names only.
          */
         ModelOptionsResponse: {
             /** Models */
@@ -923,6 +943,8 @@ export interface components {
          * @description Closed request to change the answering model; the browser never sends a key.
          */
         ModelSelectRequest: {
+            /** Chatgpt Plan Model */
+            chatgpt_plan_model?: string | null;
             /**
              * Confirm Cloud
              * @default false
@@ -934,13 +956,22 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "lm_studio" | "gemini";
+            provider: "lm_studio" | "gemini" | "chatgpt_plan";
         };
         /**
          * ModelStatusResponse
-         * @description Which model answers now. Names only: the Gemini API key never appears here.
+         * @description Which model answers now. Names only: no Gemini API key or ChatGPT token appears here.
          */
         ModelStatusResponse: {
+            /** Chatgpt Plan Blocker */
+            chatgpt_plan_blocker?: ("CHATGPT_PLAN_SIGN_IN_REQUIRED" | "CHATGPT_PLAN_USAGE_NOT_GRANTED" | "CHATGPT_PLAN_MODEL_MISSING") | null;
+            /** Chatgpt Plan Model */
+            chatgpt_plan_model?: string | null;
+            /**
+             * Chatgpt Plan Ready
+             * @default false
+             */
+            chatgpt_plan_ready: boolean;
             /** Cloud */
             cloud: boolean;
             /** Gemini Blocker */
@@ -959,7 +990,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "lm_studio" | "gemini";
+            provider: "lm_studio" | "gemini" | "chatgpt_plan";
         };
         /** OperationActivityContext */
         OperationActivityContext: {
@@ -1884,6 +1915,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chatgpt_plan_models_api_v1_model_chatgpt_plan_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelOptionsResponse"];
                 };
             };
         };
