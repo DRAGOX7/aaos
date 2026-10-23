@@ -59,6 +59,10 @@ function detailLabel(component: HealthComponent): string {
       return "Status is not reported for this component.";
     case "INTERNAL_STATUS_UNAVAILABLE":
       return "Internal status is unavailable.";
+    case "CALENDAR_PROPOSALS_READY":
+      return "Calendar proposals are on. Each event is written only after you approve it.";
+    case "CALENDAR_PROPOSALS_MISCONFIGURED":
+      return "Calendar proposals are switched on, but a setting is missing or invalid, so they are off. The backend log names the setting.";
     default:
       return "Status detail is unavailable.";
   }

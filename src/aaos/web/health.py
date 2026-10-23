@@ -36,6 +36,10 @@ class HealthDetailCode(StrEnum):
     RAG_INDEX_NOT_CONFIGURED = "RAG_INDEX_NOT_CONFIGURED"
     PASSIVE_STATUS_UNAVAILABLE = "PASSIVE_STATUS_UNAVAILABLE"
     INTERNAL_STATUS_UNAVAILABLE = "INTERNAL_STATUS_UNAVAILABLE"
+    # Phase 12 (additive): everyday Calendar proposals are configured, or switched on
+    # with a missing or invalid setting (and therefore off).
+    CALENDAR_PROPOSALS_READY = "CALENDAR_PROPOSALS_READY"
+    CALENDAR_PROPOSALS_MISCONFIGURED = "CALENDAR_PROPOSALS_MISCONFIGURED"
 
 
 class HealthComponent(BaseModel):

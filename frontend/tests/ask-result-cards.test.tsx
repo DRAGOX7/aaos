@@ -61,7 +61,7 @@ describe("CalendarProposalCard", () => {
     render(<CalendarProposalCard proposal={proposal} />);
 
     expect(screen.getByText("Awaiting approval")).toBeVisible();
-    expect(screen.getByText("This event has not been added to Calendar.")).toBeVisible();
+    expect(screen.getByText(/This event has not been added to Calendar\. It is added only if you approve it/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: /update|delete/i })).not.toBeInTheDocument();

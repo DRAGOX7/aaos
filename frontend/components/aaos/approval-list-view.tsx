@@ -17,6 +17,12 @@ function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
 }
 
+function formatDeadline(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
 export function ApprovalListView() {
   const queryClient = useQueryClient();
   const query = useQuery(approvalListQueryOptions());
@@ -72,6 +78,12 @@ export function ApprovalListView() {
                 {approval.operation_state ? (
                   <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">
                     Operation: {statusLabel(approval.operation_state)}
+                  </p>
+                ) : null}
+                {approval.status === "PENDING" ? (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Approve by {formatDeadline(approval.approval_expires_at)}. Nothing is written to
+                    Calendar unless you approve.
                   </p>
                 ) : null}
                 {approval.status === "PENDING" ? (

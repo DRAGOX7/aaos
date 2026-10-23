@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import threading
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +42,8 @@ from aaos.web.contracts import (
 from aaos.web.errors import install_error_boundary
 from aaos.web.health import SystemHealthResponse
 
+_LOGGER = logging.getLogger("aaos.main")
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session, sessionmaker
@@ -58,6 +62,7 @@ if TYPE_CHECKING:
     from aaos.agent.conversation_context import ConversationContextStore
     from aaos.approval.contracts import ApprovalId, TrustedApproverContext
     from aaos.inference.factory import ClosableModelGateway
+    from aaos.integrations.google_calendar.composition import ClientBuilder
     from aaos.moodle.changes import MoodleChangeSet
     from aaos.rag.contracts import LocalRagService, RagQuery, RenderedRagResponse
     from aaos.rag.factory import ConfiguredPhase4Runtime
@@ -67,7 +72,7 @@ if TYPE_CHECKING:
     from aaos.tasks.service import TaskApprovalService
     from aaos.web.activity_read import ActivityReadService
     from aaos.web.document_files import DocumentFile, DocumentFileService
-    from aaos.web.health_read import SystemHealthService
+    from aaos.web.health_read import CalendarProposalsHealth, SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
     from aaos.web.rag import AcademicRagReader, RagReadService
     from aaos.web.routes import (
@@ -692,9 +697,10 @@ class _LazyDefaultActivityReader:
 class _LazyDefaultSystemHealthReader:
     """Create passive health persistence only when detailed health is requested."""
 
-    def __init__(self) -> None:
+    def __init__(self, calendar_proposals: CalendarProposalsHealth = "OFF") -> None:
         self._engine: Engine | None = None
         self._delegate: SystemHealthService | None = None
+        self._calendar_proposals: CalendarProposalsHealth = calendar_proposals
 
     def _ensure_delegate(self) -> SystemHealthService:
         if self._delegate is None:
@@ -708,6 +714,7 @@ class _LazyDefaultSystemHealthReader:
                 sessions,
                 AcademicReadService(sessions),
                 SqlitePassiveRagIndexReader(sessions),
+                calendar_proposals=self._calendar_proposals,
             )
         return self._delegate
 
@@ -731,6 +738,63 @@ class _LazyDefaultPrincipalProvider:
         return LocalPrincipalProvider(self._settings).current()
 
 
+def _compose_calendar_proposals(
+    settings: AppSettings,
+    session_factory: sessionmaker[Session] | None,
+    environment: Mapping[str, str],
+    client_builder: ClientBuilder | None,
+) -> tuple[
+    CalendarProposalsHealth,
+    CalendarTaskProposalPort | None,
+    ApprovedCalendarTaskExecutor | None,
+    Engine | None,
+]:
+    """Build the Calendar proposal service and executor when the owner switched them on.
+
+    Off unless ``AAOS_CALENDAR_PROPOSALS=on`` and every setting is valid. A partial or
+    invalid configuration, or a client the factory refuses, leaves proposals off, logs one
+    warning naming the settings (never their values), and shows as MISCONFIGURED in
+    System health; the rest of AAOS starts as usual (owner decision D4).
+    """
+    from aaos.integrations.google_calendar.composition import (
+        CalendarProposalsUnavailable,
+        build_calendar_services,
+    )
+    from aaos.integrations.google_calendar.setup import resolve_calendar_proposals
+
+    setup = resolve_calendar_proposals(environment, settings)
+    if setup.state == "OFF":
+        return "OFF", None, None, None
+    if setup.state == "MISCONFIGURED":
+        _LOGGER.warning(
+            "Calendar proposals are off: these settings are missing or invalid: %s",
+            ", ".join(setup.problems),
+        )
+        return "MISCONFIGURED", None, None, None
+    engine: Engine | None = None
+    sessions = session_factory
+    if sessions is None:
+        from aaos.persistence.database import create_database_engine, create_session_factory
+
+        engine = create_database_engine()
+        sessions = create_session_factory(engine)
+    try:
+        services = build_calendar_services(sessions, setup, client_builder=client_builder)
+    except CalendarProposalsUnavailable:
+        if engine is not None:
+            engine.dispose()
+        _LOGGER.warning(
+            "Calendar proposals are off: the Google Calendar client could not be built from "
+            "AAOS_GOOGLE_CREDENTIAL_PATH and AAOS_GOOGLE_SERVICE_IDENTITY"
+        )
+        return "MISCONFIGURED", None, None, None
+    _LOGGER.warning(
+        "CALENDAR PROPOSALS ACTIVE: Ask AAOS can propose Google Calendar events; each one "
+        "is written only after you approve it"
+    )
+    return "ON", services.proposals, services.executor, engine
+
+
 def create_app(
     settings: AppSettings = DEFAULT_SETTINGS,
     *,
@@ -746,11 +810,29 @@ def create_app(
     calendar_task_service: CalendarTaskProposalPort | None = None,
     calendar_task_executor: ApprovedCalendarTaskExecutor | None = None,
     warm_rag_on_startup: bool = False,
+    calendar_environment: Mapping[str, str] | None = None,
+    calendar_client_builder: ClientBuilder | None = None,
 ) -> FastAPI:
     """Create the AAOS API using explicit, non-secret configuration."""
 
     if calendar_task_service is not None and calendar_task_executor is None:
         raise ValueError("Calendar proposals require execution through the approval endpoint")
+
+    # Phase 12: everyday Calendar proposals, off unless switched on and fully configured.
+    calendar_proposals: CalendarProposalsHealth = "ON" if calendar_task_service else "OFF"
+    calendar_engine: Engine | None = None
+    if calendar_task_service is None:
+        (
+            calendar_proposals,
+            calendar_task_service,
+            calendar_task_executor,
+            calendar_engine,
+        ) = _compose_calendar_proposals(
+            settings,
+            session_factory,
+            os.environ if calendar_environment is None else calendar_environment,
+            calendar_client_builder,
+        )
 
     warn_if_cloud_model(settings)
     model_selection = ModelSelection(
@@ -765,6 +847,8 @@ def create_app(
     )
 
     install_error_boundary(application)
+    if calendar_engine is not None:
+        application.router.add_event_handler("shutdown", calendar_engine.dispose)
 
     course_reader: CourseReader
     academic_reader: AcademicReader
@@ -791,7 +875,7 @@ def create_app(
         task_reader = lazy_task_reader
         lazy_activity_reader = _LazyDefaultActivityReader()
         resolved_activity_reader = lazy_activity_reader
-        lazy_system_health_reader = _LazyDefaultSystemHealthReader()
+        lazy_system_health_reader = _LazyDefaultSystemHealthReader(calendar_proposals)
         resolved_system_health_reader = lazy_system_health_reader
         lazy_task_commands = task_commands or _LazyDefaultTaskApprovalService()
         resolved_task_commands = lazy_task_commands
@@ -842,6 +926,7 @@ def create_app(
                 session_factory,
                 academic_reader,
                 SqlitePassiveRagIndexReader(session_factory),
+                calendar_proposals=calendar_proposals,
             )
         else:
             resolved_system_health_reader = system_health_reader

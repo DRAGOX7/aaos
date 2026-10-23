@@ -104,7 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
-| Phase 12 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D6 (`docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`) | Implementation not started, at the owner's request; D2 settled on a new dedicated `AAOS` calendar, readable by the service account (spec §11.2); Phase 0 and Phase 5 gates stay deferred; see "Phase 12 spec approval (2026-10-23)" |
+| Phase 12 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D6, dedicated `AAOS` calendar); IMPLEMENTED / VERIFIED by automated tests on 2026-10-23 (4,534 backend, 290 frontend; fake Google client only) | Not accepted: the 12D real check and human acceptance need the owner present; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 implementation status (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -857,3 +857,36 @@ separately at the end of this section.
   primary calendar. The owner should remove it from the primary calendar's
   sharing, and check the primary calendar is not public. Phase 12 refuses the
   primary calendar by configuration either way.
+
+## Phase 12 implementation status (2026-10-23)
+
+- **Built on `feat/phase-12-calendar-approvals`:**
+  - **12A:** `AAOS_LOCAL_APPROVER_*` read into the settings, failing closed;
+    `src/aaos/integrations/google_calendar/setup.py` decides OFF, ON or
+    MISCONFIGURED.
+  - **12B:** `composition.py`:
+    - the `CREATE_EVENT` definition, with fingerprints computed from its contracts;
+    - the 24 h / 25 h lifetimes (D1);
+    - the factory-built client, with no fake fallback;
+    - the served app's wiring in `main.py`.
+  - **12C:** System health states; the Approvals page deadline; card wording.
+- **Defect found and fixed:**
+  - The frozen 7E task service and the frozen 6B adapter disagreed on the remote
+    precondition version, so every approved action was refused unwritten.
+  - It was fixed by building the adapter with
+    `derivation_version = "calendar-adapter-v1"`. No frozen code changed.
+  - Spec §12 has the root cause, and a regression test pins the two values.
+- **Contract amendment, recorded as D4 requires:** two additive Phase 7 health
+  detail codes, `CALENDAR_PROPOSALS_READY` and `CALENDAR_PROPOSALS_MISCONFIGURED`.
+  The OpenAPI file and the frontend types are regenerated.
+- **Verification (fake Google client only; no real Calendar write):**
+  - full backend suite: 4,534 passed, 6 skipped, 0 failed, with 40 new Phase 12
+    tests;
+  - frontend: 51 files, 290 tests passed;
+  - `tsc` clean; ESLint 0 errors and the 2 earlier warnings;
+  - ruff and mypy clean on the changed files.
+- **Status:** IMPLEMENTED / VERIFIED by automated tests. **Not accepted.** Still
+  needed:
+  - the 12D real check with the owner present: one proposal approved into the
+    dedicated `AAOS` calendar, and one rejected;
+  - whole-phase human acceptance.

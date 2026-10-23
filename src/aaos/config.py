@@ -133,6 +133,8 @@ MODEL_PROVIDER_ENVIRONMENT_KEY = "AAOS_MODEL_PROVIDER"
 GEMINI_MODEL_ENVIRONMENT_KEY = "AAOS_GEMINI_MODEL"
 GEMINI_API_KEY_ENVIRONMENT_KEY = "GEMINI_API_KEY"
 CHATGPT_PLAN_MODEL_ENVIRONMENT_KEY = "AAOS_CHATGPT_PLAN_MODEL"
+LOCAL_APPROVER_IDENTITY_ENVIRONMENT_KEY = "AAOS_LOCAL_APPROVER_IDENTITY"
+LOCAL_APPROVER_CONTEXT_ENVIRONMENT_KEY = "AAOS_LOCAL_APPROVER_CONTEXT_ID"
 
 
 def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
@@ -146,6 +148,10 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
     is present in the environment; the key itself is never stored in the settings.
     Choosing ``chatgpt_plan`` needs ``AAOS_CHATGPT_PLAN_MODEL``; its sign-in is read
     from the owner-only credential file when the gateway is built, never from here.
+    The local approver (``AAOS_LOCAL_APPROVER_IDENTITY`` and
+    ``AAOS_LOCAL_APPROVER_CONTEXT_ID``, Phase 7E section 6) is set only when both are
+    present and valid; anything else leaves no approver, so approvals fail closed and
+    the backend still starts.
     """
     values: dict[str, object] = {}
 
@@ -176,6 +182,10 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
         if provider == "chatgpt_plan":
             values["chatgpt_plan_model"] = environment.get(CHATGPT_PLAN_MODEL_ENVIRONMENT_KEY, "")
 
+    approver = _approver_from_environment(environment)
+    if approver is not None:
+        values["local_approver_identity"], values["local_approver_context_id"] = approver
+
     try:
         return AppSettings(**values)  # type: ignore[arg-type]
     except ValueError as error:
@@ -194,6 +204,21 @@ def settings_from_environment(environment: Mapping[str, str]) -> AppSettings:
                 f"{MODEL_PROVIDER_ENVIRONMENT_KEY}=chatgpt_plan"
             ) from error
         raise
+
+
+def _approver_from_environment(environment: Mapping[str, str]) -> tuple[str, str] | None:
+    """Both approver values when both are present and valid, else None (never raises)."""
+    identity = environment.get(LOCAL_APPROVER_IDENTITY_ENVIRONMENT_KEY, "").strip()
+    context_id = environment.get(LOCAL_APPROVER_CONTEXT_ENVIRONMENT_KEY, "").strip()
+    if not _LOCAL_ID.fullmatch(identity) or not _LOCAL_ID.fullmatch(context_id):
+        return None
+    try:
+        from aaos.approval.contracts import TrustedApproverContext
+
+        TrustedApproverContext(identity, context_id)
+    except (TypeError, ValueError):
+        return None
+    return identity, context_id
 
 
 DEFAULT_SETTINGS = settings_from_environment(os.environ)

@@ -263,6 +263,27 @@ request shapes your plan accepts.
 
 **Telegram alerts** are optional; see [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md).
 
+**Optional: Calendar proposals with your approval (Phase 12).** Off by default. When it's on, Ask
+AAOS can propose a Google Calendar event, and the event is written only after you click **Approve**
+on the proposal or on the Approvals page. Reject writes nothing, and a proposal you don't decide
+within 24 hours expires. Events go to a **dedicated calendar** shared with AAOS's Google service
+account ("Make changes to events"), never to your primary calendar. Set these in the backend's
+terminal before starting it:
+
+```powershell
+$env:AAOS_CALENDAR_PROPOSALS        = 'on'
+$env:AAOS_LOCAL_APPROVER_IDENTITY   = 'owner'
+$env:AAOS_LOCAL_APPROVER_CONTEXT_ID = 'aaos-laptop-1'
+$env:AAOS_GOOGLE_CALENDAR_ID        = '<the dedicated calendar ID, ending in @group.calendar.google.com>'
+$env:AAOS_GOOGLE_SERVICE_IDENTITY   = '<the service account email, ending in .iam.gserviceaccount.com>'
+$env:AAOS_GOOGLE_CREDENTIAL_PATH    = "$env:LOCALAPPDATA\AAOS\credentials\google-calendar-service-account.json"
+$env:AAOS_CALENDAR_TIMEZONE         = 'Asia/Amman'
+```
+
+The backend logs `CALENDAR PROPOSALS ACTIVE` when they're on. If a setting is missing or invalid,
+proposals stay off, the log names the setting (never its value), and System health shows Google
+Calendar as degraded. Neither the key nor the calendar ID is ever shown in the page.
+
 ## Project structure
 
 ```text
@@ -313,7 +334,7 @@ The authoritative record is [`docs/GOVERNANCE_LEDGER.md`](docs/GOVERNANCE_LEDGER
 - Phase 9: **FROZEN** at `phase-09-passed`.
 - Phase 10: **FROZEN** at `phase-10-passed` (human-accepted 2026-10-23): Telegram notifications are merged and in use. The replay of real snapshot history named in the acceptance gate is not recorded and is listed as a known limitation.
 - Phase 11: **FROZEN** at `phase-11-passed` (human-accepted 2026-10-23): an optional cloud model that uses your ChatGPT plan through Sign in with ChatGPT. In the evaluation, 86/96 answerable questions cited the right page (78/96 for the local model) and all unanswerable ones were refused. The local model stays the default.
-- Phase 12: **AUTHORIZED**, spec approved (2026-10-23): everyday Calendar proposals that are written only after you approve each one. Nothing is built yet.
+- Phase 12: **IMPLEMENTED** (2026-10-23), acceptance pending: everyday Calendar proposals that are written only after you approve each one. Not yet tried against Google: the real check needs the owner present.
 
 ## Documentation
 
