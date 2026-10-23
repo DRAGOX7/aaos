@@ -21,6 +21,7 @@ excerpts, to OpenAI on the owner's ChatGPT plan (Sign in with ChatGPT). Guard ra
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -56,8 +57,10 @@ from .telemetry import (
 _LOGGER = logging.getLogger("aaos.inference.chatgpt_plan")
 
 API_BASE_URL = "https://api.openai.com/v1/"
-# The lowest reasoning effort; a model that rejects it is retried without the setting.
-REASONING_EFFORT = "none"
+# Reasoning efforts to try, lowest first. The 2026-10-23 probe found that gpt-6.1-sol
+# rejects "none" and "minimal" (unsupported_value, param reasoning.effort) and accepts
+# "low"; a model that rejects every value here is asked without the setting.
+REASONING_EFFORTS = ("none", "low")
 # Waits before each retry of a short "unavailable" answer (HTTP 503).
 _UNAVAILABLE_RETRY_DELAYS = (1.0, 3.0, 6.0)
 # The hard stop while streaming: generous enough for Arabic text (about 2 bytes a
@@ -84,10 +87,19 @@ _NOT_ELIGIBLE_CODES = frozenset(
 class ChatGPTPlanHTTPError(InferenceBackendError):
     """A ChatGPT-plan failure that keeps its status and safe category (never a body)."""
 
-    def __init__(self, message: str, *, http_status: int | None, category: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None,
+        category: str,
+        param: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.http_status = http_status
         self.category = category
+        # Which request field OpenAI rejected, when it said so (a safe word only).
+        self.param = param
 
 
 class _RequestPacer:
@@ -122,7 +134,11 @@ def _slug(name: object) -> str | None:
 
 
 def build_payload(
-    model: str, request: ChatRequest, *, with_schema: bool, with_reasoning: bool
+    model: str,
+    request: ChatRequest,
+    *,
+    with_schema: bool,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """The Responses API body for ``request``: streamed, unstored, and without tools."""
     payload: dict[str, Any] = {
@@ -148,18 +164,9 @@ def build_payload(
                 "strict": bool(wrapper.get("strict", True)),
             }
         }
-    if with_reasoning:
-        payload["reasoning"] = {"effort": REASONING_EFFORT}
+    if reasoning_effort is not None:
+        payload["reasoning"] = {"effort": reasoning_effort}
     return payload
-
-
-def attempt_ladder(model: str, request: ChatRequest) -> list[dict[str, Any]]:
-    """Each attempt sends less than the one before: schema, then reasoning, are dropped."""
-    attempts = [build_payload(model, request, with_schema=True, with_reasoning=True)]
-    if request.structured_output == "json_schema":
-        attempts.append(build_payload(model, request, with_schema=False, with_reasoning=True))
-    attempts.append(build_payload(model, request, with_schema=False, with_reasoning=False))
-    return attempts
 
 
 async def _sse_events(response: httpx2.Response) -> AsyncIterator[dict[str, Any]]:
@@ -281,6 +288,10 @@ class ChatGPTPlanGateway:
         self._min_interval = max(0.0, float(min_interval_seconds))
         self._owned_closers = owned_closers
         self._closed = False
+        # What the server rejected so far, so later requests do not repeat it: an index
+        # into the reasoning efforts (len = send none), and schemas it refused.
+        self._effort_index = 0
+        self._rejected_schemas: set[str] = set()
 
     def __repr__(self) -> str:
         return f"ChatGPTPlanGateway(model={self._model!r})"
@@ -313,16 +324,39 @@ class ChatGPTPlanGateway:
                 raise InferenceContextLimitError(
                     "ChatGPT plan request exceeds the configured context window"
                 )
-        attempts = attempt_ladder(self._model, request)
-        for index, attempt in enumerate(attempts):
+        schema = request.structured_output_schema
+        structured = request.structured_output == "json_schema"
+        # Retry with less, never more: each HTTP 400 removes exactly what it names (the
+        # reasoning effort steps down, or this schema is dropped). A 400 that names
+        # nothing drops the schema first, then the reasoning setting. Every step sends
+        # less, so the loop ends; AAOS's own parsers still check every reply.
+        while True:
+            with_schema = structured and schema not in self._rejected_schemas
+            effort = (
+                REASONING_EFFORTS[self._effort_index]
+                if self._effort_index < len(REASONING_EFFORTS)
+                else None
+            )
+            payload = build_payload(
+                self._model, request, with_schema=with_schema, reasoning_effort=effort
+            )
             try:
-                text, usage = await self._post_with_retry(attempt, request)
+                text, usage = await self._post_with_retry(payload, request)
                 break
             except ChatGPTPlanHTTPError as error:
-                if error.http_status != 400 or index == len(attempts) - 1:
+                if error.http_status != 400:
                     raise
-        else:  # pragma: no cover - the loop always breaks or raises
-            raise InferenceProtocolError("no attempt was made")
+                param = error.param or ""
+                if param.startswith("reasoning") and effort is not None:
+                    self._effort_index += 1
+                elif param.startswith("text") and with_schema:
+                    self._rejected_schemas.add(schema)
+                elif with_schema:
+                    self._rejected_schemas.add(schema)
+                elif effort is not None:
+                    self._effort_index += 1
+                else:
+                    raise
         self._report(self._on_success)
         return ChatResponse(content=text, model_identifier=self._model, usage=usage)
 
@@ -365,7 +399,7 @@ class ChatGPTPlanGateway:
         )
         headers = {"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
         chunks: list[str] = []
-        size = 0
+        size = [0]  # visible bytes so far, updated by _take_event
         completed: dict[str, Any] | None = None
         try:
             async with asyncio.timeout(limit):
@@ -375,31 +409,13 @@ class ChatGPTPlanGateway:
                     if not response.is_success:
                         body = await response.aread()
                         raise self._http_error(response.status_code, body)
-                    async for event in _sse_events(response):
-                        kind = event.get("type")
-                        if kind == "response.output_text.delta":
-                            delta = event.get("delta")
-                            if isinstance(delta, str):
-                                chunks.append(delta)
-                                size += len(delta.encode("utf-8"))
-                                if cap_bytes is not None and size > cap_bytes:
-                                    raise self._fail(
-                                        InferenceProtocolError(
-                                            "ChatGPT plan reply exceeded the output cap"
-                                        ),
-                                        detail="over_cap",
-                                    )
-                        elif kind == "response.completed":
-                            raw = event.get("response")
-                            completed = raw if isinstance(raw, dict) else {}
-                            break
-                        elif kind in {"response.failed", "error"}:
-                            raise self._event_error(event)
-                        elif kind == "response.incomplete":
-                            raise self._fail(
-                                InferenceProtocolError("ChatGPT plan reply was incomplete"),
-                                detail="incomplete",
-                            )
+                    # The stream is read to its end (only a few bytes follow
+                    # response.completed), so every reader finishes normally; aclosing
+                    # closes the event reader here when an error ends it early.
+                    async with contextlib.aclosing(_sse_events(response)) as events:
+                        async for event in events:
+                            if completed is None:
+                                completed = self._take_event(event, chunks, size, cap_bytes)
         except (ChatGPTPlanHTTPError, InferenceProtocolError):
             raise
         except TimeoutError:
@@ -453,6 +469,36 @@ class ChatGPTPlanGateway:
         )
         return text, usage
 
+    def _take_event(
+        self,
+        event: dict[str, Any],
+        chunks: list[str],
+        size: list[int],
+        cap_bytes: int | None,
+    ) -> dict[str, Any] | None:
+        """Use one stream event; returns the completed response when it arrives."""
+        kind = event.get("type")
+        if kind == "response.output_text.delta":
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                chunks.append(delta)
+                size[0] += len(delta.encode("utf-8"))
+                if cap_bytes is not None and size[0] > cap_bytes:
+                    raise self._fail(
+                        InferenceProtocolError("ChatGPT plan reply exceeded the output cap"),
+                        detail="over_cap",
+                    )
+        elif kind == "response.completed":
+            raw = event.get("response")
+            return raw if isinstance(raw, dict) else {}
+        elif kind in {"response.failed", "error"}:
+            raise self._event_error(event)
+        elif kind == "response.incomplete":
+            raise self._fail(
+                InferenceProtocolError("ChatGPT plan reply was incomplete"), detail="incomplete"
+            )
+        return None
+
     def _http_error(self, status: int, body: bytes) -> InferenceError:
         code, param = _error_code(body)
         category = f"http_{status}" + (f"_{code}" if code else "")
@@ -482,6 +528,7 @@ class ChatGPTPlanGateway:
                 f"ChatGPT plan request failed for model '{self._model}' (status {status})",
                 http_status=status,
                 category=category,
+                param=param,
             )
         detail = f"param={param}" if param else None
         return self._fail(error, http_status=status, category=category, detail=detail)

@@ -103,7 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
-| Phase 11 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D7); IMPLEMENTED / VERIFIED by automated tests on 2026-10-23 (4,492 backend, 288 frontend; fake transports only) | Not accepted: the first real sign-in, the 11C probe, the §10 evaluation and human acceptance need the owner present; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 implementation status (2026-10-23)" |
+| Phase 11 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D7); IMPLEMENTED / VERIFIED on 2026-10-23 (4,494 backend, 288 frontend tests; first real sign-in and the 11C probe done, two defects fixed) | Not accepted: the §10 evaluation (real course excerpts to OpenAI, needs consent) and human acceptance remain; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 probe (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -681,3 +681,31 @@ separately at the end of this section.
   3. the §10 evaluation: at least three runs of the Phase I4 answer evaluation.
      It sends real course excerpts to OpenAI, so it needs consent at the time.
   4. whole-phase human acceptance.
+
+## Phase 11 probe (2026-10-23)
+
+- **Sign-in:** the owner completed the first real sign-in (`aaos model chatgpt-plan
+  sign-in`, including OpenAI's own authenticator-app check). `status` reported
+  `SIGNED_IN`, and the credential file was confirmed owner-only. No token was read
+  into this record.
+- **Probe:** `scripts/chatgpt_plan_probe.py` ran three times with the owner present,
+  sending only synthetic prompts. Spec §13 has the findings:
+  - seven models offered; `gpt-6.1-sol` probed;
+  - developer messages and `instructions` accepted;
+  - `reasoning.effort` `none` and `minimal` rejected, `low` accepted;
+  - all six strict AAOS JSON schemas accepted unchanged.
+- **Defects found and fixed:**
+  1. The gateway's fallback dropped the JSON schema when OpenAI had rejected
+     `reasoning.effort`. Every structured call lost its strict format and made
+     two extra requests. The fallback now drops only the field OpenAI's
+     `error.param` names, and remembers it.
+  2. Stray `httpcore2` tracebacks appeared because streams were not read to
+     their end. They now are, and the third run printed 0 tracebacks.
+- **Verification after the fixes:**
+  - full backend suite: 4,494 passed, 6 skipped, 0 failed;
+  - the gateway and probe tests: 25 passed;
+  - the third probe run: all six gateway shapes accepted with their schema, and
+    one rejected attempt in all, for the first request only.
+- **Status:** Phase 11 stays IMPLEMENTED / VERIFIED, now with 11C done. Still
+  needed: the §10 evaluation, which sends real course excerpts to OpenAI and
+  needs the owner's consent at the time, and whole-phase human acceptance.

@@ -346,10 +346,57 @@ All automated tests use fake transports. No real OpenAI call runs in the suite.
 - Other providers, or API-key OpenAI access.
 - Images or vision through this provider.
 
-## 13. Probe findings
+## 13. Probe findings (2026-10-23)
 
-Not yet run. The probe script exists (`scripts/chatgpt_plan_probe.py`), and it needs the owner
-present and a real sign-in. Fill this in from its output.
+The owner signed in with `aaos model chatgpt-plan sign-in`, which needed OpenAI's own
+authenticator-app check. `scripts/chatgpt_plan_probe.py` then ran three times, sending only
+synthetic prompts. Everything below is from its safe-word output; no prompt, reply or token was
+printed.
+
+**Sign-in**
+- It completed with `ext_agent_host_id` sent and the default callback port.
+- The credential file is owner-only (checked with `is_owner_only`).
+- `status` reported `SIGNED_IN`.
+
+**Models offered**, in server order:
+- `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra` and
+  `gpt-5.6-luna`.
+- Probed: `gpt-6.1-sol`, the first listed.
+
+| Request shape | Result |
+|---|---|
+| Plain user message | Accepted |
+| System text as a `developer` message | Accepted (the gateway's default) |
+| System text as `instructions` | Accepted |
+| `reasoning.effort = "none"` | **Rejected**: HTTP 400, `unsupported_value`, param `reasoning.effort` |
+| `reasoning.effort = "minimal"` | **Rejected**: same code and param |
+| `reasoning.effort = "low"` | Accepted |
+| `text.format` json_schema (strict), for `grounded_answer`, `requirement_decomposition`, `atomic_requirement_decomposition`, `evidence_spans`, `evidence_segments_single_requirement` and `requirement_coverage` | **All accepted**, with AAOS's strict schemas unchanged |
+| The same six shapes through `ChatGPTPlanGateway` | All accepted (see the fix below) |
+
+**What changed because of the probe:**
+
+- **Defect found:** in the first run, the gateway answered each structured request only after
+  2 rejected attempts, and without its schema.
+  - Its fallback dropped the schema first, even though OpenAI's 400 named `reasoning.effort`.
+  - So every structured call lost the strict format and cost two extra requests.
+- **Fix:**
+  - The fallback reads OpenAI's `error.param`. A rejected `reasoning.*` steps the effort down
+    (`none` → `low` → not sent) and keeps the schema. A rejected `text.*` drops only that schema.
+  - A 400 that names nothing keeps the earlier order: schema first, then reasoning.
+  - What was rejected is remembered for the gateway's lifetime.
+  - After the fix: the first gateway request makes 1 rejected attempt, every later one makes
+    none, and all six keep the strict schema.
+- **Second finding:** stray "generator didn't stop after athrow()" tracebacks from `httpcore2` on
+  stderr.
+  - Cause: the stream was not read to its end after `response.completed`.
+  - Fix: the gateway and the probe now read every stream to its end, inside `contextlib.aclosing`.
+  - The third run printed 0 tracebacks.
+
+**Not settled by the probe:**
+- Answer quality and speed on real course material. That is the §10 evaluation.
+- Behaviour at the plan limit.
+- Other models in the list.
 
 ## 14. Implementation notes (2026-10-23)
 
@@ -358,13 +405,13 @@ OpenAI's published Sign in with ChatGPT pages, read on 2026-10-23.
 
 - **Order (D4):** the owner asked to finish all of Phase 11 in one go, so 11D was built before the
   probe ran.
-  - To keep that safe, the gateway falls back step by step: the JSON schema is dropped on an HTTP
-    400, then the reasoning setting.
-  - The probe output still decides whether anything in §7 changes.
+  - To keep that safe, the gateway falls back step by step on an HTTP 400.
+  - The probe did change §7: the fallback now drops only the field OpenAI's `error.param` names
+    (§13).
 - **System messages:** they are sent as `developer` input items. OpenAI's preview rejects `system`
   items.
-- **Reasoning:** the lowest effort is requested as `reasoning.effort = "none"`. The probe tries
-  `none`, `minimal` and `low`.
+- **Reasoning:** the gateway tries `reasoning.effort = "none"`, then `"low"`, then sends none. It
+  remembers the first value that works. After the probe (§13), `gpt-6.1-sol` settles on `low`.
 - **Fields never sent:** OpenAI's preview limitations list the fields it rejects. None of them is
   sent, including `max_output_tokens`, `temperature`, `top_p`, `truncation`, `user`, `metadata` and
   `previous_response_id`.

@@ -17,6 +17,7 @@ reply and no token.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from collections.abc import Sequence
 from typing import Any
@@ -75,25 +76,25 @@ def raw_variants(model: str) -> list[tuple[str, dict[str, Any]]]:
     variants = [
         (
             "plain user message",
-            build_payload(model, _plain(), with_schema=False, with_reasoning=False),
+            build_payload(model, _plain(), with_schema=False, reasoning_effort=None),
         ),
         (
             "system text as a developer message",
-            build_payload(model, _plain(system=True), with_schema=False, with_reasoning=False),
+            build_payload(model, _plain(system=True), with_schema=False, reasoning_effort=None),
         ),
     ]
-    with_instructions = build_payload(model, _plain(), with_schema=False, with_reasoning=False)
+    with_instructions = build_payload(model, _plain(), with_schema=False, reasoning_effort=None)
     with_instructions["instructions"] = SYSTEM
     variants.append(("system text as instructions", with_instructions))
     for effort in REASONING_EFFORTS:
-        payload = build_payload(model, _plain(), with_schema=False, with_reasoning=False)
+        payload = build_payload(model, _plain(), with_schema=False, reasoning_effort=None)
         payload["reasoning"] = {"effort": effort}
         variants.append((f"reasoning effort {effort}", payload))
     for schema in SCHEMAS:
         variants.append(
             (
                 f"json_schema {schema}",
-                build_payload(model, _structured(schema), with_schema=True, with_reasoning=False),
+                build_payload(model, _structured(schema), with_schema=True, reasoning_effort=None),
             )
         )
     return variants
@@ -110,19 +111,25 @@ async def probe_raw(
                 code, param = _error_code(await response.aread())
                 return f"{label:<52} FAILED  http_{response.status_code} code={code} param={param}"
             size = 0
-            async for event in _sse_events(response):
-                kind = event.get("type")
-                if kind == "response.output_text.delta" and isinstance(event.get("delta"), str):
-                    size += len(event["delta"])
-                elif kind == "response.completed":
-                    _, visible = _usage(event.get("response"))
-                    return f"{label:<52} OK      {size} characters, visible_tokens={visible}"
-                elif kind in {"response.failed", "response.incomplete", "error"}:
-                    source = event.get("response")
-                    error = (source if isinstance(source, dict) else event).get("error")
-                    code = _safe(error.get("code")) if isinstance(error, dict) else None
-                    return f"{label:<52} FAILED  {kind} code={code}"
-            return f"{label:<52} FAILED  stream ended before completion"
+            outcome: str | None = None
+            # Read to the end of the stream so every reader finishes normally.
+            async with contextlib.aclosing(_sse_events(response)) as events:
+                async for event in events:
+                    if outcome is not None:
+                        continue
+                    kind = event.get("type")
+                    delta = event.get("delta")
+                    if kind == "response.output_text.delta" and isinstance(delta, str):
+                        size += len(delta)
+                    elif kind == "response.completed":
+                        _, visible = _usage(event.get("response"))
+                        outcome = f"OK      {size} characters, visible_tokens={visible}"
+                    elif kind in {"response.failed", "response.incomplete", "error"}:
+                        source = event.get("response")
+                        error = (source if isinstance(source, dict) else event).get("error")
+                        code = _safe(error.get("code")) if isinstance(error, dict) else None
+                        outcome = f"FAILED  {kind} code={code}"
+            return f"{label:<52} {outcome or 'FAILED  stream ended before completion'}"
     except httpx2.HTTPError as error:
         return f"{label:<52} FAILED  {type(error).__name__}"
 

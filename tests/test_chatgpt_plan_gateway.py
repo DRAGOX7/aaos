@@ -188,31 +188,94 @@ def test_a_structured_request_sends_the_aaos_schema(tmp_path: Path) -> None:
     assert text_format["schema"]["type"] == "object"
 
 
-def test_a_rejected_setting_is_retried_with_less_never_more(tmp_path: Path) -> None:
+def _rejected(param: str) -> httpx2.Response:
+    return httpx2.Response(400, json={"error": {"code": "unsupported_value", "param": param}})
+
+
+STRUCTURED = ChatRequest(
+    messages=(ChatMessage("user", "q"),),
+    structured_output="json_schema",
+    structured_output_schema="grounded_answer",
+    max_output_tokens=256,
+)
+
+
+def test_an_unnamed_rejection_is_retried_with_less_never_more(tmp_path: Path) -> None:
     seen: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
-        if len(seen) < 3:
-            return httpx2.Response(
-                400,
-                json={
-                    "error": {"code": "subscription_sharing_unsupported_capability", "param": "x"}
-                },
-            )
+        if len(seen) < 4:
+            return _rejected("x")
         return _completed('{"status": "INSUFFICIENT_EVIDENCE"}')
 
-    request = ChatRequest(
+    _run(_gateway(tmp_path, handler), STRUCTURED)
+    bodies = _bodies(seen)
+    assert [("text" in b, b.get("reasoning", {}).get("effort")) for b in bodies] == [
+        (True, "none"),
+        (False, "none"),
+        (False, "low"),
+        (False, None),
+    ]
+
+
+def test_a_rejected_reasoning_effort_steps_down_keeps_the_schema_and_is_remembered(
+    tmp_path: Path,
+) -> None:
+    # What the 2026-10-23 probe saw from gpt-6.1-sol: "none" refused, "low" accepted.
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        if json.loads(request.content).get("reasoning", {}).get("effort") == "none":
+            return _rejected("reasoning.effort")
+        return _completed('{"status": "INSUFFICIENT_EVIDENCE"}')
+
+    gateway = _gateway(tmp_path, handler)
+
+    async def twice() -> None:
+        try:
+            await gateway.generate(STRUCTURED)
+            await gateway.generate(STRUCTURED)
+        finally:
+            await gateway.aclose()
+
+    asyncio.run(twice())
+    bodies = _bodies(seen)
+    assert [b["reasoning"]["effort"] for b in bodies] == ["none", "low", "low"]
+    assert all("text" in b for b in bodies)  # the schema is never dropped for this
+
+
+def test_a_rejected_schema_is_dropped_for_that_schema_only(tmp_path: Path) -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        body = json.loads(request.content)
+        if body.get("text", {}).get("format", {}).get("name") == "aaos_grounded_rag_answer_v1":
+            return _rejected("text.format.schema")
+        return _completed('{"status": "INSUFFICIENT_EVIDENCE"}')
+
+    other = ChatRequest(
         messages=(ChatMessage("user", "q"),),
         structured_output="json_schema",
-        structured_output_schema="grounded_answer",
+        structured_output_schema="requirement_coverage",
         max_output_tokens=256,
     )
-    _run(_gateway(tmp_path, handler), request)
-    first, second, third = _bodies(seen)
-    assert "text" in first and "reasoning" in first
-    assert "text" not in second and "reasoning" in second
-    assert "text" not in third and "reasoning" not in third
+    gateway = _gateway(tmp_path, handler)
+
+    async def both() -> None:
+        try:
+            await gateway.generate(STRUCTURED)
+            await gateway.generate(STRUCTURED)
+            await gateway.generate(other)
+        finally:
+            await gateway.aclose()
+
+    asyncio.run(both())
+    bodies = _bodies(seen)
+    assert ["text" in b for b in bodies] == [True, False, False, True]
+    assert all(b["reasoning"]["effort"] == "none" for b in bodies)
 
 
 def test_a_400_on_the_plainest_request_is_reported(tmp_path: Path) -> None:
