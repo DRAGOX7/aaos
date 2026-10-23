@@ -104,7 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
-| Phase 12 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D6, dedicated `AAOS` calendar); IMPLEMENTED / VERIFIED by automated tests on 2026-10-23 (4,534 backend, 290 frontend; fake Google client only) | Not accepted: the 12D real check and human acceptance need the owner present; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 implementation status (2026-10-23)" |
+| Phase 12 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D6, dedicated `AAOS` calendar); IMPLEMENTED / VERIFIED (4,544 backend, 290 frontend tests; 12D real check done: one approved event written to the AAOS calendar, one rejected with nothing written) | Not accepted: whole-phase human acceptance remains; two frozen-code defects found by 12D were fixed with owner approval; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 real check 12D" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -957,3 +957,35 @@ separately at the end of this section.
 - **Frozen evidence:** no freeze tag is moved. The A–H frozen evaluation used fake
   providers that never ran the canonicalizer, so its recorded results are
   unaffected.
+
+## Phase 12 real check 12D (2026-10-23/24)
+
+- **Setup:**
+  - the owner ran the served app from `main` at `2d1cc832`, with the Phase 12
+    settings (`CALENDAR PROPOSALS ACTIVE` logged);
+  - the answering model was the ChatGPT plan;
+  - the two study tasks were created earlier in Ask AAOS.
+- **Approved:** "Put my study task Review k-fold cross-validation on my calendar
+  tomorrow at 6 pm", approved by the owner.
+  - Records: approval `CONSUMED` (issued 20:59:14Z, approve-by 24 h later,
+    decided 20:59:21Z); operation `CONFIRMED_SUCCESS`; lifecycle
+    `CONFIRMED_SUCCESS`.
+- **Rejected:** "Put my study task Practice KNIME workflows on my calendar tomorrow
+  at 8 pm", rejected by the owner.
+  - Records: approval `REJECTED`; no operation record; lifecycle `REJECTED`.
+- **Read-only Google check** (`calendar.readonly`, GET only) of 24–25 October:
+  - the dedicated AAOS calendar has **exactly one** event, "Study session: Review
+    k-fold cross-validation", 2026-10-24 18:00–19:00 Asia/Amman;
+  - no KNIME event exists;
+  - neither event is in the owner's primary calendar.
+- **Target:** both actions are bound to the hashed target
+  `cal-0b6331ca92c7b66664d045b7`, which hashes from the AAOS calendar ID, not the
+  primary calendar (`cal-e22174a2…`).
+- **Gate items met:**
+  - one write, and only after a recorded human approval;
+  - a rejection writes nothing;
+  - `CREATE_EVENT` only, to the dedicated calendar only;
+  - the approval window is 24 h (D1);
+  - no calendar ID, key or approver value in this record (hashes only).
+- **Status:** Phase 12 is IMPLEMENTED / VERIFIED, with 12D done. **Whole-phase
+  human acceptance remains.**

@@ -267,3 +267,16 @@ Where the implementation differs from, or fills in, the text above:
 - **The pre-check script** stays outside the repository. Turning it into an `aaos doctor` check is
   left for later; it is not needed for the gate.
 
+## 13. 12D result (2026-10-23/24)
+
+- **Approved:** one proposal approved by the owner, written to the dedicated AAOS calendar as
+  "Study session: Review k-fold cross-validation", 2026-10-24 18:00–19:00 Asia/Amman. Records:
+  approval `CONSUMED`, operation `CONFIRMED_SUCCESS`.
+- **Rejected:** one proposal rejected, with nothing written. Records: approval `REJECTED`, no
+  operation.
+- **Confirmed:** a read-only check of the AAOS calendar and the primary calendar.
+- **Two defects** in frozen code blocked 12D first. Both were fixed with owner approval and are
+  recorded in the ledger:
+  - the ChatGPT-plan gateway's handling of agent union schemas;
+  - the agent time parser's `fold`.
+
