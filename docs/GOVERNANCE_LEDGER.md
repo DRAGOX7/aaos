@@ -555,6 +555,7 @@ separately at the end of this section.
 | Phase 10 notifications | `test_notification_events.py`, `_messages.py`, `_monitor.py`, `_pipeline.py`, `_telegram.py` | 62 passed |
 | Gemini, frontend | `model-badge.test.tsx`, `ask-view.test.tsx` | 49 passed |
 | Full backend suite | `tests/` | 4,396 passed, 1 failed, 6 skipped, 1 warning (7 m 46 s) |
+| Phase 8 sandbox, re-run with Docker running | `tests/phase8/test_sandbox.py` | 7 passed, including the earlier failure |
 
 - **The one failure is environmental:**
   `tests/phase8/test_sandbox.py::test_real_docker_supervisor_path_uses_qualified_runtime`
@@ -563,8 +564,13 @@ separately at the end of this section.
     `dockerDesktopLinuxEngine` pipe, because Docker Desktop was not running.
   - The test and `scripts/phase8/qualify_isolation_runtime.py` are unchanged
     since Phase 8 apart from a formatting-only commit (`93f964d5`).
-  - It is not a Gemini or Phase 10 regression. It was not re-run with Docker
-    started.
+  - It is not a Gemini or Phase 10 regression.
+  - **Confirmed by a re-run:** with Docker Desktop started by the owner (engine
+    29.5.3, linux), `tests/phase8/test_sandbox.py` ran at `3be31e49` with 7 passed,
+    including this test. `3be31e49` differs from `85f341d5` only in ledger and
+    PHASES.md text.
+  - Taken together, all 4,397 non-skipped backend tests passed. The full suite
+    was not repeated as one run.
 - **Skips:** the 6 opt-in live and acceptance gates (LM Studio, Moodle browser,
   Phase 3 ingestion, two Phase 4 acceptance gates, and the Phase 8 real
   qualification probe), each skipped by its own environment flag.
