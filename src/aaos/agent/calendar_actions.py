@@ -407,7 +407,9 @@ def _parse_local_start(question: str, zone: ZoneInfo, now: datetime) -> datetime
         utc_candidate = candidate.astimezone(timezone.utc)
         round_trip = utc_candidate.astimezone(zone)
         if round_trip.replace(tzinfo=None) == wall_time:
-            candidates[utc_candidate] = candidate
+            # An ordinary time gives the same instant for both folds: keep fold=0, the
+            # fold the canonicalizer derives, not the last one tried.
+            candidates.setdefault(utc_candidate, candidate)
     if len(candidates) != 1:
         raise CalendarIntentError("requested wall time is nonexistent or ambiguous")
     result = next(iter(candidates.values()))

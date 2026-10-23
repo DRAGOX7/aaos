@@ -927,3 +927,33 @@ separately at the end of this section.
   - The existing agent tests use a fake proposal service that never runs the real
     canonicalizer.
   - Proposed fix: keep the first candidate per instant (one line).
+
+## Agentic Calendar defect fix after freeze (2026-10-23)
+
+- **Approval:** the owner approved a recorded defect fix for the frozen agentic
+  Calendar code: "in _parse_local_start keep the first fold candidate per instant,
+  with a regression test that runs the real canonicalizer."
+- **Defect:**
+  - `_parse_local_start` in `src/aaos/agent/calendar_actions.py` (`c4bc8848`)
+    tried fold 0 and 1 and kept the **last** candidate per UTC instant.
+  - So an ordinary time such as 18:00 got `fold=1`, and the Calendar
+    canonicalizer refused it ("start fold is invalid for declared timezone").
+  - Every study-task Calendar proposal failed at preparation (`INVALID_REQUEST`),
+    with any model.
+  - The earlier agent tests used a fake proposal service that never ran the
+    canonicalizer.
+- **Fix:** `candidates.setdefault(...)` keeps the first candidate (fold 0) per
+  instant. Repeated and skipped wall times are still refused.
+- **Evidence:**
+  - `tests/test_calendar_time_fold.py` (6 tests: ordinary times in Asia/Amman,
+    Europe/Berlin and UTC through the real canonicalizer; repeated and skipped
+    times still refused);
+  - the Calendar agent and Phase 12 flow tests: 32 passed;
+  - full backend suite: 4,544 passed, 6 skipped, 0 failed;
+  - ruff and mypy clean;
+  - an end-to-end reproduction on a database copy with the fake Google client,
+    on `gpt-6-luna`: `CALENDAR_PROPOSAL_CREATED`, pending approval, with 0 Google
+    writes.
+- **Frozen evidence:** no freeze tag is moved. The A–H frozen evaluation used fake
+  providers that never ran the canonicalizer, so its recorded results are
+  unaffected.
