@@ -104,7 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
-| Phase 12 | AUTHORIZED on 2026-10-23 for specification and, after spec approval, implementation | Not started; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 authorization (2026-10-23)" |
+| Phase 12 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D6 (`docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`) | Implementation not started, at the owner's request; the dedicated calendar (D2) is still to be confirmed (spec §11); Phase 0 and Phase 5 gates stay deferred; see "Phase 12 spec approval (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -797,3 +797,31 @@ separately at the end of this section.
   - remote or multi-user use;
   - any other external write.
 - **Acceptance gate:** as listed under Phase 12 in `docs/PHASES.md`.
+
+## Phase 12 spec approval (2026-10-23)
+
+- **Approval:** the owner approved `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md` (the draft in commit
+  `f5837c67`), in these words: "I approve the Phase 12 spec with the recommended
+  defaults for D1–D6."
+- **Owner decisions:** all six recommended defaults (spec §2).
+  - **D1:** a proposal can wait 24 hours for approval, and the action is valid
+    for 25 hours. These are parameters; the frozen 5- and 10-minute constructor
+    defaults are not changed.
+  - **D2:** the existing 6B dedicated calendar, once confirmed in spec §11.
+  - **D3:** approver identity `owner`, context `aaos-laptop-1`.
+  - **D4:** a partial configuration starts the backend with proposals off, a
+    warning, and `MISCONFIGURED` in System health.
+  - **D5:** no Telegram announcement of pending proposals.
+  - **D6:** proposals from Ask AAOS only.
+- **Open item:** the read-only pre-check confirmed the 6B service account is
+  the same account and that its key still works. The dedicated calendar is not
+  yet confirmed. The owner can confirm it with the read-only check described in
+  spec §11. If it can't be confirmed, D2 falls back to a new dedicated calendar,
+  recorded here before 12D.
+- **Effect:**
+  - Under the Phase 12 authorization, slices 12A–12C may now be implemented. The
+    owner asked that coding not start yet, so each start is the owner's call.
+  - The 12D real check (one approved and one rejected proposal) needs the owner
+    present.
+- **Unchanged:** the Phase 0 and Phase 5 gates stay deferred. The Phase 12
+  not-authorized list still applies.

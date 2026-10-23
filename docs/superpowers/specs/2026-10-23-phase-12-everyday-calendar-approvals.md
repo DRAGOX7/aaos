@@ -1,6 +1,6 @@
 # Phase 12 Spec — Everyday Calendar Proposals and Approvals
 
-**Status: DRAFT for owner approval. No code, and no real Calendar write, until it is approved.**
+**Status: APPROVED by the owner on 2026-10-23 ("I approve the Phase 12 spec with the recommended defaults for D1–D6"). Coding has not started; the owner asked not to start yet.**
 
 - **Authorization:** `docs/GOVERNANCE_LEDGER.md`, "Phase 12 authorization (2026-10-23)".
 - **Design note:** `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md`.
@@ -39,9 +39,9 @@
 8. **Frozen contracts are untouched.** Phase 12 adds composition and configuration only. Any change
    to a Phase 6 or Phase 7 contract needs its own recorded amendment.
 
-## 2. Owner decisions (to approve or change)
+## 2. Owner decisions (approved 2026-10-23: all recommended defaults)
 
-| # | Decision | Recommended default |
+| # | Decision | Approved default |
 |---|---|---|
 | D1 | How long a proposal can wait for approval | **24 hours** (`approval_lifetime`), with the action valid for **25 hours** (`action_lifetime`). The frozen constructor defaults are 5 and 10 minutes, chosen for the 6B acceptance run. They are only parameters, so no contract changes. |
 | D2 | Which calendar | **The existing 6B dedicated calendar**, after the owner confirms it in §11. A new dedicated calendar is the alternative. |
