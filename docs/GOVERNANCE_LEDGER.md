@@ -101,7 +101,7 @@ and gates.
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
-| Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED, merged to `main` on 2026-10-04 without a recorded authorization; recorded retroactively on 2026-10-23. Not VERIFIED or HUMAN_APPROVED by this ledger | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
+| Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built. Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not VERIFIED until the tests are re-run | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay, and no test re-run on the acceptance day; Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
@@ -452,8 +452,9 @@ PLANNED / NOT STARTED.
 
 ## Optional Gemini cloud model — retroactive record (2026-10-23)
 
-This records work that reached `main` outside the phase sequence. It is a record
-of what exists, not an approval or a verification.
+This records work that reached `main` outside the phase sequence. The record
+itself is not an approval or a verification; the owner's approval is recorded
+separately at the end of this section.
 
 - **What exists:** an opt-in `GeminiGateway` behind the existing `ModelGateway`
   boundary, so a Google Gemini model can answer instead of the local LM Studio
@@ -508,8 +509,28 @@ of what exists, not an approval or a verification.
   - Commit `e2bbb794` states "Not verified against the live Gemini API". Later
     commit messages describe live use by the owner (for example the AI Studio
     usage chart in `85e75bc2`), but no live evidence artifact is recorded.
-- **Status:** IMPLEMENTED. Not VERIFIED and not HUMAN_APPROVED by this ledger.
-  Either needs its own recorded evidence or owner decision.
+- **Status:** IMPLEMENTED; HUMAN_APPROVED (see the owner approval below). Not
+  VERIFIED: that needs a recorded re-run of the tests listed above.
 - **Consequence for Phase 11:** the proposed ChatGPT-plan gateway builds on this
   provider-selection path, so a Phase 11 authorization should name this record
   and decide whether Gemini's status must first reach VERIFIED.
+
+### Owner approval of the Gemini provider (2026-10-23)
+
+- **Decision:** the owner approved the optional Gemini provider as built:
+  "I approve the optional Gemini provider as built, including its changes to the
+  Phase 4 semantic steps and the Phase 7 /model routes."
+- **Scope of the approval:** the code on `main` at commit `f031a67d` that this
+  record describes. That includes the gateway and its selection path, the Phase 4
+  `approved_identifiers` change in the semantic steps, and the Phase 7 routes
+  `GET /model`, `GET /model/gemini-models` and `POST /model`.
+- **Effect on the frozen phases:** those Phase 4 and Phase 7 changes are now
+  owner-approved amendments. The `phase-04-passed` and `phase-07-passed` tags
+  still mark the original baselines and are not moved. The amended code is
+  covered by this approval, not by those phases' acceptance evidence.
+- **Status:** IMPLEMENTED; HUMAN_APPROVED. **Not VERIFIED.** The owner set the
+  condition that verification needs a recorded re-run of the listed tests (the
+  `.venv` was absent on 2026-10-23).
+- **Approval does not extend to:**
+  - other cloud providers or changes to the local-first default;
+  - Phase 11 or the ChatGPT-plan gateway, which remain unauthorized.

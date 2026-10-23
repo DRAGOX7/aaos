@@ -47,7 +47,7 @@ terminology, not evidence of a freeze tag.
 
 Outside the phase sequence:
 
-- Optional Gemini cloud model — **IMPLEMENTED** on `main` since 2026-10-04 without a recorded authorization; off by default. It touches frozen Phase 4 and Phase 7 code. See the 2026-10-23 retroactive record in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
+- Optional Gemini cloud model — **IMPLEMENTED; HUMAN_APPROVED** on 2026-10-23, as built; **not VERIFIED** until the tests are re-run. On `main` since 2026-10-04; off by default. Its changes to frozen Phase 4 and Phase 7 code are owner-approved amendments; the freeze tags are not moved. See the 2026-10-23 retroactive record in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
 
 ### Historical status notes
 
