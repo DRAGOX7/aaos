@@ -44,7 +44,7 @@ terminology, not evidence of a freeze tag.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
 - Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E), which is still open, and no test re-run on the acceptance day, which was closed by the 2026-10-23 re-run (62 notification tests passed). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
-- Phase 11 — **AUTHORIZED / SPECIFICATION IN PROGRESS**: optional ChatGPT-plan cloud model through Sign in with ChatGPT. Authorized by the owner on 2026-10-23, with the Phase 0 and Phase 5 gates still deferred. No implementation until the owner approves the spec. Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
+- Phase 11 — **AUTHORIZED / SPEC APPROVED; IMPLEMENTATION NOT STARTED**: optional ChatGPT-plan cloud model through Sign in with ChatGPT. Authorized by the owner on 2026-10-23, with the Phase 0 and Phase 5 gates still deferred. Spec approved on 2026-10-23 with defaults D1–D7 (`docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`); coding waits for the owner's go-ahead. Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
 
 Outside the phase sequence:
 
@@ -629,7 +629,7 @@ Notify the owner on Telegram, within a configured interval, when the read-only M
 
 ## PHASE 11 — Optional ChatGPT-Plan Cloud Model (Sign in with ChatGPT)
 
-**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** Draft spec: `docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`, awaiting owner approval. The owner authorized Phase 11 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred, as in the Phase 10 authorization. Implementation begins only after the owner approves the spec.
+**Current status: AUTHORIZED / SPEC APPROVED; IMPLEMENTATION NOT STARTED.** Spec: `docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`, approved by the owner on 2026-10-23 with the recommended defaults D1–D7. Coding waits for the owner's go-ahead. The owner authorized Phase 11 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred, as in the Phase 10 authorization. Implementation begins only after the owner approves the spec.
 
 Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
 

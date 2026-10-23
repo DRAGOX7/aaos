@@ -103,7 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
-| Phase 11 | AUTHORIZED on 2026-10-23 for specification, the owner-present probe, and (after spec approval) implementation | Not started; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 authorization (2026-10-23)" |
+| Phase 11 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D7 (`docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`) | Implementation not started, at the owner's request; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 authorization" and "Phase 11 spec approval" (2026-10-23) |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -617,3 +617,30 @@ separately at the end of this section.
   - changing the local model as the default;
   - any other provider.
 - **Acceptance gate:** as listed under Phase 11 in `docs/PHASES.md`.
+
+## Phase 11 spec approval (2026-10-23)
+
+- **Approval:** the owner approved
+  `docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md` (the draft
+  in commit `5826ef3e`), in these words: "I approve the Phase 11 spec with the
+  recommended defaults for D1–D7."
+- **Owner decisions:** all seven recommended defaults (spec §2).
+  - **D1:** sign-in from the CLI only.
+  - **D2:** credentials at `%LOCALAPPDATA%\AAOS\credentials\chatgpt-plan.json`,
+    with any in-repository path refused.
+  - **D3:** `PyJWT[crypto]`, pinned, as the only new dependency.
+  - **D4:** the probe runs after 11A–11B and before 11D.
+  - **D5:** switching between cloud providers needs confirmation again.
+  - **D6:** no default model.
+  - **D7:** no AAOS-side usage cap; the owner sets a weekly cap at
+    chatgpt.com/settings/usage.
+- **Effect:** under the Phase 11 authorization, implementation of slices 11A–11F
+  may now begin.
+  - **Not started:** the owner asked that coding not start yet. Each start is
+    the owner's call.
+  - **Probe:** the owner-present probe (11C) still needs the owner present, and
+    their consent at that time.
+  - **Evaluation:** the §10 evaluation sends real course excerpts to OpenAI, so
+    it also needs the owner's consent at the time of the run.
+- **Unchanged:** the Phase 0 and Phase 5 gates stay deferred. The not-authorized
+  list in the Phase 11 authorization still applies.

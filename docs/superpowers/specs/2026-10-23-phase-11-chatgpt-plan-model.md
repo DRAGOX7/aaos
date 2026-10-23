@@ -1,6 +1,6 @@
 # Phase 11 Spec — Optional ChatGPT-Plan Cloud Model (Sign in with ChatGPT)
 
-**Status: DRAFT for owner approval. No code, and no probe, until it is approved.**
+**Status: APPROVED by the owner on 2026-10-23 ("I approve the Phase 11 spec with the recommended defaults for D1–D7"). Coding has not started; the owner asked not to start yet.**
 
 - **Authorization:** `docs/GOVERNANCE_LEDGER.md`, "Phase 11 authorization (2026-10-23)".
 - **Design note:** `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
@@ -47,9 +47,9 @@
    parsers, coverage checks and entailment checks, exactly as for the other
    models.
 
-## 2. Owner decisions (to approve or change)
+## 2. Owner decisions (approved 2026-10-23: all recommended defaults)
 
-| # | Decision | Recommended default |
+| # | Decision | Approved default |
 |---|---|---|
 | D1 | Where sign-in runs | **CLI only** in v1 (`aaos model chatgpt-plan sign-in`). No browser route can start a sign-in or receive a code. |
 | D2 | Credential file location | `%LOCALAPPDATA%\AAOS\credentials\chatgpt-plan.json`, overridable with `AAOS_CHATGPT_PLAN_CREDENTIAL_PATH`. Any path inside the repository is refused. |
