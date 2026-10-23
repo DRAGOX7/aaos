@@ -657,7 +657,7 @@ Let the owner's ChatGPT Plus/Pro plan answer AAOS model requests through OpenAI'
 
 ## PHASE 12 — Everyday Calendar Proposals and Approvals
 
-**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** The owner authorized Phase 12 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred. Implementation begins only after the owner approves the spec.
+**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** Draft spec: `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`, awaiting owner approval. The owner authorized Phase 12 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred. Implementation begins only after the owner approves the spec.
 
 Design note: `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md`.
 
