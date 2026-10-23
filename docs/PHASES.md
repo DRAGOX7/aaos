@@ -629,7 +629,7 @@ Notify the owner on Telegram, within a configured interval, when the read-only M
 
 ## PHASE 11 — Optional ChatGPT-Plan Cloud Model (Sign in with ChatGPT)
 
-**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** The owner authorized Phase 11 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred, as in the Phase 10 authorization. Implementation begins only after the owner approves the spec.
+**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** Draft spec: `docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`, awaiting owner approval. The owner authorized Phase 11 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred, as in the Phase 10 authorization. Implementation begins only after the owner approves the spec.
 
 Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
 
@@ -651,5 +651,5 @@ Let the owner's ChatGPT Plus/Pro plan answer AAOS model requests through OpenAI'
 - No tools or agent features are ever requested. No Codex CLI or reused Codex login.
 - The local model remains the default, and moving to the cloud model needs confirmation.
 - Plan-limit and signed-out states fail clearly and never fall back to paid billing.
-- The frozen evaluation set runs at least three times on the ChatGPT-plan model, with the results recorded beside the local model's.
+- The frozen Phase I4 answer evaluation runs at least three times on the ChatGPT-plan model, with the results recorded beside the local model's.
 - All earlier gates still pass.

@@ -234,7 +234,7 @@ other tokens are ever included.
 | Preview behaviour | AAOS dependency | Effect | Mitigation in the gateway |
 |---|---|---|---|
 | `max_tokens` dropped | `max_output_tokens` (generation 2048, capped at 4096; classifiers bounded) | The model can write past AAOS's budget. That costs plan usage and latency, and can produce over-long JSON. | Keep the local prompt-budget check. Read the stream with a hard output cap and stop after it. Treat an over-cap or incomplete reply as `InferenceProtocolError`, then let the existing strict parsers decide. |
-| `temperature` dropped | `temperature=0.0` in every classifier and decision step | Coverage, decomposition, entailment and decision outputs are no longer deterministic. The same question can flip between answered and refused (compare `docs/evaluations/rag-coverage-flips-2026-10-02.md`). | Can't be fixed in the gateway. State it in the UI and docs. The acceptance gate needs repeated-run stability on the frozen evaluation set (§8), not a single run. |
+| `temperature` dropped | `temperature=0.0` in every classifier and decision step | Coverage, decomposition, entailment and decision outputs are no longer deterministic. The same question can flip between answered and refused (compare `docs/evaluations/rag-coverage-flips-2026-10-02.md`). | Can't be fixed in the gateway. State it in the UI and docs. The acceptance gate needs repeated-run stability on the frozen Phase I4 answer evaluation (§8), not a single run. |
 | Prompt caching has no effect | Several model calls per question share long system prompts | Each call spends full plan usage, and weekly caps arrive sooner. | Keep prompts lean. Optionally pace requests the way `AAOS_GEMINI_MIN_INTERVAL_SECONDS` does. |
 | Token counting unavailable | AAOS already estimates locally (`_estimate_prompt_tokens`) | None | Keep the local estimate. |
 | `store=false` forced | AAOS wants no server-side history | Good for privacy | None |
@@ -287,9 +287,11 @@ Automated, with fake transports only and no real OpenAI calls in tests:
 Manual, with the owner present:
 
 - One sign-in, one question, one sign-out, then revocation in ChatGPT settings.
-- A comparison against the local model on the frozen evaluation set
-  (`docs/evaluations/agentic-aaos-ah-frozen-evaluation-v1.md`), with **at least
-  three repeated runs**, because temperature can't be pinned.
+- A comparison against the local model on the frozen Phase I4 answer evaluation
+  (`tests/evaluation/phase_i4_arabic_retrieval_cases_v1.json`), with **at least
+  three repeated runs**, because temperature can't be pinned. (Corrected
+  2026-10-23: the A–H frozen set first named here is synthetic and
+  fake-provider-only, so it can't measure a live model. See the Phase 11 spec §10.)
 - The result is evidence for the owner, not an automatic switch of the default.
 
 Proposed gate:
