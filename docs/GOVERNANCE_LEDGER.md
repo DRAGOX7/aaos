@@ -104,7 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
-| Phase 12 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D6 (`docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`) | Implementation not started, at the owner's request; the dedicated calendar (D2) is still to be confirmed (spec §11); Phase 0 and Phase 5 gates stay deferred; see "Phase 12 spec approval (2026-10-23)" |
+| Phase 12 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D6 (`docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`) | Implementation not started, at the owner's request; the 6B calendar is the owner's primary calendar, so D2 falls back to a new dedicated calendar, not yet created (spec §11.1); Phase 0 and Phase 5 gates stay deferred; see "Phase 12 spec approval (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -825,3 +825,20 @@ separately at the end of this section.
     present.
 - **Unchanged:** the Phase 0 and Phase 5 gates stay deferred. The Phase 12
   not-authorized list still applies.
+
+## Phase 12 calendar finding (2026-10-23)
+
+- **Finding:** the owner gave the calendar ID of the calendar Phase 6B wrote to.
+  Its hash matches the 6B record (`cal-e22174a2…`). It is the owner's **primary**
+  calendar.
+- **About Phase 6B:** the frozen run's single real `CREATE` went to the primary
+  calendar, although the 6B plan described a dedicated calendar. This is
+  recorded as a fact about the frozen evidence. Phase 6B is not reopened: the
+  write was approved, and it is recorded as `CONFIRMED_SUCCESS`.
+- **D2 falls back** to a new dedicated calendar, as the Phase 12 spec approval
+  provides. Phase 12 never writes to the primary calendar (spec invariant 3).
+  The owner creates the new calendar and shares it with the same service
+  account ("Make changes to events"). Its ID is confirmed by the read-only
+  check before 12D.
+- **Recommended to the owner:** remove the service account's access to the
+  primary calendar once the dedicated one is shared.

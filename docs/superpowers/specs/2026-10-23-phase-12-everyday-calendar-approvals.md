@@ -189,3 +189,20 @@ run the read-only check script.
 - The script is kept outside the repository, since no code is written before spec approval.
   12A can turn it into an `aaos doctor` check.
 - Write permission is confirmed only in 12D.
+
+### 11.1 Calendar identification (2026-10-23)
+
+- **What was compared:** the owner gave the calendar ID of the calendar Phase 6B wrote to. Its hash
+  was compared locally with the 6B record. No network call was made.
+- **Result:** **it matches `cal-e22174a2…`, and it is the owner's primary calendar** (its ID is the
+  owner's Google account address).
+- **So the Phase 6B real write went to the owner's primary calendar, not a dedicated one.** The 6B
+  plan's "dedicated calendar" wording did not hold in the run.
+- **Effect on D2:** "the existing 6B dedicated calendar" can't be used. Invariant 3 and the
+  Phase 12 not-authorized list forbid the primary calendar. D2 therefore falls back, as the ledger
+  provides, to **a new dedicated calendar**:
+  1. the owner creates it in Google Calendar;
+  2. the owner shares it with the same service account, with "Make changes to events";
+  3. its ID is confirmed with the read-only check before 12D.
+- **Recommended:** once the new calendar is shared, the owner removes the service account's access
+  to the primary calendar, so the key can no longer write there at all.
