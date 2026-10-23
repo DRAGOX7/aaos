@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThemeToggle } from "@/components/aaos/theme-toggle";
+import { setLocale } from "@/lib/i18n/locale";
 import { THEME_INIT_SCRIPT, THEME_STORAGE_KEY } from "@/lib/theme";
 
 type ChangeListener = (event: { matches: boolean }) => void;
@@ -37,35 +38,62 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Opens the theme menu from the keyboard and picks one option. */
+function choose(option: "Light" | "Dark" | "System") {
+  fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
+  fireEvent.click(screen.getByRole("menuitemradio", { name: option }));
+}
+
 describe("ThemeToggle", () => {
   it("follows the system theme when nothing is saved", () => {
     mockSystemTheme(false);
     render(<ThemeToggle />);
-    expect(screen.getByRole("button", { name: "Theme: System. Switch to Light." })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Theme: System. Change theme" })).toBeInTheDocument();
     expect(root()).not.toHaveClass("dark");
     expect(root().style.colorScheme).toBe("light");
   });
 
-  it("cycles Light, Dark, System and saves each choice", () => {
+  it("lists all three themes and marks the current one", () => {
+    mockSystemTheme(false);
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    render(<ThemeToggle />);
+    fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
+    const options = screen.getAllByRole("menuitemradio");
+    expect(options.map((option) => option.textContent)).toEqual(["Light", "Dark", "System"]);
+    expect(screen.getByRole("menuitemradio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemradio", { name: "Light" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("applies and saves each choice", () => {
     mockSystemTheme(false);
     render(<ThemeToggle />);
-    const button = screen.getByRole("button");
 
-    fireEvent.click(button);
-    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
-    expect(root()).not.toHaveClass("dark");
-    expect(button).toHaveAccessibleName("Theme: Light. Switch to Dark.");
-
-    fireEvent.click(button);
+    choose("Dark");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
     expect(root()).toHaveClass("dark");
     expect(root().style.colorScheme).toBe("dark");
-    expect(button).toHaveAccessibleName("Theme: Dark. Switch to System.");
+    expect(screen.getByRole("button")).toHaveAccessibleName("Theme: Dark. Change theme");
 
-    fireEvent.click(button);
-    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
+    choose("Light");
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
     expect(root()).not.toHaveClass("dark");
-    expect(button).toHaveAccessibleName("Theme: System. Switch to Light.");
+
+    choose("System");
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
+    expect(screen.getByRole("button")).toHaveAccessibleName("Theme: System. Change theme");
+  });
+
+  it("opens right to left, in Arabic, when the page is Arabic", () => {
+    mockSystemTheme(false);
+    act(() => setLocale("ar"));
+    try {
+      render(<ThemeToggle />);
+      fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
+      expect(screen.getByRole("menu")).toHaveAttribute("dir", "rtl");
+      expect(screen.getByRole("menuitemradio", { name: "داكن" })).toBeInTheDocument();
+    } finally {
+      act(() => setLocale("en"));
+    }
   });
 
   it("applies a saved dark choice even when the system is light", () => {
@@ -73,7 +101,7 @@ describe("ThemeToggle", () => {
     window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
     render(<ThemeToggle />);
     expect(root()).toHaveClass("dark");
-    expect(screen.getByRole("button")).toHaveAccessibleName("Theme: Dark. Switch to System.");
+    expect(screen.getByRole("button")).toHaveAccessibleName("Theme: Dark. Change theme");
   });
 
   it("tracks the system theme only while on System", () => {
@@ -84,7 +112,7 @@ describe("ThemeToggle", () => {
     act(() => system.setDark(false));
     expect(root()).not.toHaveClass("dark");
 
-    fireEvent.click(screen.getByRole("button")); // Light
+    choose("Light");
     expect(system.listenerCount()).toBe(0);
     act(() => system.setDark(true));
     expect(root()).not.toHaveClass("dark");
@@ -99,23 +127,11 @@ describe("ThemeToggle", () => {
       throw new Error("blocked");
     });
     render(<ThemeToggle />);
-    const button = screen.getByRole("button");
-    // The in-memory fallback keeps the last choice, so the start depends on test order.
-    const seen = new Set<string | null>();
-    for (let i = 0; i < 3; i += 1) {
-      fireEvent.click(button);
-      seen.add(button.getAttribute("aria-label"));
-      if (root().classList.contains("dark")) {
-        expect(button).toHaveAccessibleName("Theme: Dark. Switch to System.");
-      }
-    }
-    expect(seen).toEqual(
-      new Set([
-        "Theme: Light. Switch to Dark.",
-        "Theme: Dark. Switch to System.",
-        "Theme: System. Switch to Light.",
-      ]),
-    );
+    choose("Dark");
+    expect(root()).toHaveClass("dark");
+    expect(screen.getByRole("button")).toHaveAccessibleName("Theme: Dark. Change theme");
+    // Leave the in-memory fallback on the default for later tests.
+    choose("System");
   });
 });
 
