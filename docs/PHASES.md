@@ -43,7 +43,7 @@ terminology, not evidence of a freeze tag.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
-- Phase 10 — **PASSED** by whole-phase human acceptance on 2026-10-23; not FROZEN (no `phase-10-passed` tag): Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E) and no test re-run on the acceptance day. Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
+- Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E) and no test re-run on the acceptance day. Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 
 ### Historical status notes
 
@@ -596,7 +596,7 @@ introduce missing security or product capabilities late.
 
 ## PHASE 10 — Moodle Change Notifications (Telegram)
 
-**Current status: PASSED (human-accepted 2026-10-23; not FROZEN).** The owner authorized Phase 10 on 2026-10-02 and explicitly deferred the open Phase 0 and Phase 5 gates. Known limitations are recorded in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
+**Current status: PASSED / FROZEN** (human-accepted 2026-10-23; tag `phase-10-passed`). The owner authorized Phase 10 on 2026-10-02 and explicitly deferred the open Phase 0 and Phase 5 gates. Known limitations are recorded in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
 
 Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 
