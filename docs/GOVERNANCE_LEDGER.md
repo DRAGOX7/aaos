@@ -890,3 +890,40 @@ separately at the end of this section.
   - the 12D real check with the owner present: one proposal approved into the
     dedicated `AAOS` calendar, and one rejected;
   - whole-phase human acceptance.
+
+## Phase 11 defect fix after freeze (2026-10-23)
+
+- **Approval:** the owner approved a recorded defect fix for frozen Phase 11:
+  "make the ChatGPT-plan gateway wrap union (oneOf) schemas in an object and unwrap
+  the reply, with tests and a re-run of the schema sweep."
+- **Defect:** OpenAI rejected all 17 AAOS agent decision schemas. 15 have a
+  top-level `oneOf`, which needs an object root, and 2 failed only in strict mode.
+  So agent features on the ChatGPT plan ran without structured output and often
+  failed (`INVALID_PROPOSAL`). The Phase 11 probe and evaluation covered only the
+  document-answering schemas.
+- **Fix:** in `src/aaos/inference/chatgpt_plan.py` only:
+  - `oneOf` becomes `anyOf`;
+  - non-object roots are wrapped as `{"decision": …}`, with the reply unwrapped;
+  - a schema steps from strict to not strict before being dropped.
+  - The `_sse_events` type annotation was also corrected (`AsyncGenerator`); it
+    fixes two mypy errors left by `0d829d3a`, with no behaviour change.
+- **Evidence:**
+  - a schema check on `gpt-6-luna` and `gpt-6.1-sol`: 24 of 27 strict and 27 of 27
+    not strict accepted (before: 10 of 27);
+  - 4 new gateway tests;
+  - full backend suite: 4,538 passed, 6 skipped, 0 failed;
+  - ruff and mypy clean;
+  - a reproduction on a database copy with the fake Google client: the agent's
+    decision is now accepted.
+- **Freeze:** the `phase-11-passed` tag is not moved. This record and spec §15 are
+  the amendment.
+- **Second defect found, not fixed (awaiting owner decision):**
+  - `_parse_local_start` in `src/aaos/agent/calendar_actions.py` (frozen agentic
+    Calendar code, `c4bc8848`) keeps the last of two identical fold candidates, so
+    an ordinary time such as 18:00 gets `fold=1`.
+  - The Calendar canonicalizer then correctly refuses it ("start fold is invalid
+    for declared timezone"). Every study-task Calendar proposal fails at
+    preparation (`INVALID_REQUEST`), with any model.
+  - The existing agent tests use a fake proposal service that never runs the real
+    canonicalizer.
+  - Proposed fix: keep the first candidate per instant (one line).

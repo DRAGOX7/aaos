@@ -441,3 +441,29 @@ As listed under Phase 11 in `docs/PHASES.md`, plus:
 - the 11A–11E tests pass;
 - the §10 evaluation is recorded;
 - §13 is filled in.
+
+## 15. Defect fix after acceptance (2026-10-23, owner-approved)
+
+- **Found by** the Phase 12 12D real check: a Calendar request on the ChatGPT plan failed with
+  `INVALID_PROPOSAL`.
+- **Cause:** a schema check across both models (`gpt-6-luna`, `gpt-6.1-sol`) showed OpenAI
+  rejected all 17 agent decision schemas with `invalid_json_schema`, even in non-strict mode.
+  - 15 of them have a `oneOf` at the top level, and OpenAI requires an object root and does not
+    support `oneOf`.
+  - The other 2 failed only in strict mode.
+  - The gateway then sent no schema, and free-form replies were not valid decisions.
+  - The Phase 11 probe (§13) and evaluation (§10) covered only the 10 document-answering
+    schemas, so this was not caught.
+- **Fix, in `ChatGPTPlanGateway` only:**
+  - every `oneOf` is renamed `anyOf`;
+  - a schema without an object root is sent wrapped as `{"decision": <schema>}`, and the reply's
+    `decision` value is handed back;
+  - a schema OpenAI still refuses steps from strict to not strict before being dropped, and this
+    is remembered per schema;
+  - AAOS's own strict parsers still check every reply, so nothing is loosened.
+- **Evidence:**
+  - the same check after the fix: 24 of 27 schemas accepted strict and 27 of 27 not strict, on
+    both models (before: 10 of 27);
+  - 4 new gateway tests;
+  - full backend suite: 4,538 passed.
+
