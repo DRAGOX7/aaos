@@ -101,6 +101,7 @@ and gates.
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
+| Phase 10 | PASSED by whole-phase human acceptance on 2026-10-23; not FROZEN (no `phase-10-passed` tag) | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay, and no test re-run on the acceptance day; Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -437,3 +438,12 @@ PLANNED / NOT STARTED.
 - **State:** IMPLEMENTED / VERIFIED. The Telegram sender, the `notify` and `monitor` commands and the event pipeline are merged to `main`; `tests/test_notification_*.py` pass.
 - **Not recorded:** whole-phase human acceptance and a `phase-10-passed` tag. Phase 10 is therefore not FROZEN.
 - **Still open and unchanged:** Phase 0 acceptance (0G/0H) and Phase 5 Slice 6 remain deferred by the 2026-10-02 authorization. Quiz changes are not notified.
+
+## Phase 10 whole-phase acceptance (2026-10-23)
+
+- **Decision:** the owner accepted Phase 10 (Moodle change notifications via Telegram) on 2026-10-23. Status: PASSED. Not FROZEN, because no `phase-10-passed` tag exists yet.
+- **Evidence relied on:** the 2026-10-04 status note (implementation merged to `main` in `472505ca`; `tests/test_notification_*.py` passing at that time). The owner chose to accept on that evidence.
+- **KNOWN_LIMITATION: no 10E real-history replay is recorded.** Spec §10E calls for a replay of real snapshot history through a fake adapter to check correctness and completeness. The repository holds only synthetic pipeline tests (`tests/test_notification_pipeline.py`), and no replay evidence file. The acceptance-gate items "every notification matches a real change" and "every in-scope change is notified exactly once" are accepted by the owner without that replay.
+- **KNOWN_LIMITATION: no test re-run on the acceptance day.** The project `.venv` was absent on 2026-10-23, so the notification tests and the full regression suite were not re-run. Commits merged after 2026-10-04 (the optional Gemini provider and UI follow-ups) are not re-verified against Phase 10 by this entry.
+- **Unchanged:** Phase 0 acceptance (0G/0H) and Phase 5 Slice 6 remain deferred, not resolved. The standing Telegram approval from 2026-10-02 stays as recorded.
+- **No new authority:** this acceptance authorizes no Phase 11 or other work. The ChatGPT-plan gateway note (`docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`) remains a proposal.
