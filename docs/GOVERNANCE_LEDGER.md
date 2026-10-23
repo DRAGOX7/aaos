@@ -103,7 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
-| Phase 11 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D7); IMPLEMENTED / VERIFIED on 2026-10-23 (4,494 backend, 288 frontend tests; first real sign-in, 11C probe and §10 evaluation done: 86/96 vs local 78/96, unanswerable 8/8) | Not accepted: whole-phase human acceptance remains; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 §10 evaluation (2026-10-23)" |
+| Phase 11 | PASSED by whole-phase human acceptance on 2026-10-23 at `b69e0f98`; not FROZEN (no `phase-11-passed` tag) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -735,3 +735,31 @@ separately at the end of this section.
 - **Status:** the evaluation required by spec §10 is recorded. Phase 11 is
   IMPLEMENTED / VERIFIED, with every owner-present step done. **Human acceptance
   remains**, and the default model stays local.
+
+## Phase 11 whole-phase acceptance (2026-10-23)
+
+- **Decision:** the owner accepted Phase 11, the optional ChatGPT-plan cloud
+  model through Sign in with ChatGPT, on 2026-10-23: "I accept Phase 11."
+  Status: PASSED. Not FROZEN, because no `phase-11-passed` tag exists.
+- **Accepted boundary:** `main` at `b69e0f98`. That includes slices 11A–11E,
+  the probe-driven gateway fix (`0d829d3a`), and the §10 evaluation report.
+- **Evidence relied on:**
+  - automated: 4,494 backend tests, 288 frontend tests, ruff, mypy and `tsc`;
+  - the first real sign-in, by the owner;
+  - three owner-present probe runs (spec §13);
+  - the §10 evaluation: 86/96 answerable rows with an expected page, against the
+    local model's 78/96, and unanswerable rows 8/8 refused with 0 cited.
+- **Default unchanged:** the local model (`lm_studio`) stays the default. The
+  ChatGPT plan answers only after the owner signs in, selects it and confirms
+  the cloud warning.
+- **KNOWN_LIMITATION:**
+  - the evaluation covers one model (`gpt-6.1-sol`), one day and three runs;
+  - its local comparison is the 2026-10-02 gate, not a fresh side-by-side run;
+  - answers that cite another page were not read by hand;
+  - behaviour at the plan limit is verified with fake transports only;
+  - the preview ignores `temperature`, so answers can vary between runs.
+- **Unchanged:** the Phase 0 (0G/0H) and Phase 5 (Slice 6) gates stay deferred,
+  not resolved. The Phase 11 not-authorized list still applies: no Codex CLI or
+  Codex login, no model-side tools, no hosted or multi-user use, no change of
+  default model and no other provider.
+- **No new authority:** this acceptance authorizes no Phase 12 or other work.
