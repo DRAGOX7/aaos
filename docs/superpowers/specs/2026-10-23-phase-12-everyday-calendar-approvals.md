@@ -206,3 +206,21 @@ run the read-only check script.
   3. its ID is confirmed with the read-only check before 12D.
 - **Recommended:** once the new calendar is shared, the owner removes the service account's access
   to the primary calendar, so the key can no longer write there at all.
+
+### 11.2 The new dedicated calendar (2026-10-23, read-only)
+
+The owner created a dedicated calendar named **AAOS** and shared it with the same service account,
+with "Make changes to events". Its ID is a group calendar ID ending in
+`@group.calendar.google.com`; it is set in the owner's environment, not stored here. The check used
+the `calendar.readonly` scope and GET requests only.
+
+| Check | Result |
+|---|---|
+| A dedicated, non-primary calendar | **Yes** (a group calendar ID) |
+| Readable by the service account | **Yes:** summary `AAOS`, time zone `Asia/Amman` |
+| Write permission | Not checkable read-only. Confirmed in 12D. |
+| The service account can still read the **primary** calendar | **Yes.** Its access has not been removed, or the primary calendar is readable publicly. Recommended to the owner: remove the service account from the primary calendar's sharing, and check "Make available to public" is off. |
+
+**D2 is now settled:** Phase 12 uses this AAOS calendar. The primary calendar is refused by
+configuration (`primary` and the owner's own address are rejected as `AAOS_GOOGLE_CALENDAR_ID`).
+
