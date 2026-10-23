@@ -44,6 +44,7 @@ terminology, not evidence of a freeze tag.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
 - Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E), which is still open, and no test re-run on the acceptance day, which was closed by the 2026-10-23 re-run (62 notification tests passed). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
+- Phase 11 — **AUTHORIZED / SPECIFICATION IN PROGRESS**: optional ChatGPT-plan cloud model through Sign in with ChatGPT. Authorized by the owner on 2026-10-23, with the Phase 0 and Phase 5 gates still deferred. No implementation until the owner approves the spec. Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
 
 Outside the phase sequence:
 
@@ -624,4 +625,31 @@ Notify the owner on Telegram, within a configured interval, when the read-only M
   - every notification matches a real change;
   - every in-scope change is notified exactly once.
 - Unchanged data sends nothing. Failed or incomplete syncs send nothing except one auth alert.
+- All earlier gates still pass.
+
+## PHASE 11 — Optional ChatGPT-Plan Cloud Model (Sign in with ChatGPT)
+
+**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** The owner authorized Phase 11 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred, as in the Phase 10 authorization. Implementation begins only after the owner approves the spec.
+
+Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
+
+### Purpose
+
+Let the owner's ChatGPT Plus/Pro plan answer AAOS model requests through OpenAI's official Sign in with ChatGPT plan usage. It is an opt-in cloud model behind the existing `ModelGateway` boundary, and the local model stays the default.
+
+### Core work
+
+- **Probe first:** one owner-present sign-in and a few requests in the formats AAOS uses, to settle the preview's open questions before code. These are structured output, the reasoning setting, available models and the host-ID rule.
+- **Sign-in flow:** owner-started PKCE sign-in through a one-shot listener on `127.0.0.1`, with ID-token and `chatgpt.tokens.use.direct` scope validation.
+- **Credential store:** outside the repository, readable only by the owner, written atomically, and refreshed by a single writer, because refresh tokens are single-use.
+- **`ChatGPTPlanGateway`:** fixed endpoints, streamed Responses API calls with `store=false` and no tools. AAOS enforces its own output cap, retries with less on HTTP 400, and maps errors to safe categories.
+- **Selection:** a `chatgpt_plan` provider with the same cloud confirmation, `CLOUD MODEL ACTIVE` log and model badge as Gemini.
+
+### Acceptance gate
+
+- No token appears in Git, logs, the frontend, model context or evaluation output.
+- No tools or agent features are ever requested. No Codex CLI or reused Codex login.
+- The local model remains the default, and moving to the cloud model needs confirmation.
+- Plan-limit and signed-out states fail clearly and never fall back to paid billing.
+- The frozen evaluation set runs at least three times on the ChatGPT-plan model, with the results recorded beside the local model's.
 - All earlier gates still pass.

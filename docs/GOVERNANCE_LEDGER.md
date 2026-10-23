@@ -103,6 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
+| Phase 11 | AUTHORIZED on 2026-10-23 for specification, the owner-present probe, and (after spec approval) implementation | Not started; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 authorization (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -585,3 +586,34 @@ separately at the end of this section.
     verified against the live Gemini API.
   - **Phase 10:** the "no test re-run" limitation is closed. Phase 10 stays
     PASSED / FROZEN at `phase-10-passed`; the tag is not moved.
+
+## Phase 11 authorization (2026-10-23)
+
+- **Authorization:** the owner authorized Phase 11, an optional ChatGPT-plan
+  cloud model through OpenAI's Sign in with ChatGPT plan usage, on 2026-10-23.
+- **Basis:** the design note
+  `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`
+  (commit `0b896d0a`). Phase 10 is PASSED / FROZEN at `phase-10-passed`, and the
+  Gemini provider it builds on is IMPLEMENTED, HUMAN_APPROVED and VERIFIED (see
+  the 2026-10-23 records above).
+- **Deferred gates:** the open Phase 0 (0G/0H) and Phase 5 (Slice 6) gates stay
+  deferred, not resolved, as in the Phase 10 authorization.
+- **Authorized now:**
+  - writing the Phase 11 spec and plan from the design note;
+  - one owner-present probe. It covers a single Sign in with ChatGPT sign-in and
+    a few requests in the formats AAOS uses, to settle the design note's §10
+    open questions. With the owner's consent at that time, only short synthetic
+    prompts are sent to OpenAI. No course material is sent, and no credential
+    is written to Git, logs or model context.
+- **Authorized only after the owner approves the spec:**
+  - implementation of the sign-in flow;
+  - the credential store;
+  - `ChatGPTPlanGateway`;
+  - the `chatgpt_plan` selection path.
+- **Not authorized:**
+  - the Codex CLI, `codex exec` or reuse of the Codex CLI's login;
+  - model-side tools;
+  - hosted or multi-user use;
+  - changing the local model as the default;
+  - any other provider.
+- **Acceptance gate:** as listed under Phase 11 in `docs/PHASES.md`.

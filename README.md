@@ -290,6 +290,7 @@ The authoritative record is [`docs/GOVERNANCE_LEDGER.md`](docs/GOVERNANCE_LEDGER
 - Phase 8: **FROZEN** at `phase-08-passed`.
 - Phase 9: **FROZEN** at `phase-09-passed`.
 - Phase 10: **FROZEN** at `phase-10-passed` (human-accepted 2026-10-23): Telegram notifications are merged and in use. The replay of real snapshot history named in the acceptance gate is not recorded and is listed as a known limitation.
+- Phase 11: **AUTHORIZED** (2026-10-23), spec in progress: an optional cloud model that uses your ChatGPT plan through Sign in with ChatGPT. Nothing is built yet.
 
 ## Documentation
 

@@ -1,7 +1,8 @@
 # ChatGPT-plan model gateway (Sign in with ChatGPT) — design note
 
-**Status:** PROPOSAL / NOT AUTHORIZED. Design only; no code. Nothing here may be
-implemented until the owner authorizes it as a phase (see §9).
+**Status:** Basis for Phase 11, which the owner authorized on 2026-10-23 (see
+`docs/GOVERNANCE_LEDGER.md`, "Phase 11 authorization"). This is a design note,
+not the spec. Implementation waits for the owner to approve the Phase 11 spec.
 
 **Date:** 2026-10-23
 
