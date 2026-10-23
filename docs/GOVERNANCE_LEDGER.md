@@ -101,6 +101,7 @@ and gates.
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
+| Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED, merged to `main` on 2026-10-04 without a recorded authorization; recorded retroactively on 2026-10-23. Not VERIFIED or HUMAN_APPROVED by this ledger | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay, and no test re-run on the acceptance day; Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
@@ -445,6 +446,70 @@ PLANNED / NOT STARTED.
 - **Freeze tag:** at the owner's request, the annotated `phase-10-passed` tag targets `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`, the commit that recorded this acceptance. Unlike `phase-07-passed` to `phase-09-passed`, the tagged commit still reads "not FROZEN"; the FROZEN wording was added in the commit that follows it. The frozen baseline is the tagged commit.
 - **Evidence relied on:** the 2026-10-04 status note (implementation merged to `main` in `472505ca`; `tests/test_notification_*.py` passing at that time). The owner chose to accept on that evidence.
 - **KNOWN_LIMITATION: no 10E real-history replay is recorded.** Spec §10E calls for a replay of real snapshot history through a fake adapter to check correctness and completeness. The repository holds only synthetic pipeline tests (`tests/test_notification_pipeline.py`), and no replay evidence file. The acceptance-gate items "every notification matches a real change" and "every in-scope change is notified exactly once" are accepted by the owner without that replay.
-- **KNOWN_LIMITATION: no test re-run on the acceptance day.** The project `.venv` was absent on 2026-10-23, so the notification tests and the full regression suite were not re-run. Commits merged after 2026-10-04 (the optional Gemini provider and UI follow-ups) are not re-verified against Phase 10 by this entry.
+- **KNOWN_LIMITATION: no test re-run on the acceptance day.** The project `.venv` was absent on 2026-10-23, so the notification tests and the full regression suite were not re-run. The optional Gemini provider and UI follow-ups were merged on 2026-10-04, before the status note's commit; the ledger does not record whether the note's passing tests ran before or after that merge, and this entry does not re-verify them against Phase 10.
 - **Unchanged:** Phase 0 acceptance (0G/0H) and Phase 5 Slice 6 remain deferred, not resolved. The standing Telegram approval from 2026-10-02 stays as recorded.
 - **No new authority:** this acceptance authorizes no Phase 11 or other work. The ChatGPT-plan gateway note (`docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`) remains a proposal.
+
+## Optional Gemini cloud model — retroactive record (2026-10-23)
+
+This records work that reached `main` outside the phase sequence. It is a record
+of what exists, not an approval or a verification.
+
+- **What exists:** an opt-in `GeminiGateway` behind the existing `ModelGateway`
+  boundary, so a Google Gemini model can answer instead of the local LM Studio
+  model. The local model stays the default.
+  - It is enabled by `AAOS_MODEL_PROVIDER=gemini`, `AAOS_GEMINI_MODEL` and
+    `GEMINI_API_KEY`, or by switching in the model panel when the last two are set.
+  - Code: `src/aaos/inference/gemini.py`, `factory.py`, `selection.py`,
+    `src/aaos/config.py`, `src/aaos/main.py`, `src/aaos/rag/factory.py`,
+    `src/aaos/rag/semantic_coverage.py`, `src/aaos/web/contracts.py`,
+    `src/aaos/web/routes.py`, the model badge and model panel in the frontend,
+    and `scripts/gemini_probe.py`.
+- **History:** 12 commits dated 2026-10-04. Ten are code commits, from
+  `e2bbb794` (the opt-in gateway) to `0e1d6749` (choosing the model from a list).
+  Two change README and demo wording: `ac99c401` and `96b33040`. They came through the `feat/gemini-model-option`,
+  `feat/model-switch-ui` and `feat/followups` branches, and `main` received them
+  in merges `27915548` and `59097e23`.
+- **Authorization: none recorded.** No PHASES.md entry, spec or ledger decision
+  exists for this work. It was merged while Phase 10 acceptance was pending, and
+  it is outside Phase 10's scope.
+- **Frozen phases it touches.** These are recorded here, not accepted
+  retroactively:
+  - **Phase 4 (local RAG):** in `85e75bc2`, the three semantic steps
+    (decomposition, evidence spans, requirement coverage) gained an
+    `approved_identifiers` set, so replies named after the active Gemini model
+    are accepted. The Qwen-only default and refusal of any other name are kept,
+    per `tests/test_semantic_model_identity.py`. Embeddings and the NLI claim
+    checker still run locally.
+  - **Phase 7 (dashboard):** new browser routes `GET /model`,
+    `GET /model/gemini-models` and `POST /model`, with the
+    `tests/test_phase7d_scope_audit.py` and `tests/test_phase7g_route_inventory.py`
+    expectations updated to include them.
+  - The `phase-04-passed` and `phase-07-passed` tags still mark the earlier baselines.
+- **Boundaries in the code (read on 2026-10-23):**
+  - The endpoint is a fixed HTTPS constant, with no redirects or proxies.
+  - The key is read from the environment only. It is held in one private
+    attribute and appears in no telemetry, `repr` or error message.
+  - Browser contracts carry names only (`ModelStatusResponse`,
+    `ModelSelectRequest`), and the browser never sends a key.
+  - Moving to the cloud model needs `confirm_cloud`, and a switch is refused
+    while a question is running.
+  - The backend logs `CLOUD MODEL ACTIVE`.
+  - No tools are sent to the model.
+  - AAOS still validates every reply with its own strict parsers.
+- **Data boundary:** with Gemini selected, question text and the selected course
+  excerpts go to Google. The README's local-first claim now says "by default" and
+  lists Gemini among the outside calls.
+- **Test evidence (not re-run 2026-10-23, `.venv` absent):**
+  - `tests/test_gemini_gateway.py`, `tests/test_gemini_model_picker.py`,
+    `tests/test_gemini_probe.py`, `tests/test_model_selection.py`,
+    `tests/test_semantic_model_identity.py` and `frontend/tests/model-badge.test.tsx`
+    use mock transports only.
+  - Commit `e2bbb794` states "Not verified against the live Gemini API". Later
+    commit messages describe live use by the owner (for example the AI Studio
+    usage chart in `85e75bc2`), but no live evidence artifact is recorded.
+- **Status:** IMPLEMENTED. Not VERIFIED and not HUMAN_APPROVED by this ledger.
+  Either needs its own recorded evidence or owner decision.
+- **Consequence for Phase 11:** the proposed ChatGPT-plan gateway builds on this
+  provider-selection path, so a Phase 11 authorization should name this record
+  and decide whether Gemini's status must first reach VERIFIED.
