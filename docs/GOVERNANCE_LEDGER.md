@@ -1098,3 +1098,15 @@ phone menu opens from the right; switching back restores English, left to right;
 console errors or hydration warnings after a reload in Arabic.
 
 Status: IMPLEMENTED and VERIFIED. Not HUMAN_APPROVED until the owner reviews it.
+
+### Theme menu (2026-10-24)
+
+At the owner's request the theme button became a shadcn `DropdownMenu` listing Light,
+Dark and System with the current choice checked, instead of a button that cycled through
+them. The menu came from the project's shadcn CLI (`npx shadcn add dropdown-menu`); it
+uses the `radix-ui` package already installed, so no dependency was added.
+`components.json` now has `"rtl": true`, so shadcn generates right-to-left-safe classes.
+The menu is given the page direction, because Radix menus are left to right by default.
+Verified on 2026-10-24: frontend suite 312 passed; `tsc` clean; ESLint has only the 2
+earlier warnings; in the built-in browser the menu works in English and in Arabic (right
+to left).

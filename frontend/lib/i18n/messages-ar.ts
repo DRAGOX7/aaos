@@ -28,7 +28,8 @@ export const AR = {
   "Dark": "داكن",
   "System": "النظام",
   "Theme: {current}": "المظهر: {current}",
-  "Theme: {current}. Switch to {next}.": "المظهر: {current}. التبديل إلى {next}.",
+  "Theme": "المظهر",
+  "Theme: {current}. Change theme": "المظهر: {current}. تغيير المظهر",
 
   // Overview
   "Good morning": "صباح الخير",
