@@ -10,34 +10,36 @@ import { courseCardFacts, type CourseCardFacts } from "@/lib/courses/card-data";
 import { courseDisplayName, distinctCourses } from "@/lib/courses/display";
 import { assignmentsQueryOptions, documentsQueryOptions } from "@/lib/query/academic";
 import { courseListQueryOptions } from "@/lib/query/courses";
+import { useI18n, type Translator } from "@/lib/i18n";
 import { useClientMinute } from "@/lib/time/use-client-minute";
 
 // Each course gets a stable colour by position. White text meets WCAG AA on
 // every band (each is at least 6:1 against white).
 const BANDS = ["#1d3a8a", "#0f6b66", "#5232a8", "#8a4b08", "#9b1c3a", "#25507a"] as const;
 
-const dueFormat = new Intl.DateTimeFormat("en-GB", {
+const DUE_OPTIONS: Intl.DateTimeFormatOptions = {
   weekday: "short",
   day: "numeric",
   month: "short",
   hour: "2-digit",
   minute: "2-digit",
-});
+};
 
-function fileLabel(count: number | null): string {
+function fileLabel(count: number | null, { t, tn }: Translator): string {
   if (count === null) return "";
-  if (count === 0) return "No files posted yet";
-  return `${count} file${count === 1 ? "" : "s"}`;
+  if (count === 0) return t("No files posted yet");
+  return tn("file", count);
 }
 
 function DeadlineLine({ deadline }: { deadline: CourseCardFacts["nextDeadline"] }) {
+  const { t, dateLocale } = useI18n();
   // Unknown (assignments failed, or the clock is not known yet): say nothing.
   if (deadline === null) return null;
   if (deadline === undefined) {
     return (
       <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
         <CalendarCheck aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
-        No upcoming deadlines
+        {t("No upcoming deadlines")}
       </p>
     );
   }
@@ -50,13 +52,18 @@ function DeadlineLine({ deadline }: { deadline: CourseCardFacts["nextDeadline"] 
       />
       <span className="min-w-0 break-words">
         <span className="font-semibold">{deadline.title}</span>
-        <span className="text-muted-foreground"> · due {dueFormat.format(deadline.dueAt)}</span>
+        <span className="text-muted-foreground">
+          {" · "}
+          {t("due {date}", { date: new Intl.DateTimeFormat(dateLocale("en-GB"), DUE_OPTIONS).format(deadline.dueAt) })}
+        </span>
       </span>
     </p>
   );
 }
 
 export function OverviewCourses() {
+  const i18n = useI18n();
+  const { t } = i18n;
   const courses = useQuery(courseListQueryOptions());
   const documents = useQuery(documentsQueryOptions());
   const assignments = useQuery(assignmentsQueryOptions());
@@ -76,32 +83,32 @@ export function OverviewCourses() {
     <section aria-labelledby="overview-courses-title" className="flex flex-col gap-3.5">
       <div className="flex items-baseline justify-between gap-4">
         <h2 id="overview-courses-title" className="text-lg font-bold tracking-tight text-foreground">
-          This semester
+          {t("This semester")}
         </h2>
         <Link
           href="/courses"
           className="text-sm font-semibold text-primary-strong underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {pastCount > 0 ? `All courses · ${pastCount} past` : "All courses"}
+          {pastCount > 0 ? `${t("All courses")} · ${i18n.tn("pastCourse", pastCount)}` : t("All courses")}
         </Link>
       </div>
 
       {courses.isPending ? (
-        <div aria-label="Loading courses" className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+        <div aria-label={t("Loading courses")} className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }, (_, index) => (
             <Skeleton key={index} className="h-[11rem] rounded-2xl" />
           ))}
         </div>
       ) : courses.isError || !all ? (
         <p className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
-          Academic data is temporarily unavailable.
+          {t("Academic data is temporarily unavailable.")}
         </p>
       ) : current.length === 0 ? (
         <p className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
-          No current courses yet. They appear after your next Moodle sync.
+          {t("No current courses yet. They appear after your next Moodle sync.")}
         </p>
       ) : (
-        <ul aria-label="Current courses" className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+        <ul aria-label={t("Current courses")} className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
           {current.map((course, index) => {
             const { code, name } = courseDisplayName(course);
             const card = facts.get(course.id);
@@ -129,7 +136,7 @@ export function OverviewCourses() {
                     <DeadlineLine deadline={card ? card.nextDeadline : null} />
                     <div className="mt-auto flex items-center justify-between gap-3">
                       <span className="text-xs text-muted-foreground">
-                        {fileLabel(card ? card.fileCount : null)}
+                        {fileLabel(card ? card.fileCount : null, i18n)}
                       </span>
                       {/* Visual only: the whole card is the one link. */}
                       <span
@@ -137,7 +144,7 @@ export function OverviewCourses() {
                         className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
                         style={{ backgroundColor: band }}
                       >
-                        Open
+                        {t("Open")}
                       </span>
                     </div>
                   </div>

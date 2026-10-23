@@ -19,6 +19,7 @@ import { AskConversation, type AskIssueKind, type AskThreadEntry } from "@/compo
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
 import { takeAskHandoff } from "@/lib/ask/handoff";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import {
   fetchAcademicAsk,
   MalformedAskResponseError,
@@ -37,6 +38,7 @@ function safeRequestIssue(
   error: unknown,
   abortCause: "timeout" | "stopped" | null,
 ): { kind: AskIssueKind; message: string } {
+  // Messages stay in English here; the conversation shows them translated.
   if (abortCause === "timeout") {
     return {
       kind: "timeout",
@@ -85,7 +87,7 @@ function createRequestId(): string | null {
 }
 
 // Starting points that map to what AAOS can actually answer.
-const ASK_SUGGESTIONS: readonly { topic: string; question: string; icon: LucideIcon }[] = [
+const ASK_SUGGESTIONS: readonly { topic: MessageKey; question: MessageKey; icon: LucideIcon }[] = [
   { topic: "Course files", question: "What does the syllabus say about the final exam?", icon: FileText },
   { topic: "Deadlines", question: "What's due this week?", icon: CalendarClock },
   { topic: "Moodle changes", question: "What changed in Moodle since yesterday?", icon: RefreshCw },
@@ -93,11 +95,12 @@ const ASK_SUGGESTIONS: readonly { topic: string; question: string; icon: LucideI
 ];
 
 export function AskView() {
+  const { t } = useI18n();
   const [question, setQuestion] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [entries, setEntries] = useState<AskThreadEntry[]>([]);
   const [pending, setPending] = useState(false);
-  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const [validationMessage, setValidationMessage] = useState<MessageKey | null>(null);
   const requestInFlight = useRef(false);
   const activeController = useRef<AbortController | null>(null);
   const abortCause = useRef<"timeout" | "stopped" | null>(null);
@@ -235,10 +238,10 @@ export function AskView() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
-            Ask AAOS
+            {t("Ask AAOS")}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Answers from your course files, Moodle data and tasks, with their sources.
+            {t("Answers from your course files, Moodle data and tasks, with their sources.")}
           </p>
         </div>
         {entries.length > 0 ? (
@@ -250,7 +253,7 @@ export function AskView() {
             disabled={pending}
           >
             <Plus aria-hidden="true" />
-            New conversation
+            {t("New conversation")}
           </Button>
         ) : null}
       </div>
@@ -265,27 +268,26 @@ export function AskView() {
           </span>
           <div className="flex flex-col gap-2">
             <h2 id="ask-empty-title" className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-              What would you like to work on?
+              {t("What would you like to work on?")}
             </h2>
             <p className="mx-auto max-w-xl text-sm leading-6 text-muted-foreground">
-              Ask about your courses, deadlines and Moodle changes, or plan your week.
-              AAOS says so when your files do not support an answer.
+              {t("Ask about your courses, deadlines and Moodle changes, or plan your week. AAOS says so when your files do not support an answer.")}
             </p>
           </div>
-          <ul aria-label="Suggested questions" className="grid w-full gap-3 text-left sm:grid-cols-2">
+          <ul aria-label={t("Suggested questions")} className="grid w-full gap-3 text-start sm:grid-cols-2">
             {ASK_SUGGESTIONS.map(({ topic, question: suggestion, icon: Icon }) => (
               <li key={suggestion}>
                 <button
                   type="button"
-                  onClick={() => void submitQuestion(suggestion)}
-                  className="flex h-full w-full items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left transition-[border-color,box-shadow] duration-200 hover:border-border-hover hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => void submitQuestion(t(suggestion))}
+                  className="flex h-full w-full items-start gap-3 rounded-2xl border border-border bg-card p-4 text-start transition-[border-color,box-shadow] duration-200 hover:border-border-hover hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
                     <Icon aria-hidden="true" className="size-[18px]" strokeWidth={2} />
                   </span>
                   <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-xs font-semibold text-muted-foreground">{topic}</span>
-                    <span className="text-sm font-semibold text-foreground">{suggestion}</span>
+                    <span className="text-xs font-semibold text-muted-foreground">{t(topic)}</span>
+                    <span className="text-sm font-semibold text-foreground">{t(suggestion)}</span>
                   </span>
                 </button>
               </li>
@@ -302,7 +304,7 @@ export function AskView() {
           className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-[0_14px_34px_rgb(16_33_75_/_0.1)]"
         >
           <label className="min-w-0 flex-1" htmlFor="ask-composer">
-            <span className="sr-only">Your message</span>
+            <span className="sr-only">{t("Your message")}</span>
             <textarea
               id="ask-composer"
               aria-describedby={validationMessage ? "ask-validation ask-session-note" : "ask-session-note"}
@@ -313,7 +315,7 @@ export function AskView() {
               maxLength={4096}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleComposerKeyDown}
-              placeholder="Ask about your courses, deadlines or files…"
+              placeholder={t("Ask about your courses, deadlines or files…")}
               value={question}
             />
           </label>
@@ -325,7 +327,7 @@ export function AskView() {
               onClick={stopWaiting}
             >
               <Square aria-hidden="true" />
-              Stop waiting
+              {t("Stop waiting")}
             </Button>
           ) : null}
           <Button type="submit" disabled={pending} className="size-11 shrink-0 rounded-xl">
@@ -334,20 +336,20 @@ export function AskView() {
             ) : (
               <ArrowUp aria-hidden="true" strokeWidth={2.4} />
             )}
-            <span className="sr-only">{pending ? "Sending" : "Send"}</span>
+            <span className="sr-only">{pending ? t("Sending") : t("Send")}</span>
           </Button>
         </form>
         {validationMessage ? (
           <p id="ask-validation" className="mt-2 text-sm text-destructive" role="alert">
-            {validationMessage}
+            {t(validationMessage)}
           </p>
         ) : null}
         <p id="ask-session-note" className="mt-2 text-center text-xs text-muted-foreground">
-          This conversation stays in this page and is not restored after refresh.
-          {pending ? "" : " Enter to send · Shift+Enter for a new line."}
+          {t("This conversation stays in this page and is not restored after refresh.")}
+          {pending ? "" : ` ${t("Enter to send · Shift+Enter for a new line.")}`}
         </p>
         <p aria-live="polite" className="sr-only">
-          {pending ? "AAOS is thinking." : ""}
+          {pending ? t("AAOS is thinking.") : ""}
         </p>
       </div>
     </div>

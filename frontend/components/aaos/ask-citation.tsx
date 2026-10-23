@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 
 import { isRagStructuralCitation, type RagAnswerCitation } from "@/lib/api/rag";
+import { useI18n } from "@/lib/i18n";
 import { documentHref } from "@/lib/routing/document-links";
 
 type AskCitationProps = Readonly<{
@@ -8,6 +11,7 @@ type AskCitationProps = Readonly<{
 }>;
 
 export function AskCitation({ citation }: AskCitationProps) {
+  const { t } = useI18n();
   const structural = isRagStructuralCitation(citation);
   let tableLocation: string | null = null;
   if (
@@ -16,7 +20,11 @@ export function AskCitation({ citation }: AskCitationProps) {
     citation.row_index != null &&
     citation.column_index != null
   ) {
-    tableLocation = ` · table ${citation.table_index + 1}, row ${citation.row_index + 1}, column ${citation.column_index + 1}`;
+    tableLocation = ` · ${t("table {table}, row {row}, column {column}", {
+      table: citation.table_index + 1,
+      row: citation.row_index + 1,
+      column: citation.column_index + 1,
+    })}`;
   }
 
   return (
@@ -31,14 +39,14 @@ export function AskCitation({ citation }: AskCitationProps) {
         <>
           <span>
             {citation.unit_start === citation.unit_end
-              ? ` · unit ${citation.unit_start}`
-              : ` · units ${citation.unit_start}–${citation.unit_end}`}
+              ? ` · ${t("unit {unit}", { unit: citation.unit_start })}`
+              : ` · ${t("units {start}–{end}", { start: citation.unit_start, end: citation.unit_end })}`}
           </span>
-          {citation.heading ? <span> · heading {citation.heading}</span> : null}
+          {citation.heading ? <span> · {t("heading {heading}", { heading: citation.heading })}</span> : null}
           {tableLocation ? <span>{tableLocation}</span> : null}
         </>
       ) : (
-        <span> · pages {citation.page_start}–{citation.page_end}</span>
+        <span> · {t("pages {start}–{end}", { start: citation.page_start, end: citation.page_end })}</span>
       )}
     </li>
   );

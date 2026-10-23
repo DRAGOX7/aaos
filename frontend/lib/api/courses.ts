@@ -26,12 +26,12 @@ export async function fetchCourses(
   return (await response.json()) as CourseListResponse;
 }
 
-const archivedDateFormat = new Intl.DateTimeFormat("en-GB", {
+const ARCHIVED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   timeZone: "UTC",
-});
+};
 
 /** A course Moodle no longer lists (archived by a complete sync). */
 export function isPastCourse(course: CourseSummary): boolean {
@@ -39,8 +39,13 @@ export function isPastCourse(course: CourseSummary): boolean {
 }
 
 /** "2 Oct 2026", or null when the archive date is unknown or invalid. */
-export function formatArchivedDate(value: string | null | undefined): string | null {
+export function formatArchivedDate(
+  value: string | null | undefined,
+  locale: string | undefined = "en-GB",
+): string | null {
   if (!value) return null;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : archivedDateFormat.format(date);
+  return Number.isNaN(date.getTime())
+    ? null
+    : new Intl.DateTimeFormat(locale, ARCHIVED_DATE_OPTIONS).format(date);
 }

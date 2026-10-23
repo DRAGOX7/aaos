@@ -14,11 +14,8 @@ import { EmptyState } from "@/components/aaos/empty-state";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useI18n } from "@/lib/i18n";
 import { activityHistoryQueryOptions } from "@/lib/query/activity";
-
-function statusLabel(status: string | null): string {
-  return (status ?? "PENDING").replaceAll("_", " ");
-}
 
 function eventHref(event: ActivityEvent): string | null {
   if (!event.resource_type) return null;
@@ -26,6 +23,7 @@ function eventHref(event: ActivityEvent): string | null {
 }
 
 export function ActivityListView() {
+  const { t, status, dateLocale } = useI18n();
   const query = useQuery(activityHistoryQueryOptions());
   const [liveEvents, setLiveEvents] = useState<ActivityEvent[]>([]);
   const [liveCursor, setLiveCursor] = useState<string | null>(null);
@@ -64,28 +62,28 @@ export function ActivityListView() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <PageHeader
-        title="Activity"
-        description="Durable operational history from trusted AAOS records."
+        title={t("Activity")}
+        description={t("Durable operational history from trusted AAOS records.")}
       />
-      <SectionCard title="Activity">
+      <SectionCard title={t("Activity")}>
         {query.isPending ? (
-          <div aria-label="Loading activity" className="space-y-3">
+          <div aria-label={t("Loading activity")} className="space-y-3">
             {Array.from({ length: 3 }, (_, index) => (
               <Skeleton key={index} className="h-20 w-full rounded-lg" />
             ))}
           </div>
         ) : query.isError ? (
           <p className="text-sm text-muted-foreground">
-            Activity history is temporarily unavailable.
+            {t("Activity history is temporarily unavailable.")}
           </p>
         ) : visibleEvents.length === 0 ? (
           <EmptyState
             icon={Activity}
-            title="No activity recorded yet."
-            description="Approvals, task updates and Calendar actions are recorded here as they happen."
+            title={t("No activity recorded yet.")}
+            description={t("Approvals, task updates and Calendar actions are recorded here as they happen.")}
           />
         ) : (
-          <ul aria-label="Activity events" className="space-y-3">
+          <ul aria-label={t("Activity events")} className="space-y-3">
             {visibleEvents.map((event) => {
               const href = eventHref(event);
               const content = (
@@ -93,14 +91,14 @@ export function ActivityListView() {
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="font-medium text-foreground">{event.title}</h3>
                     <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                      {statusLabel(event.status)}
+                      {status(event.status ?? "PENDING")}
                     </span>
                   </div>
                   <time
                     className="mt-1 block text-xs text-muted-foreground"
                     dateTime={event.occurred_at}
                   >
-                    {new Date(event.occurred_at).toLocaleString()}
+                    {new Date(event.occurred_at).toLocaleString(dateLocale(undefined))}
                   </time>
                 </>
               );
@@ -129,10 +127,10 @@ export function ActivityListView() {
         {visibleEvents.length > 0 && connectionState === "unavailable" ? (
           <p
             role="status"
-            aria-label="Live activity status"
+            aria-label={t("Live activity status")}
             className="mt-4 text-sm text-muted-foreground"
           >
-            Live activity is unavailable; showing durable history.
+            {t("Live activity is unavailable; showing durable history.")}
           </p>
         ) : null}
       </SectionCard>

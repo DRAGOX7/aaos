@@ -7,6 +7,7 @@ import { CircleAlert, CircleCheck, CircleDashed, type LucideIcon } from "lucide-
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { systemHealthQueryOptions } from "@/lib/query/health";
 import { cn } from "@/lib/utils";
 
@@ -14,7 +15,7 @@ type HealthComponent = components["schemas"]["HealthComponent"];
 type HealthComponentName = components["schemas"]["HealthComponentName"];
 type HealthStatus = components["schemas"]["HealthStatus"];
 
-const COMPONENT_NAMES: Record<HealthComponentName, string> = {
+const COMPONENT_NAMES: Record<HealthComponentName, MessageKey> = {
   DATABASE: "Database",
   ACADEMIC_DATA: "Academic data",
   ACADEMIC_SYNC: "Moodle sync",
@@ -24,7 +25,7 @@ const COMPONENT_NAMES: Record<HealthComponentName, string> = {
   GOOGLE_CALENDAR: "Google Calendar",
 };
 
-type StatusLook = Readonly<{ label: string; pill: string; dot: string }>;
+type StatusLook = Readonly<{ label: MessageKey; pill: string; dot: string }>;
 
 const STATUS: Record<string, StatusLook> = {
   HEALTHY: { label: "Healthy", pill: "bg-success-soft text-success-strong", dot: "bg-success" },
@@ -37,7 +38,7 @@ function statusLook(status: string): StatusLook {
   return STATUS[status] ?? { label: "Unknown", pill: "bg-muted text-muted-foreground", dot: "bg-text-subtle" };
 }
 
-function detailLabel(component: HealthComponent): string {
+function detailLabel(component: HealthComponent): MessageKey {
   switch (component.detail_code) {
     case "DATABASE_READY":
       return "The local database is reachable and its schema is current.";
@@ -69,25 +70,28 @@ function detailLabel(component: HealthComponent): string {
 }
 
 function StatusPill({ status, name }: { status: string; name: string }) {
+  const { t } = useI18n();
   const look = statusLook(status);
   return (
     <span
-      aria-label={`${name} status ${look.label}`}
+      aria-label={t("{name} status {status}", { name, status: t(look.label) })}
       className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold", look.pill)}
     >
       <span aria-hidden="true" className={cn("size-1.5 rounded-full", look.dot)} />
-      {look.label}
+      {t(look.label)}
     </span>
   );
 }
 
 function HealthComponentRow({ component }: { component: HealthComponent }) {
-  const name = COMPONENT_NAMES[component.name] ?? component.name;
+  const { t } = useI18n();
+  const known: MessageKey | undefined = COMPONENT_NAMES[component.name];
+  const name = known ? t(known) : component.name;
   return (
     <li className="flex flex-col items-start justify-between gap-2 py-3.5 sm:flex-row sm:items-center sm:gap-4">
       <div className="min-w-0">
         <h3 className="text-[15px] font-semibold text-foreground">{name}</h3>
-        <p className="mt-0.5 text-sm text-muted-foreground">{detailLabel(component)}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{t(detailLabel(component))}</p>
       </div>
       <StatusPill status={component.status} name={name} />
     </li>
@@ -95,11 +99,12 @@ function HealthComponentRow({ component }: { component: HealthComponent }) {
 }
 
 function ComponentGroup({ title, components }: { title: string; components: HealthComponent[] }) {
+  const { t } = useI18n();
   return (
     <section>
       <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h2>
       {components.length === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">No components reported.</p>
+        <p className="mt-3 text-sm text-muted-foreground">{t("No components reported.")}</p>
       ) : (
         <ul className="mt-1 divide-y divide-border">
           {components.map((component) => (
@@ -111,55 +116,58 @@ function ComponentGroup({ title, components }: { title: string; components: Heal
   );
 }
 
-const OVERALL: Record<string, { title: string; icon: LucideIcon; tone: string }> = {
+const OVERALL: Record<string, { title: MessageKey; icon: LucideIcon; tone: string }> = {
   HEALTHY: { title: "All systems healthy", icon: CircleCheck, tone: "bg-success-soft text-success-strong" },
   DEGRADED: { title: "Some systems are degraded", icon: CircleAlert, tone: "bg-warning-soft text-warning-strong" },
 };
 
-const checkedFormat = new Intl.DateTimeFormat("en-GB", {
+const CHECKED_OPTIONS: Intl.DateTimeFormatOptions = {
   hour: "2-digit",
   minute: "2-digit",
   day: "numeric",
   month: "short",
-});
+};
 
 export function SystemHealthView() {
+  const { t, dateLocale } = useI18n();
   const query = useQuery(systemHealthQueryOptions());
   const required = query.data?.components.filter((component) => component.required) ?? [];
   const optional = query.data?.components.filter((component) => !component.required) ?? [];
   const overall = query.data ? (query.data.overall as HealthStatus) : null;
-  const summary = overall
+  const summary: { title: MessageKey; icon: LucideIcon; tone: string } | null = overall
     ? (OVERALL[overall] ?? { title: "Systems need attention", icon: CircleDashed, tone: "bg-danger-soft text-danger-strong" })
     : null;
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6">
-      <PageHeader title="System health" description="Passive operational status from trusted AAOS checks." />
-      <SectionCard title="System health">
+      <PageHeader title={t("System health")} description={t("Passive operational status from trusted AAOS checks.")} />
+      <SectionCard title={t("System health")}>
         {query.isPending ? (
-          <div aria-label="Loading system health" className="space-y-3">
+          <div aria-label={t("Loading system health")} className="space-y-3">
             {Array.from({ length: 3 }, (_, index) => (
               <Skeleton key={index} className="h-16 w-full rounded-lg" />
             ))}
           </div>
         ) : query.isError ? (
-          <p className="text-sm text-muted-foreground">System health is temporarily unavailable.</p>
+          <p className="text-sm text-muted-foreground">{t("System health is temporarily unavailable.")}</p>
         ) : query.data && summary && overall ? (
           <div className="space-y-7">
             <div className={cn("flex flex-col items-start justify-between gap-3 rounded-xl px-4 py-3.5 sm:flex-row sm:items-center", summary.tone)}>
               <div className="flex items-center gap-3">
                 <summary.icon aria-hidden="true" className="size-6 shrink-0" strokeWidth={2} />
                 <div>
-                  <h2 className="font-bold">Overall status</h2>
-                  <p className="text-sm font-medium">{summary.title}</p>
+                  <h2 className="font-bold">{t("Overall status")}</h2>
+                  <p className="text-sm font-medium">{t(summary.title)}</p>
                 </div>
               </div>
               <span className="text-xs font-medium opacity-80">
-                Checked {checkedFormat.format(new Date(query.data.checked_at))}
+                {t("Checked {time}", {
+                  time: new Intl.DateTimeFormat(dateLocale("en-GB"), CHECKED_OPTIONS).format(new Date(query.data.checked_at)),
+                })}
               </span>
             </div>
-            <ComponentGroup title="Required components" components={required} />
-            <ComponentGroup title="Optional components" components={optional} />
+            <ComponentGroup title={t("Required components")} components={required} />
+            <ComponentGroup title={t("Optional components")} components={optional} />
           </div>
         ) : null}
       </SectionCard>

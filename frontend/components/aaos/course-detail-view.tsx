@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import { formatArchivedDate, isPastCourse } from "@/lib/api/courses";
+import { useI18n } from "@/lib/i18n";
 import { courseQueryOptions } from "@/lib/query/academic";
 import { parseCourseRouteId } from "@/lib/routing/route-ids";
 
@@ -15,6 +16,7 @@ type CourseDetailViewProps = Readonly<{
 }>;
 
 function CourseDetailQuery({ courseId }: { courseId: number }) {
+  const { t, dateLocale } = useI18n();
   const {
     data,
     error,
@@ -24,8 +26,8 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
 
   if (isPending) {
     return (
-      <SectionCard title="Course">
-        <div aria-label="Loading course">
+      <SectionCard title={t("Course")}>
+        <div aria-label={t("Loading course")}>
           <Skeleton className="h-8 w-2/3" />
           <Skeleton className="mt-3 h-4 w-1/3" />
           <Skeleton className="mt-6 h-20 w-full" />
@@ -39,18 +41,19 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
       error instanceof ApiError && error.code === "COURSE_NOT_FOUND";
 
     return (
-      <SectionCard title="Course">
+      <SectionCard title={t("Course")}>
         <p className="text-sm text-muted-foreground">
           {notFound
-            ? "Course not found."
-            : "Academic data is temporarily unavailable."}
+            ? t("Course not found.")
+            : t("Academic data is temporarily unavailable.")}
         </p>
       </SectionCard>
     );
   }
 
+  const archived = formatArchivedDate(data.archived_at, dateLocale("en-GB"));
   return (
-    <SectionCard title="Course">
+    <SectionCard title={t("Course")}>
       <article aria-labelledby="course-detail-title">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -69,9 +72,9 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
 
             {isPastCourse(data) ? (
               <p className="mt-2 inline-block rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                {formatArchivedDate(data.archived_at)
-                  ? "Past course · archived " + formatArchivedDate(data.archived_at)
-                  : "Past course"}
+                {archived
+                  ? t("Past course · archived {date}", { date: archived })
+                  : t("Past course")}
               </p>
             ) : null}
           </div>
@@ -84,20 +87,20 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
         ) : null}
 
         <nav
-          aria-label="Course academic views"
+          aria-label={t("Course academic views")}
           className="mt-6 flex flex-wrap gap-3"
         >
           <Link
             href={`/assignments?course_id=${data.id}`}
             className="rounded-md bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            View assignments
+            {t("View assignments")}
           </Link>
           <Link
             href={`/documents?course_id=${data.id}`}
             className="rounded-md bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            View documents
+            {t("View documents")}
           </Link>
         </nav>
       </article>
@@ -108,11 +111,12 @@ function CourseDetailQuery({ courseId }: { courseId: number }) {
 export function CourseDetailView({
   courseId,
 }: CourseDetailViewProps) {
+  const { t } = useI18n();
   if (courseId === null) {
     return (
-      <SectionCard title="Course">
+      <SectionCard title={t("Course")}>
         <p className="text-sm text-muted-foreground">
-          The course link is invalid.
+          {t("The course link is invalid.")}
         </p>
       </SectionCard>
     );

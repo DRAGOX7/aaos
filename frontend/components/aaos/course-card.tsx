@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 
 import {
@@ -6,13 +8,17 @@ import {
   type CourseSummary,
 } from "@/lib/api/courses";
 import { courseDisplayName } from "@/lib/courses/display";
+import { useI18n } from "@/lib/i18n";
 
 type CourseCardProps = Readonly<{
   course: CourseSummary;
 }>;
 
 export function CourseCard({ course }: CourseCardProps) {
-  const archived = isPastCourse(course) ? formatArchivedDate(course.archived_at) : null;
+  const { t, dateLocale } = useI18n();
+  const archived = isPastCourse(course)
+    ? formatArchivedDate(course.archived_at, dateLocale("en-GB"))
+    : null;
   const { code, name } = courseDisplayName(course);
 
   return (
@@ -35,7 +41,7 @@ export function CourseCard({ course }: CourseCardProps) {
 
             {archived ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                {"Archived " + archived}
+                {t("Archived {date}", { date: archived })}
               </p>
             ) : null}
           </div>

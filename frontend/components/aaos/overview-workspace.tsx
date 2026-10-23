@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { useI18n, type MessageKey, type Translator } from "@/lib/i18n";
 import { systemHealthQueryOptions } from "@/lib/query/health";
 import { approvalListQueryOptions, taskListQueryOptions } from "@/lib/query/tasks";
 
@@ -17,7 +18,7 @@ const TERMINAL_TASK_STATES = new Set([
   "REVOKED",
 ]);
 
-const HEALTH_LABEL: Record<string, string> = {
+const HEALTH_LABEL: Record<string, MessageKey> = {
   HEALTHY: "Healthy",
   DEGRADED: "Degraded",
   NOT_CONFIGURED: "Not configured",
@@ -25,9 +26,9 @@ const HEALTH_LABEL: Record<string, string> = {
 
 type QueryLike = Readonly<{ isPending: boolean; isError: boolean }>;
 
-function valueOf(query: QueryLike, value: () => ReactNode): ReactNode {
+function valueOf(query: QueryLike, value: () => ReactNode, { t }: Translator): ReactNode {
   if (query.isPending) return <span className="text-muted-foreground">…</span>;
-  if (query.isError) return <span className="font-medium text-muted-foreground">Unavailable</span>;
+  if (query.isError) return <span className="font-medium text-muted-foreground">{t("Unavailable")}</span>;
   return value();
 }
 
@@ -46,6 +47,8 @@ function Row({ label, href, children }: Readonly<{ label: string; href: string; 
 }
 
 export function OverviewWorkspace() {
+  const i18n = useI18n();
+  const { t } = i18n;
   const approvals = useQuery(approvalListQueryOptions());
   const tasks = useQuery(taskListQueryOptions());
   const health = useQuery(systemHealthQueryOptions());
@@ -56,22 +59,22 @@ export function OverviewWorkspace() {
       className="flex min-w-0 flex-col gap-1 rounded-2xl border border-border bg-card px-6 py-5"
     >
       <h2 id="overview-workspace-title" className="mb-1 text-base font-bold text-foreground">
-        Workspace
+        {t("Workspace")}
       </h2>
       <ul className="flex flex-col">
-        <Row label="Pending approvals" href="/approvals">
+        <Row label={t("Pending approvals")} href="/approvals">
           {valueOf(approvals, () =>
-            (approvals.data?.approvals ?? []).filter((item) => item.status === "PENDING").length)}
+            (approvals.data?.approvals ?? []).filter((item) => item.status === "PENDING").length, i18n)}
         </Row>
-        <Row label="Active tasks" href="/tasks">
+        <Row label={t("Active tasks")} href="/tasks">
           {valueOf(tasks, () =>
-            (tasks.data?.tasks ?? []).filter((item) => !TERMINAL_TASK_STATES.has(item.status)).length)}
+            (tasks.data?.tasks ?? []).filter((item) => !TERMINAL_TASK_STATES.has(item.status)).length, i18n)}
         </Row>
-        <Row label="System health" href="/system-health">
+        <Row label={t("System health")} href="/system-health">
           {valueOf(health, () => {
             const overall = health.data?.overall;
-            return overall ? (HEALTH_LABEL[overall] ?? "Needs attention") : "Unavailable";
-          })}
+            return overall ? t(HEALTH_LABEL[overall] ?? "Needs attention") : t("Unavailable");
+          }, i18n)}
         </Row>
       </ul>
     </section>

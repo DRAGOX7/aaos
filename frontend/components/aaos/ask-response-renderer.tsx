@@ -4,6 +4,7 @@ import { History, SearchX } from "lucide-react";
 
 import type { AcademicAskResponse, AcademicAskSource, RagProvenance } from "@/lib/api/ask";
 import { splitAnswerText } from "@/lib/ask/answer-text";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import {
   CalendarProposalCard,
   MoodleChangeCard,
@@ -43,17 +44,18 @@ function AnswerText({
 }
 
 function RefusalState({ response }: { response: AcademicAskResponse }) {
+  const { t } = useI18n();
   const insufficient = response.status === "INSUFFICIENT_EVIDENCE";
   return (
     <section
-      aria-label={insufficient ? "Insufficient evidence" : "Request refused"}
+      aria-label={insufficient ? t("Insufficient evidence") : t("Request refused")}
       className="flex gap-3 rounded-xl bg-muted px-4 py-3.5"
       role="note"
     >
       <SearchX aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" strokeWidth={2} />
       <div className="min-w-0">
         <h3 className="text-sm font-semibold text-foreground">
-          {insufficient ? "Not enough evidence" : "Request could not be completed"}
+          {insufficient ? t("Not enough evidence") : t("Request could not be completed")}
         </h3>
         {response.answer_text ? (
           <p dir="auto" className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">
@@ -62,7 +64,7 @@ function RefusalState({ response }: { response: AcademicAskResponse }) {
         ) : null}
         {insufficient ? (
           <p className="mt-1.5 text-xs text-muted-foreground">
-            AAOS only answers what your course files support. Try naming the course or asking more specifically.
+            {t("AAOS only answers what your course files support. Try naming the course or asking more specifically.")}
           </p>
         ) : null}
       </div>
@@ -70,7 +72,7 @@ function RefusalState({ response }: { response: AcademicAskResponse }) {
   );
 }
 
-const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }>> = {
+const FAILURE_GUIDANCE: Partial<Record<string, { title: MessageKey; detail: MessageKey }>> = {
   MODEL_UNAVAILABLE: {
     title: "The answering model is unavailable.",
     detail:
@@ -115,9 +117,10 @@ const FAILURE_GUIDANCE: Partial<Record<string, { title: string; detail: string }
 };
 
 function FailureState({ response }: { response: AcademicAskResponse }) {
+  const { t } = useI18n();
   const guidance = response.failure_code ? FAILURE_GUIDANCE[response.failure_code] : undefined;
-  let title = guidance?.title ?? "AAOS could not complete this request.";
-  let detail = guidance?.detail ?? "Try again. If a task action may have been in progress, keep the same request and retry it from this page.";
+  let title: MessageKey = guidance?.title ?? "AAOS could not complete this request.";
+  let detail: MessageKey = guidance?.detail ?? "Try again. If a task action may have been in progress, keep the same request and retry it from this page.";
 
   if (response.status === "TIMED_OUT") {
     title = "AAOS reached its time limit.";
@@ -129,17 +132,18 @@ function FailureState({ response }: { response: AcademicAskResponse }) {
 
   return (
     <section
-      aria-label="Ask request status"
+      aria-label={t("Ask request status")}
       className="rounded-xl border border-warning/35 bg-warning-soft/70 px-4 py-3"
       role="status"
     >
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-      <p className="mt-1 break-words text-sm text-muted-foreground">{detail}</p>
+      <h3 className="text-sm font-semibold text-foreground">{t(title)}</h3>
+      <p className="mt-1 break-words text-sm text-muted-foreground">{t(detail)}</p>
     </section>
   );
 }
 
 function GenericSource({ source }: { source: AcademicAskSource }) {
+  const { t } = useI18n();
   return (
     <li className="min-w-0 rounded-xl border border-border bg-card/70 px-3 py-2.5">
       <p className="break-words text-sm font-medium text-foreground">
@@ -147,15 +151,15 @@ function GenericSource({ source }: { source: AcademicAskSource }) {
       </p>
       <p className="mt-1 break-words text-xs text-muted-foreground">
         {source.entity_kind}
-        {source.entity_id != null ? " · ID " + source.entity_id : ""}
-        {source.source_turn != null ? " · conversation turn " + source.source_turn : ""}
+        {source.entity_id != null ? " · " + t("ID {id}", { id: source.entity_id }) : ""}
+        {source.source_turn != null ? " · " + t("conversation turn {turn}", { turn: source.source_turn }) : ""}
         {source.from_snapshot_id != null && source.to_snapshot_id != null
-          ? " · snapshots " + source.from_snapshot_id + " → " + source.to_snapshot_id
+          ? " · " + t("snapshots {from} → {to}", { from: source.from_snapshot_id, to: source.to_snapshot_id })
           : ""}
       </p>
       {source.changed_fields.length > 0 && source.change_kind == null ? (
         <p className="mt-1 break-words text-xs text-muted-foreground">
-          Changed fields: {source.changed_fields.join(", ")}
+          {t("Changed fields: {fields}", { fields: source.changed_fields.join(", ") })}
         </p>
       ) : null}
     </li>
@@ -196,6 +200,7 @@ function SourceList({
 }
 
 export function AskResponseRenderer({ response }: { response: AcademicAskResponse }) {
+  const { t } = useI18n();
   if (response.status === "REFUSED" || response.status === "INSUFFICIENT_EVIDENCE") {
     return <RefusalState response={response} />;
   }
@@ -220,15 +225,15 @@ export function AskResponseRenderer({ response }: { response: AcademicAskRespons
       ) : null}
       {response.study_plan ? <StudyPlanView plan={response.study_plan} /> : null}
       {ragProvenance ? <RagCitationList provenance={ragProvenance} /> : null}
-      <SourceList sources={response.sources} heading="Trusted sources" />
-      <SourceList sources={response.context_sources} heading="Conversation context" />
+      <SourceList sources={response.sources} heading={t("Trusted sources")} />
+      <SourceList sources={response.context_sources} heading={t("Conversation context")} />
       {!response.answer_text &&
       !response.calendar_proposal &&
       !response.study_plan &&
       !ragProvenance &&
       response.sources.length === 0 &&
       response.context_sources.length === 0 ? (
-        <p className="text-sm text-muted-foreground">AAOS returned no additional content.</p>
+        <p className="text-sm text-muted-foreground">{t("AAOS returned no additional content.")}</p>
       ) : null}
     </div>
   );

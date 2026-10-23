@@ -47,7 +47,7 @@ By default everything runs on your machine; an optional Gemini cloud model can b
 | **Study tasks and plans** | *"Add a study task: review chapter 2 for Natural Language Processing"* creates a local task, linked to its course. AAOS can also plan your study week from real deadlines. |
 | **Calendar with approval** | AAOS can propose a Google Calendar event. Nothing is created until you approve it, and every approval is recorded. |
 | **Moodle change alerts** | A scheduled check compares Moodle snapshots and sends Telegram messages for new assignments, deadline changes, new files and announcements. |
-| **Dashboard** | A Next.js dashboard for courses, deadlines, documents (with an in-page PDF viewer), tasks, approvals, activity and system health, in a light or dark theme. |
+| **Dashboard** | A Next.js dashboard for courses, deadlines, documents (with an in-page PDF viewer), tasks, approvals, activity and system health, in English or Arabic, in a light or dark theme. |
 | **Past courses** | Archived semesters stay searchable and are clearly labelled as past. |
 
 ## See it working
