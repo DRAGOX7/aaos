@@ -104,7 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
-| Phase 12 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D6, dedicated `AAOS` calendar); IMPLEMENTED / VERIFIED (4,544 backend, 290 frontend tests; 12D real check done: one approved event written to the AAOS calendar, one rejected with nothing written) | Not accepted: whole-phase human acceptance remains; two frozen-code defects found by 12D were fixed with owner approval; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 real check 12D" |
+| Phase 12 | PASSED by whole-phase human acceptance on 2026-10-24 at `cd4d0e81`; not FROZEN (no `phase-12-passed` tag) | Calendar proposals stay off by default; known limitations and the not-authorized list are recorded in "Phase 12 whole-phase acceptance (2026-10-24)"; Phase 0 and Phase 5 gates stay deferred; no Phase 13 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -989,3 +989,36 @@ separately at the end of this section.
   - no calendar ID, key or approver value in this record (hashes only).
 - **Status:** Phase 12 is IMPLEMENTED / VERIFIED, with 12D done. **Whole-phase
   human acceptance remains.**
+
+## Phase 12 whole-phase acceptance (2026-10-24)
+
+- **Decision:** the owner accepted Phase 12, everyday Calendar proposals and
+  approvals: "I accept Phase 12." Status: PASSED. Not FROZEN, because no
+  `phase-12-passed` tag exists.
+- **Accepted boundary:** `main` at `cd4d0e81`. That includes:
+  - slices 12A–12C (`32adc88f`);
+  - the Phase 11 union-schema defect fix (`90244593`);
+  - the agentic Calendar fold defect fix (`2c03b71c`);
+  - the 12D record.
+- **Evidence relied on:**
+  - automated: 4,544 backend tests, 290 frontend tests, ruff, mypy and `tsc`;
+  - the 12D real check: one approved proposal written once to the dedicated
+    `AAOS` calendar (`CONFIRMED_SUCCESS`), and one rejected proposal with nothing
+    written, both confirmed by a read-only Google check.
+- **Default unchanged:** Calendar proposals stay off. They switch on only with
+  `AAOS_CALENDAR_PROPOSALS=on` and a complete, valid configuration, and every
+  write still needs its own approval.
+- **KNOWN_LIMITATION:**
+  - the real check covered one approval and one rejection, on the ChatGPT plan
+    only;
+  - a lost Google reply (`UNKNOWN_OUTCOME`) is verified with fake clients only;
+  - the proposal card does not show the approval deadline, because its frozen
+    contract has no field for it; the Approvals page does;
+  - the service account can still read the owner's primary calendar (removal
+    recommended);
+  - the read-only pre-check script is not yet an `aaos doctor` check.
+- **Unchanged:** the Phase 0 (0G/0H) and Phase 5 (Slice 6) gates stay deferred.
+  The Phase 12 not-authorized list still applies: no standing or automatic
+  approval, no update/delete/invite actions, no primary calendar, no OAuth user
+  sign-in, no remote use and no other external write.
+- **No new authority:** this acceptance authorizes no Phase 13 or other work.

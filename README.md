@@ -334,7 +334,7 @@ The authoritative record is [`docs/GOVERNANCE_LEDGER.md`](docs/GOVERNANCE_LEDGER
 - Phase 9: **FROZEN** at `phase-09-passed`.
 - Phase 10: **FROZEN** at `phase-10-passed` (human-accepted 2026-10-23): Telegram notifications are merged and in use. The replay of real snapshot history named in the acceptance gate is not recorded and is listed as a known limitation.
 - Phase 11: **FROZEN** at `phase-11-passed` (human-accepted 2026-10-23): an optional cloud model that uses your ChatGPT plan through Sign in with ChatGPT. In the evaluation, 86/96 answerable questions cited the right page (78/96 for the local model) and all unanswerable ones were refused. The local model stays the default.
-- Phase 12: **IMPLEMENTED** (2026-10-23), acceptance pending: everyday Calendar proposals that are written only after you approve each one. Checked for real: one approved event was written to the dedicated AAOS calendar, and one rejected proposal wrote nothing.
+- Phase 12: **PASSED** (human-accepted 2026-10-24, not frozen): everyday Calendar proposals that are written only after you approve each one. Checked for real: one approved event was written to the dedicated AAOS calendar, and one rejected proposal wrote nothing. Off by default.
 
 ## Documentation
 
