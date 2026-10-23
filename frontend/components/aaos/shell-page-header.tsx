@@ -5,12 +5,13 @@ import { Search } from "lucide-react";
 
 import { MobileNav } from "@/components/aaos/mobile-nav";
 import { ModelBadge } from "@/components/aaos/model-badge";
+import { ThemeToggle } from "@/components/aaos/theme-toggle";
 import { systemHealthQueryOptions } from "@/lib/query/health";
 import { cn } from "@/lib/utils";
 
 const HEALTH_PILL: Record<string, { label: string; tone: string; dot: string }> = {
-  HEALTHY: { label: "All systems healthy", tone: "bg-success-soft text-[#066b47]", dot: "bg-success" },
-  DEGRADED: { label: "Some systems degraded", tone: "bg-warning-soft text-[#8a5300]", dot: "bg-warning" },
+  HEALTHY: { label: "All systems healthy", tone: "bg-success-soft text-success-strong", dot: "bg-success" },
+  DEGRADED: { label: "Some systems degraded", tone: "bg-warning-soft text-warning-strong", dot: "bg-warning" },
 };
 
 function HealthPill() {
@@ -19,7 +20,7 @@ function HealthPill() {
   if (!overall) return null;
   const pill = HEALTH_PILL[overall] ?? {
     label: "System health needs attention",
-    tone: "bg-[#fdecee] text-[#a62a33]",
+    tone: "bg-danger-soft text-danger-strong",
     dot: "bg-destructive",
   };
   return (
@@ -53,7 +54,7 @@ export function ShellPageHeader() {
           />
           <input
             aria-label="Global workspace search"
-            className="h-11 w-full rounded-xl border border-border bg-white py-2 pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-text-subtle focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-11 w-full rounded-xl border border-border bg-card py-2 pl-10 pr-4 text-sm text-foreground outline-none placeholder:text-text-subtle focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="Search courses, documents, or assignments"
             readOnly
             type="search"
@@ -63,6 +64,7 @@ export function ShellPageHeader() {
         <div className="ml-auto flex items-center gap-3">
           <ModelBadge />
           <HealthPill />
+          <ThemeToggle />
           <span
             className="flex size-10 items-center justify-center rounded-full bg-hero text-sm font-bold text-white"
             title="AAOS workspace"

@@ -29,7 +29,7 @@ function AnswerText({
     <div dir="auto" className="flex flex-col gap-3">
       {notice ? (
         <p
-          className="inline-flex items-center gap-1.5 self-start rounded-full bg-warning-soft px-3 py-1 text-xs font-semibold text-[#8a5300]"
+          className="inline-flex items-center gap-1.5 self-start rounded-full bg-warning-soft px-3 py-1 text-xs font-semibold text-warning-strong"
         >
           <History aria-hidden="true" className="size-3.5" strokeWidth={2.2} />
           {notice}
@@ -141,7 +141,7 @@ function FailureState({ response }: { response: AcademicAskResponse }) {
 
 function GenericSource({ source }: { source: AcademicAskSource }) {
   return (
-    <li className="min-w-0 rounded-xl border border-border bg-white/70 px-3 py-2.5">
+    <li className="min-w-0 rounded-xl border border-border bg-card/70 px-3 py-2.5">
       <p className="break-words text-sm font-medium text-foreground">
         {source.title || source.entity_kind}
       </p>

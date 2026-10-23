@@ -39,7 +39,7 @@ export function OverviewUpNext() {
   return (
     <section
       aria-labelledby="overview-up-next-title"
-      className="flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-white px-6 py-5"
+      className="flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-card px-6 py-5"
     >
       <div className="flex items-baseline justify-between gap-4">
         <h2 id="overview-up-next-title" className="text-base font-bold text-foreground">

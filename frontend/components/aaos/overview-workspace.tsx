@@ -53,7 +53,7 @@ export function OverviewWorkspace() {
   return (
     <section
       aria-labelledby="overview-workspace-title"
-      className="flex min-w-0 flex-col gap-1 rounded-2xl border border-border bg-white px-6 py-5"
+      className="flex min-w-0 flex-col gap-1 rounded-2xl border border-border bg-card px-6 py-5"
     >
       <h2 id="overview-workspace-title" className="mb-1 text-base font-bold text-foreground">
         Workspace

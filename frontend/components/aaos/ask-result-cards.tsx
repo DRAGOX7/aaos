@@ -63,7 +63,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
           >
             <span
               aria-hidden="true"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-white text-xs font-bold text-primary-strong"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-xs font-bold text-primary-strong"
             >
               {index + 1}
             </span>
@@ -101,7 +101,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
 export function MoodleChangeCard({ source }: { source: AcademicAskSource }) {
   const fields = source.changed_fields.map(fieldLabel).join(", ");
   return (
-    <article className="min-w-0 rounded-xl border border-border bg-white/75 p-4">
+    <article className="min-w-0 rounded-xl border border-border bg-card/75 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-words font-semibold text-foreground">
           {source.title || "Moodle change"}
@@ -147,7 +147,7 @@ const TASK_PRIORITY_LABELS: Record<string, string> = { LOW: "Low", NORMAL: "Norm
 export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
   const status = source.study_task_status;
   return (
-    <article className="min-w-0 rounded-xl border border-border bg-white/75 p-4">
+    <article className="min-w-0 rounded-xl border border-border bg-card/75 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-words font-semibold text-foreground">
           {source.title || "Study task"}
@@ -387,7 +387,7 @@ export function CalendarProposalCard({ proposal }: { proposal: CalendarProposal 
   }
 
   return (
-    <section aria-labelledby={"calendar-proposal-" + proposal.proposal_id} className="min-w-0 rounded-2xl border border-border bg-white p-4 shadow-[var(--aaos-shadow-card)] sm:p-5">
+    <section aria-labelledby={"calendar-proposal-" + proposal.proposal_id} className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-[var(--aaos-shadow-card)] sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 id={"calendar-proposal-" + proposal.proposal_id} className="text-base font-semibold text-foreground">
@@ -495,7 +495,7 @@ function StudyPlanMoodleChanges({ plan }: { plan: StudyPlan }) {
       <h4 className="text-sm font-semibold text-foreground">Moodle changes</h4>
       <ul className="mt-2 space-y-2">
         {plan.moodle_changes.map((change) => (
-          <li key={change.change_id} className="min-w-0 rounded-xl border border-border bg-white/70 px-3 py-2.5">
+          <li key={change.change_id} className="min-w-0 rounded-xl border border-border bg-card/70 px-3 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="break-words font-medium text-foreground">
                 {change.title || "Moodle change"}
@@ -532,7 +532,7 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
   }
 
   return (
-    <section aria-labelledby={"study-plan-" + plan.plan_id} className="min-w-0 rounded-2xl border border-border bg-white p-4 shadow-[var(--aaos-shadow-card)] sm:p-5">
+    <section aria-labelledby={"study-plan-" + plan.plan_id} className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-[var(--aaos-shadow-card)] sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 id={"study-plan-" + plan.plan_id} className="text-base font-semibold text-foreground">
@@ -590,7 +590,7 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
           ) : (
             <ol className="mt-2 space-y-3">
               {[...dateGroups.entries()].map(([date, items]) => (
-                <li key={date} className="min-w-0 rounded-lg border border-border bg-white/75 p-3">
+                <li key={date} className="min-w-0 rounded-lg border border-border bg-card/75 p-3">
                   <h5 className="text-sm font-semibold text-foreground">{formatDate(date)}</h5>
                   <ul className="mt-2 space-y-2">
                     {items.map((item, index) => (

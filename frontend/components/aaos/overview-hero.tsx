@@ -64,7 +64,7 @@ export function OverviewHero() {
 
         <form
           onSubmit={onSubmit}
-          className="flex items-center gap-2 rounded-2xl bg-white p-2 shadow-[0_18px_40px_rgb(5_14_38_/_0.25)]"
+          className="flex items-center gap-2 rounded-2xl bg-card p-2 shadow-[0_18px_40px_rgb(5_14_38_/_0.25)]"
         >
           <label htmlFor="overview-ask" className="sr-only">
             Ask AAOS

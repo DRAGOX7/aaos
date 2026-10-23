@@ -105,6 +105,7 @@ and gates.
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
 | Phase 12 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-24; freeze tag `phase-12-passed` targets the acceptance commit `398a03ad0cc962d63bb771ec06dd9d543a1cfa04` (accepted boundary `cd4d0e81`) | Calendar proposals stay off by default; known limitations and the not-authorized list are recorded in "Phase 12 whole-phase acceptance (2026-10-24)"; Phase 0 and Phase 5 gates stay deferred; no Phase 13 authority follows |
+| Dashboard dark mode (outside the phase sequence) | IMPLEMENTED and VERIFIED on 2026-10-24 at the owner's request; awaiting the owner's review (not HUMAN_APPROVED) | Light stays the default look; touches frozen Phase 7 frontend code (see "Dashboard dark mode (2026-10-24)"); no backend change and no Phase 13 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -1026,3 +1027,36 @@ separately at the end of this section.
   approval, no update/delete/invite actions, no primary calendar, no OAuth user
   sign-in, no remote use and no other external write.
 - **No new authority:** this acceptance authorizes no Phase 13 or other work.
+
+## Dashboard dark mode (2026-10-24)
+
+The owner asked for dark mode on the dashboard on 2026-10-24. This is a frontend-only
+change outside the phase sequence. It touches frozen Phase 7 code, which the Phase 7
+spec allows for (§13.6: dark mode was "not a Phase 7 blocking requirement" and the
+tokens were to keep it possible).
+
+What changed:
+
+- `frontend/app/globals.css`: a `.dark` block redefines every `--aaos-*` colour token;
+  new tokens for the status text and danger colours and the hover border
+  (`success-strong`, `warning-strong`, `danger-soft`, `danger-strong`, `border-hover`)
+  replace hex values that were hard-coded in components.
+- `frontend/app/layout.tsx` and `frontend/lib/theme.ts`: an inline script in `<head>`
+  applies the saved choice (or the OS setting) before first paint, so there is no flash
+  of the wrong theme. The choice is stored in the browser's `localStorage` under
+  `aaos-theme` (`light`, `dark` or `system`; default `system`). Nothing is sent to the
+  backend.
+- `frontend/components/aaos/theme-toggle.tsx`: a button in the top bar cycles
+  Light, Dark, System.
+- 16 components: `bg-white` became `bg-card` and hard-coded hex colours became tokens.
+  Light mode looks the same as before.
+- Tests: the Phase 7 test "keeps Phase 7 light-only" was replaced by two tests: light
+  stays the default, and every colour token has a dark value. 8 new toggle tests.
+
+Verification on 2026-10-24: frontend suite 299 passed (290 before, minus the replaced
+test, plus 10 new); `tsc` clean; ESLint has only the 2 earlier warnings. In the built-in
+browser against the owner's running dev server: Overview, System health and Ask render
+correctly in dark; a Light choice survives a page reload while the OS is dark; no
+console errors or hydration warnings.
+
+Status: IMPLEMENTED and VERIFIED. Not HUMAN_APPROVED until the owner reviews it.

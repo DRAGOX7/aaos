@@ -93,11 +93,11 @@ export function OverviewCourses() {
           ))}
         </div>
       ) : courses.isError || !all ? (
-        <p className="rounded-2xl border border-border bg-white px-5 py-4 text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
           Academic data is temporarily unavailable.
         </p>
       ) : current.length === 0 ? (
-        <p className="rounded-2xl border border-border bg-white px-5 py-4 text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
           No current courses yet. They appear after your next Moodle sync.
         </p>
       ) : (
@@ -110,7 +110,7 @@ export function OverviewCourses() {
               <li key={course.id}>
                 <Link
                   href={`/courses/${course.id}`}
-                  className="group flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-white transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgb(16_33_75_/_0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+                  className="group flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgb(16_33_75_/_0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
                 >
                   <div
                     className="flex flex-col gap-2.5 px-[1.125rem] pb-4 pt-[1.125rem] text-white"

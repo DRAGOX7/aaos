@@ -7,10 +7,10 @@ import { documentHref } from "@/lib/documents/source-links";
 import { cn } from "@/lib/utils";
 
 const TONES: Record<SearchTone, { pill: string; dot: string }> = {
-  success: { pill: "bg-success-soft text-[#066b47]", dot: "bg-success" },
-  warning: { pill: "bg-warning-soft text-[#8a5300]", dot: "bg-warning" },
+  success: { pill: "bg-success-soft text-success-strong", dot: "bg-success" },
+  warning: { pill: "bg-warning-soft text-warning-strong", dot: "bg-warning" },
   info: { pill: "bg-primary-soft text-primary-strong", dot: "bg-primary" },
-  danger: { pill: "bg-[#fdecee] text-[#a62a33]", dot: "bg-destructive" },
+  danger: { pill: "bg-danger-soft text-danger-strong", dot: "bg-destructive" },
   neutral: { pill: "bg-muted text-muted-foreground", dot: "bg-text-subtle" },
 };
 

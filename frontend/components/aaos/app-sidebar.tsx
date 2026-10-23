@@ -100,7 +100,7 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full w-64 flex-col border-r border-sidebar-border bg-white",
+        "flex h-full w-64 flex-col border-r border-sidebar-border bg-card",
         className,
       )}
     >

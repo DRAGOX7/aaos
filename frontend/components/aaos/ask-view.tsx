@@ -278,7 +278,7 @@ export function AskView() {
                 <button
                   type="button"
                   onClick={() => void submitQuestion(suggestion)}
-                  className="flex h-full w-full items-start gap-3 rounded-2xl border border-border bg-white p-4 text-left transition-[border-color,box-shadow] duration-200 hover:border-[#bcd3f4] hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex h-full w-full items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left transition-[border-color,box-shadow] duration-200 hover:border-border-hover hover:shadow-[0_10px_28px_rgb(16_33_75_/_0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
                     <Icon aria-hidden="true" className="size-[18px]" strokeWidth={2} />
@@ -299,7 +299,7 @@ export function AskView() {
       <div className="sticky bottom-0 z-10 mt-auto bg-[linear-gradient(to_top,var(--aaos-background)_70%,transparent)] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
         <form
           onSubmit={handleSubmit}
-          className="flex items-end gap-2 rounded-2xl border border-border bg-white p-2 shadow-[0_14px_34px_rgb(16_33_75_/_0.1)]"
+          className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-[0_14px_34px_rgb(16_33_75_/_0.1)]"
         >
           <label className="min-w-0 flex-1" htmlFor="ask-composer">
             <span className="sr-only">Your message</span>
