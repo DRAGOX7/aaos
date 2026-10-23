@@ -20,6 +20,7 @@ from aaos.web.health import (
 )
 
 RagCoverage = Literal["FULL", "PARTIAL", "NONE"]
+CalendarProposalsHealth = Literal["OFF", "ON", "MISCONFIGURED"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,11 +119,13 @@ class SystemHealthService:
         rag_reader: PassiveRagIndexReader,
         *,
         registered_components: Mapping[HealthComponentName, bool] | None = None,
+        calendar_proposals: CalendarProposalsHealth = "OFF",
     ) -> None:
         self._sessions = sessions
         self._academic_reader = academic_reader
         self._rag_reader = rag_reader
         self._registered_components = dict(registered_components or {})
+        self._calendar_proposals = calendar_proposals
 
     @staticmethod
     def _component(
@@ -223,6 +226,18 @@ class SystemHealthService:
             )
 
     def _optional(self, name: HealthComponentName) -> HealthComponent:
+        if name is HealthComponentName.GOOGLE_CALENDAR and self._calendar_proposals != "OFF":
+            # Phase 12: the configured state only. No Google call is made for health.
+            if self._calendar_proposals == "ON":
+                return self._component(
+                    name, HealthStatus.HEALTHY, False, HealthDetailCode.CALENDAR_PROPOSALS_READY
+                )
+            return self._component(
+                name,
+                HealthStatus.DEGRADED,
+                False,
+                HealthDetailCode.CALENDAR_PROPOSALS_MISCONFIGURED,
+            )
         if not self._registered_components.get(name, False):
             return self._component(
                 name,

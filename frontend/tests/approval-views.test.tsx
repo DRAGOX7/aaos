@@ -87,4 +87,33 @@ describe("approval list view", () => {
     expect(mutate).toHaveBeenCalledWith({ approvalId: "approval-1", decision: "approve" });
     expect(screen.getByText("PENDING")).toBeInTheDocument();
   });
+
+  it("shows the approval deadline only for pending approvals", () => {
+    const approval = (id: string, status: string, summary: string) => ({
+      approval_id: id,
+      task_id: `task-${id}`,
+      status,
+      issued_at: "2026-10-24T09:00:00Z",
+      approval_expires_at: "2026-10-25T09:00:00Z",
+      operation_state: null,
+      can_approve: status === "PENDING",
+      can_reject: status === "PENDING",
+      action: {
+        action_type: "CREATE_EVENT",
+        integration_label: "Google Calendar",
+        summary,
+        start: "2026-10-25T15:00:00Z",
+        end: "2026-10-25T16:00:00Z",
+        timezone: "Asia/Amman",
+      },
+    });
+    useQueryMock.mockReturnValue({
+      data: { approvals: [approval("a", "PENDING", "Pending one"), approval("b", "REJECTED", "Done one")] },
+      isPending: false,
+      isError: false,
+    });
+    render(<ApprovalListView />);
+    expect(screen.getAllByText(/^Approve by /)).toHaveLength(1);
+    expect(screen.getByText(/Nothing is written to\s+Calendar unless you approve/)).toBeInTheDocument();
+  });
 });

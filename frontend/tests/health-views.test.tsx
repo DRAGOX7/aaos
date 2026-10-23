@@ -93,6 +93,45 @@ describe("system health view", () => {
     expect(screen.queryByText(/uptime|latency|requests per second|restart/i)).not.toBeInTheDocument();
   });
 
+  it("explains the Calendar proposals state without any setting value", () => {
+    useQueryMock.mockReturnValue({
+      data: {
+        schema_version: "phase7-health-v1",
+        checked_at: "2026-10-24T00:00:00Z",
+        overall: "DEGRADED",
+        components: [
+          { name: "DATABASE", status: "HEALTHY", required: true, detail_code: "DATABASE_READY" },
+          {
+            name: "GOOGLE_CALENDAR",
+            status: "DEGRADED",
+            required: false,
+            detail_code: "CALENDAR_PROPOSALS_MISCONFIGURED",
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+    });
+    const { unmount } = render(<SystemHealthView />);
+    expect(screen.getByText(/a setting is missing or invalid, so they are off/)).toBeInTheDocument();
+    unmount();
+    useQueryMock.mockReturnValue({
+      data: {
+        schema_version: "phase7-health-v1",
+        checked_at: "2026-10-24T00:00:00Z",
+        overall: "HEALTHY",
+        components: [
+          { name: "DATABASE", status: "HEALTHY", required: true, detail_code: "DATABASE_READY" },
+          { name: "GOOGLE_CALENDAR", status: "HEALTHY", required: false, detail_code: "CALENDAR_PROPOSALS_READY" },
+        ],
+      },
+      isPending: false,
+      isError: false,
+    });
+    render(<SystemHealthView />);
+    expect(screen.getByText(/each event is written only after you approve it/i)).toBeInTheDocument();
+  });
+
   it("stacks health status rows on narrow screens", () => {
     useQueryMock.mockReturnValue({
       data: {

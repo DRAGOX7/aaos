@@ -372,7 +372,7 @@ describe("unified Ask view", () => {
     fillAndSend("Prepare a Calendar event for my assignment");
 
     expect(await screen.findByText("Awaiting approval")).toBeVisible();
-    expect(screen.getByText("This event has not been added to Calendar.")).toBeVisible();
+    expect(screen.getByText(/This event has not been added to Calendar\. It is added only if you approve it/)).toBeVisible();
     expect(screen.queryByText("Executed")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /update|delete/i })).not.toBeInTheDocument();
   });

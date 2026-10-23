@@ -45,7 +45,7 @@ terminology, not evidence of a freeze tag.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
 - Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E), which is still open, and no test re-run on the acceptance day, which was closed by the 2026-10-23 re-run (62 notification tests passed). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 - Phase 11 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-11-passed` tag targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1`: optional ChatGPT-plan cloud model through Sign in with ChatGPT. Authorized and spec approved on 2026-10-23 (defaults D1–D7), with the Phase 0 and Phase 5 gates still deferred. Evaluation: 86/96 against the local model's 78/96, unanswerable 8/8 (`docs/evaluations/phase11-chatgpt-plan-evaluation-2026-10-23.md`). The local model stays the default. Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
-- Phase 12 — **AUTHORIZED / SPEC APPROVED; IMPLEMENTATION NOT STARTED**: everyday Calendar proposals and approvals (opt-in, off by default). Authorized and spec approved by the owner on 2026-10-23 (defaults D1–D6, `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`), with the Phase 0 and Phase 5 gates still deferred. Coding waits for the owner's go-ahead; D2 is settled on a new dedicated `AAOS` calendar (spec §11.2).
+- Phase 12 — **IMPLEMENTED / VERIFIED (automated); ACCEPTANCE PENDING**: everyday Calendar proposals and approvals (opt-in, off by default). Authorized and spec approved on 2026-10-23 (defaults D1–D6, dedicated `AAOS` calendar), with the Phase 0 and Phase 5 gates still deferred. 4,534 backend and 290 frontend tests pass with the fake Google client. Still needed with the owner present: the 12D real check and human acceptance. Spec: `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`.
 
 Outside the phase sequence:
 
@@ -657,7 +657,7 @@ Let the owner's ChatGPT Plus/Pro plan answer AAOS model requests through OpenAI'
 
 ## PHASE 12 — Everyday Calendar Proposals and Approvals
 
-**Current status: AUTHORIZED / SPEC APPROVED; IMPLEMENTATION NOT STARTED.** Spec: `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`, approved by the owner on 2026-10-23 with the recommended defaults D1–D6. Coding waits for the owner's go-ahead.
+**Current status: IMPLEMENTED / VERIFIED (automated); ACCEPTANCE PENDING.** Spec: `docs/superpowers/specs/2026-10-23-phase-12-everyday-calendar-approvals.md`, approved with the recommended defaults D1–D6. The 12D real check and human acceptance remain.
 
 Design note: `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md`.
 

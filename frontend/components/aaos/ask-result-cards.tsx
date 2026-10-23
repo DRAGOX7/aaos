@@ -256,7 +256,10 @@ function proposalState(
     return { label: "Revoked", detail: "This proposal is no longer available." };
   }
   if (approvalState === "PENDING" && taskState === "AWAITING_APPROVAL") {
-    return { label: "Awaiting approval", detail: "This event has not been added to Calendar." };
+    return {
+      label: "Awaiting approval",
+      detail: "This event has not been added to Calendar. It is added only if you approve it; the Approvals page shows the deadline.",
+    };
   }
   if (approvalState === "APPROVED" && operationState === "EXECUTING") {
     return { label: "Approved · executing", detail: "Approval is recorded; Calendar execution is still in progress." };

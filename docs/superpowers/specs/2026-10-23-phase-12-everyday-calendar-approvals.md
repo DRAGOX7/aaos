@@ -224,3 +224,46 @@ the `calendar.readonly` scope and GET requests only.
 **D2 is now settled:** Phase 12 uses this AAOS calendar. The primary calendar is refused by
 configuration (`primary` and the owner's own address are rejected as `AAOS_GOOGLE_CALENDAR_ID`).
 
+## 12. Implementation notes (2026-10-23, slices 12A–12C)
+
+Where the implementation differs from, or fills in, the text above:
+
+- **Defect found: the derivation version (§4).**
+  - **Symptom:** in the 12C flow test, an approval returned 200 and the task ended
+    `CONFIRMED_FAILURE` with 0 Google reads or writes.
+  - **Root cause:** the frozen 7E task service stamps each action's remote precondition with
+    `config.provider_adapter_version`, which the factory requires to be `calendar-adapter-v1`.
+    The frozen 6B adapter accepts only an action whose precondition carries its
+    `derivation_version`. With 6B's `calendar-provider-id-v1` the two never matched, so every
+    action was refused before Google was contacted.
+  - **Why earlier tests missed it:** the 7E tests use a generic fake adapter, and 6B's own tool
+    bypassed the 7E service.
+  - **Fix, with no frozen code changed:** the adapter is built with
+    `derivation_version = "calendar-adapter-v1"`. That value only names the namespace of the event
+    IDs AAOS derives.
+  - **Regression test:** `test_the_definition_has_the_frozen_6b_shape` pins the two values
+    together, and the 12C flow tests prove one approval writes exactly one event.
+- **Calendar ID rule (§3):** the ID must be a group-calendar ID (`…@group.calendar.google.com`).
+  That refuses `primary` and any personal address, the owner's included, without AAOS needing to
+  know the owner's address.
+- **Approval deadline (§5):** the proposal card's data (`CalendarProposalView`) has no approval
+  deadline, and adding one would change a frozen Phase 7/8 contract.
+  - The **Approvals page** shows "Approve by …" from the existing `approval_expires_at`.
+  - The card says the event is added only if approved, and that the Approvals page shows the
+    deadline.
+- **System health (§5 and D4):** two additive detail codes, `CALENDAR_PROPOSALS_READY`
+  (`HEALTHY`) and `CALENDAR_PROPOSALS_MISCONFIGURED` (`DEGRADED`), on the existing
+  `GOOGLE_CALENDAR` component. With proposals off, the component is unchanged
+  (`NOT_CONFIGURED`). This is the additive amendment to the Phase 7 health contract that D4
+  requires. No Google call is made for health.
+- **Startup:** `create_app` gains two optional, test-only parameters, `calendar_environment` and
+  `calendar_client_builder`. The served app uses `os.environ` and the real factory.
+  - Building the client is local only. Google's library uses its bundled API description, so
+    nothing contacts Google until the first approved write.
+  - `CALENDAR PROPOSALS ACTIVE` is logged when proposals are on.
+- **Lost replies (§7):** with the fake client, a timed-out insert is followed by the adapter's read
+  and settles as `CONFIRMED_FAILURE`, not `UNKNOWN_OUTCOME`. The test asserts it is never success
+  and never written twice; the frozen 6B tests cover `UNKNOWN_OUTCOME`.
+- **The pre-check script** stays outside the repository. Turning it into an `aaos doctor` check is
+  left for later; it is not needed for the gate.
+

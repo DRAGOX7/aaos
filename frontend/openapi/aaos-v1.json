@@ -1636,7 +1636,9 @@
           "RAG_INDEX_PARTIAL",
           "RAG_INDEX_NOT_CONFIGURED",
           "PASSIVE_STATUS_UNAVAILABLE",
-          "INTERNAL_STATUS_UNAVAILABLE"
+          "INTERNAL_STATUS_UNAVAILABLE",
+          "CALENDAR_PROPOSALS_READY",
+          "CALENDAR_PROPOSALS_MISCONFIGURED"
         ],
         "title": "HealthDetailCode",
         "type": "string"
