@@ -103,7 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
-| Phase 11 | PASSED by whole-phase human acceptance on 2026-10-23 at `b69e0f98`; not FROZEN (no `phase-11-passed` tag) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
+| Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -740,7 +740,12 @@ separately at the end of this section.
 
 - **Decision:** the owner accepted Phase 11, the optional ChatGPT-plan cloud
   model through Sign in with ChatGPT, on 2026-10-23: "I accept Phase 11."
-  Status: PASSED. Not FROZEN, because no `phase-11-passed` tag exists.
+  Status: PASSED / FROZEN.
+- **Freeze tag:** at the owner's request, the annotated `phase-11-passed` tag
+  targets `6d49a0effb35046d412bcea8f94a1f93b6337fa1`, the commit that recorded this acceptance. As with
+  `phase-10-passed`, the tagged commit still reads "not FROZEN"; the FROZEN
+  wording was added in the commit that follows it. The frozen baseline is the
+  tagged commit.
 - **Accepted boundary:** `main` at `b69e0f98`. That includes slices 11A–11E,
   the probe-driven gateway fix (`0d829d3a`), and the §10 evaluation report.
 - **Evidence relied on:**
