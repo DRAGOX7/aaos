@@ -43,11 +43,11 @@ terminology, not evidence of a freeze tag.
 - Phase 7 — **PASSED / FROZEN** by whole-phase human acceptance; the annotated `phase-07-passed` tag targets the final governance commit. Slices 7A–7G are **HUMAN_ACCEPTED**; no Phase 8 authority follows.
 - Phase 8 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–10 are **HUMAN_ACCEPTED** and the annotated `phase-08-passed` tag targets the final governance commit.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
-- Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E) and no test re-run on the acceptance day. Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
+- Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E), which is still open, and no test re-run on the acceptance day, which was closed by the 2026-10-23 re-run (62 notification tests passed). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 
 Outside the phase sequence:
 
-- Optional Gemini cloud model — **IMPLEMENTED; HUMAN_APPROVED** on 2026-10-23, as built; **not VERIFIED** until the tests are re-run. On `main` since 2026-10-04; off by default. Its changes to frozen Phase 4 and Phase 7 code are owner-approved amendments; the freeze tags are not moved. See the 2026-10-23 retroactive record in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
+- Optional Gemini cloud model — **IMPLEMENTED; HUMAN_APPROVED; VERIFIED** on 2026-10-23 (as built; mock-transport tests re-run, not verified against the live Gemini API). On `main` since 2026-10-04; off by default. Its changes to frozen Phase 4 and Phase 7 code are owner-approved amendments; the freeze tags are not moved. See the 2026-10-23 retroactive record in [GOVERNANCE_LEDGER.md](GOVERNANCE_LEDGER.md).
 
 ### Historical status notes
 

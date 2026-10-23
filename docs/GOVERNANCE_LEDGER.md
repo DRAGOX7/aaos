@@ -101,8 +101,8 @@ and gates.
 | Phase 7 | PASSED / FROZEN by whole-phase human acceptance; 7A–7G HUMAN_ACCEPTED; freeze tag `phase-07-passed` targets the final governance commit | Settings route and favicon carryovers are closed; no Phase 8 authority follows |
 | Phase 8 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–10 HUMAN_ACCEPTED; freeze tag `phase-08-passed` targets the final governance commit `b07fa31dd95978e986269e4572fecb07d8b3e94a` | Restricted computation and multimodal vision are accepted within the recorded boundaries; RLM and Phase 9 remain out of scope |
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
-| Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built. Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not VERIFIED until the tests are re-run | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
-| Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay, and no test re-run on the acceptance day; Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
+| Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
+| Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -446,7 +446,7 @@ PLANNED / NOT STARTED.
 - **Freeze tag:** at the owner's request, the annotated `phase-10-passed` tag targets `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`, the commit that recorded this acceptance. Unlike `phase-07-passed` to `phase-09-passed`, the tagged commit still reads "not FROZEN"; the FROZEN wording was added in the commit that follows it. The frozen baseline is the tagged commit.
 - **Evidence relied on:** the 2026-10-04 status note (implementation merged to `main` in `472505ca`; `tests/test_notification_*.py` passing at that time). The owner chose to accept on that evidence.
 - **KNOWN_LIMITATION: no 10E real-history replay is recorded.** Spec §10E calls for a replay of real snapshot history through a fake adapter to check correctness and completeness. The repository holds only synthetic pipeline tests (`tests/test_notification_pipeline.py`), and no replay evidence file. The acceptance-gate items "every notification matches a real change" and "every in-scope change is notified exactly once" are accepted by the owner without that replay.
-- **KNOWN_LIMITATION: no test re-run on the acceptance day.** The project `.venv` was absent on 2026-10-23, so the notification tests and the full regression suite were not re-run. The optional Gemini provider and UI follow-ups were merged on 2026-10-04, before the status note's commit; the ledger does not record whether the note's passing tests ran before or after that merge, and this entry does not re-verify them against Phase 10.
+- **KNOWN_LIMITATION: no test re-run on the acceptance day** (closed later on 2026-10-23; see "Verification re-run (2026-10-23)"). The project `.venv` was absent on 2026-10-23, so the notification tests and the full regression suite were not re-run. The optional Gemini provider and UI follow-ups were merged on 2026-10-04, before the status note's commit; the ledger does not record whether the note's passing tests ran before or after that merge, and this entry does not re-verify them against Phase 10.
 - **Unchanged:** Phase 0 acceptance (0G/0H) and Phase 5 Slice 6 remain deferred, not resolved. The standing Telegram approval from 2026-10-02 stays as recorded.
 - **No new authority:** this acceptance authorizes no Phase 11 or other work. The ChatGPT-plan gateway note (`docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`) remains a proposal.
 
@@ -509,8 +509,8 @@ separately at the end of this section.
   - Commit `e2bbb794` states "Not verified against the live Gemini API". Later
     commit messages describe live use by the owner (for example the AI Studio
     usage chart in `85e75bc2`), but no live evidence artifact is recorded.
-- **Status:** IMPLEMENTED; HUMAN_APPROVED (see the owner approval below). Not
-  VERIFIED: that needs a recorded re-run of the tests listed above.
+- **Status:** IMPLEMENTED; HUMAN_APPROVED (see the owner approval below);
+  VERIFIED by the re-run recorded in "Verification re-run (2026-10-23)".
 - **Consequence for Phase 11:** the proposed ChatGPT-plan gateway builds on this
   provider-selection path, so a Phase 11 authorization should name this record
   and decide whether Gemini's status must first reach VERIFIED.
@@ -534,3 +534,48 @@ separately at the end of this section.
 - **Approval does not extend to:**
   - other cloud providers or changes to the local-first default;
   - Phase 11 or the ChatGPT-plan gateway, which remain unauthorized.
+
+## Verification re-run (2026-10-23)
+
+- **Purpose:** to meet the owner's condition for marking the Gemini provider
+  VERIFIED, and to close the Phase 10 "no test re-run" limitation.
+- **Tested commit:** `85f341d5`, on `main` with a clean tracked tree.
+- **Environment:** the `.venv` was rebuilt with `uv sync --frozen` after
+  `uv lock --check` passed (198 packages), giving Python 3.11.9 and
+  torch 2.13.0+cu130.
+- **Commands:**
+  - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider -o addopts="" -q`
+    for the targeted files and for the full suite (`-rfEs`);
+  - `npx vitest run tests/model-badge.test.tsx tests/ask-view.test.tsx` in `frontend/`.
+- **Results:**
+
+| Scope | Files | Result |
+| --- | --- | --- |
+| Gemini, backend | `test_gemini_gateway.py`, `test_gemini_model_picker.py`, `test_gemini_probe.py`, `test_model_selection.py`, `test_semantic_model_identity.py` | 104 passed |
+| Phase 10 notifications | `test_notification_events.py`, `_messages.py`, `_monitor.py`, `_pipeline.py`, `_telegram.py` | 62 passed |
+| Gemini, frontend | `model-badge.test.tsx`, `ask-view.test.tsx` | 49 passed |
+| Full backend suite | `tests/` | 4,396 passed, 1 failed, 6 skipped, 1 warning (7 m 46 s) |
+
+- **The one failure is environmental:**
+  `tests/phase8/test_sandbox.py::test_real_docker_supervisor_path_uses_qualified_runtime`
+  needs a running Docker engine, and the probe returned `DOCKER_ENGINE_UNAVAILABLE`.
+  - `docker info` on the `desktop-linux` context could not reach the
+    `dockerDesktopLinuxEngine` pipe, because Docker Desktop was not running.
+  - The test and `scripts/phase8/qualify_isolation_runtime.py` are unchanged
+    since Phase 8 apart from a formatting-only commit (`93f964d5`).
+  - It is not a Gemini or Phase 10 regression. It was not re-run with Docker
+    started.
+- **Skips:** the 6 opt-in live and acceptance gates (LM Studio, Moodle browser,
+  Phase 3 ingestion, two Phase 4 acceptance gates, and the Phase 8 real
+  qualification probe), each skipped by its own environment flag.
+- **Warning:** the chromadb `DeprecationWarning` for a legacy embedding-function
+  config in `tests/test_rag_chroma.py`.
+- **Not run:**
+  - ruff, mypy, and the rest of the frontend suite;
+  - any live Gemini or Telegram call;
+  - the Phase 10 §10E real-history replay, which stays a KNOWN_LIMITATION.
+- **Status changes:**
+  - **Gemini provider:** VERIFIED, by mock-transport tests only. It is not
+    verified against the live Gemini API.
+  - **Phase 10:** the "no test re-run" limitation is closed. Phase 10 stays
+    PASSED / FROZEN at `phase-10-passed`; the tag is not moved.
