@@ -106,6 +106,7 @@ and gates.
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
 | Phase 12 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-24; freeze tag `phase-12-passed` targets the acceptance commit `398a03ad0cc962d63bb771ec06dd9d543a1cfa04` (accepted boundary `cd4d0e81`) | Calendar proposals stay off by default; known limitations and the not-authorized list are recorded in "Phase 12 whole-phase acceptance (2026-10-24)"; Phase 0 and Phase 5 gates stay deferred; no Phase 13 authority follows |
 | Dashboard dark mode (outside the phase sequence) | IMPLEMENTED and VERIFIED on 2026-10-24 at the owner's request; awaiting the owner's review (not HUMAN_APPROVED) | Light stays the default look; touches frozen Phase 7 frontend code (see "Dashboard dark mode (2026-10-24)"); no backend change and no Phase 13 authority follows |
+| Dashboard Arabic language (outside the phase sequence) | IMPLEMENTED and VERIFIED on 2026-10-24 at the owner's request; awaiting the owner's review (not HUMAN_APPROVED) | English stays the default; frontend only, touches frozen Phase 7 frontend code (see "Dashboard Arabic language (2026-10-24)"); no backend change and no Phase 13 authority follows |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -1058,5 +1059,42 @@ test, plus 10 new); `tsc` clean; ESLint has only the 2 earlier warnings. In the 
 browser against the owner's running dev server: Overview, System health and Ask render
 correctly in dark; a Light choice survives a page reload while the OS is dark; no
 console errors or hydration warnings.
+
+Status: IMPLEMENTED and VERIFIED. Not HUMAN_APPROVED until the owner reviews it.
+
+## Dashboard Arabic language (2026-10-24)
+
+The owner asked for Arabic on the dashboard on 2026-10-24. This is a frontend-only
+change outside the phase sequence that touches frozen Phase 7 code, recorded like the
+dark-mode change above.
+
+What changed:
+
+- A language button in the top bar switches between English and Arabic. The choice is
+  stored in the browser's `localStorage` under `aaos-lang` (`en` or `ar`; default `en`)
+  and is never sent to the backend.
+- Arabic is laid out right to left: `<html lang="ar" dir="rtl">`, logical CSS classes
+  instead of left/right ones, and the side panels open from the other side.
+- `frontend/lib/i18n/`: the English text is the key, and `messages-ar.ts` holds the
+  Arabic. The type check fails if any English string shown through `t()` has no Arabic.
+  Arabic plurals use the six Arabic forms. Dates use `ar-JO` with Western digits.
+- No flash: an inline script in `<head>` sets the language before first paint. The
+  server renders English, so an Arabic page stays hidden until its first Arabic render
+  (it is shown after 1.5 s anyway if scripts never run).
+- Noto Sans Arabic is loaded for Arabic letters; Plus Jakarta Sans stays for Latin.
+- Security boundary kept: the Phase 7G test forbids the word "cookies" in frontend
+  source, so the language is not stored in a cookie. That test is unchanged and passes.
+- Tests: the design-token test now expects the Arabic font in `--font-sans`. 11 new
+  tests (translator, plurals, placeholders, runtime messages, toggle, no-flash script).
+
+Not translated: text that comes from the backend or the model (answers, activity titles,
+task summaries, Moodle course names and content), and backend codes not in the table.
+The model answers in the language of the question.
+
+Verification on 2026-10-24: frontend suite 310 passed (299 before, plus 11 new); `tsc`
+clean; ESLint has only the 2 earlier warnings. In the built-in browser against the owner's
+running dev server: Overview, System health and Ask render in Arabic, right to left; the
+phone menu opens from the right; switching back restores English, left to right; no
+console errors or hydration warnings after a reload in Arabic.
 
 Status: IMPLEMENTED and VERIFIED. Not HUMAN_APPROVED until the owner reviews it.

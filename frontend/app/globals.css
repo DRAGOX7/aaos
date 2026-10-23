@@ -141,7 +141,7 @@
 
 @theme inline {
   --font-heading: var(--font-jakarta);
-  --font-sans: var(--font-jakarta);
+  --font-sans: var(--font-jakarta), var(--font-arabic);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -225,8 +225,26 @@
     min-height: 100%;
   }
 
+  /* Letter spacing breaks the joins between Arabic letters. */
+  :lang(ar) {
+    letter-spacing: normal !important;
+  }
+
   ::selection {
     background: var(--aaos-primary-soft);
     color: var(--aaos-primary-deep);
+  }
+}
+
+/* An Arabic page stays hidden until its first Arabic render (components/aaos/
+   locale-sync.tsx). If scripts never run, it is shown after 1.5 s anyway. */
+html[data-aaos-locale-pending] body {
+  visibility: hidden;
+  animation: aaos-locale-reveal 0s linear 1.5s forwards;
+}
+
+@keyframes aaos-locale-reveal {
+  to {
+    visibility: visible;
   }
 }

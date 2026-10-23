@@ -11,6 +11,7 @@ import {
   watchSystemTheme,
   type ThemeChoice,
 } from "@/lib/theme";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 
 const NEXT_CHOICE: Record<ThemeChoice, ThemeChoice> = {
   light: "dark",
@@ -18,7 +19,7 @@ const NEXT_CHOICE: Record<ThemeChoice, ThemeChoice> = {
   system: "light",
 };
 
-const CHOICE_LABEL: Record<ThemeChoice, string> = {
+const CHOICE_LABEL: Record<ThemeChoice, MessageKey> = {
   light: "Light",
   dark: "Dark",
   system: "System",
@@ -32,6 +33,7 @@ const serverChoice = (): ThemeChoice => "system";
 
 /** Cycles the dashboard theme: Light, then Dark, then System (follow the OS). */
 export function ThemeToggle() {
+  const { t } = useI18n();
   const choice = useSyncExternalStore(subscribeThemeChoice, readThemeChoice, serverChoice);
 
   // Re-apply on mount too: a development remount can drop the <html> class.
@@ -48,10 +50,10 @@ export function ThemeToggle() {
   const Icon = CHOICE_ICON[choice];
   return (
     <button
-      aria-label={`Theme: ${CHOICE_LABEL[choice]}. Switch to ${CHOICE_LABEL[next]}.`}
+      aria-label={t("Theme: {current}. Switch to {next}.", { current: t(CHOICE_LABEL[choice]), next: t(CHOICE_LABEL[next]) })}
       className="flex size-10 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={() => setThemeChoice(next)}
-      title={`Theme: ${CHOICE_LABEL[choice]}`}
+      title={t("Theme: {current}", { current: t(CHOICE_LABEL[choice]) })}
       type="button"
     >
       <Icon aria-hidden="true" className="size-[18px]" strokeWidth={1.9} />

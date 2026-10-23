@@ -1,9 +1,10 @@
 import type { DocumentSummary } from "@/lib/api/academic";
+import type { MessageKey } from "@/lib/i18n";
 
 export type SearchTone = "success" | "warning" | "info" | "danger" | "neutral";
 
 export type DocumentSearchState = Readonly<{
-  label: string;
+  label: MessageKey;
   tone: SearchTone;
 }>;
 

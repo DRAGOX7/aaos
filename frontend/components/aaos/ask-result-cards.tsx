@@ -19,11 +19,12 @@ import type {
   RagProvenance,
   StudyPlan,
 } from "@/lib/api/ask";
+import { useI18n, type MessageKey, type Translator } from "@/lib/i18n";
 
-function formatDate(value: string): string {
+function formatDate(value: string, locale: string | undefined): string {
   const parsed = new Date(value + "T00:00:00Z");
   if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeZone: "UTC",
   }).format(parsed);
@@ -37,24 +38,27 @@ function statusLabel(value: string): string {
   return value.replaceAll("_", " ").toLocaleLowerCase();
 }
 
-function fieldLabel(field: string): string {
-  switch (field) {
-    case "title": return "Title";
-    case "code": return "Course code";
-    case "due_at": return "Deadline";
-    case "published_at": return "Published date";
-    case "course": return "Course";
-    case "document_version": return "Document version";
-    default: return field;
-  }
+const FIELD_LABELS: Record<string, MessageKey> = {
+  title: "Title",
+  code: "Course code",
+  due_at: "Deadline",
+  published_at: "Published date",
+  course: "Course",
+  document_version: "Document version",
+};
+
+function fieldLabel(field: string, { t }: Translator): string {
+  const known: MessageKey | undefined = FIELD_LABELS[field];
+  return known ? t(known) : field;
 }
 
 export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
+  const { t } = useI18n();
   if (!("citations" in provenance) || provenance.citations.length === 0) return null;
 
   return (
-    <section aria-label="RAG citations" className="mt-1 border-t border-border pt-4">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sources</h3>
+    <section aria-label={t("RAG citations")} className="mt-1 border-t border-border pt-4">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">{t("Sources")}</h3>
       <ul className="mt-2 space-y-2">
         {provenance.citations.map((citation, index) => (
           <li
@@ -74,20 +78,22 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
               <span className="block break-words text-muted-foreground">
                 {"page_start" in citation
                   ? citation.page_start === citation.page_end
-                    ? "Page " + citation.page_start
-                    : "Pages " + citation.page_start + "–" + citation.page_end
+                    ? t("Page {page}", { page: citation.page_start })
+                    : t("Pages {start}–{end}", { start: citation.page_start, end: citation.page_end })
                     : citation.unit_start === citation.unit_end
-                      ? "Unit " + citation.unit_start
-                      : "Units " + citation.unit_start + "–" + citation.unit_end}
-                {" · Version " + citation.document_version_id}
+                      ? t("Unit {unit}", { unit: citation.unit_start })
+                      : t("Units {start}–{end}", { start: citation.unit_start, end: citation.unit_end })}
+                {" · " + t("Version {version}", { version: citation.document_version_id })}
                 {"heading" in citation && citation.heading ? " · " + citation.heading : ""}
                 {"table_index" in citation && citation.table_index != null
-                  ? " · Table " + (citation.table_index + 1)
-                    + ", row " + ((citation.row_index ?? 0) + 1)
-                    + ", column " + ((citation.column_index ?? 0) + 1)
+                  ? " · " + t("Table {table}, row {row}, column {column}", {
+                      table: citation.table_index + 1,
+                      row: (citation.row_index ?? 0) + 1,
+                      column: (citation.column_index ?? 0) + 1,
+                    })
                   : ""}
                 {"from_past_course" in provenance && provenance.from_past_course
-                  ? " · past course"
+                  ? " · " + t("past course")
                   : ""}
               </span>
             </span>
@@ -99,39 +105,41 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
 }
 
 export function MoodleChangeCard({ source }: { source: AcademicAskSource }) {
-  const fields = source.changed_fields.map(fieldLabel).join(", ");
+  const i18n = useI18n();
+  const { t } = i18n;
+  const fields = source.changed_fields.map((field) => fieldLabel(field, i18n)).join(", ");
   return (
     <article className="min-w-0 rounded-xl border border-border bg-card/75 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-words font-semibold text-foreground">
-          {source.title || "Moodle change"}
+          {source.title || t("Moodle change")}
         </h3>
         {source.change_kind ? (
           <span className="rounded-md border border-teal/30 bg-teal-soft px-2 py-1 text-xs font-semibold text-teal">
-            {source.change_kind}
+            {i18n.status(source.change_kind, (code) => code)}
           </span>
         ) : null}
       </div>
       <dl className="mt-3 grid min-w-0 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
         {fields ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Changed fields</dt>
+            <dt className="text-muted-foreground">{t("Changed fields")}</dt>
             <dd className="break-words font-medium text-foreground">{fields}</dd>
           </div>
         ) : null}
         {source.before_due_at || source.after_due_at ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Deadline</dt>
+            <dt className="text-muted-foreground">{t("Deadline")}</dt>
             <dd className="break-words font-medium text-foreground">
-              {source.before_due_at ? formatTimestampAsProvided(source.before_due_at) : "No previous deadline"}
+              {source.before_due_at ? formatTimestampAsProvided(source.before_due_at) : t("No previous deadline")}
               {" → "}
-              {source.after_due_at ? formatTimestampAsProvided(source.after_due_at) : "No current deadline"}
+              {source.after_due_at ? formatTimestampAsProvided(source.after_due_at) : t("No current deadline")}
             </dd>
           </div>
         ) : null}
         {source.from_snapshot_id != null && source.to_snapshot_id != null ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Moodle snapshots</dt>
+            <dt className="text-muted-foreground">{t("Moodle snapshots")}</dt>
             <dd className="break-words text-foreground">
               {source.from_snapshot_id} → {source.to_snapshot_id}
             </dd>
@@ -142,15 +150,16 @@ export function MoodleChangeCard({ source }: { source: AcademicAskSource }) {
   );
 }
 
-const TASK_PRIORITY_LABELS: Record<string, string> = { LOW: "Low", NORMAL: "Normal", HIGH: "High" };
+const TASK_PRIORITY_LABELS: Record<string, MessageKey> = { LOW: "Low", NORMAL: "Normal", HIGH: "High" };
 
 export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
+  const { t } = useI18n();
   const status = source.study_task_status;
   return (
     <article className="min-w-0 rounded-xl border border-border bg-card/75 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="min-w-0 break-words font-semibold text-foreground">
-          {source.title || "Study task"}
+          {source.title || t("Study task")}
         </h3>
         {status ? (
           <span
@@ -158,22 +167,24 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
               status === "COMPLETED" ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-strong"
             }`}
           >
-            {status === "COMPLETED" ? "Done" : "To do"}
+            {status === "COMPLETED" ? t("Done") : t("To do")}
           </span>
         ) : null}
       </div>
       <dl className="mt-3 grid min-w-0 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
         {source.study_task_priority ? (
           <div>
-            <dt className="text-muted-foreground">Priority</dt>
+            <dt className="text-muted-foreground">{t("Priority")}</dt>
             <dd className="font-medium text-foreground">
-              {TASK_PRIORITY_LABELS[source.study_task_priority] ?? source.study_task_priority}
+              {source.study_task_priority in TASK_PRIORITY_LABELS
+                ? t(TASK_PRIORITY_LABELS[source.study_task_priority])
+                : source.study_task_priority}
             </dd>
           </div>
         ) : null}
         {source.study_task_due_at ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Due</dt>
+            <dt className="text-muted-foreground">{t("Due")}</dt>
             <dd className="break-words text-foreground">
               {formatTimestampAsProvided(source.study_task_due_at)}
             </dd>
@@ -181,23 +192,23 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
         ) : null}
         {source.study_task_course_title ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Course</dt>
+            <dt className="text-muted-foreground">{t("Course")}</dt>
             <dd className="break-words text-foreground">{source.study_task_course_title}</dd>
           </div>
         ) : source.study_task_course_id != null ? (
           <div>
-            <dt className="text-muted-foreground">Course ID</dt>
+            <dt className="text-muted-foreground">{t("Course ID")}</dt>
             <dd className="text-foreground">{source.study_task_course_id}</dd>
           </div>
         ) : null}
         {source.study_task_assignment_title ? (
           <div className="min-w-0">
-            <dt className="text-muted-foreground">Assignment</dt>
+            <dt className="text-muted-foreground">{t("Assignment")}</dt>
             <dd className="break-words text-foreground">{source.study_task_assignment_title}</dd>
           </div>
         ) : source.study_task_assignment_id != null ? (
           <div>
-            <dt className="text-muted-foreground">Assignment ID</dt>
+            <dt className="text-muted-foreground">{t("Assignment ID")}</dt>
             <dd className="text-foreground">{source.study_task_assignment_id}</dd>
           </div>
         ) : null}
@@ -207,7 +218,7 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
           href={`/tasks#study-task-${source.entity_id}`}
           className="mt-3 inline-flex text-sm font-semibold text-primary-strong underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          View in Tasks
+          {t("View in Tasks")}
         </Link>
       ) : null}
     </article>
@@ -216,14 +227,17 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
 
 function getSafeActionMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
-  return "AAOS could not confirm the approval state.";
+  return "AAOS could not confirm the approval state." satisfies MessageKey;
 }
+
+// The last case shows the raw state, so a label is either a known key or that code.
+type ProposalState = { label: MessageKey; detail: MessageKey } | { code: string; detail: MessageKey };
 
 function proposalState(
   proposal: CalendarProposal,
   approval: ApprovalDetail | null,
   task: TaskDetail | null,
-): { label: string; detail: string } {
+): ProposalState {
   const approvalState = approval?.status ?? proposal.approval_status;
   const operationState = task?.operation_state ?? approval?.operation_state ?? proposal.operation_state;
   const taskState = task?.status ?? proposal.task_status;
@@ -268,7 +282,7 @@ function proposalState(
     return { label: "Approved", detail: "Approval is recorded. Calendar execution is not yet confirmed." };
   }
   return {
-    label: statusLabel(taskState),
+    code: taskState,
     detail: "The proposal state is shown as returned by AAOS.",
   };
 }
@@ -291,17 +305,22 @@ const TERMINAL_OPERATION_STATES = new Set([
 ]);
 
 export function CalendarProposalCard({ proposal }: { proposal: CalendarProposal }) {
+  const { t, tx, status } = useI18n();
   const [approval, setApproval] = useState<ApprovalDetail | null>(null);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [pending, setPending] = useState(false);
   const [decisionUncertain, setDecisionUncertain] = useState(false);
+  // Errors are kept in English (an API message may be one) and shown translated.
   const [error, setError] = useState<string | null>(null);
-  const currentState = decisionUncertain
+  const currentState: ProposalState = decisionUncertain
     ? {
         label: "Status not confirmed",
         detail: "AAOS could not confirm whether the last decision was recorded.",
       }
     : proposalState(proposal, approval, task);
+  const stateLabel = "code" in currentState
+    ? status(currentState.code, statusLabel)
+    : t(currentState.label);
   const mayDecide =
     proposal.operation === "CREATE_EVENT" &&
     (approval?.status ?? proposal.approval_status) === "PENDING" &&
@@ -391,47 +410,49 @@ export function CalendarProposalCard({ proposal }: { proposal: CalendarProposal 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 id={"calendar-proposal-" + proposal.proposal_id} className="text-base font-semibold text-foreground">
-            Calendar event proposal
+            {t("Calendar event proposal")}
           </h3>
-          <p className="mt-1 text-sm text-muted-foreground">{currentState.detail}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{t(currentState.detail)}</p>
         </div>
         <span className="rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs font-semibold text-foreground">
-          {currentState.label}
+          {stateLabel}
         </span>
       </div>
 
       <dl className="mt-4 grid min-w-0 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div className="min-w-0 sm:col-span-2">
-          <dt className="text-muted-foreground">Title</dt>
+          <dt className="text-muted-foreground">{t("Title")}</dt>
           <dd className="break-words font-medium text-foreground">{proposal.summary}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-muted-foreground">Starts</dt>
+          <dt className="text-muted-foreground">{t("Starts")}</dt>
           <dd className="break-words text-foreground">{proposal.start}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-muted-foreground">Ends</dt>
+          <dt className="text-muted-foreground">{t("Ends")}</dt>
           <dd className="break-words text-foreground">{proposal.end}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-muted-foreground">Timezone</dt>
+          <dt className="text-muted-foreground">{t("Timezone")}</dt>
           <dd className="break-words text-foreground">{proposal.timezone}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-muted-foreground">Linked {proposal.source_entity_kind}</dt>
-          <dd className="break-words text-foreground">ID {proposal.source_entity_id}</dd>
+          <dt className="text-muted-foreground">
+            {proposal.source_entity_kind === "assignment" ? t("Linked assignment") : t("Linked study task")}
+          </dt>
+          <dd className="break-words text-foreground">{t("ID {id}", { id: proposal.source_entity_id })}</dd>
         </div>
         {task?.failure_code ? (
           <div className="min-w-0 sm:col-span-2">
-            <dt className="text-muted-foreground">Failure code</dt>
+            <dt className="text-muted-foreground">{t("Failure code")}</dt>
             <dd className="break-words text-foreground">{task.failure_code}</dd>
           </div>
         ) : null}
       </dl>
 
-      {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
+      {error ? <p className="mt-3 text-sm text-destructive" role="alert">{tx(error)}</p> : null}
       <p className="sr-only" aria-live="polite">
-        {pending ? "Submitting Calendar decision." : ""}
+        {pending ? t("Submitting Calendar decision.") : ""}
       </p>
 
       {mayDecide ? (
@@ -442,21 +463,21 @@ export function CalendarProposalCard({ proposal }: { proposal: CalendarProposal 
             disabled={pending}
             onClick={() => void decide("reject")}
           >
-            {pending ? "Updating…" : "Reject"}
+            {pending ? t("Updating…") : t("Reject")}
           </Button>
           <Button
             type="button"
             disabled={pending}
             onClick={() => void decide("approve")}
           >
-            {pending ? "Updating…" : "Approve"}
+            {pending ? t("Updating…") : t("Approve")}
           </Button>
         </div>
       ) : null}
       {decisionUncertain || executionStatusNeedsRefresh ? (
         <div className="mt-5 flex justify-end border-t border-border pt-4">
           <Button type="button" variant="outline" disabled={pending} onClick={() => void refreshProposalState()}>
-            {pending ? "Checking…" : "Check proposal status"}
+            {pending ? t("Checking…") : t("Check proposal status")}
           </Button>
         </div>
       ) : null}
@@ -467,19 +488,22 @@ export function CalendarProposalCard({ proposal }: { proposal: CalendarProposal 
 type PlanSource = StudyPlan["rag_provenance"][number];
 
 function StudyPlanSourceList({ sources }: { sources: PlanSource[] }) {
+  const { t, status } = useI18n();
   if (sources.length === 0) return null;
   return (
     <section className="mt-4 border-t border-border pt-3">
-      <h4 className="text-sm font-semibold text-foreground">Plan provenance</h4>
+      <h4 className="text-sm font-semibold text-foreground">{t("Plan provenance")}</h4>
       <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
         {sources.map((source, index) => (
           <li key={source.claim_id ?? source.change_id ?? source.entity_id ?? index} className="break-words">
-            {source.kind}
-            {source.document_version_id ? " · document version " + source.document_version_id : ""}
-            {source.citation_location ? " · " + source.citation_location.replace("page:", "page ").replace("unit:", "unit ") : ""}
-            {source.change_id ? " · change " + source.change_id : ""}
+            {status(source.kind, (code) => code)}
+            {source.document_version_id ? " · " + t("document version {version}", { version: source.document_version_id }) : ""}
+            {source.citation_location
+              ? " · " + source.citation_location.replace("page:", t("page") + " ").replace("unit:", t("unit") + " ")
+              : ""}
+            {source.change_id ? " · " + t("change {change}", { change: source.change_id }) : ""}
             {source.from_snapshot_id && source.to_snapshot_id
-              ? " · snapshots " + source.from_snapshot_id + " → " + source.to_snapshot_id
+              ? " · " + t("snapshots {from} → {to}", { from: source.from_snapshot_id, to: source.to_snapshot_id })
               : ""}
           </li>
         ))}
@@ -489,31 +513,33 @@ function StudyPlanSourceList({ sources }: { sources: PlanSource[] }) {
 }
 
 function StudyPlanMoodleChanges({ plan }: { plan: StudyPlan }) {
+  const i18n = useI18n();
+  const { t } = i18n;
   if (plan.moodle_changes.length === 0) return null;
   return (
     <section className="mt-4">
-      <h4 className="text-sm font-semibold text-foreground">Moodle changes</h4>
+      <h4 className="text-sm font-semibold text-foreground">{t("Moodle changes")}</h4>
       <ul className="mt-2 space-y-2">
         {plan.moodle_changes.map((change) => (
           <li key={change.change_id} className="min-w-0 rounded-xl border border-border bg-card/70 px-3 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="break-words font-medium text-foreground">
-                {change.title || "Moodle change"}
+                {change.title || t("Moodle change")}
               </span>
               <span className="rounded-md border border-border px-2 py-0.5 text-xs font-semibold text-foreground">
-                {change.change_kind}
+                {i18n.status(change.change_kind, (code) => code)}
               </span>
             </div>
             {change.changed_fields.length ? (
               <p className="mt-1 break-words text-sm text-muted-foreground">
-                Changed: {change.changed_fields.map(fieldLabel).join(", ")}
+                {t("Changed: {fields}", { fields: change.changed_fields.map((field) => fieldLabel(field, i18n)).join(", ") })}
               </p>
             ) : null}
             {change.before_due_at || change.after_due_at ? (
               <p className="mt-1 break-words text-sm text-foreground">
-                {change.before_due_at ? formatTimestampAsProvided(change.before_due_at) : "No previous deadline"}
+                {change.before_due_at ? formatTimestampAsProvided(change.before_due_at) : t("No previous deadline")}
                 {" → "}
-                {change.after_due_at ? formatTimestampAsProvided(change.after_due_at) : "No current deadline"}
+                {change.after_due_at ? formatTimestampAsProvided(change.after_due_at) : t("No current deadline")}
               </p>
             ) : null}
           </li>
@@ -524,6 +550,8 @@ function StudyPlanMoodleChanges({ plan }: { plan: StudyPlan }) {
 }
 
 export function StudyPlanView({ plan }: { plan: StudyPlan }) {
+  const { t, tn, status, dateLocale } = useI18n();
+  const locale = dateLocale(undefined);
   const dateGroups = new Map<string, StudyPlan["items"]>();
   for (const item of plan.items) {
     const group = dateGroups.get(item.study_date) ?? [];
@@ -536,32 +564,32 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 id={"study-plan-" + plan.plan_id} className="text-base font-semibold text-foreground">
-            Study plan
+            {t("Study plan")}
           </h3>
           <p className="mt-1 break-words text-sm text-muted-foreground">
-            {formatDate(plan.planning_window_start)} – {formatDate(plan.planning_window_end)} · {plan.timezone}
+            {formatDate(plan.planning_window_start, locale)} – {formatDate(plan.planning_window_end, locale)} · {plan.timezone}
           </p>
         </div>
         <span className="rounded-md border border-primary/20 bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary">
-          Recommendations
+          {t("Recommendations")}
         </span>
       </div>
 
       <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2">
         <section className="min-w-0">
-          <h4 className="text-sm font-semibold text-foreground">Current facts</h4>
-          <p className="mt-1 text-xs text-muted-foreground">Trusted assignment and StudyTask records</p>
+          <h4 className="text-sm font-semibold text-foreground">{t("Current facts")}</h4>
+          <p className="mt-1 text-xs text-muted-foreground">{t("Trusted assignment and StudyTask records")}</p>
           {plan.obligations.length === 0 && plan.study_tasks.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">No current obligations or StudyTasks were found.</p>
+            <p className="mt-2 text-sm text-muted-foreground">{t("No current obligations or StudyTasks were found.")}</p>
           ) : (
             <ul className="mt-2 space-y-2">
               {plan.obligations.map((fact) => (
                 <li key={"assignment-" + fact.assignment_id} className="min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
                   <p className="break-words text-sm font-medium text-foreground">{fact.title}</p>
                   <p className="mt-1 break-words text-xs text-muted-foreground">
-                    Course ID {fact.course_id}
-                    {fact.due_at ? " · due " + formatTimestampAsProvided(fact.due_at) : ""}
-                    {fact.overdue ? " · overdue" : ""}
+                    {t("Course ID {id}", { id: fact.course_id })}
+                    {fact.due_at ? " · " + t("due {date}", { date: formatTimestampAsProvided(fact.due_at) }) : ""}
+                    {fact.overdue ? " · " + t("overdue") : ""}
                   </p>
                 </li>
               ))}
@@ -569,9 +597,9 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
                 <li key={"task-" + task.task_id} className="min-w-0 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
                   <p className="break-words text-sm font-medium text-foreground">{task.title}</p>
                   <p className="mt-1 break-words text-xs text-muted-foreground">
-                    {task.status} · {task.priority}
-                    {task.course_id != null ? " · course " + task.course_id : ""}
-                    {task.assignment_id != null ? " · assignment " + task.assignment_id : ""}
+                    {status(task.status, (code) => code)} · {status(task.priority, (code) => code)}
+                    {task.course_id != null ? " · " + t("course {id}", { id: task.course_id }) : ""}
+                    {task.assignment_id != null ? " · " + t("assignment {id}", { id: task.assignment_id }) : ""}
                   </p>
                 </li>
               ))}
@@ -581,34 +609,34 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
         </section>
 
         <section className="min-w-0">
-          <h4 className="text-sm font-semibold text-foreground">Recommended study blocks</h4>
+          <h4 className="text-sm font-semibold text-foreground">{t("Recommended study blocks")}</h4>
           <p className="mt-1 text-xs text-muted-foreground">
-            Dates and durations are recommendations, not university requirements.
+            {t("Dates and durations are recommendations, not university requirements.")}
           </p>
           {plan.items.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">No recommended study blocks for this window.</p>
+            <p className="mt-2 text-sm text-muted-foreground">{t("No recommended study blocks for this window.")}</p>
           ) : (
             <ol className="mt-2 space-y-3">
               {[...dateGroups.entries()].map(([date, items]) => (
                 <li key={date} className="min-w-0 rounded-lg border border-border bg-card/75 p-3">
-                  <h5 className="text-sm font-semibold text-foreground">{formatDate(date)}</h5>
+                  <h5 className="text-sm font-semibold text-foreground">{formatDate(date, locale)}</h5>
                   <ul className="mt-2 space-y-2">
                     {items.map((item, index) => (
                       <li key={date + "-" + index} className="min-w-0 border-t border-border pt-2 first:border-0 first:pt-0">
                         <p className="break-words text-sm font-medium text-foreground">
-                          Course ID {item.course_id}
-                          {item.assignment_id != null ? " · assignment " + item.assignment_id : ""}
-                          {item.study_task_id != null ? " · StudyTask " + item.study_task_id : ""}
+                          {t("Course ID {id}", { id: item.course_id })}
+                          {item.assignment_id != null ? " · " + t("assignment {id}", { id: item.assignment_id }) : ""}
+                          {item.study_task_id != null ? " · " + t("StudyTask {id}", { id: item.study_task_id }) : ""}
                         </p>
                         {item.focus ? <p className="mt-1 break-words text-sm text-muted-foreground">{item.focus}</p> : null}
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                          <span>{item.duration_minutes} minutes</span>
+                          <span>{tn("minute", item.duration_minutes)}</span>
                           {item.estimated_duration ? (
                             <span className="rounded border border-warning/30 bg-warning-soft px-1.5 py-0.5 font-medium text-foreground">
-                              Estimated
+                              {t("Estimated")}
                             </span>
                           ) : null}
-                          <span>{item.rationale_code.replaceAll("_", " ").toLocaleLowerCase()}</span>
+                          <span>{status(item.rationale_code, statusLabel)}</span>
                         </div>
                       </li>
                     ))}
@@ -623,12 +651,12 @@ export function StudyPlanView({ plan }: { plan: StudyPlan }) {
       <div className="mt-4 space-y-2 border-t border-border pt-3">
         {!plan.calendar_conflict_aware ? (
           <p className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-foreground">
-            Calendar conflicts were not checked.
+            {t("Calendar conflicts were not checked.")}
           </p>
         ) : null}
         {plan.assumptions.map((assumption, index) => (
           <p key={"assumption-" + index} className="break-words text-sm text-muted-foreground">
-            Assumption: {assumption}
+            {t("Assumption: {assumption}", { assumption })}
           </p>
         ))}
         {plan.warnings.map((warning, index) => (

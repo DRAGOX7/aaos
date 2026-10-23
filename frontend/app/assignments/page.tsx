@@ -1,4 +1,5 @@
 import { AssignmentList } from "@/components/aaos/assignment-list";
+import { LocalizedText } from "@/components/aaos/localized-text";
 import { parseCourseIdParam } from "@/lib/query/course-filter";
 
 type AssignmentsPageProps = Readonly<{
@@ -20,7 +21,7 @@ export default async function AssignmentsPage({
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6">
         <p className="text-sm text-muted-foreground">
-          The course filter is invalid.
+          <LocalizedText text="The course filter is invalid." />
         </p>
       </div>
     );

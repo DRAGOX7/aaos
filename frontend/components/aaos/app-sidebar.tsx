@@ -16,10 +16,11 @@ import {
 } from "lucide-react";
 
 import { AaosMark } from "@/components/aaos/aaos-mark";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type NavigationItem = Readonly<{
-  label: string;
+  label: MessageKey;
   href: string;
   icon: LucideIcon;
 }>;
@@ -94,13 +95,14 @@ export function AppSidebar({
   // usePathname follows client-side navigation; a popstate listener missed
   // Link and router.push moves and left the previous page highlighted.
   const pathname = usePathname() ?? "/";
+  const { t } = useI18n();
 
   const resolvedActiveHref = activeHref ?? resolveActiveNavigationHref(pathname);
 
   return (
     <aside
       className={cn(
-        "flex h-full w-64 flex-col border-r border-sidebar-border bg-card",
+        "flex h-full w-64 flex-col border-e border-sidebar-border bg-card",
         className,
       )}
     >
@@ -112,7 +114,7 @@ export function AppSidebar({
             AAOS
           </p>
           <p className="text-xs text-muted-foreground">
-            Academic AI OS
+            {t("Academic AI OS")}
           </p>
         </div>
       </div>
@@ -142,7 +144,7 @@ export function AppSidebar({
                 className="size-[18px] shrink-0"
                 strokeWidth={1.9}
               />
-              <span>{item.label}</span>
+              <span>{t(item.label)}</span>
             </Link>
           );
         })}

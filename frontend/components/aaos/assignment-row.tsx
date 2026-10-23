@@ -1,12 +1,15 @@
+"use client";
+
 import type { components } from "@/types/api.generated";
 import {
   bucketAssignment,
   type AssignmentDueBucket,
 } from "@/lib/assignments/due-buckets";
 import { courseDisplayName } from "@/lib/courses/display";
+import { useI18n, type Translator, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-const DUE_LOOK: Record<AssignmentDueBucket, { label: string; pill: string }> = {
+const DUE_LOOK: Record<AssignmentDueBucket, { label: MessageKey; pill: string }> = {
   OVERDUE: { label: "Overdue", pill: "bg-danger-soft text-danger-strong" },
   DUE_SOON: { label: "Due soon", pill: "bg-warning-soft text-warning-strong" },
   THIS_WEEK: { label: "This week", pill: "bg-primary-soft text-primary-strong" },
@@ -33,12 +36,12 @@ type AssignmentRowProps = Readonly<{
   now: Date;
 }>;
 
-function formatDueDate(dueAt: string | null): string {
+function formatDueDate(dueAt: string | null, { t, dateLocale }: Translator): string {
   if (dueAt === null) {
-    return "No due date";
+    return t("No due date");
   }
 
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat(dateLocale("en-US"), {
     dateStyle: "medium",
     timeZone: "UTC",
   }).format(new Date(dueAt));
@@ -49,6 +52,8 @@ export function AssignmentRow({
   courseContext,
   now,
 }: AssignmentRowProps) {
+  const i18n = useI18n();
+  const { t } = i18n;
   const dueBucket: AssignmentDueBucket = bucketAssignment(
     assignment.due_at,
     now,
@@ -72,7 +77,7 @@ export function AssignmentRow({
               </p>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
-                Course unavailable
+                {t("Course unavailable")}
               </p>
             )}
           </div>
@@ -80,7 +85,7 @@ export function AssignmentRow({
           <span
             className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", DUE_LOOK[dueBucket].pill)}
           >
-            {DUE_LOOK[dueBucket].label}
+            {t(DUE_LOOK[dueBucket].label)}
           </span>
         </div>
 
@@ -91,7 +96,7 @@ export function AssignmentRow({
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
-          Due: {formatDueDate(assignment.due_at)}
+          {t("Due: {date}", { date: formatDueDate(assignment.due_at, i18n) })}
         </p>
       </article>
     </li>

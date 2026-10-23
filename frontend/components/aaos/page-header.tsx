@@ -1,3 +1,7 @@
+"use client";
+
+import { useI18n } from "@/lib/i18n";
+
 type PageHeaderProps = Readonly<{
   title?: string;
   description?: string;
@@ -6,18 +10,19 @@ type PageHeaderProps = Readonly<{
 
 /** A page's own title. Global search and identity live in the shell's top bar. */
 export function PageHeader({
-  title = "Overview",
-  description = "Your academic workspace",
+  title,
+  description,
   titleAs = "h1",
 }: PageHeaderProps) {
+  const { t } = useI18n();
   const Title = titleAs;
   return (
     <header className="min-w-0">
       <Title className="block text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
-        {title}
+        {title ?? t("Overview")}
       </Title>
       <p className="mt-1 text-sm text-muted-foreground">
-        {description}
+        {description ?? t("Your academic workspace")}
       </p>
     </header>
   );

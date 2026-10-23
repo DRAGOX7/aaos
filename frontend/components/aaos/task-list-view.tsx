@@ -9,24 +9,22 @@ import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { StudyTask } from "@/lib/api/tasks";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { studyTaskListQueryOptions, taskListQueryOptions } from "@/lib/query/tasks";
 
-function statusLabel(status: string): string {
-  return status.replaceAll("_", " ");
-}
-
-const PRIORITY_LABELS: Record<StudyTask["priority"], string> = {
+const PRIORITY_LABELS: Record<StudyTask["priority"], MessageKey> = {
   LOW: "Low priority",
   NORMAL: "Normal priority",
   HIGH: "High priority",
 };
 
 /** Plain words for a task's state; "OPEN" read like a button. */
-export function studyTaskStatusLabel(status: StudyTask["status"]): string {
+export function studyTaskStatusLabel(status: StudyTask["status"]): MessageKey {
   return status === "COMPLETED" ? "Done" : "To do";
 }
 
 function StudyTaskRow({ task }: { task: StudyTask }) {
+  const { t } = useI18n();
   const done = task.status === "COMPLETED";
   return (
     <li
@@ -42,11 +40,11 @@ function StudyTaskRow({ task }: { task: StudyTask }) {
             done ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-strong"
           }`}
         >
-          {studyTaskStatusLabel(task.status)}
+          {t(studyTaskStatusLabel(task.status))}
         </span>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        {PRIORITY_LABELS[task.priority]}
+        {t(PRIORITY_LABELS[task.priority])}
         {task.course_id !== null && task.course_title ? (
           <>
             {" · "}
@@ -65,6 +63,7 @@ function StudyTaskRow({ task }: { task: StudyTask }) {
 }
 
 export function TaskListView() {
+  const { t, status } = useI18n();
   const studyQuery = useQuery(studyTaskListQueryOptions());
   const query = useQuery(taskListQueryOptions());
 
@@ -77,35 +76,35 @@ export function TaskListView() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <PageHeader
-        title="Tasks"
-        description="Your study tasks, and Calendar actions waiting for or done after your approval."
+        title={t("Tasks")}
+        description={t("Your study tasks, and Calendar actions waiting for or done after your approval.")}
       />
       {pending ? (
-        <SectionCard title="Tasks">
-          <div aria-label="Loading tasks" className="space-y-3">
+        <SectionCard title={t("Tasks")}>
+          <div aria-label={t("Loading tasks")} className="space-y-3">
             {Array.from({ length: 3 }, (_, index) => (
               <Skeleton key={index} className="h-24 w-full rounded-lg" />
             ))}
           </div>
         </SectionCard>
       ) : nothing ? (
-        <SectionCard title="Tasks">
+        <SectionCard title={t("Tasks")}>
           <EmptyState
             icon={ListTodo}
-            title="No tasks found."
-            description="Ask AAOS to add one, for example: add a study task: review chapter 2 for AI445."
-            action={{ href: "/ask", label: "Open Ask AAOS" }}
+            title={t("No tasks found.")}
+            description={t("Ask AAOS to add one, for example: add a study task: review chapter 2 for AI445.")}
+            action={{ href: "/ask", label: t("Open Ask AAOS") }}
           />
         </SectionCard>
       ) : (
         <>
           {studyQuery.isError ? (
-            <SectionCard title="Study tasks">
-              <p className="text-sm text-muted-foreground">Study tasks are temporarily unavailable.</p>
+            <SectionCard title={t("Study tasks")}>
+              <p className="text-sm text-muted-foreground">{t("Study tasks are temporarily unavailable.")}</p>
             </SectionCard>
           ) : studyTasks.length > 0 ? (
-            <SectionCard title="Study tasks">
-              <ul aria-label="Study tasks" className="space-y-3">
+            <SectionCard title={t("Study tasks")}>
+              <ul aria-label={t("Study tasks")} className="space-y-3">
                 {studyTasks.map((task) => (
                   <StudyTaskRow key={task.id} task={task} />
                 ))}
@@ -113,14 +112,14 @@ export function TaskListView() {
             </SectionCard>
           ) : null}
           {query.isError ? (
-            <SectionCard title="Calendar actions">
+            <SectionCard title={t("Calendar actions")}>
               <p className="text-sm text-muted-foreground">
-                Task data is temporarily unavailable.
+                {t("Task data is temporarily unavailable.")}
               </p>
             </SectionCard>
           ) : actions.length > 0 ? (
-            <SectionCard title="Calendar actions">
-              <ul aria-label="Tasks" className="space-y-3">
+            <SectionCard title={t("Calendar actions")}>
+              <ul aria-label={t("Tasks")} className="space-y-3">
                 {actions.map((task) => (
                   <li
                     key={task.task_id}
@@ -129,7 +128,7 @@ export function TaskListView() {
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <h3 className="font-medium text-foreground">{task.action.summary}</h3>
                       <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                        {statusLabel(task.status)}
+                        {status(task.status)}
                       </span>
                     </div>
                     <p className="mt-1 text-sm text-muted-foreground">

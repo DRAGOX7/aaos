@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
+import { useI18n } from "@/lib/i18n";
 import { courseListQueryOptions } from "@/lib/query/courses";
 import { assignmentsQueryOptions } from "@/lib/query/academic";
 
@@ -21,6 +22,7 @@ export function AssignmentList({
   courseId,
   now,
 }: AssignmentListProps) {
+  const { t } = useI18n();
   const assignmentQuery = useQuery(assignmentsQueryOptions(courseId));
   const courseQuery = useQuery(courseListQueryOptions());
 
@@ -37,31 +39,31 @@ export function AssignmentList({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <PageHeader
-        title="Assignments"
-        description="Read-only assignment deadlines from your academic workspace."
+        title={t("Assignments")}
+        description={t("Read-only assignment deadlines from your academic workspace.")}
       />
 
-      <SectionCard title="Assignments">
+      <SectionCard title={t("Assignments")}>
         {isPending ? (
-          <div aria-label="Loading assignments" className="space-y-3">
+          <div aria-label={t("Loading assignments")} className="space-y-3">
             {Array.from({ length: 3 }, (_, index) => (
               <Skeleton key={index} className="h-28 w-full rounded-lg" />
             ))}
           </div>
         ) : notFound ? (
-          <p className="text-sm text-muted-foreground">Course not found.</p>
+          <p className="text-sm text-muted-foreground">{t("Course not found.")}</p>
         ) : hasError ? (
           <p className="text-sm text-muted-foreground">
-            Academic data is temporarily unavailable.
+            {t("Academic data is temporarily unavailable.")}
           </p>
         ) : assignmentQuery.data?.assignments.length === 0 ? (
           <EmptyState
             icon={ClipboardList}
-            title="No assignments found."
-            description="Assignments and their deadlines appear here after your next Moodle sync."
+            title={t("No assignments found.")}
+            description={t("Assignments and their deadlines appear here after your next Moodle sync.")}
           />
         ) : (
-          <ul aria-label="Assignments" className="space-y-3">
+          <ul aria-label={t("Assignments")} className="space-y-3">
             {assignmentQuery.data?.assignments.map((assignment) => {
               const course = coursesById.get(assignment.course_id);
 

@@ -50,7 +50,7 @@ describe("AAOS design tokens", () => {
 
   it("uses the locally managed Plus Jakarta Sans font variable", () => {
     expect(css).toContain(
-      "--font-sans: var(--font-jakarta);",
+      "--font-sans: var(--font-jakarta), var(--font-arabic);",
     );
   });
 

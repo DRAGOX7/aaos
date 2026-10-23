@@ -7,6 +7,7 @@ import { DocumentReadiness } from "@/components/aaos/document-readiness";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
+import { useI18n } from "@/lib/i18n";
 import { documentQueryOptions } from "@/lib/query/academic";
 import { parseDocumentRouteId } from "@/lib/routing/route-ids";
 
@@ -15,14 +16,15 @@ type DocumentDetailViewProps = Readonly<{
 }>;
 
 function DocumentDetailQuery({ documentId }: { documentId: number }) {
+  const { t } = useI18n();
   const { data, error, isError, isPending } = useQuery(
     documentQueryOptions(documentId),
   );
 
   if (isPending) {
     return (
-      <SectionCard title="Document">
-        <div aria-label="Loading document">
+      <SectionCard title={t("Document")}>
+        <div aria-label={t("Loading document")}>
           <Skeleton className="h-8 w-2/3" />
           <Skeleton className="mt-6 h-24 w-full" />
         </div>
@@ -35,18 +37,18 @@ function DocumentDetailQuery({ documentId }: { documentId: number }) {
       error instanceof ApiError && error.code === "DOCUMENT_NOT_FOUND";
 
     return (
-      <SectionCard title="Document">
+      <SectionCard title={t("Document")}>
         <p className="text-sm text-muted-foreground">
           {notFound
-            ? "Document not found."
-            : "Academic data is temporarily unavailable."}
+            ? t("Document not found.")
+            : t("Academic data is temporarily unavailable.")}
         </p>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard title="Document">
+    <SectionCard title={t("Document")}>
       <article aria-labelledby="document-detail-title">
         <h1
           id="document-detail-title"
@@ -66,6 +68,7 @@ function DocumentDetailQuery({ documentId }: { documentId: number }) {
  * here, a Word file downloads (browsers cannot display it).
  */
 function DocumentFile({ documentId, title }: { documentId: number; title: string }) {
+  const { t } = useI18n();
   const fileUrl = `/api/v1/documents/${documentId}/file`;
   const word = /\.docx?$/i.test(title.trim());
   return (
@@ -78,15 +81,15 @@ function DocumentFile({ documentId, title }: { documentId: number; title: string
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           <ExternalLink aria-hidden="true" className="size-4" strokeWidth={2} />
-          {word ? "Download file" : "Open file"}
+          {word ? t("Download file") : t("Open file")}
         </a>
         {word ? (
-          <p className="text-sm text-muted-foreground">Word files open in Word after downloading.</p>
+          <p className="text-sm text-muted-foreground">{t("Word files open in Word after downloading.")}</p>
         ) : null}
       </div>
       {word ? null : (
         <iframe
-          title={`${title} preview`}
+          title={t("{title} preview", { title })}
           src={fileUrl}
           className="h-[75vh] min-h-[28rem] w-full rounded-xl border border-border bg-muted"
         />
@@ -96,11 +99,12 @@ function DocumentFile({ documentId, title }: { documentId: number; title: string
 }
 
 export function DocumentDetailView({ documentId }: DocumentDetailViewProps) {
+  const { t } = useI18n();
   if (documentId === null) {
     return (
-      <SectionCard title="Document">
+      <SectionCard title={t("Document")}>
         <p className="text-sm text-muted-foreground">
-          The document link is invalid.
+          {t("The document link is invalid.")}
         </p>
       </SectionCard>
     );

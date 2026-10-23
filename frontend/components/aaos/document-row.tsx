@@ -1,9 +1,12 @@
+"use client";
+
 import Link from "next/link";
 import { FileText } from "lucide-react";
 
 import type { DocumentSummary } from "@/lib/api/academic";
 import { documentSearchState, type SearchTone } from "@/lib/documents/search-state";
 import { documentHref } from "@/lib/documents/source-links";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const TONES: Record<SearchTone, { pill: string; dot: string }> = {
@@ -19,6 +22,7 @@ type DocumentRowProps = Readonly<{
 }>;
 
 export function DocumentRow({ document }: DocumentRowProps) {
+  const { t, tn } = useI18n();
   const state = documentSearchState(document);
   const tone = TONES[state.tone];
   return (
@@ -38,7 +42,7 @@ export function DocumentRow({ document }: DocumentRowProps) {
           </h2>
           {document.page_count !== null ? (
             <p className="mt-0.5 text-[13px] text-muted-foreground">
-              {document.page_count} page{document.page_count === 1 ? "" : "s"}
+              {tn("page", document.page_count)}
             </p>
           ) : null}
         </div>
@@ -49,7 +53,7 @@ export function DocumentRow({ document }: DocumentRowProps) {
           )}
         >
           <span aria-hidden="true" className={cn("size-1.5 rounded-full", tone.dot)} />
-          {state.label}
+          {t(state.label)}
         </span>
       </article>
     </li>

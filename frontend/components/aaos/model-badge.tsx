@@ -26,24 +26,25 @@ import {
   modelKeys,
   modelQueryOptions,
 } from "@/lib/query/model";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type CloudProvider = Exclude<ModelProvider, "lm_studio">;
 
 /** How each cloud option is named, and which company receives the data. */
-const CLOUD: Record<CloudProvider, { name: string; company: string; where: string }> = {
+const CLOUD: Record<CloudProvider, { name: MessageKey; company: string; where: MessageKey }> = {
   gemini: { name: "Gemini", company: "Google", where: "Google's cloud" },
   chatgpt_plan: { name: "ChatGPT plan", company: "OpenAI", where: "OpenAI's cloud, on your ChatGPT plan" },
 };
 
-const BLOCKER_TEXT: Record<NonNullable<ModelStatus["gemini_blocker"]>, string> = {
+const BLOCKER_TEXT: Record<NonNullable<ModelStatus["gemini_blocker"]>, MessageKey> = {
   GEMINI_API_KEY_MISSING:
     "To enable Gemini, set GEMINI_API_KEY in the terminal that runs the AAOS backend, then restart it. The key is never typed into this page.",
   GEMINI_MODEL_MISSING:
     "To enable Gemini, set AAOS_GEMINI_MODEL in the terminal that runs the AAOS backend, then restart it.",
 };
 
-const PLAN_BLOCKER_TEXT: Record<NonNullable<ModelStatus["chatgpt_plan_blocker"]>, string> = {
+const PLAN_BLOCKER_TEXT: Record<NonNullable<ModelStatus["chatgpt_plan_blocker"]>, MessageKey> = {
   CHATGPT_PLAN_SIGN_IN_REQUIRED:
     "To use your ChatGPT plan, run `aaos model chatgpt-plan sign-in` in a terminal, then reopen this panel. Signing in never happens in this page.",
   CHATGPT_PLAN_USAGE_NOT_GRANTED:
@@ -51,7 +52,7 @@ const PLAN_BLOCKER_TEXT: Record<NonNullable<ModelStatus["chatgpt_plan_blocker"]>
   CHATGPT_PLAN_MODEL_MISSING: "Pick a ChatGPT plan model below.",
 };
 
-const FAILURE_TEXT: Record<ModelSwitchFailure, string> = {
+const FAILURE_TEXT: Record<ModelSwitchFailure, MessageKey> = {
   CLOUD_CONFIRMATION_REQUIRED: "Confirm that your data may be sent to the cloud provider first.",
   GEMINI_NOT_READY: "Gemini is not set up in the backend yet.",
   CHATGPT_PLAN_NOT_READY:
@@ -70,6 +71,7 @@ function sortedChoices(listed: string[] | undefined, configured: string | null |
 
 /** Whether answers are produced on this computer or sent to a cloud provider, always visible. */
 export function ModelBadge() {
+  const { t, dir } = useI18n();
   const query = useQuery(modelQueryOptions());
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -108,13 +110,15 @@ export function ModelBadge() {
   const pickedPlan = chosenPlan ?? status.chatgpt_plan_model ?? "";
   const geminiChoices = sortedChoices(geminiList.data, status.gemini_model);
   const planChoices = sortedChoices(planList.data, status.chatgpt_plan_model);
-  const label = active ? `Cloud · ${CLOUD[active].name} · ${status.model}` : `Local · ${status.model}`;
+  const label = active
+    ? `${t("Cloud")} · ${t(CLOUD[active].name)} · ${status.model}`
+    : `${t("Local")} · ${status.model}`;
   const Icon = cloud ? Cloud : HardDrive;
   const failure =
     mutation.error instanceof ModelSwitchError
-      ? FAILURE_TEXT[mutation.error.failure]
+      ? t(FAILURE_TEXT[mutation.error.failure])
       : mutation.error
-        ? FAILURE_TEXT.UNKNOWN
+        ? t(FAILURE_TEXT.UNKNOWN)
         : null;
   const pickedFor = (provider: CloudProvider) =>
     (provider === "gemini" ? pickedGemini : pickedPlan) || undefined;
@@ -137,7 +141,7 @@ export function ModelBadge() {
       <SheetTrigger asChild>
         <button
           type="button"
-          aria-label={`Answering model: ${label}. Change model`}
+          aria-label={t("Answering model: {label}. Change model", { label })}
           title={label}
           className={cn(
             "hidden h-9 max-w-[16rem] items-center gap-2 rounded-full px-3 text-[13px] font-semibold transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex",
@@ -148,13 +152,20 @@ export function ModelBadge() {
           <span className="truncate">{label}</span>
         </button>
       </SheetTrigger>
-      <SheetContent side="right">
+      <SheetContent side={dir === "rtl" ? "left" : "right"}>
         <SheetHeader>
-          <SheetTitle>Answering model</SheetTitle>
+          <SheetTitle>{t("Answering model")}</SheetTitle>
           <SheetDescription>
             {active
-              ? `Answers come from ${CLOUD[active].name} (${status.model}) in ${CLOUD[active].where}. Your questions and excerpts of your course files are sent to ${CLOUD[active].company}.`
-              : `Answers come from the local model (${status.local_model}) on this computer. Nothing is sent anywhere.`}
+              ? t("Answers come from {name} ({model}) in {where}. Your questions and excerpts of your course files are sent to {company}.", {
+                  name: t(CLOUD[active].name),
+                  model: status.model,
+                  where: t(CLOUD[active].where),
+                  company: CLOUD[active].company,
+                })
+              : t("Answers come from the local model ({model}) on this computer. Nothing is sent anywhere.", {
+                  model: status.local_model,
+                })}
           </SheetDescription>
         </SheetHeader>
 
@@ -164,7 +175,7 @@ export function ModelBadge() {
               className="rounded-xl border border-destructive/30 bg-danger-soft p-3 text-sm text-danger-strong"
               role="status"
             >
-              Last problem: {status.last_failure}
+              {t("Last problem: {problem}", { problem: status.last_failure })}
             </p>
           ) : null}
 
@@ -178,7 +189,7 @@ export function ModelBadge() {
               if (cloud) mutation.mutate({ provider: "lm_studio", confirmCloud: false });
             }}
           >
-            <HardDrive aria-hidden="true" /> Local model · {status.local_model}
+            <HardDrive aria-hidden="true" /> {t("Local model")} · {status.local_model}
           </Button>
 
           <Button
@@ -195,9 +206,9 @@ export function ModelBadge() {
 
           {status.gemini_ready ? (
             <label className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-              Gemini model
+              {t("Gemini model")}
               <select
-                aria-label="Gemini model"
+                aria-label={t("Gemini model")}
                 className="h-9 rounded-xl border border-border bg-card px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 disabled={mutation.isPending || geminiList.isPending}
                 value={pickedGemini}
@@ -218,14 +229,14 @@ export function ModelBadge() {
                 ))}
               </select>
               {geminiList.isError ? (
-                <span role="note">The model list could not be loaded; showing the configured model.</span>
+                <span role="note">{t("The model list could not be loaded; showing the configured model.")}</span>
               ) : null}
             </label>
           ) : null}
 
           {!status.gemini_ready && status.gemini_blocker ? (
             <p className="text-sm text-muted-foreground" role="note">
-              {BLOCKER_TEXT[status.gemini_blocker]}
+              {t(BLOCKER_TEXT[status.gemini_blocker])}
             </p>
           ) : null}
 
@@ -238,14 +249,14 @@ export function ModelBadge() {
               if (active !== "chatgpt_plan") setConfirming("chatgpt_plan");
             }}
           >
-            <Cloud aria-hidden="true" /> ChatGPT plan{pickedPlan ? ` · ${pickedPlan}` : ""}
+            <Cloud aria-hidden="true" /> {t("ChatGPT plan")}{pickedPlan ? ` · ${pickedPlan}` : ""}
           </Button>
 
           {planSignedIn ? (
             <label className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-              ChatGPT plan model
+              {t("ChatGPT plan model")}
               <select
-                aria-label="ChatGPT plan model"
+                aria-label={t("ChatGPT plan model")}
                 className="h-9 rounded-xl border border-border bg-card px-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 disabled={mutation.isPending || planList.isPending}
                 value={pickedPlan}
@@ -259,7 +270,7 @@ export function ModelBadge() {
               >
                 {pickedPlan ? null : (
                   <option value="" disabled>
-                    Choose a model
+                    {t("Choose a model")}
                   </option>
                 )}
                 {planChoices.map((name) => (
@@ -269,7 +280,7 @@ export function ModelBadge() {
                 ))}
               </select>
               {planList.isError ? (
-                <span role="note">The ChatGPT plan model list could not be loaded.</span>
+                <span role="note">{t("The ChatGPT plan model list could not be loaded.")}</span>
               ) : null}
             </label>
           ) : null}
@@ -277,7 +288,7 @@ export function ModelBadge() {
           {status.chatgpt_plan_blocker &&
           status.chatgpt_plan_blocker !== "CHATGPT_PLAN_MODEL_MISSING" ? (
             <p className="text-sm text-muted-foreground" role="note">
-              {PLAN_BLOCKER_TEXT[status.chatgpt_plan_blocker]}
+              {t(PLAN_BLOCKER_TEXT[status.chatgpt_plan_blocker])}
             </p>
           ) : null}
 
@@ -288,12 +299,12 @@ export function ModelBadge() {
               className="flex flex-col gap-3 rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm text-warning-strong"
             >
               <p id="cloud-confirm-title" className="font-semibold">
-                Send your data to {CLOUD[confirming].company}?
+                {t("Send your data to {company}?", { company: CLOUD[confirming].company })}
               </p>
               <p>
-                Your questions and the excerpts of your course files used to answer them will be
-                sent to {CLOUD[confirming].company}. AAOS returns to the local model whenever the
-                backend restarts.
+                {t("Your questions and the excerpts of your course files used to answer them will be sent to {company}. AAOS returns to the local model whenever the backend restarts.", {
+                  company: CLOUD[confirming].company,
+                })}
               </p>
               <div className="flex gap-2">
                 <Button
@@ -308,7 +319,7 @@ export function ModelBadge() {
                     })
                   }
                 >
-                  Send my data to {CLOUD[confirming].company}
+                  {t("Send my data to {company}", { company: CLOUD[confirming].company })}
                 </Button>
                 <Button
                   type="button"
@@ -317,7 +328,7 @@ export function ModelBadge() {
                   disabled={mutation.isPending}
                   onClick={() => setConfirming(null)}
                 >
-                  Cancel
+                  {t("Cancel")}
                 </Button>
               </div>
             </div>
@@ -325,7 +336,7 @@ export function ModelBadge() {
 
           {mutation.isPending ? (
             <p className="text-sm text-muted-foreground" role="status">
-              Switching… the first answer afterwards can take a little longer.
+              {t("Switching… the first answer afterwards can take a little longer.")}
             </p>
           ) : null}
           {failure ? (

@@ -15,9 +15,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export function MobileNav() {
+  const { t, dir } = useI18n();
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -25,18 +27,18 @@ export function MobileNav() {
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Open navigation"
+          aria-label={t("Open navigation")}
         >
           <Menu aria-hidden="true" className="size-5" />
         </Button>
       </SheetTrigger>
 
       <SheetContent
-        side="left"
+        side={dir === "rtl" ? "right" : "left"}
         className="w-[18rem] max-w-[88vw] gap-0 p-0"
       >
         <SheetTitle className="sr-only">
-          AAOS navigation
+          {t("AAOS navigation")}
         </SheetTitle>
 
         <div className="flex items-center gap-3 px-6 pb-6 pt-7">
@@ -47,7 +49,7 @@ export function MobileNav() {
               AAOS
             </p>
             <p className="text-xs text-muted-foreground">
-              Academic AI OS
+              {t("Academic AI OS")}
             </p>
           </div>
         </div>
@@ -77,7 +79,7 @@ export function MobileNav() {
                     className="size-[18px] shrink-0"
                     strokeWidth={1.9}
                   />
-                  <span>{item.label}</span>
+                  <span>{t(item.label)}</span>
                 </Link>
               </SheetClose>
             );
