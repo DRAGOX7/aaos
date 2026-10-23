@@ -13,6 +13,7 @@ const LOCAL: ModelStatus = {
   gemini_model: "gemini-test-flash",
   gemini_ready: true,
   gemini_blocker: null,
+  chatgpt_plan_ready: false,
 };
 const CLOUD: ModelStatus = { ...LOCAL, provider: "gemini", model: "gemini-test-flash", cloud: true };
 
@@ -298,5 +299,116 @@ describe("model badge", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("A question is running");
     expect(screen.getByText("Local · qwen/qwen3.5-4b")).toBeInTheDocument();
+  });
+});
+
+describe("ModelBadge with the ChatGPT plan", () => {
+  const SIGNED_IN: ModelStatus = {
+    ...LOCAL,
+    chatgpt_plan_model: "gpt-test",
+    chatgpt_plan_ready: true,
+    chatgpt_plan_blocker: null,
+  };
+  const ON_PLAN: ModelStatus = {
+    ...SIGNED_IN,
+    provider: "chatgpt_plan",
+    model: "gpt-test",
+    cloud: true,
+  };
+
+  function mockPlanApi(initial: ModelStatus, ...switches: Response[]) {
+    let current = initial;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/chatgpt-plan-models")) return json({ models: ["gpt-other", "gpt-test"] });
+      if (url.endsWith("/gemini-models")) return json({ models: ["gemini-test-flash"] });
+      if (init?.method === "POST") {
+        const next = switches.shift();
+        if (!next) throw new Error("unexpected switch request");
+        if (next.ok) current = (await next.clone().json()) as ModelStatus;
+        return next;
+      }
+      return json(current);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return () => fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+  }
+
+  it("says plainly when the ChatGPT plan is answering", async () => {
+    mockPlanApi(ON_PLAN);
+    renderBadge();
+    expect(await screen.findByText("Cloud · ChatGPT plan · gpt-test")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    expect(await screen.findByText(/sent to OpenAI/)).toBeInTheDocument();
+  });
+
+  it("explains the terminal sign-in and offers no way to sign in or type a token here", async () => {
+    mockPlanApi({ ...LOCAL, chatgpt_plan_blocker: "CHATGPT_PLAN_SIGN_IN_REQUIRED" });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    expect(
+      await screen.findByText(/run `aaos model chatgpt-plan sign-in` in a terminal/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^ChatGPT plan/ })).toBeDisabled();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "ChatGPT plan model" })).not.toBeInTheDocument();
+  });
+
+  it("needs a confirmation naming OpenAI before switching, and sends the picked model", async () => {
+    const switchRequests = mockPlanApi(SIGNED_IN, json(ON_PLAN));
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    const picker = await screen.findByRole("combobox", { name: "ChatGPT plan model" });
+    await waitFor(() =>
+      expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "gpt-other",
+        "gpt-test",
+      ]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^ChatGPT plan · gpt-test/ }));
+    expect(await screen.findByText("Send your data to OpenAI?")).toBeInTheDocument();
+    expect(switchRequests()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Send my data to OpenAI" }));
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    const [, init] = switchRequests()[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      provider: "chatgpt_plan",
+      confirm_cloud: true,
+      chatgpt_plan_model: "gpt-test",
+    });
+    expect(await screen.findByText("Cloud · ChatGPT plan · gpt-test")).toBeInTheDocument();
+  });
+
+  it("asks again when moving from Gemini to the ChatGPT plan", async () => {
+    const switchRequests = mockPlanApi({ ...SIGNED_IN, provider: "gemini", model: "gemini-test-flash", cloud: true });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^ChatGPT plan/ }));
+    expect(await screen.findByText("Send your data to OpenAI?")).toBeInTheDocument();
+    expect(switchRequests()).toHaveLength(0);
+  });
+
+  it("changes the plan model at once while already on the plan", async () => {
+    const switchRequests = mockPlanApi(ON_PLAN, json({ ...ON_PLAN, model: "gpt-other", chatgpt_plan_model: "gpt-other" }));
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    const picker = await screen.findByRole("combobox", { name: "ChatGPT plan model" });
+    await waitFor(() => expect(within(picker).getAllByRole("option")).toHaveLength(2));
+    fireEvent.change(picker, { target: { value: "gpt-other" } });
+    await waitFor(() => expect(switchRequests()).toHaveLength(1));
+    expect(JSON.parse(String(switchRequests()[0][1]?.body))).toEqual({
+      provider: "chatgpt_plan",
+      confirm_cloud: true,
+      chatgpt_plan_model: "gpt-other",
+    });
+    expect(await screen.findByText("Cloud · ChatGPT plan · gpt-other")).toBeInTheDocument();
+  });
+
+  it("explains a refused switch when the plan is not signed in", async () => {
+    mockPlanApi(SIGNED_IN, json({ error: { code: "CHATGPT_PLAN_NOT_READY", message: "x" } }, 409));
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^ChatGPT plan · gpt-test/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send my data to OpenAI" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sign in first");
   });
 });

@@ -31,3 +31,18 @@ def test_public_release_scan_flags_sensitive_paths_without_leaking_values(tmp_pa
     assert report.model_weight_findings >= 1
     assert "sentinel" not in report.to_dict()
     assert report.raw_matches == ()
+
+
+def test_public_release_scan_flags_a_saved_sign_in_and_a_bare_jwt(tmp_path: Path) -> None:
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "plan.json").write_text(
+        '{"tokens": {"refresh_token": "rt-sentinel-0123456789abcdefghij"}}', encoding="utf-8"
+    )
+    (notes / "token.txt").write_text(
+        "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzZW50aW5lbCJ9.c2lnbmF0dXJlLXNlbnRpbmVs", encoding="utf-8"
+    )
+    report = scan_public_release(tmp_path)
+    assert report.secret_findings == 2
+    assert "sentinel" not in str(report.to_dict())
+    assert report.raw_matches == ()

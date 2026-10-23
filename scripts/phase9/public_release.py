@@ -12,6 +12,12 @@ DemoLabel = Literal["REAL_LOCAL_BEHAVIOR", "DETERMINISTIC_FAKE_BEHAVIOR", "SYNTH
 _SECRET_PATTERN = re.compile(
     rb"(?i)(?:client_secret|access_token|refresh_token|private_key|authorization)\s*[:=]"
 )
+# A token stored as JSON ("refresh_token": "<long value>") and a bare JWT (an ID token,
+# for one): the shapes a saved sign-in takes, which the pattern above does not see.
+_STORED_TOKEN_PATTERN = re.compile(
+    rb'(?i)"(?:access_token|refresh_token|id_token|client_secret)"\s*:\s*"[^"\s]{20,}"'
+)
+_JWT_PATTERN = re.compile(rb"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
 _PRIVATE_PATH_PARTS = frozenset({"university", "private", "personal"})
 _MODEL_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".pt", ".pth", ".bin"})
 _TEMP_SUFFIXES = frozenset({".har", ".netlog", ".trace", ".png", ".jpg", ".jpeg"})
@@ -179,7 +185,11 @@ def scan_public_release(repo_root: Path) -> PublicReleaseReport:
             payload = path.read_bytes()
         except OSError:
             continue
-        if _SECRET_PATTERN.search(payload):
+        if (
+            _SECRET_PATTERN.search(payload)
+            or _STORED_TOKEN_PATTERN.search(payload)
+            or _JWT_PATTERN.search(payload)
+        ):
             secret += 1
     return PublicReleaseReport(len(paths), secret, private, database, weights, temporary)
 

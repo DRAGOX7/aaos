@@ -1679,7 +1679,7 @@
       },
       "ModelOptionsResponse": {
         "additionalProperties": false,
-        "description": "The Gemini chat models the configured key can use. Names only.",
+        "description": "The models a cloud provider offers (Gemini key or ChatGPT plan). Names only.",
         "properties": {
           "models": {
             "items": {
@@ -1700,6 +1700,18 @@
         "additionalProperties": false,
         "description": "Closed request to change the answering model; the browser never sends a key.",
         "properties": {
+          "chatgpt_plan_model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chatgpt Plan Model"
+          },
           "confirm_cloud": {
             "default": false,
             "title": "Confirm Cloud",
@@ -1720,7 +1732,8 @@
           "provider": {
             "enum": [
               "lm_studio",
-              "gemini"
+              "gemini",
+              "chatgpt_plan"
             ],
             "title": "Provider",
             "type": "string"
@@ -1734,8 +1747,41 @@
       },
       "ModelStatusResponse": {
         "additionalProperties": false,
-        "description": "Which model answers now. Names only: the Gemini API key never appears here.",
+        "description": "Which model answers now. Names only: no Gemini API key or ChatGPT token appears here.",
         "properties": {
+          "chatgpt_plan_blocker": {
+            "anyOf": [
+              {
+                "enum": [
+                  "CHATGPT_PLAN_SIGN_IN_REQUIRED",
+                  "CHATGPT_PLAN_USAGE_NOT_GRANTED",
+                  "CHATGPT_PLAN_MODEL_MISSING"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chatgpt Plan Blocker"
+          },
+          "chatgpt_plan_model": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chatgpt Plan Model"
+          },
+          "chatgpt_plan_ready": {
+            "default": false,
+            "title": "Chatgpt Plan Ready",
+            "type": "boolean"
+          },
           "cloud": {
             "title": "Cloud",
             "type": "boolean"
@@ -1796,7 +1842,8 @@
           "provider": {
             "enum": [
               "lm_studio",
-              "gemini"
+              "gemini",
+              "chatgpt_plan"
             ],
             "title": "Provider",
             "type": "string"
@@ -3809,7 +3856,7 @@
         "summary": "Get Model"
       },
       "post": {
-        "description": "Switch between the local model and Gemini (cloud needs confirmation).",
+        "description": "Switch between the local model and a cloud model (cloud needs confirmation).",
         "operationId": "select_model_api_v1_model_post",
         "requestBody": {
           "content": {
@@ -3844,6 +3891,25 @@
           }
         },
         "summary": "Select Model"
+      }
+    },
+    "/api/v1/model/chatgpt-plan-models": {
+      "get": {
+        "description": "The models the signed-in ChatGPT plan offers (names only).",
+        "operationId": "get_chatgpt_plan_models_api_v1_model_chatgpt_plan_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Chatgpt Plan Models"
       }
     },
     "/api/v1/model/gemini-models": {

@@ -229,6 +229,28 @@ Google asks (never on a daily limit, and never more than 30 s at a time) and ret
 example `7`) to leave that many seconds between requests; the default is no spacing, which suits a paid
 key. `scripts/gemini_probe.py` sends one request per format AAOS uses and reports each in safe words.
 
+**Optional: answer with your ChatGPT plan (Phase 11).** Also off by default, and the same privacy
+change, with OpenAI instead of Google: your questions and the course excerpts used to answer them
+are sent to OpenAI, and the usage counts against your ChatGPT Plus or Pro plan through OpenAI's
+**Sign in with ChatGPT**. It is a plain model call, not the Codex CLI: no tools, and only AAOS's own
+prompt. Sign in once, in a terminal (never in the page):
+
+```powershell
+..\aaos\.venv\Scripts\aaos.exe model chatgpt-plan sign-in
+```
+
+Your browser opens an OpenAI page. Allow AAOS to use your plan, and the sign-in is saved in an
+owner-only file outside the repository (`%LOCALAPPDATA%\AAOS\credentials\chatgpt-plan.json`; set
+`AAOS_CHATGPT_PLAN_CREDENTIAL_PATH` to move it). `aaos model chatgpt-plan status` shows the state
+without contacting OpenAI, and `aaos model chatgpt-plan sign-out` revokes and removes the tokens.
+Then pick **ChatGPT plan** and a model in the model panel (it asks for confirmation, also when you
+come from Gemini), or start the backend with `AAOS_MODEL_PROVIDER=chatgpt_plan` and
+`AAOS_CHATGPT_PLAN_MODEL=<model>`. Set a weekly limit for AAOS at
+<https://chatgpt.com/settings/usage>; when the plan limit is reached, AAOS stops and says so, and
+OpenAI never moves the request to paid billing. The preview ignores `temperature`, so answers can
+differ slightly from run to run. `scripts/chatgpt_plan_probe.py` reports, in safe words, which
+request shapes your plan accepts.
+
 **Connect Moodle and index your files** (from the data folder):
 
 ```powershell
@@ -290,7 +312,7 @@ The authoritative record is [`docs/GOVERNANCE_LEDGER.md`](docs/GOVERNANCE_LEDGER
 - Phase 8: **FROZEN** at `phase-08-passed`.
 - Phase 9: **FROZEN** at `phase-09-passed`.
 - Phase 10: **FROZEN** at `phase-10-passed` (human-accepted 2026-10-23): Telegram notifications are merged and in use. The replay of real snapshot history named in the acceptance gate is not recorded and is listed as a known limitation.
-- Phase 11: **AUTHORIZED**, spec approved (2026-10-23): an optional cloud model that uses your ChatGPT plan through Sign in with ChatGPT. Nothing is built yet.
+- Phase 11: **IMPLEMENTED** (2026-10-23), acceptance pending: an optional cloud model that uses your ChatGPT plan through Sign in with ChatGPT. Not yet tried against OpenAI: the first sign-in and the probe need the owner present.
 
 ## Documentation
 

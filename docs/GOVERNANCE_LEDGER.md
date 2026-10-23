@@ -103,7 +103,7 @@ and gates.
 | Phase 9 | PASSED / FROZEN by whole-phase human acceptance; Tasks 0–9 HUMAN_ACCEPTED; freeze tag `phase-09-passed` targets the final governance commit | Release qualification is accepted with the recorded non-blocking limitations; no Phase 10 or RLM authority follows |
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
-| Phase 11 | AUTHORIZED on 2026-10-23; spec APPROVED on 2026-10-23 with defaults D1–D7 (`docs/superpowers/specs/2026-10-23-phase-11-chatgpt-plan-model.md`) | Implementation not started, at the owner's request; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 authorization" and "Phase 11 spec approval" (2026-10-23) |
+| Phase 11 | AUTHORIZED and spec APPROVED on 2026-10-23 (defaults D1–D7); IMPLEMENTED / VERIFIED by automated tests on 2026-10-23 (4,492 backend, 288 frontend; fake transports only) | Not accepted: the first real sign-in, the 11C probe, the §10 evaluation and human acceptance need the owner present; Phase 0 and Phase 5 gates stay deferred; see "Phase 11 implementation status (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -644,3 +644,40 @@ separately at the end of this section.
     it also needs the owner's consent at the time of the run.
 - **Unchanged:** the Phase 0 and Phase 5 gates stay deferred. The not-authorized
   list in the Phase 11 authorization still applies.
+
+## Phase 11 implementation status (2026-10-23)
+
+- **Instruction:** the owner asked to "finish all phase 11". This entry records
+  how far that could go without the owner present.
+- **Implemented on `feat/phase-11-chatgpt-plan`:**
+  - **11A:** configuration (`chatgpt_plan` provider, `AAOS_CHATGPT_PLAN_MODEL`) and
+    the owner-only credential store (`src/aaos/inference/chatgpt_plan_credentials.py`).
+  - **11B:** the CLI-only sign-in (`chatgpt_plan_signin.py`, `chatgpt_plan_cli.py`,
+    `aaos model chatgpt-plan sign-in | status | sign-out`).
+  - **11C:** the probe script `scripts/chatgpt_plan_probe.py`. It has not been run.
+  - **11D:** `ChatGPTPlanGateway` (`chatgpt_plan.py`) and the RAG wiring.
+  - **11E:** the selection rules (including D5), additive contracts, the route
+    `GET /model/chatgpt-plan-models`, the model panel, and the regenerated
+    OpenAPI file and types.
+  - **Release scan:** `scripts/phase9/public_release.py` also flags stored tokens
+    and bare JWTs.
+  - **Dependency:** `pyjwt[crypto]==2.15.1` (D3).
+- **Order:** 11D was built before the probe, against D4's order, because the owner
+  asked for all of Phase 11. The gateway falls back step by step, and spec §14
+  records this.
+- **Verification on 2026-10-23 (Docker running):**
+  - full backend suite: 4,492 passed, 6 skipped, 1 warning, 0 failed (95 new tests);
+  - frontend suite: 51 files, 288 tests passed;
+  - `tsc --noEmit` clean; ESLint has 0 errors and the 2 earlier warnings;
+  - ruff check and format clean on the changed files; mypy clean on the changed
+    modules;
+  - a browser check of the model panel against the real backend: the ChatGPT plan
+    option shows the terminal sign-in note, with no console errors.
+  - All automated tests use fake transports. No real OpenAI call was made.
+- **Status:** IMPLEMENTED / VERIFIED by automated tests. **Not accepted.** These
+  need the owner present:
+  1. the first real sign-in (`aaos model chatgpt-plan sign-in`);
+  2. the 11C probe, with its findings recorded in spec §13;
+  3. the §10 evaluation: at least three runs of the Phase I4 answer evaluation.
+     It sends real course excerpts to OpenAI, so it needs consent at the time.
+  4. whole-phase human acceptance.

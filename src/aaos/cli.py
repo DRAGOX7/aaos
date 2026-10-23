@@ -48,6 +48,10 @@ def main() -> int:
         from aaos.notifications.cli import run_notify_command
 
         return run_notify_command(sys.argv[2:])
+    if sys.argv[1:3] == ["model", "chatgpt-plan"]:
+        from aaos.inference.chatgpt_plan_cli import run_chatgpt_plan_command
+
+        return run_chatgpt_plan_command(sys.argv[3:])
     if sys.argv[1:2] == ["monitor"]:
         from aaos.notifications.cli import run_monitor_command
 

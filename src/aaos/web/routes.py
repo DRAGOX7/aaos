@@ -80,38 +80,50 @@ _MODEL_SELECTION_FAILURES = {
     "CLOUD_CONFIRMATION_REQUIRED": (
         422,
         "CLOUD_CONFIRMATION_REQUIRED",
-        "Confirm that your questions and file excerpts may be sent to Google.",
+        "Confirm that your questions and file excerpts may be sent to the cloud provider.",
     ),
     "GEMINI_NOT_READY": (
         409,
         "GEMINI_NOT_READY",
         "Gemini is not set up in the backend's environment yet.",
     ),
+    "CHATGPT_PLAN_NOT_READY": (
+        409,
+        "CHATGPT_PLAN_NOT_READY",
+        "Sign in first: run 'aaos model chatgpt-plan sign-in' in a terminal.",
+    ),
     "MODEL_BUSY": (409, "MODEL_BUSY", "A question is running. Try again when it has finished."),
     "MODEL_SWITCH_FAILED": (500, "MODEL_SWITCH_FAILED", "AAOS could not switch the model."),
     "INVALID_MODEL": (
         422,
         "INVALID_MODEL",
-        "That is not one of the Gemini models your key can use.",
+        "That is not one of the models available to you.",
     ),
     "MODEL_LIST_FAILED": (
         503,
         "MODEL_LIST_FAILED",
-        "AAOS could not get the list of Gemini models.",
+        "AAOS could not get the list of models.",
     ),
 }
 
 
 class ModelSelectionPort(Protocol):
-    """Which model answers, and the guarded switch between local and Gemini."""
+    """Which model answers, and the guarded switch between local and the cloud models."""
 
     def status(self) -> ModelStatus: ...
 
     async def switch(
-        self, provider: str, *, confirm_cloud: bool = False, gemini_model: str | None = None
+        self,
+        provider: str,
+        *,
+        confirm_cloud: bool = False,
+        gemini_model: str | None = None,
+        chatgpt_plan_model: str | None = None,
     ) -> ModelStatus: ...
 
     async def gemini_models(self) -> tuple[str, ...]: ...
+
+    async def chatgpt_plan_models(self) -> tuple[str, ...]: ...
 
 
 class DocumentFileReader(Protocol):
@@ -546,6 +558,9 @@ def create_api_v1_router(
                 gemini_ready=status.gemini_ready,
                 gemini_blocker=status.gemini_blocker,
                 last_failure=status.last_failure,
+                chatgpt_plan_model=status.chatgpt_plan_model,
+                chatgpt_plan_ready=status.chatgpt_plan_ready,
+                chatgpt_plan_blocker=status.chatgpt_plan_blocker,
             )
 
         @router.get("/model", response_model=ModelStatusResponse)
@@ -562,9 +577,18 @@ def create_api_v1_router(
                 http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]
                 raise Phase7ApiError(http_status, code, message) from None
 
+        @router.get("/model/chatgpt-plan-models", response_model=ModelOptionsResponse)
+        async def get_chatgpt_plan_models() -> ModelOptionsResponse:
+            """The models the signed-in ChatGPT plan offers (names only)."""
+            try:
+                return ModelOptionsResponse(models=await model_selection.chatgpt_plan_models())
+            except ModelSelectionError as error:
+                http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]
+                raise Phase7ApiError(http_status, code, message) from None
+
         @router.post("/model", response_model=ModelStatusResponse)
         async def select_model(request: Request, body: ModelSelectRequest) -> ModelStatusResponse:
-            """Switch between the local model and Gemini (cloud needs confirmation)."""
+            """Switch between the local model and a cloud model (cloud needs confirmation)."""
             try:
                 enforce_mutation_fence(
                     host=request.headers.get("host"),
@@ -582,6 +606,7 @@ def create_api_v1_router(
                     body.provider,
                     confirm_cloud=body.confirm_cloud,
                     gemini_model=body.gemini_model,
+                    chatgpt_plan_model=body.chatgpt_plan_model,
                 )
             except ModelSelectionError as error:
                 http_status, code, message = _MODEL_SELECTION_FAILURES[error.code]
