@@ -104,6 +104,7 @@ and gates.
 | Optional Gemini cloud model (outside the phase sequence) | IMPLEMENTED; HUMAN_APPROVED by the owner on 2026-10-23 as built; VERIFIED on 2026-10-23 by a mock-transport test re-run (see "Verification re-run (2026-10-23)"). Merged to `main` on 2026-10-04 without a recorded authorization and recorded retroactively. Not verified against the live Gemini API | Off by default; touches frozen Phase 4 and Phase 7 code (see the 2026-10-23 record); no Phase 11 authority follows |
 | Phase 10 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-10-passed` targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade` | Accepted with two KNOWN_LIMITATIONs: no recorded 10E real-history replay (still open), and no test re-run on the acceptance day (closed by the re-run later on 2026-10-23); Phase 0 and Phase 5 gates stay deferred; no Phase 11 authority follows |
 | Phase 11 | PASSED / FROZEN by whole-phase human acceptance on 2026-10-23; freeze tag `phase-11-passed` targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1` (accepted boundary `b69e0f98`) | The local model stays the default; known limitations and the not-authorized list are recorded in "Phase 11 whole-phase acceptance (2026-10-23)"; Phase 0 and Phase 5 gates stay deferred; no Phase 12 authority follows |
+| Phase 12 | AUTHORIZED on 2026-10-23 for specification and, after spec approval, implementation | Not started; Phase 0 and Phase 5 gates stay deferred; see "Phase 12 authorization (2026-10-23)" |
 
 ### Agentic AAOS A–H frozen evaluation baseline (2026-09-28)
 
@@ -768,3 +769,31 @@ separately at the end of this section.
   Codex login, no model-side tools, no hosted or multi-user use, no change of
   default model and no other provider.
 - **No new authority:** this acceptance authorizes no Phase 12 or other work.
+
+## Phase 12 authorization (2026-10-23)
+
+- **Authorization:** the owner authorized Phase 12, everyday Calendar proposals
+  and approvals, on 2026-10-23: "I authorize Phase 12 (everyday Calendar
+  proposals and approvals) based on the design note."
+- **Basis:** the design note `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md` (commit `48ce6d2d`). Phase 11 is PASSED /
+  FROZEN at `phase-11-passed`.
+- **Deferred gates:** the open Phase 0 (0G/0H) and Phase 5 (Slice 6) gates stay
+  deferred, not resolved, at the owner's instruction.
+- **Relation to frozen phases:** Phase 12 composes the frozen Phase 6A/6B
+  approval and Calendar parts and the Phase 7E approval routes and cards. It
+  does not reopen them. Phase 6B's single real `CREATE` remains evidence, not
+  standing authority. Any change to a frozen contract needs its own recorded
+  amendment.
+- **Authorized now:** writing the Phase 12 spec and plan from the design note.
+  Coding has not started, at the owner's instruction.
+- **Authorized only after the owner approves the spec:** implementation, and the
+  owner-present real checks in the Phase 12 gate (one approved and one rejected
+  proposal on the dedicated calendar).
+- **Not authorized:**
+  - standing or automatic approval;
+  - update, delete, invite or attendee actions;
+  - writes to the owner's primary calendar;
+  - OAuth user sign-in;
+  - remote or multi-user use;
+  - any other external write.
+- **Acceptance gate:** as listed under Phase 12 in `docs/PHASES.md`.

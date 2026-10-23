@@ -1,7 +1,8 @@
 # Everyday Calendar proposals and approvals — design note
 
-**Status:** PROPOSAL / NOT AUTHORIZED. Design only; no code. Nothing here may be
-implemented until the owner authorizes it as a phase (see §6).
+**Status:** Basis for Phase 12, which the owner authorized on 2026-10-23 (see
+`docs/GOVERNANCE_LEDGER.md`, "Phase 12 authorization"). This is a design note,
+not the spec. Implementation waits for the owner to approve the Phase 12 spec.
 
 **Date:** 2026-10-23
 

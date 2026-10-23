@@ -45,6 +45,7 @@ terminology, not evidence of a freeze tag.
 - Phase 9 — **PASSED / FROZEN** by whole-phase human acceptance; Tasks 0–9 are **HUMAN_ACCEPTED** and the annotated `phase-09-passed` tag targets the final governance commit.
 - Phase 10 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-10-passed` tag targets the acceptance commit `2dfb0fac46c0f1e341556d90759dc9ebf39a5ade`: Moodle change notifications via Telegram. Authorized by the owner on 2026-10-02 with the Phase 0 and Phase 5 gates explicitly deferred. Accepted with two known limitations recorded in the ledger: no real-history replay (10E), which is still open, and no test re-run on the acceptance day, which was closed by the 2026-10-23 re-run (62 notification tests passed). Plan: `docs/superpowers/plans/2026-10-02-phase-10-moodle-change-notifications.md`.
 - Phase 11 — **PASSED / FROZEN** by whole-phase human acceptance on 2026-10-23; the annotated `phase-11-passed` tag targets the acceptance commit `6d49a0effb35046d412bcea8f94a1f93b6337fa1`: optional ChatGPT-plan cloud model through Sign in with ChatGPT. Authorized and spec approved on 2026-10-23 (defaults D1–D7), with the Phase 0 and Phase 5 gates still deferred. Evaluation: 86/96 against the local model's 78/96, unanswerable 8/8 (`docs/evaluations/phase11-chatgpt-plan-evaluation-2026-10-23.md`). The local model stays the default. Design note: `docs/superpowers/specs/2026-10-23-chatgpt-plan-model-gateway-design.md`.
+- Phase 12 — **AUTHORIZED / SPECIFICATION IN PROGRESS**: everyday Calendar proposals and approvals (opt-in, off by default). Authorized by the owner on 2026-10-23, with the Phase 0 and Phase 5 gates still deferred. No implementation until the owner approves the spec. Design note: `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md`.
 
 Outside the phase sequence:
 
@@ -652,4 +653,36 @@ Let the owner's ChatGPT Plus/Pro plan answer AAOS model requests through OpenAI'
 - The local model remains the default, and moving to the cloud model needs confirmation.
 - Plan-limit and signed-out states fail clearly and never fall back to paid billing.
 - The frozen Phase I4 answer evaluation runs at least three times on the ChatGPT-plan model, with the results recorded beside the local model's.
+- All earlier gates still pass.
+
+## PHASE 12 — Everyday Calendar Proposals and Approvals
+
+**Current status: AUTHORIZED / SPECIFICATION IN PROGRESS.** The owner authorized Phase 12 on 2026-10-23. The open Phase 0 and Phase 5 gates stay deferred. Implementation begins only after the owner approves the spec.
+
+Design note: `docs/superpowers/specs/2026-10-23-everyday-calendar-approvals-design.md`.
+
+### Purpose
+
+Let the app the owner runs every day propose Google Calendar events in Ask AAOS, and write each one only after the owner approves it in the dashboard. It reuses the frozen Phase 6A/6B approval and Calendar parts and the Phase 7E Approve and Reject controls without changing them.
+
+### Core work
+
+- **Configuration:** opt-in and off by default.
+  - `AAOS_CALENDAR_PROPOSALS=on`.
+  - The approver identity through `AAOS_LOCAL_APPROVER_IDENTITY` and `AAOS_LOCAL_APPROVER_CONTEXT_ID`, the names in the Phase 7E amendment.
+  - The dedicated calendar ID, service identity and credential path.
+  - A partial configuration fails closed at startup.
+- **Credentials:** the existing Google service-account key, outside the repository and confined to the Calendar client factory. Writes go only to a dedicated calendar shared with that account, never `primary`.
+- **Composition:** the served app builds the Calendar proposal service, the executor and the local principal provider only when the configuration is complete.
+- **Flow:** proposal → owner approval → claim → one `CREATE_EVENT` → reconciliation, through the existing paths.
+  - `UNKNOWN_OUTCOME` stays honest.
+  - Reject writes nothing.
+
+### Acceptance gate
+
+- No Calendar write without a recorded human approval, and no standing or automatic approval.
+- `CREATE_EVENT` only, and only to the configured dedicated calendar.
+- No credential or approver value in Git, logs, the browser, model context or approval, action and event records.
+- Off by default: with the switch unset, the served app behaves exactly as before.
+- With the owner present: one proposal approved end to end into the dedicated calendar, and one rejected.
 - All earlier gates still pass.
