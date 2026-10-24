@@ -9,9 +9,9 @@ It syncs your courses read-only, answers questions from your own course files wi
 keeps your study tasks, and tells you on Telegram when something changes.
 By default everything runs on your machine; an optional Gemini cloud model can be switched on from the app. The AI model proposes; trusted code decides.
 
-<a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-preview.gif" alt="AAOS demo: kinetic opening, then the Ask page answering in English and Arabic with sources" width="720"></a>
+<a href="docs/media/aaos-demo.mp4"><img src="docs/media/aaos-demo-preview.gif" alt="AAOS demo: kinetic opening, then the Ask page answering with sources in English, then in Arabic with the interface in Arabic" width="720"></a>
 
-**▶ [Watch the full 51-second demo with sound](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover.
+**▶ [Watch the full 62-second demo with sound](docs/media/aaos-demo.mp4)** — real recordings of AAOS, with voiceover: answers with sources in English and Arabic, study tasks, Calendar events you approve, the dark theme and Arabic interface, and Telegram alerts.
 
 </div>
 
