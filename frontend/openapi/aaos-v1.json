@@ -1338,6 +1338,52 @@
         "title": "CalendarProposalView",
         "type": "object"
       },
+      "ChatGPTPlanUsageView": {
+        "additionalProperties": false,
+        "description": "AAOS's own ChatGPT-plan use since the backend started (OpenAI reports no remainder).",
+        "properties": {
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "limit_reached_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit Reached At"
+          },
+          "output_tokens": {
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "replies": {
+            "minimum": 0.0,
+            "title": "Replies",
+            "type": "integer"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "replies",
+          "input_tokens",
+          "output_tokens"
+        ],
+        "title": "ChatGPTPlanUsageView",
+        "type": "object"
+      },
       "CourseListResponse": {
         "additionalProperties": false,
         "description": "Browser-safe course collection response.",
@@ -1783,6 +1829,16 @@
             "default": false,
             "title": "Chatgpt Plan Ready",
             "type": "boolean"
+          },
+          "chatgpt_plan_usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatGPTPlanUsageView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cloud": {
             "title": "Cloud",

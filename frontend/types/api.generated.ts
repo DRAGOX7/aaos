@@ -801,6 +801,25 @@ export interface components {
             timezone: string;
         };
         /**
+         * ChatGPTPlanUsageView
+         * @description AAOS's own ChatGPT-plan use since the backend started (OpenAI reports no remainder).
+         */
+        ChatGPTPlanUsageView: {
+            /** Input Tokens */
+            input_tokens: number;
+            /** Limit Reached At */
+            limit_reached_at?: string | null;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Replies */
+            replies: number;
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+        };
+        /**
          * CourseListResponse
          * @description Browser-safe course collection response.
          */
@@ -972,6 +991,7 @@ export interface components {
              * @default false
              */
             chatgpt_plan_ready: boolean;
+            chatgpt_plan_usage?: components["schemas"]["ChatGPTPlanUsageView"] | null;
             /** Cloud */
             cloud: boolean;
             /** Gemini Blocker */

@@ -25,6 +25,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Literal
 
 from aaos.config import (
@@ -35,6 +36,8 @@ from aaos.config import (
     MODEL_PROVIDERS,
     AppSettings,
 )
+
+from .models import TokenUsage
 
 GeminiBlocker = Literal["GEMINI_API_KEY_MISSING", "GEMINI_MODEL_MISSING"]
 ChatGPTPlanBlocker = Literal[
@@ -63,6 +66,23 @@ class ModelSelectionError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class ChatGPTPlanUsage:
+    """What AAOS itself has used of the ChatGPT plan since this process started.
+
+    OpenAI reports no remaining allowance (the 2026-10-24 header probe found none), so
+    this counts only AAOS's own completed replies; the plan's real limit is shown at
+    chatgpt.com/settings/usage.
+    """
+
+    since: datetime
+    replies: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # When a request last failed on the plan's usage limit; cleared by the next reply.
+    limit_reached_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelStatus:
     """What is answering, and whether the other option could be switched to."""
 
@@ -78,6 +98,7 @@ class ModelStatus:
     chatgpt_plan_model: str | None = None
     chatgpt_plan_ready: bool = False
     chatgpt_plan_blocker: ChatGPTPlanBlocker | None = None
+    chatgpt_plan_usage: ChatGPTPlanUsage | None = None
 
 
 Listener = Callable[[], Awaitable[None]]
@@ -118,6 +139,7 @@ class ModelSelection:
         self._listeners: list[Listener] = []
         self._active = 0
         self._last_failure: str | None = None
+        self._chatgpt_plan_usage = ChatGPTPlanUsage(since=datetime.now(UTC))
         self._select_lock = asyncio.Lock()
         self._gate = asyncio.Event()
         self._gate.set()
@@ -189,6 +211,7 @@ class ModelSelection:
             chatgpt_plan_model=chatgpt_plan_model,
             chatgpt_plan_ready=chatgpt_plan_blocker is None,
             chatgpt_plan_blocker=chatgpt_plan_blocker,
+            chatgpt_plan_usage=self._chatgpt_plan_usage,
         )
 
     def effective_settings(self) -> AppSettings:
@@ -215,10 +238,25 @@ class ModelSelection:
         """Remember the last model problem for the page; only safe characters are kept."""
         cleaned = re.sub(r"[^A-Za-z0-9_ .:=()/-]", "", summary).strip()[:200]
         self._last_failure = cleaned or None
+        if "PLAN_LIMIT_REACHED" in cleaned:
+            self._chatgpt_plan_usage = replace(
+                self._chatgpt_plan_usage, limit_reached_at=datetime.now(UTC)
+            )
 
     def record_success(self) -> None:
         """A model call worked: the earlier problem no longer describes the situation."""
         self._last_failure = None
+
+    def record_chatgpt_plan_usage(self, usage: TokenUsage | None) -> None:
+        """Add one completed ChatGPT-plan reply (token counts when OpenAI reported them)."""
+        current = self._chatgpt_plan_usage
+        self._chatgpt_plan_usage = replace(
+            current,
+            replies=current.replies + 1,
+            input_tokens=current.input_tokens + (usage.input_tokens if usage else 0),
+            output_tokens=current.output_tokens + (usage.output_tokens if usage else 0),
+            limit_reached_at=None,
+        )
 
     async def gemini_models(self) -> tuple[str, ...]:
         """The chat models the Gemini key can use, fetched on demand and kept for 5 minutes."""

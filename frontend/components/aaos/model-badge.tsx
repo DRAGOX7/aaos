@@ -65,6 +65,66 @@ const FAILURE_TEXT: Record<ModelSwitchFailure, MessageKey> = {
   UNKNOWN: "AAOS could not switch the model. Nothing was changed.",
 };
 
+const USAGE_PAGE = "https://chatgpt.com/settings/usage";
+// Western digits in both languages, like the dates (see lib/i18n).
+const COUNT = new Intl.NumberFormat("en");
+
+function formatTime(value: string, locale: string | undefined): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+/**
+ * What AAOS itself has used of the ChatGPT plan since the backend started. OpenAI does
+ * not report what is left, so the real remainder is a link to OpenAI's usage page.
+ */
+function PlanUsage({ usage }: { usage: NonNullable<ModelStatus["chatgpt_plan_usage"]> }) {
+  const { t, dateLocale } = useI18n();
+  const total = usage.input_tokens + usage.output_tokens;
+  return (
+    <section
+      aria-label={t("ChatGPT plan use by AAOS")}
+      className="flex flex-col gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm"
+    >
+      <p className="font-semibold text-foreground">{t("ChatGPT plan use by AAOS")}</p>
+      {usage.limit_reached_at ? (
+        <p className="rounded-lg bg-danger-soft p-2 text-danger-strong" role="status">
+          {t("Your ChatGPT plan limit for AAOS was reached at {time}. ChatGPT plan answers will fail until it resets.", {
+            time: formatTime(usage.limit_reached_at, dateLocale(undefined)),
+          })}
+        </p>
+      ) : null}
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dt className="text-muted-foreground">{t("Replies")}</dt>
+        <dd className="font-medium text-foreground">{COUNT.format(usage.replies)}</dd>
+        <dt className="text-muted-foreground">{t("Tokens")}</dt>
+        <dd className="font-medium text-foreground">
+          {t("{total} ({input} in, {output} out)", {
+            total: COUNT.format(total),
+            input: COUNT.format(usage.input_tokens),
+            output: COUNT.format(usage.output_tokens),
+          })}
+        </dd>
+      </dl>
+      <p className="text-xs text-muted-foreground">
+        {t("Counted since the backend started at {time}.", {
+          time: formatTime(usage.since, dateLocale(undefined)),
+        })}{" "}
+        {t("OpenAI does not tell AAOS how much of your plan is left.")}{" "}
+        <a
+          href={USAGE_PAGE}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-primary-strong underline-offset-4 hover:underline"
+        >
+          {t("See what's left on chatgpt.com")}
+        </a>
+      </p>
+    </section>
+  );
+}
+
 function sortedChoices(listed: string[] | undefined, configured: string | null | undefined) {
   return Array.from(new Set([...(listed ?? []), ...(configured ? [configured] : [])])).sort();
 }
@@ -284,6 +344,8 @@ export function ModelBadge() {
               ) : null}
             </label>
           ) : null}
+
+          {planSignedIn && status.chatgpt_plan_usage ? <PlanUsage usage={status.chatgpt_plan_usage} /> : null}
 
           {status.chatgpt_plan_blocker &&
           status.chatgpt_plan_blocker !== "CHATGPT_PLAN_MODEL_MISSING" ? (
