@@ -341,6 +341,62 @@ describe("ModelBadge with the ChatGPT plan", () => {
     expect(await screen.findByText(/sent to OpenAI/)).toBeInTheDocument();
   });
 
+  it("shows AAOS's own plan use and links to OpenAI for what is left", async () => {
+    mockPlanApi({
+      ...ON_PLAN,
+      chatgpt_plan_usage: {
+        since: "2026-10-24T09:00:00Z",
+        replies: 3,
+        input_tokens: 1200,
+        output_tokens: 345,
+        limit_reached_at: null,
+      },
+    });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    const usage = await screen.findByRole("region", { name: "ChatGPT plan use by AAOS" });
+    expect(within(usage).getByText("3")).toBeInTheDocument();
+    expect(within(usage).getByText("1,545 (1,200 in, 345 out)")).toBeInTheDocument();
+    expect(within(usage).getByText(/does not tell AAOS how much of your plan is left/)).toBeInTheDocument();
+    const link = within(usage).getByRole("link", { name: "See what's left on chatgpt.com" });
+    expect(link).toHaveAttribute("href", "https://chatgpt.com/settings/usage");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(usage).queryByText(/limit for AAOS was reached/)).not.toBeInTheDocument();
+  });
+
+  it("says when the plan limit was reached, and shows no usage before sign-in", async () => {
+    mockPlanApi({
+      ...ON_PLAN,
+      chatgpt_plan_usage: {
+        since: "2026-10-24T09:00:00Z",
+        replies: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        limit_reached_at: "2026-10-24T10:00:00Z",
+      },
+    });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    expect(await screen.findByText(/limit for AAOS was reached/)).toBeInTheDocument();
+    cleanup();
+
+    mockPlanApi({
+      ...LOCAL,
+      chatgpt_plan_blocker: "CHATGPT_PLAN_SIGN_IN_REQUIRED",
+      chatgpt_plan_usage: {
+        since: "2026-10-24T09:00:00Z",
+        replies: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        limit_reached_at: null,
+      },
+    });
+    renderBadge();
+    fireEvent.click(await screen.findByRole("button", { name: /Change model/ }));
+    await screen.findByText(/run `aaos model chatgpt-plan sign-in` in a terminal/);
+    expect(screen.queryByRole("region", { name: "ChatGPT plan use by AAOS" })).not.toBeInTheDocument();
+  });
+
   it("explains the terminal sign-in and offers no way to sign in or type a token here", async () => {
     mockPlanApi({ ...LOCAL, chatgpt_plan_blocker: "CHATGPT_PLAN_SIGN_IN_REQUIRED" });
     renderBadge();

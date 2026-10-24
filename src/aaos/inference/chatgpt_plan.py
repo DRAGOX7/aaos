@@ -319,6 +319,7 @@ class ChatGPTPlanGateway:
         unavailable_retry_delays: tuple[float, ...] = _UNAVAILABLE_RETRY_DELAYS,
         on_failure: Callable[[str], None] | None = None,
         on_success: Callable[[], None] | None = None,
+        on_usage: Callable[[TokenUsage | None], None] | None = None,
         min_interval_seconds: float = 0.0,
         owned_closers: tuple[Callable[[], Any], ...] = (),
     ) -> None:
@@ -338,6 +339,7 @@ class ChatGPTPlanGateway:
         self._unavailable_retry_delays = unavailable_retry_delays
         self._on_failure = on_failure
         self._on_success = on_success
+        self._on_usage = on_usage
         self._min_interval = max(0.0, float(min_interval_seconds))
         self._owned_closers = owned_closers
         self._closed = False
@@ -418,6 +420,7 @@ class ChatGPTPlanGateway:
         if with_schema and openai_schema(schema)[1]:
             text = unwrap_reply(text)
         self._report(self._on_success)
+        self._report(self._on_usage, usage)
         return ChatResponse(content=text, model_identifier=self._model, usage=usage)
 
     async def _post_with_retry(
@@ -652,7 +655,7 @@ class ChatGPTPlanGateway:
         )
         return error
 
-    def _report(self, callback: Callable[..., None] | None, *args: str) -> None:
+    def _report(self, callback: Callable[..., None] | None, *args: object) -> None:
         if callback is None:
             return
         try:

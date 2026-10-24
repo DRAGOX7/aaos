@@ -18,6 +18,7 @@ from aaos.inference.factory import (
 )
 from aaos.inference.gateway import ModelGateway
 from aaos.inference.lm_studio import LMStudioGateway
+from aaos.inference.models import TokenUsage
 from aaos.rag.config import RagIndexConfig, resolve_rag_runtime_paths
 from aaos.rag.contracts import LocalRagService, RagErrorCode, RagOperationalError
 from aaos.rag.database import (
@@ -109,6 +110,7 @@ def build_configured_phase4_runtime(
     data_root: Path | None = None,
     on_model_failure: Callable[[str], None] | None = None,
     on_model_success: Callable[[], None] | None = None,
+    on_chatgpt_plan_usage: Callable[[TokenUsage | None], None] | None = None,
 ) -> ConfiguredPhase4Runtime:
     """Build the approved local Phase 4 runtime at an explicit call site."""
 
@@ -137,7 +139,10 @@ def build_configured_phase4_runtime(
     if settings.model_provider in CLOUD_MODEL_PROVIDERS:
         # Opt-in cloud model: there is no local model to load or free.
         gateway = build_model_gateway(
-            settings, on_failure=on_model_failure, on_success=on_model_success
+            settings,
+            on_failure=on_model_failure,
+            on_success=on_model_success,
+            on_chatgpt_plan_usage=on_chatgpt_plan_usage,
         )
         cloud_options["model_lifecycle_factory"] = NoOpModelLifecycle
         # The semantic steps reject any reply that is not from the model they expect.

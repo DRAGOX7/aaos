@@ -259,6 +259,7 @@ class _LazyDefaultRagReader:
                         self._selection.effective_settings(),
                         on_model_failure=self._selection.record_failure,
                         on_model_success=self._selection.record_success,
+                        on_chatgpt_plan_usage=self._selection.record_chatgpt_plan_usage,
                     )
                 )
                 self._delegate = RagReadService(self._runtime.service, sessions)
@@ -416,6 +417,9 @@ class _LazyDefaultAcademicAskService:
                 settings,
                 on_failure=self._selection.record_failure if self._selection else None,
                 on_success=self._selection.record_success if self._selection else None,
+                on_chatgpt_plan_usage=(
+                    self._selection.record_chatgpt_plan_usage if self._selection else None
+                ),
             )
             self._assistant = ReadOnlyAcademicAssistant(
                 self._gateway,

@@ -773,6 +773,18 @@ ModelChatGPTPlanBlockerView = Literal[
 ]
 
 
+class ChatGPTPlanUsageView(BaseModel):
+    """AAOS's own ChatGPT-plan use since the backend started (OpenAI reports no remainder)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    since: datetime
+    replies: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    limit_reached_at: datetime | None = None
+
+
 class ModelStatusResponse(BaseModel):
     """Which model answers now. Names only: no Gemini API key or ChatGPT token appears here."""
 
@@ -791,6 +803,7 @@ class ModelStatusResponse(BaseModel):
     chatgpt_plan_model: str | None = Field(default=None, max_length=200)
     chatgpt_plan_ready: bool = False
     chatgpt_plan_blocker: ModelChatGPTPlanBlockerView | None = None
+    chatgpt_plan_usage: ChatGPTPlanUsageView | None = None
 
 
 class ModelSelectRequest(BaseModel):

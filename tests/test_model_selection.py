@@ -11,7 +11,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aaos.config import AppSettings
-from aaos.inference.selection import ModelSelection, ModelSelectionError
+from aaos.inference.models import TokenUsage
+from aaos.inference.selection import ChatGPTPlanUsage, ModelSelection, ModelSelectionError
 from aaos.web.errors import install_error_boundary
 from aaos.web.routes import create_api_v1_router
 
@@ -202,6 +203,30 @@ def test_the_last_problem_is_kept_in_safe_words_and_cleared_by_a_success_or_a_sw
     asyncio.run(scenario())
 
 
+def test_chatgpt_plan_use_is_added_up_and_a_plan_limit_is_remembered_until_the_next_reply() -> None:
+    selection = _selection(READY)
+    assert selection.status().chatgpt_plan_usage == ChatGPTPlanUsage(
+        since=selection.status().chatgpt_plan_usage.since  # type: ignore[union-attr]
+    )
+
+    selection.record_chatgpt_plan_usage(TokenUsage(20, 6, 26))
+    selection.record_chatgpt_plan_usage(None)  # a reply OpenAI sent no counts for
+    selection.record_chatgpt_plan_usage(TokenUsage(5, 1, 6))
+    usage = selection.status().chatgpt_plan_usage
+    assert usage is not None
+    assert (usage.replies, usage.input_tokens, usage.output_tokens) == (3, 25, 7)
+    assert usage.limit_reached_at is None
+
+    selection.record_failure("Gemini generation failed: http_503_UNAVAILABLE")
+    assert selection.status().chatgpt_plan_usage.limit_reached_at is None  # type: ignore[union-attr]
+    selection.record_failure("ChatGPT plan generation failed: PLAN_LIMIT_REACHED")
+    assert selection.status().chatgpt_plan_usage.limit_reached_at is not None  # type: ignore[union-attr]
+
+    selection.record_chatgpt_plan_usage(TokenUsage(1, 1, 2))
+    usage = selection.status().chatgpt_plan_usage
+    assert usage is not None and usage.limit_reached_at is None and usage.replies == 4
+
+
 # --- the API ---------------------------------------------------------------------------
 
 LOCAL_PAGE = {"Host": "localhost:8000", "Origin": "http://localhost:3000"}
@@ -219,6 +244,9 @@ def _client(selection: ModelSelection | None) -> TestClient:
 def test_get_model_reports_names_only() -> None:
     body = _client(_selection(READY)).get("/api/v1/model").json()
 
+    usage = body.pop("chatgpt_plan_usage")
+    assert set(usage) == {"since", "replies", "input_tokens", "output_tokens", "limit_reached_at"}
+    assert (usage["replies"], usage["input_tokens"], usage["output_tokens"]) == (0, 0, 0)
     assert body == {
         "provider": "lm_studio",
         "model": "qwen/qwen3.5-4b",
@@ -242,6 +270,17 @@ def test_get_model_shows_the_last_problem() -> None:
     body = _client(selection).get("/api/v1/model").json()
 
     assert body["last_failure"] == "Gemini generation failed: http_503_UNAVAILABLE"
+
+
+def test_get_model_shows_chatgpt_plan_use_and_the_limit() -> None:
+    selection = _selection(READY)
+    selection.record_chatgpt_plan_usage(TokenUsage(20, 6, 26))
+    selection.record_failure("ChatGPT plan generation failed: PLAN_LIMIT_REACHED")
+
+    usage = _client(selection).get("/api/v1/model").json()["chatgpt_plan_usage"]
+
+    assert (usage["replies"], usage["input_tokens"], usage["output_tokens"]) == (1, 20, 6)
+    assert usage["limit_reached_at"] is not None
 
 
 def test_post_model_switches_with_confirmation_from_the_local_page() -> None:

@@ -1110,3 +1110,52 @@ The menu is given the page direction, because Radix menus are left to right by d
 Verified on 2026-10-24: frontend suite 312 passed; `tsc` clean; ESLint has only the 2
 earlier warnings; in the built-in browser the menu works in English and in Arabic (right
 to left).
+
+## ChatGPT-plan usage shown in the model panel (2026-10-24)
+
+- **Request:** the owner asked to see the usage left when AAOS uses the ChatGPT plan.
+  The change touches frozen Phase 11 code (the gateway and model selection) and adds
+  a field to `GET /api/v1/model`.
+- **Owner approval for the probe:** "Run a header-only probe on one cheap request to
+  see if OpenAI reports remaining usage. Print only header names and numbers, never
+  the token. If it reports nothing, fall back to showing AAOS's own token use plus the
+  usage-page link."
+- **Probe (2026-10-24, owner-approved, one request):** `GET /v1/models` and one
+  streamed `POST /v1/responses` on `gpt-6.1-sol` ("Reply with the single word OK.",
+  13 input and 5 output tokens). The script printed header names only, plus values
+  for usage-like names when they were plain numbers. The token was never printed.
+  - No rate-limit, quota or remaining-usage header on either call. The only
+    `x-codex-*` headers (`safety-buffering-enabled`, `safety-buffering-faster-model`,
+    `turn-state`) have non-number values.
+  - The completed response has only this request's `usage` token counts.
+  - Not inspected: the `response.metadata` event and the `access_programs` field
+    (only their names were seen).
+  - **Finding:** OpenAI does not report the remaining plan allowance to AAOS. This
+    confirms spec D7: the limit is set and shown only at chatgpt.com/settings/usage.
+- **Fallback, as approved:**
+  - `ChatGPTPlanGateway` takes an optional `on_usage` callback, called once per
+    completed reply with its `TokenUsage`, and never on a failure.
+  - `ModelSelection` adds the counts up in process memory, like the model choice
+    and `last_failure`. A `PLAN_LIMIT_REACHED` failure records the time, and the
+    next completed reply clears it. The totals reset when the backend restarts.
+  - `GET /api/v1/model` gains `chatgpt_plan_usage` (`since`, `replies`,
+    `input_tokens`, `output_tokens`, `limit_reached_at`): counts and times only, no
+    prompt, reply or token.
+  - The model panel shows these numbers once the plan is signed in. It says OpenAI
+    does not report what is left, links to chatgpt.com/settings/usage, and warns
+    when the plan limit was reached.
+- **Freeze:** the `phase-11-passed` tag is not moved. This record is the amendment.
+- **Verification (2026-10-24):**
+  - 4 new backend tests (gateway, selection, API) and 2 new frontend tests;
+  - full backend suite: 4,553 collected, 1 deselected, exit 0 with no failures.
+    The deselected test, `tests/phase8/test_sandbox.py::test_real_docker_supervisor_path_uses_qualified_runtime`,
+    needs the Docker engine, which was not running (`DOCKER_ENGINE_UNAVAILABLE`).
+    The per-outcome counts were cut off in the captured output;
+  - ruff, ruff format and mypy clean;
+  - frontend suite: 315 passed; `tsc` and ESLint clean;
+  - in the built-in browser, after a backend restart, the panel shows 0 replies and
+    0 tokens, the backend start time and the usage-page link, with no console
+    errors. No ChatGPT-plan answer was run through AAOS, so a non-zero count has
+    not been seen live.
+
+Status: IMPLEMENTED and VERIFIED. Not HUMAN_APPROVED until the owner reviews it.

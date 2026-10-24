@@ -391,6 +391,29 @@ def test_the_plan_limit_fails_at_once_and_is_never_retried(tmp_path: Path) -> No
         assert failures and "PLAN_LIMIT_REACHED" in failures[-1]
 
 
+def test_each_completed_reply_reports_its_token_use_and_a_failure_reports_none(
+    tmp_path: Path,
+) -> None:
+    usages: list[Any] = []
+
+    def gateway(handler: Callable[[httpx2.Request], httpx2.Response]) -> ChatGPTPlanGateway:
+        return ChatGPTPlanGateway(
+            SETTINGS,
+            httpx2.MockTransport(handler),
+            store=_store(tmp_path),
+            unavailable_retry_delays=(0.0, 0.0),
+            on_usage=usages.append,
+        )
+
+    _run(gateway(lambda request: _completed(output_tokens=6)))
+    assert [(u.input_tokens, u.output_tokens) for u in usages] == [(20, 6)]
+
+    limit = {"error": {"code": "subscription_sharing_usage_limit_exceeded"}}
+    with pytest.raises(InferenceBackendError):
+        _run(gateway(lambda request: httpx2.Response(429, json=limit)))
+    assert len(usages) == 1
+
+
 def test_a_refused_token_is_refreshed_once_then_needs_a_sign_in(tmp_path: Path) -> None:
     refresher = Refresher()
     seen: list[str] = []

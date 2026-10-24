@@ -37,6 +37,7 @@ from aaos.web.contracts import (
     AssignmentListResponse,
     AssignmentSummary,
     CalendarProposalView,
+    ChatGPTPlanUsageView,
     CourseListResponse,
     CourseSummary,
     DocumentListResponse,
@@ -549,6 +550,7 @@ def create_api_v1_router(
     if model_selection is not None:
 
         def _model_response(status: ModelStatus) -> ModelStatusResponse:
+            usage = status.chatgpt_plan_usage
             return ModelStatusResponse(
                 provider=status.provider,  # type: ignore[arg-type]
                 model=status.model,
@@ -561,6 +563,17 @@ def create_api_v1_router(
                 chatgpt_plan_model=status.chatgpt_plan_model,
                 chatgpt_plan_ready=status.chatgpt_plan_ready,
                 chatgpt_plan_blocker=status.chatgpt_plan_blocker,
+                chatgpt_plan_usage=(
+                    ChatGPTPlanUsageView(
+                        since=usage.since,
+                        replies=usage.replies,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        limit_reached_at=usage.limit_reached_at,
+                    )
+                    if usage is not None
+                    else None
+                ),
             )
 
         @router.get("/model", response_model=ModelStatusResponse)

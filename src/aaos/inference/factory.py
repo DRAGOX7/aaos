@@ -12,6 +12,7 @@ import httpx2
 from aaos.config import GEMINI_API_KEY_ENVIRONMENT_KEY, AppSettings
 
 from .gateway import InferenceError, ModelGateway
+from .models import TokenUsage
 
 _LOGGER = logging.getLogger("aaos.inference")
 
@@ -127,6 +128,7 @@ def build_model_gateway(
     *,
     on_failure: Callable[[str], None] | None = None,
     on_success: Callable[[], None] | None = None,
+    on_chatgpt_plan_usage: Callable[[TokenUsage | None], None] | None = None,
 ) -> ClosableModelGateway:
     """Build the gateway for ``settings``; cloud credentials are read here, never stored."""
     if settings.model_provider == "gemini":
@@ -157,6 +159,7 @@ def build_model_gateway(
             store=store,
             on_failure=on_failure,
             on_success=on_success,
+            on_usage=on_chatgpt_plan_usage,
             min_interval_seconds=_min_interval_from_environment(
                 CHATGPT_PLAN_MIN_INTERVAL_ENVIRONMENT_KEY
             ),
