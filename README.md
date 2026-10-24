@@ -188,7 +188,22 @@ cd ..\aaos-data
 ..\aaos\.venv\Scripts\aaos.exe doctor
 ```
 
-**Run** (two terminals):
+**Run.** One command starts the backend and the dashboard, each in its own window, waits until
+both answer and opens <http://localhost:3000>:
+
+```powershell
+.\scripts\start-aaos.ps1
+```
+
+Or double-click `scripts\start-aaos.cmd`, which you can also pin to the desktop or taskbar. The
+script looks for the data folder in `AAOS_DATA_DIR`, else an `aaos-data` folder next to the
+repository (or pass `-DataDir <path>`), and `-NoBrowser` skips opening the browser. A server
+that is already running is left alone. To stop AAOS, close the `AAOS backend` and
+`AAOS dashboard` windows. With the default local model, LM Studio must be running; the script warns
+if it isn't. The server windows inherit the environment of the terminal that ran the script, so to
+use a cloud model, set its variables there first (a double-click always starts on the local model).
+
+Or start the two servers yourself (two terminals):
 
 ```powershell
 # Backend, from the data folder
