@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { PriorityBadge } from "@/components/aaos/priority-badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
 import {
@@ -175,10 +176,12 @@ export function StudyTaskCard({ source }: { source: AcademicAskSource }) {
         {source.study_task_priority ? (
           <div>
             <dt className="text-muted-foreground">{t("Priority")}</dt>
-            <dd className="font-medium text-foreground">
-              {source.study_task_priority in TASK_PRIORITY_LABELS
-                ? t(TASK_PRIORITY_LABELS[source.study_task_priority])
-                : source.study_task_priority}
+            <dd className="mt-0.5">
+              <PriorityBadge priority={source.study_task_priority}>
+                {source.study_task_priority in TASK_PRIORITY_LABELS
+                  ? t(TASK_PRIORITY_LABELS[source.study_task_priority])
+                  : source.study_task_priority}
+              </PriorityBadge>
             </dd>
           </div>
         ) : null}

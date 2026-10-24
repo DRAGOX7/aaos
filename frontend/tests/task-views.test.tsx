@@ -3,15 +3,33 @@ import { render, screen } from "@testing-library/react";
 
 import { TaskListView } from "@/components/aaos/task-list-view";
 
-const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
+const { useQueryMock, useMutationMock, useQueryClientMock } = vi.hoisted(() => ({
+  useQueryMock: vi.fn(),
+  useMutationMock: vi.fn(),
+  useQueryClientMock: vi.fn(() => ({ invalidateQueries: vi.fn() })),
+}));
 
 vi.mock("@tanstack/react-query", async () => ({
   ...(await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query")),
   useQuery: useQueryMock,
+  useMutation: useMutationMock,
+  useQueryClient: useQueryClientMock,
 }));
 
+const calendarAction = (summary: string) => ({
+  action_type: "CREATE_EVENT",
+  integration_label: "Calendar",
+  summary,
+  start: "2026-09-19T10:00:00Z",
+  end: "2026-09-19T11:00:00Z",
+  timezone: "UTC",
+});
+
 describe("task list view", () => {
-  beforeEach(() => useQueryMock.mockReset());
+  beforeEach(() => {
+    useQueryMock.mockReset();
+    useMutationMock.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false });
+  });
 
   it("renders a bounded loading state", () => {
     useQueryMock.mockReturnValue({ isPending: true, isError: false });
@@ -57,7 +75,8 @@ describe("task list view", () => {
     expect(list.querySelector("#study-task-3")).not.toBeNull();
     expect(screen.getByText("To do")).toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
-    expect(screen.getByText(/High priority/)).toBeInTheDocument();
+    expect(screen.getByText("High priority")).toHaveClass("bg-danger-soft", "text-danger-strong");
+    expect(screen.getByText("Normal priority")).toHaveClass("bg-warning-soft", "text-warning-strong");
     expect(
       screen.getByRole("link", { name: "AI445 · Natural Language Processing" }),
     ).toHaveAttribute("href", "/courses/9");
@@ -89,5 +108,59 @@ describe("task list view", () => {
     render(<TaskListView />);
     expect(screen.getByText("UNKNOWN OUTCOME")).toBeInTheDocument();
     expect(screen.queryByText("CONFIRMED SUCCESS")).not.toBeInTheDocument();
+  });
+
+  it("offers decisions only on Calendar actions with a pending approval", () => {
+    const mutate = vi.fn();
+    useMutationMock.mockReturnValue({ mutate, isPending: false, isError: false });
+    const task = (taskId: string, status: string, summary: string) => ({
+      task_id: taskId,
+      task_kind: "CALENDAR_CREATE_EVENT",
+      status,
+      created_at: "2026-09-18T00:00:00Z",
+      updated_at: "2026-09-18T00:00:00Z",
+      action: calendarAction(summary),
+    });
+    const approval = (approvalId: string, taskId: string, status: string) => ({
+      approval_id: approvalId,
+      task_id: taskId,
+      status,
+      issued_at: "2026-09-18T00:00:00Z",
+      approval_expires_at: "2026-09-19T00:00:00Z",
+      operation_state: null,
+      can_approve: status === "PENDING",
+      can_reject: status === "PENDING",
+      action: calendarAction("unused"),
+    });
+    useQueryMock.mockImplementation((options?: { queryKey?: readonly unknown[] }) => {
+      if (options?.queryKey?.[0] === "approvals") {
+        return {
+          data: { approvals: [approval("approval-1", "task-1", "PENDING"), approval("approval-2", "task-2", "REJECTED")] },
+          isPending: false,
+          isError: false,
+        };
+      }
+      if (options?.queryKey?.[0] === "tasks") {
+        return {
+          data: {
+            tasks: [
+              task("task-1", "AWAITING_APPROVAL", "Waiting session"),
+              task("task-2", "REJECTED", "Rejected session"),
+              task("task-3", "AWAITING_APPROVAL", "Unmatched session"),
+            ],
+          },
+          isPending: false,
+          isError: false,
+        };
+      }
+      return { data: { study_tasks: [] }, isPending: false, isError: false };
+    });
+    render(<TaskListView />);
+
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
+    screen.getByRole("button", { name: "Reject" }).click();
+    expect(mutate).toHaveBeenCalledWith({ approvalId: "approval-1", decision: "reject" });
+    expect(screen.getAllByText("AWAITING APPROVAL")).toHaveLength(2);
   });
 });
