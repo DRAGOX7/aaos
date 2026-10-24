@@ -45,22 +45,23 @@ By default everything runs on your machine; an optional Gemini cloud model can b
 | **Ask AAOS** | Ask in English or Arabic: *"What's due this week?"*, *"What is KNIME based on my past courses?"*, *"شو يعني overfitting"*. Answers come from your course files and Moodle data, with sources, or AAOS says it doesn't have enough evidence. |
 | **Grounded answers** | Every claim in a document answer must cite a passage. A local NLI model checks that the passage actually supports the claim; unsupported claims are dropped rather than shown. |
 | **Study tasks and plans** | *"Add a study task: review chapter 2 for Natural Language Processing"* creates a local task, linked to its course. AAOS can also plan your study week from real deadlines. |
-| **Calendar with approval** | AAOS can propose a Google Calendar event. Nothing is created until you approve it, and every approval is recorded. |
+| **Calendar with approval** | AAOS can propose a Google Calendar event. Nothing is created until you approve it, from the proposal, the Approvals page or the Tasks page, and every approval is recorded. |
 | **Moodle change alerts** | A scheduled check compares Moodle snapshots and sends Telegram messages for new assignments, deadline changes, new files and announcements. |
-| **Dashboard** | A Next.js dashboard for courses, deadlines, documents (with an in-page PDF viewer), tasks, approvals, activity and system health, in English or Arabic, in a light or dark theme. |
+| **Dashboard** | A Next.js dashboard for courses, deadlines, documents (with an in-page PDF viewer), tasks with color-coded priority, approvals, activity and system health, in English or Arabic, in a light or dark theme. When you answer with your ChatGPT plan, the model panel shows how much AAOS has used. |
 | **Past courses** | Archived semesters stay searchable and are clearly labelled as past. |
 
 ## See it working
 
-Real screens from a running AAOS connected to a real Moodle account. They were captured with the
-optional Gemini model selected, which is why the top bar shows the cloud badge; the default is the
-local model, and the badge then reads `Local · …`.
+Real screens from a running AAOS connected to a real Moodle account. Most were captured with the
+optional Gemini model selected, which is why their top bar shows the cloud badge; the default is the
+local model, and the badge then reads `Local · …`, as on the Tasks page and the model panel.
 
 | | |
 |---|---|
 | ![Overview: this semester's courses and a box to ask a question](docs/images/screens/overview.png)<br>**Overview.** The semester's courses at a glance, with one place to ask. | ![An answer to a question about past-course files, with its sources listed](docs/images/screens/ask-answer-with-sources.png)<br>**Answers from your own files.** The reply says it comes from a past course and lists the file and page of every source. |
 | ![AAOS describing itself and what it can and cannot do](docs/images/screens/ask-about-aaos.png)<br>**It knows its limits.** Questions about AAOS itself get a fixed answer; it only reads Moodle. | ![A study task created from a sentence](docs/images/screens/task-created.png)<br>**Tasks from a sentence.** "Make a high-priority study task…" creates a local task, kept in AAOS only. |
-| ![The Tasks page listing study tasks with priority and course](docs/images/screens/tasks.png)<br>**Tasks page.** Study tasks with status, priority and the course they belong to. | ![A document page with its ingestion status and the PDF opened in the browser](docs/images/screens/document-viewer.png)<br>**Open any file.** Ingestion and index status, and the original PDF in the built-in viewer. |
+| ![The Tasks page listing study tasks with colored priority badges and their course](docs/images/screens/tasks.png)<br>**Tasks page.** Study tasks with status, a priority badge (red for high, amber for normal, green for low) and the course they belong to. Calendar actions waiting for you get **Approve** and **Reject** buttons here too. | ![A document page with its ingestion status and the PDF opened in the browser](docs/images/screens/document-viewer.png)<br>**Open any file.** Ingestion and index status, and the original PDF in the built-in viewer. |
+| ![The model panel showing how many ChatGPT-plan replies and tokens AAOS has used, with a link to OpenAI's usage page](docs/images/screens/model-panel-chatgpt-usage.png)<br>**ChatGPT plan use.** Replies and tokens AAOS has used since the backend started. OpenAI doesn't report what's left on your plan, so the panel links to OpenAI's usage page and warns when the limit is reached. | |
 
 ## Design principles
 
@@ -247,7 +248,9 @@ Then pick **ChatGPT plan** and a model in the model panel (it asks for confirmat
 come from Gemini), or start the backend with `AAOS_MODEL_PROVIDER=chatgpt_plan` and
 `AAOS_CHATGPT_PLAN_MODEL=<model>`. Set a weekly limit for AAOS at
 <https://chatgpt.com/settings/usage>; when the plan limit is reached, AAOS stops and says so, and
-OpenAI never moves the request to paid billing. The preview ignores `temperature`, so answers can
+OpenAI never moves the request to paid billing. The model panel counts the replies and tokens AAOS
+has used since the backend started; OpenAI doesn't tell AAOS how much of the plan is left, so the
+panel links to the usage page for that. The preview ignores `temperature`, so answers can
 differ slightly from run to run. `scripts/chatgpt_plan_probe.py` reports, in safe words, which
 request shapes your plan accepts.
 
@@ -265,7 +268,7 @@ request shapes your plan accepts.
 
 **Optional: Calendar proposals with your approval (Phase 12).** Off by default. When it's on, Ask
 AAOS can propose a Google Calendar event, and the event is written only after you click **Approve**
-on the proposal or on the Approvals page. Reject writes nothing, and a proposal you don't decide
+on the proposal, the Approvals page or the Tasks page. Reject writes nothing, and a proposal you don't decide
 within 24 hours expires. Events go to a **dedicated calendar** shared with AAOS's Google service
 account ("Make changes to events"), never to your primary calendar. Set these in the backend's
 terminal before starting it:
