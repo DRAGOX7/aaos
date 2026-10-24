@@ -54,13 +54,15 @@ By default everything runs on your machine; an optional Gemini cloud model can b
 
 Real screens from a running AAOS connected to a real Moodle account. Most were captured with the
 optional Gemini model selected, which is why their top bar shows the cloud badge; the default is the
-local model, and the badge then reads `Local · …`, as on the Tasks page and the model panel.
+local model, and the badge then reads `Local · …`, as on the newer screens (Tasks, dark theme,
+Arabic and the model panel).
 
 | | |
 |---|---|
 | ![Overview: this semester's courses and a box to ask a question](docs/images/screens/overview.png)<br>**Overview.** The semester's courses at a glance, with one place to ask. | ![An answer to a question about past-course files, with its sources listed](docs/images/screens/ask-answer-with-sources.png)<br>**Answers from your own files.** The reply says it comes from a past course and lists the file and page of every source. |
 | ![AAOS describing itself and what it can and cannot do](docs/images/screens/ask-about-aaos.png)<br>**It knows its limits.** Questions about AAOS itself get a fixed answer; it only reads Moodle. | ![A study task created from a sentence](docs/images/screens/task-created.png)<br>**Tasks from a sentence.** "Make a high-priority study task…" creates a local task, kept in AAOS only. |
 | ![The Tasks page listing study tasks with colored priority badges and their course](docs/images/screens/tasks.png)<br>**Tasks page.** Study tasks with status, a priority badge (red for high, amber for normal, green for low) and the course they belong to. Calendar actions waiting for you get **Approve** and **Reject** buttons here too. | ![A document page with its ingestion status and the PDF opened in the browser](docs/images/screens/document-viewer.png)<br>**Open any file.** Ingestion and index status, and the original PDF in the built-in viewer. |
+| ![The Overview page in the dark theme](docs/images/screens/overview-dark.png)<br>**Dark theme.** Light, Dark or System, picked from the theme menu in the top bar and remembered in the browser. | ![The Overview page in Arabic, laid out right to left](docs/images/screens/overview-arabic.png)<br>**Arabic.** The whole interface in Arabic, laid out right to left. Course names and other Moodle content are shown as Moodle sends them. |
 | ![The model panel showing how many ChatGPT-plan replies and tokens AAOS has used, with a link to OpenAI's usage page](docs/images/screens/model-panel-chatgpt-usage.png)<br>**ChatGPT plan use.** Replies and tokens AAOS has used since the backend started. OpenAI doesn't report what's left on your plan, so the panel links to OpenAI's usage page and warns when the limit is reached. | |
 
 ## Design principles
