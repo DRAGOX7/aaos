@@ -425,12 +425,7 @@ def create_api_v1_router(
                     conversation_id=body.conversation_id,
                     request_id=body.request_id,
                 )
-                response = _academic_ask_response(result, body.request_id)
-                return response.model_copy(
-                    update={
-                        "rag_provenance": enrich_inspection(response.rag_provenance, records),
-                    }
-                )
+                return _academic_ask_response(result, body.request_id, records)
             finally:
                 INSPECTIONS.reset(token)
 
@@ -781,6 +776,7 @@ def _json_compatible_mapping(value: Mapping[str, object] | None) -> dict[str, ob
 def _academic_ask_response(
     result: AcademicAskResult,
     request_id: UUID | None,
+    records: list[InspectionRecord] | None = None,
 ) -> AcademicAskResponse:
     return AcademicAskResponse(
         status=AcademicAskStatusView(result.status.value),
@@ -842,7 +838,9 @@ def _academic_ask_response(
             )
             for source in result.context_sources
         ),
-        rag_provenance=_academic_ask_rag_provenance_view(result.rag_provenance),
+        rag_provenance=enrich_inspection(
+            _academic_ask_rag_provenance_view(result.rag_provenance), records or []
+        ),
         calendar_proposal=(
             CalendarProposalView(
                 proposal_id=result.calendar_proposal.proposal_id,

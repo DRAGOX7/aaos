@@ -84,7 +84,7 @@ async function fetchEvidence(version: number, start: number, end: number, kind: 
     || typeof value.course_title !== "string" || typeof value.truncated !== "boolean"
     || !Array.isArray(value.excerpts) || value.excerpts.length > 20
     || !value.excerpts.every((text) => typeof text === "string")
-    || value.excerpts.reduce((length, text) => length + text.length, 0) > 16000) throw new Error("Invalid evidence");
+    || value.excerpts.reduce((length, text) => length + Array.from(text).length, 0) > 16000) throw new Error("Invalid evidence");
   return value;
 }
 

@@ -241,7 +241,9 @@ describe("unified Ask view", () => {
     expect(screen.getByText("Algorithms")).toBeVisible();
     expect(screen.getByText(/Page 2 · Version 12/)).toBeVisible();
     expect(screen.getByText("Lecture notes")).toBeVisible();
-    expect(screen.getByText(/Units 4–5 · Version 15 · Graphs · Table 2, row 3, column 1/)).toBeVisible();
+    expect(screen.getByRole("button", { name: /Lecture notes/ })).toHaveTextContent(
+      /Units 4–5 · Version 15 · Graphs · Table 2, row 3, column 1/,
+    );
   });
 
   it("renders insufficient evidence as a refusal rather than a page error", async () => {

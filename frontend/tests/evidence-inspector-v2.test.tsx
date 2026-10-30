@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { AskConversation } from "@/components/aaos/ask-conversation";
 import { EvidenceWorkspace } from "@/components/aaos/citation-evidence";
 import { RagCitationList } from "@/components/aaos/ask-result-cards";
 import { isAcademicAskResponse } from "@/lib/api/ask";
@@ -16,6 +17,7 @@ const provenance: Provenance = {
     inspection: { document_version_id: 31, kind: "RETRIEVED_PASSAGE", claim_text: "KNIME provides graphical workflows.",
       passages: [{ location: 2, start: 15, end: 15 + passage.length, text: passage }] } },
     { claim_id: "claim-2", document_version_id: 42, document_title: "Arabic notes", unit_start: 4, unit_end: 4,
+      heading: "KNIME (v2) overview",
       inspection: { document_version_id: 42, kind: "RETRIEVED_PASSAGE", claim_text: "تعالج الخوارزمية البيانات باستخدام KNIME.",
         passages: [{ location: 4, start: 0, end: 48, text: "تستخدم الخوارزمية KNIME مع 3 مجموعات و x = 2." }] } }],
 };
@@ -59,6 +61,44 @@ describe("Evidence Inspector V2", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("binds citations to the selected answer when claim IDs and document versions repeat", async () => {
+    viewport(true);
+    const first = structuredClone(provenance);
+    first.citations = [first.citations[0]];
+    const second = structuredClone(first);
+    const laterPassage = "Additional context.";
+    second.answer_text = second.rendered_text = "The lecture provides additional context.";
+    second.citations[0].inspection!.claim_text = second.answer_text;
+    second.citations[0].inspection!.passages = [{
+      location: 2, start: source.indexOf(laterPassage),
+      end: source.indexOf(laterPassage) + laterPassage.length, text: laterPassage,
+    }];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(evidence()));
+    render(<EvidenceWorkspace><AskConversation pending={false} entries={[
+      { id: "answer-1", kind: "assistant", response: { status: "ANSWERED", answer_text: first.answer_text,
+        sources: [], context_sources: [], step_count: 1, rag_provenance: first } },
+      { id: "answer-2", kind: "assistant", response: { status: "ANSWERED", answer_text: second.answer_text,
+        sources: [], context_sources: [], step_count: 1, rag_provenance: second } },
+    ]} /></EvidenceWorkspace>);
+    const [firstCitation, secondCitation] = screen.getAllByRole("button", { name: /Lecture_2/ });
+    const pane = async () => screen.findByRole("complementary", { name: "Evidence inspector" });
+
+    fireEvent.click(firstCitation);
+    expect(await within(await pane()).findByText(passage, { selector: "mark" })).toBeVisible();
+    expect(within(await pane()).getByRole("region", { name: "Selected claim" })).toHaveTextContent(first.answer_text);
+
+    fireEvent.click(secondCitation);
+    expect(await within(await pane()).findByText(laterPassage, { selector: "mark" })).toBeVisible();
+    expect(within(await pane()).getByRole("region", { name: "Selected claim" })).toHaveTextContent(second.answer_text);
+    expect(within(await pane()).queryByText(passage, { selector: "mark" })).not.toBeInTheDocument();
+    expect(firstCitation).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(firstCitation);
+    expect(await within(await pane()).findByText(passage, { selector: "mark" })).toBeVisible();
+    expect(within(await pane()).getByRole("region", { name: "Selected claim" })).toHaveTextContent(first.answer_text);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("shows the mapped claim and original highlighted passage before collapsed headers", async () => {
     viewport(true);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(evidence()));
@@ -90,6 +130,40 @@ describe("Evidence Inspector V2", () => {
     act(() => setLocale("en"));
     expect(screen.getByRole("complementary", { name: "Evidence inspector" })).toBeVisible();
     expect(mark).toHaveTextContent(passage);
+  });
+
+  it("isolates an English structural heading inside Arabic citation metadata", () => {
+    viewport(true);
+    act(() => setLocale("ar"));
+    render(workspace());
+    const citation = screen.getByRole("button", { name: /Arabic notes/ });
+    expect(within(citation).getByText("KNIME (v2) overview")).toHaveAttribute("dir", "auto");
+    expect(within(citation).getByText("KNIME (v2) overview").tagName).toBe("BDI");
+  });
+
+  it("loads a bounded original source containing supplementary Unicode characters", async () => {
+    viewport(true);
+    const value = structuredClone(provenance);
+    delete value.citations[0].inspection;
+    const original = "🧮".repeat(8000) + "x".repeat(8000);
+    expect(Array.from(original)).toHaveLength(16000);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(evidence(31, original)));
+    render(workspace(value));
+    fireEvent.click(screen.getByRole("button", { name: /Lecture_2/ }));
+    expect(await screen.findByText(original)).toBeVisible();
+    expect(screen.queryByText(/Evidence is unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("rejects original source text beyond the 16,000-code-point budget", async () => {
+    viewport(true);
+    const value = structuredClone(provenance);
+    delete value.citations[0].inspection;
+    const original = "🧮".repeat(8001) + "x".repeat(8000);
+    expect(Array.from(original)).toHaveLength(16001);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(evidence(31, original)));
+    render(workspace(value));
+    fireEvent.click(screen.getByRole("button", { name: /Lecture_2/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Evidence is unavailable");
   });
 
   it("uses a full-width modal on mobile with a clear close path", async () => {

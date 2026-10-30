@@ -86,7 +86,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
                       ? t("Unit {unit}", { unit: citation.unit_start })
                       : t("Units {start}–{end}", { start: citation.unit_start, end: citation.unit_end })}
                 {" · " + t("Version {version}", { version: citation.document_version_id })}
-                {"heading" in citation && citation.heading ? " · " + citation.heading : ""}
+                {"heading" in citation && citation.heading ? <> · <bdi dir="auto">{citation.heading}</bdi></> : null}
                 {"table_index" in citation && citation.table_index != null
                   ? " · " + t("Table {table}, row {row}, column {column}", {
                       table: citation.table_index + 1,

@@ -34,6 +34,15 @@ from aaos.rag.generation import CitationValidator, render_rag_answer
 from aaos.web.routes import create_api_v1_router
 
 REPORTED = "What is KNIME? Explain it using only my currently available indexed lecture documents. Include citations if supporting documents are found."
+COMPARISON = "Compare this with the previous lecture."
+
+
+def test_comparison_without_context_is_missing() -> None:
+    resolution = ContextReferenceResolver().resolve(
+        COMPARISON, ConversationContextSnapshot(uuid4(), 0)
+    )
+    assert resolution.status is ContextResolutionStatus.MISSING
+    assert resolution.entity is None
 
 
 @pytest.mark.parametrize(
@@ -64,6 +73,9 @@ def test_local_topic_does_not_accidentally_inherit_an_unrelated_active_entity() 
         is ContextResolutionStatus.NONE
     )
     assert ContextReferenceResolver().resolve("Explain it.", snapshot).entity == entity
+    comparison = ContextReferenceResolver().resolve(COMPARISON, snapshot)
+    assert comparison.status is ContextResolutionStatus.RESOLVED
+    assert comparison.entity == entity
 
 
 @pytest.mark.parametrize(
@@ -187,7 +199,7 @@ def test_simple_definition_keeps_existing_behavior(endpoint: str) -> None:
 
 
 @pytest.mark.parametrize("endpoint", ["/api/v1/ask", "/api/v1/ask/stream"])
-@pytest.mark.parametrize("question", ["Explain it.", "Explain document 999."])
+@pytest.mark.parametrize("question", ["Explain it.", "Explain document 999.", COMPARISON])
 def test_fresh_invalid_reference_never_reaches_retrieval(endpoint: str, question: str) -> None:
     client, rag, gateway = _client()
     with client:

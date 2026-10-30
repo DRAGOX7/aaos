@@ -58,6 +58,7 @@ _GENERIC_REFERENCE = re.compile(
     r"\b(?:"
     r"(?:about|for|to|with|on|from|in|regarding)\s+(?:it|that)"
     r"|(?:related|relevant)\s+to\s+(?:it|that)"
+    r"|compare\s+this"
     r"|(?:explain|describe|summarize|expand\s+on|compare|show|list|find|read|open|repeat|clarify)"
     r"\s+(?:it|that)"
     r"|(?:what|when|where|why|how|is|are|was|were|does|did|can|could|should|would|will|has|have)"
