@@ -141,7 +141,9 @@
 
 @theme inline {
   --font-heading: var(--font-jakarta);
-  --font-sans: var(--font-jakarta), var(--font-arabic);
+  /* Next's Jakarta variable includes Arial, which captures Arabic before Noto.
+     Name the same loaded Latin face first; keep managed fallbacks after Noto. */
+  --font-sans: "Plus Jakarta Sans", var(--font-arabic), var(--font-jakarta);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);

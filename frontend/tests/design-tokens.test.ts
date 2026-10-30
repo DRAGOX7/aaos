@@ -48,9 +48,9 @@ describe("AAOS design tokens", () => {
     }
   });
 
-  it("uses the locally managed Plus Jakarta Sans font variable", () => {
+  it("keeps Jakarta for Latin and Noto before Jakarta's greedy Arial fallback", () => {
     expect(css).toContain(
-      "--font-sans: var(--font-jakarta), var(--font-arabic);",
+      '--font-sans: "Plus Jakarta Sans", var(--font-arabic), var(--font-jakarta);',
     );
   });
 

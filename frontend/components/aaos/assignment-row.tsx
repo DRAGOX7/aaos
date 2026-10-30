@@ -8,6 +8,7 @@ import {
 import { courseDisplayName } from "@/lib/courses/display";
 import { useI18n, type Translator, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { formatDeadline } from "@/lib/time/deadline";
 
 const DUE_LOOK: Record<AssignmentDueBucket, { label: MessageKey; pill: string }> = {
   OVERDUE: { label: "Overdue", pill: "bg-danger-soft text-danger-strong" },
@@ -41,10 +42,7 @@ function formatDueDate(dueAt: string | null, { t, dateLocale }: Translator): str
     return t("No due date");
   }
 
-  return new Intl.DateTimeFormat(dateLocale("en-US"), {
-    dateStyle: "medium",
-    timeZone: "UTC",
-  }).format(new Date(dueAt));
+  return formatDeadline(dueAt, dateLocale("en-GB"));
 }
 
 export function AssignmentRow({

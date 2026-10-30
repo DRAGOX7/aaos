@@ -18,6 +18,13 @@ vi.mock("@/components/aaos/activity-stream", () => ({
 }));
 
 describe("activity list view", () => {
+  it("does not invent a Pending status for a status-less event", () => {
+    useQueryMock.mockReturnValue({ data: { events: [{ activity_id: "sync", occurred_at: "2026-10-30T10:00:00Z",
+      category: "SYNC", event_code: "SYNC_FAILED", status: null, title: "Sync failed", context: null }], next_cursor: null }, isPending: false, isError: false });
+    render(<ActivityListView />);
+    expect(screen.getByText("Sync failed")).toBeInTheDocument();
+    expect(screen.queryByText("PENDING")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     useQueryMock.mockReset();
     streamBoundaryMock.mockClear();

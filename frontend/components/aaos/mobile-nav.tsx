@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 
 import { AaosMark } from "@/components/aaos/aaos-mark";
 import {
   AAOS_NAVIGATION,
+  resolveActiveNavigationHref,
 } from "@/components/aaos/app-sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +22,7 @@ import { cn } from "@/lib/utils";
 
 export function MobileNav() {
   const { t, dir } = useI18n();
+  const activeHref = resolveActiveNavigationHref(usePathname());
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -60,7 +63,7 @@ export function MobileNav() {
         >
           {AAOS_NAVIGATION.map((item) => {
             const Icon = item.icon;
-            const active = item.href === "/";
+            const active = item.href === activeHref;
 
             return (
               <SheetClose key={item.label} asChild>

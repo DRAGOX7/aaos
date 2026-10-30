@@ -37,10 +37,10 @@ function Row({ label, href, children }: Readonly<{ label: string; href: string; 
     <li>
       <Link
         href={href}
-        className="flex items-center justify-between gap-4 border-b border-border py-2.5 text-sm last:border-b-0 hover:text-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-14 items-center justify-between gap-4 py-3 text-sm hover:text-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span className="text-muted-foreground">{label}</span>
-        <span className="font-bold text-foreground">{children}</span>
+        <span className="shrink-0 rounded-md bg-muted px-2.5 py-1 text-sm font-semibold text-foreground">{children}</span>
       </Link>
     </li>
   );
@@ -56,12 +56,12 @@ export function OverviewWorkspace() {
   return (
     <section
       aria-labelledby="overview-workspace-title"
-      className="flex min-w-0 flex-col gap-1 rounded-2xl border border-border bg-card px-6 py-5"
+      className="flex min-w-0 flex-col gap-1 self-start rounded-2xl border border-border bg-card px-6 py-5"
     >
       <h2 id="overview-workspace-title" className="mb-1 text-base font-bold text-foreground">
         {t("Workspace")}
       </h2>
-      <ul className="flex flex-col">
+      <ul className="flex flex-col divide-y divide-border">
         <Row label={t("Pending approvals")} href="/approvals">
           {valueOf(approvals, () =>
             (approvals.data?.approvals ?? []).filter((item) => item.status === "PENDING").length, i18n)}

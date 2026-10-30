@@ -13,8 +13,8 @@ export function OverviewAcademicSummary() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-7">
       <OverviewHero />
       <OverviewCourses />
-      <div className="grid gap-3.5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">
           <OverviewUpNext />
         </div>
         <OverviewWorkspace />

@@ -4,6 +4,7 @@ import { CheckCircle2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState } from "@/components/aaos/empty-state";
+import { CalendarActionPreview } from "@/components/aaos/calendar-action-preview";
 import { PageHeader } from "@/components/aaos/page-header";
 import { SectionCard } from "@/components/aaos/section-card";
 import { Button } from "@/components/ui/button";
@@ -73,6 +74,7 @@ export function ApprovalListView() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {approval.action.integration_label}
                 </p>
+                <CalendarActionPreview action={approval.action} />
                 {approval.operation_state ? (
                   <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">
                     {t("Operation: {state}", { state: status(approval.operation_state) })}
@@ -87,21 +89,21 @@ export function ApprovalListView() {
                 ) : null}
                 {approval.status === "PENDING" ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
+                    {approval.can_approve ? <Button
                       type="button"
                       disabled={mutation.isPending}
                       onClick={() => mutation.mutate({ approvalId: approval.approval_id, decision: "approve" })}
                     >
                       {t("Approve")}
-                    </Button>
-                    <Button
+                    </Button> : null}
+                    {approval.can_reject ? <Button
                       type="button"
                       variant="outline"
                       disabled={mutation.isPending}
                       onClick={() => mutation.mutate({ approvalId: approval.approval_id, decision: "reject" })}
                     >
                       {t("Reject")}
-                    </Button>
+                    </Button> : null}
                   </div>
                 ) : null}
               </li>

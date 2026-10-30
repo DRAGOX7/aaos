@@ -10,19 +10,13 @@ import { assignmentsQueryOptions } from "@/lib/query/academic";
 import { courseListQueryOptions } from "@/lib/query/courses";
 import { useI18n } from "@/lib/i18n";
 import { useClientMinute } from "@/lib/time/use-client-minute";
+import { formatDeadline } from "@/lib/time/deadline";
+import { bucketAssignment } from "@/lib/assignments/due-buckets";
 
 const MAX_ITEMS = 3;
-const DUE_OPTIONS: Intl.DateTimeFormatOptions = {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-};
 
 export function OverviewUpNext() {
   const { t, dateLocale } = useI18n();
-  const dueFormat = new Intl.DateTimeFormat(dateLocale("en-GB"), DUE_OPTIONS);
   const assignments = useQuery(assignmentsQueryOptions());
   const courses = useQuery(courseListQueryOptions());
   // "Upcoming" depends on the viewer's clock, known only after hydration.
@@ -44,13 +38,13 @@ export function OverviewUpNext() {
       aria-labelledby="overview-up-next-title"
       className="flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-card px-6 py-5"
     >
-      <div className="flex items-baseline justify-between gap-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 id="overview-up-next-title" className="text-base font-bold text-foreground">
           {t("Up next")}
         </h2>
         <Link
           href="/assignments"
-          className="text-sm font-semibold text-primary-strong underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex min-h-11 items-center text-sm font-semibold text-primary-strong underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {t("View assignments")}
         </Link>
@@ -83,14 +77,19 @@ export function OverviewUpNext() {
             <li key={item.id}>
               <Link
                 href={`/assignments?course_id=${item.course_id}`}
-                className="flex items-center gap-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="grid min-w-0 gap-2 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5"
               >
-                <span className="w-16 shrink-0 text-[13px] font-bold text-primary-strong">
+                <span className="min-w-0 space-y-1">
+                <span className="block text-xs font-semibold text-muted-foreground">
                   {codes.get(item.course_id) ?? t("Course")}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{item.title}</span>
-                <span className="shrink-0 text-[13px] text-muted-foreground">
-                  {dueFormat.format(new Date(item.due_at ?? ""))}
+                <span dir="auto" className="block break-words text-sm font-semibold leading-6 text-foreground">{item.title}</span>
+                </span>
+                <span className="flex flex-wrap items-center gap-2 sm:flex-col sm:items-end">
+                  {now !== null && bucketAssignment(item.due_at, new Date(now)) === "DUE_SOON" ? <span className="rounded-md bg-warning-soft px-2 py-1 text-xs font-semibold text-warning-strong">{t("Due soon")}</span> : null}
+                  <time dateTime={item.due_at ?? undefined} className="text-xs leading-5 text-muted-foreground">
+                    {formatDeadline(item.due_at ?? "", dateLocale("en-GB"))}
+                  </time>
                 </span>
               </Link>
             </li>

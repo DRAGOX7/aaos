@@ -5,6 +5,7 @@ import { ListTodo } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState } from "@/components/aaos/empty-state";
+import { CalendarActionPreview } from "@/components/aaos/calendar-action-preview";
 import { PageHeader } from "@/components/aaos/page-header";
 import { PriorityBadge } from "@/components/aaos/priority-badge";
 import { SectionCard } from "@/components/aaos/section-card";
@@ -167,6 +168,7 @@ export function TaskListView() {
                       <p className="mt-1 text-sm text-muted-foreground">
                         {task.action.integration_label}
                       </p>
+                      <CalendarActionPreview action={task.action} />
                       {approval ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {approval.can_approve ? (

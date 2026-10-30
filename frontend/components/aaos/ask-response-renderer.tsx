@@ -27,7 +27,7 @@ function AnswerText({
       && provenance.from_past_course === true,
   });
   return (
-    <div dir="auto" className="flex flex-col gap-3">
+    <div dir="auto" className="flex flex-col gap-4">
       {notice ? (
         <p
           className="inline-flex items-center gap-1.5 self-start rounded-full bg-warning-soft px-3 py-1 text-xs font-semibold text-warning-strong"
@@ -36,7 +36,7 @@ function AnswerText({
           {notice}
         </p>
       ) : null}
-      <p dir="auto" className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground">
+      <p dir="auto" className="whitespace-pre-wrap break-words text-base leading-7 text-foreground [unicode-bidi:plaintext]">
         {body}
       </p>
     </div>

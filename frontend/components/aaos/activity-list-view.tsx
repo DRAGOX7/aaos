@@ -90,9 +90,9 @@ export function ActivityListView() {
                 <>
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="font-medium text-foreground">{event.title}</h3>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                      {status(event.status ?? "PENDING")}
-                    </span>
+                    {event.status ? <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {status(event.status)}
+                    </span> : null}
                   </div>
                   <time
                     className="mt-1 block text-xs text-muted-foreground"

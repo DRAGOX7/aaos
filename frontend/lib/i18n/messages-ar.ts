@@ -3,6 +3,10 @@
 // here (the type check fails otherwise). {name} marks a value filled in at run time.
 
 export const AR = {
+  "Time zone": "المنطقة الزمنية",
+  "Location": "الموقع",
+  "Description": "الوصف",
+  "Select a source to inspect its original passage": "اختر مصدرًا لفحص مقطعه الأصلي",
   "Evidence inspector": "فاحص الأدلة",
   "Selected claim": "الادعاء المحدد",
   "Retrieved passage": "المقطع المسترجع",

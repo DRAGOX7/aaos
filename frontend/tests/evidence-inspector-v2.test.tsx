@@ -35,6 +35,18 @@ function workspace(value = provenance) {
 afterEach(() => { act(() => setLocale("en")); localStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Evidence Inspector V2", () => {
+  it("closes the desktop inspector from its relocated conversation toolbar with Escape", async () => {
+    viewport(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(evidence()));
+    render(<EvidenceWorkspace header={<button>Conversation toolbar</button>}><RagCitationList provenance={provenance} /></EvidenceWorkspace>);
+    const trigger = screen.getByRole("button", { name: /Lecture_2/ });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("complementary", { name: "Evidence inspector" })).toBeVisible();
+    const toolbar = screen.getByRole("button", { name: "Conversation toolbar" });
+    toolbar.focus(); fireEvent.keyDown(toolbar, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("complementary")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
   it("keeps one interactive answer beside a non-modal desktop pane and switches citations", async () => {
     viewport(true);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json(evidence()))

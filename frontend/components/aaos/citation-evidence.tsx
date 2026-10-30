@@ -31,7 +31,7 @@ function wideViewport() { return window.matchMedia?.(WIDE_QUERY).matches ?? fals
 function serverViewport() { return false; }
 
 /** One shared selection keeps the existing answer interactive beside its source. */
-export function EvidenceWorkspace({ children }: { children: ReactNode }) {
+export function EvidenceWorkspace({ children, header }: { children: ReactNode; header?: ReactNode }) {
   const { t, dir } = useI18n();
   const [selection, setSelection] = useState<Selection | null>(null);
   const sequence = useRef(0);
@@ -46,10 +46,12 @@ export function EvidenceWorkspace({ children }: { children: ReactNode }) {
   return <InspectorContext.Provider value={{ selection, panelId, select: (citation, trigger) => {
     setSelection({ citation, trigger, sequence: ++sequence.current });
   } }}>
-    <div className={selection && wide ? "grid min-w-0 items-start gap-6 grid-cols-[minmax(0,1fr)_minmax(22rem,0.9fr)]" : "min-w-0"}
-      onKeyDown={(event) => { if (selection && wide && event.key === "Escape") { event.stopPropagation(); close(); } }}>
+    <div onKeyDown={(event) => { if (selection && wide && event.key === "Escape") { event.stopPropagation(); close(); } }}>
+    {header}
+    <div className={selection && wide ? "grid min-w-0 items-start gap-6 grid-cols-[minmax(0,1.38fr)_minmax(22rem,1fr)]" : "min-w-0"}>
       <div className="min-w-0">{children}</div>
-      {selection && wide ? <aside id={panelId} aria-label={t("Evidence inspector")} className="sticky top-20 max-h-[calc(100dvh-6rem)] min-w-0 overflow-y-auto rounded-xl border border-border bg-card">{content}</aside> : null}
+      {selection && wide ? <aside id={panelId} aria-label={t("Evidence inspector")} className="sticky top-20 max-h-[calc(100dvh-6rem)] min-w-0 overflow-y-auto rounded-[20px] border border-border bg-card">{content}</aside> : null}
+    </div>
     </div>
     {!wide ? <Sheet open={selection !== null} onOpenChange={(value) => { if (!value) close(); }}>
       <SheetContent id={panelId} side={dir === "rtl" ? "left" : "right"} showCloseButton={false}
@@ -68,7 +70,7 @@ export function CitationEvidence({ citation, children }: { citation: Citation; c
   return <button type="button" aria-expanded={selected} aria-controls={selected ? inspector.panelId : undefined}
     data-selected={selected || undefined}
     onClick={(event) => inspector.select(citation, event.currentTarget)}
-    className="min-w-0 min-h-11 flex-1 cursor-pointer rounded-md text-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-primary/10 data-selected:ring-2 data-selected:ring-ring">
+    className="min-w-0 min-h-11 flex-1 cursor-pointer rounded-xl border border-border p-3 text-start underline-offset-4 hover:border-border-hover hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-primary-soft data-selected:ring-2 data-selected:ring-ring">
     {children}
   </button>;
 }
@@ -119,11 +121,13 @@ function EvidenceContent({ citation, modal, close }: { citation: Citation; modal
     const match = alignEvidence(original, passage.text, passage, !source.truncated);
     return match ? [{ original, match, location: passage.location }] : [];
   }) ?? [];
-  const locationLabel = page ? t("Pages {start}–{end}", { start, end }) : t("Units {start}–{end}", { start, end });
+  const locationLabel = page
+    ? start === end ? t("Page {page}", { page: start }) : t("Pages {start}–{end}", { start, end })
+    : start === end ? t("Unit {unit}", { unit: start }) : t("Units {start}–{end}", { start, end });
   const title = <bdi dir="auto">{citation.document_title}</bdi>;
   const titleClass = "min-w-0 break-words text-base font-semibold text-foreground outline-none";
   return <>
-    <div className="flex items-start justify-between gap-3 border-b border-border p-4">
+    <div className="flex items-start justify-between gap-3 border-b border-border p-5 sm:p-6">
       <div className="min-w-0 space-y-2">
         {modal ? <SheetTitle ref={heading} tabIndex={-1} className={titleClass}>{title}</SheetTitle>
           : <h2 ref={heading} tabIndex={-1} className={titleClass}>{title}</h2>}
@@ -133,10 +137,10 @@ function EvidenceContent({ citation, modal, close }: { citation: Citation; modal
       </div>
       <Button variant="ghost" className="min-h-11 shrink-0" onClick={close}>{t("Close")}</Button>
     </div>
-    <div className="space-y-5 p-4">
+    <div className="space-y-6 p-5 sm:p-6">
       {inspection ? <section aria-label={t("Selected claim")}>
         <h3 className="mb-2 text-sm font-semibold">{t("Selected claim")}</h3>
-        <p dir="auto" className="whitespace-pre-wrap break-words text-start text-sm leading-7 [unicode-bidi:plaintext]">{inspection.claim_text}</p>
+        <p dir="auto" className="whitespace-pre-wrap break-words border-s-2 border-primary-strong ps-4 text-start text-base leading-7 [unicode-bidi:plaintext]">{inspection.claim_text}</p>
       </section> : null}
       {!sources && !failed ? <p role="status">{t("Loading evidence…")}</p> : null}
       {failed ? <div role="alert"><p>{t("Evidence is unavailable. The source may no longer be accessible.")}</p>
@@ -145,10 +149,10 @@ function EvidenceContent({ citation, modal, close }: { citation: Citation; modal
         <section aria-label={matches.length ? t("Retrieved passage") : t("Source context")}>
           <h3 className="mb-2 text-sm font-semibold">{matches.length ? t("Retrieved passage") : t("Source context")}</h3>
           {matches.length ? <>
-            <p className="mb-3 text-xs leading-5 text-muted-foreground">{t("Highlight locates a cited retrieved passage, not a minimal verified claim span.")}</p>
+            <p className="mb-4 rounded-lg bg-muted px-3 py-2.5 text-[13px] leading-5 text-muted-foreground">{t("Highlight locates a cited retrieved passage, not a minimal verified claim span.")}</p>
             {matches.map(({ original, match, location }, index) => <div key={index} className="mb-4">
               <p className="mb-1 text-xs text-muted-foreground">{page ? t("Page {page}", { page: location }) : t("Unit {unit}", { unit: location })}</p>
-              <p dir="auto" className="whitespace-pre-wrap break-words text-start text-sm leading-7 [unicode-bidi:plaintext]">
+              <p dir="auto" className="whitespace-pre-wrap break-words text-start text-base leading-7 [unicode-bidi:plaintext]">
                 <mark className="rounded-sm bg-warning-soft px-0.5 text-foreground decoration-clone">{original.slice(match.start, match.end)}</mark>
               </p>
             </div>)}

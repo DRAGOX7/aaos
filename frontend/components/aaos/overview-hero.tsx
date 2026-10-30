@@ -79,11 +79,11 @@ export function OverviewHero() {
             onChange={(event) => setQuestion(event.target.value)}
             maxLength={4096}
             placeholder={t("Ask about your courses, files, deadlines or Moodle changes…")}
-            className="h-11 min-w-0 flex-1 bg-transparent px-3 text-base text-foreground outline-none placeholder:text-text-subtle"
+            className="h-11 min-w-0 flex-1 rounded-xl bg-transparent px-3 text-base text-foreground outline-none placeholder:text-text-subtle focus-visible:ring-2 focus-visible:ring-ring"
           />
           <button
             type="submit"
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl bg-primary px-5 text-[15px] font-bold text-white transition-colors hover:bg-primary-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl bg-primary-strong px-5 text-[15px] font-bold text-white transition-colors hover:bg-primary-strong/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:bg-primary dark:text-background dark:hover:bg-primary/90"
           >
             {t("Ask")}
             <ArrowUp aria-hidden="true" className="size-4" strokeWidth={2.4} />

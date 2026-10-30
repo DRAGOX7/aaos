@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { MobileNav } from "@/components/aaos/mobile-nav";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppSidebar, resolveActiveNavigationHref } from "@/components/aaos/app-sidebar";
@@ -36,6 +37,14 @@ const expectedHrefs = [
 ];
 
 describe("AAOS navigation", () => {
+  it("marks the actual nested mobile route, not Overview", () => {
+    pathnameMock.mockReturnValue("/courses/42");
+    render(<MobileNav />);
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const nav = screen.getByRole("navigation", { name: "AAOS mobile" });
+    expect(within(nav).getByRole("link", { name: "Courses" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
+  });
   it("renders exactly the frozen Phase 7 navigation labels", () => {
     render(<AppSidebar />);
 

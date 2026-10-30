@@ -69,7 +69,7 @@ export function AskConversation({
       aria-label={t("Conversation")}
       aria-live="polite"
       aria-relevant="additions"
-      className="flex min-h-0 flex-col gap-6"
+      className="flex min-h-0 flex-col gap-8"
       role="log"
     >
       {entries.map((entry) =>
@@ -83,9 +83,8 @@ export function AskConversation({
             </p>
           </article>
         ) : (
-          <article aria-label={t("AAOS answer")} className="flex gap-3" key={entry.id}>
-            <AssistantMark />
-            <div className="min-w-0 flex-1 rounded-2xl rounded-ss-md border border-border bg-card px-5 py-4">
+          <article aria-label={t("AAOS answer")} className="min-w-0" key={entry.id}>
+            <div className="min-w-0 rounded-[20px] border border-border bg-card p-5 sm:p-6">
               {entry.kind === "assistant"
                 ? <AskResponseRenderer response={entry.response} />
                 : <AskIssueMessage kind={entry.issue.kind} message={entry.issue.message} />}

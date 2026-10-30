@@ -17,6 +17,22 @@ vi.mock("@tanstack/react-query", async () => ({
 }));
 
 describe("approval list view", () => {
+  it.each([[false, false], [true, false], [false, true]])("honors capabilities %s/%s and previews the scheduled event", (can_approve, can_reject) => {
+    useQueryMock.mockReturnValue({ data: { approvals: [{
+      approval_id: "a", task_id: "t", status: "PENDING", operation_state: null,
+      approval_expires_at: "2026-10-30T10:00:00Z", can_approve, can_reject,
+      action: { summary: "Review", integration_label: "Calendar", action_type: "CREATE_EVENT",
+        start: "2026-10-31T22:30:00Z", end: "2026-10-31T23:30:00Z", timezone: "Asia/Amman",
+        location: "Study room", description: "Review the exercises" },
+    }] }, isPending: false, isError: false });
+    render(<ApprovalListView />);
+    expect(!!screen.queryByRole("button", { name: "Approve" })).toBe(can_approve);
+    expect(!!screen.queryByRole("button", { name: "Reject" })).toBe(can_reject);
+    expect(screen.getByText("Asia/Amman")).toBeInTheDocument();
+    expect(screen.getByText("Study room")).toBeInTheDocument();
+    expect(screen.getByText("Review the exercises")).toBeInTheDocument();
+    expect(document.querySelector('time[datetime="2026-10-31T22:30:00Z"]')).toHaveTextContent(/Nov|November/);
+  });
   beforeEach(() => {
     useQueryMock.mockReset();
     useMutationMock.mockReturnValue({ mutate: vi.fn(), isPending: false });

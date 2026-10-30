@@ -204,12 +204,12 @@ export function ModelBadge() {
           aria-label={t("Answering model: {label}. Change model", { label })}
           title={label}
           className={cn(
-            "hidden h-9 max-w-[16rem] items-center gap-2 rounded-full px-3 text-[13px] font-semibold transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex",
+            "flex size-11 shrink-0 items-center justify-center gap-2 rounded-full text-[13px] font-semibold transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-auto sm:max-w-[16rem] sm:px-3",
             cloud ? "bg-warning-soft text-warning-strong" : "bg-muted text-foreground",
           )}
         >
           <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.9} />
-          <span className="truncate">{label}</span>
+          <span className="hidden truncate sm:inline">{label}</span>
         </button>
       </SheetTrigger>
       <SheetContent side={dir === "rtl" ? "left" : "right"}>

@@ -59,21 +59,24 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
   if (!("citations" in provenance) || provenance.citations.length === 0) return null;
 
   return (
-    <section aria-label={t("RAG citations")} className="mt-1 border-t border-border pt-4">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">{t("Sources")}</h3>
-      <ul className="mt-2 space-y-2">
+    <section aria-label={t("RAG citations")} className="mt-2 border-t border-border pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 className="text-sm font-semibold text-foreground">{t("Sources")}</h3>
+        <p className="text-xs leading-5 text-muted-foreground">{t("Select a source to inspect its original passage")}</p>
+      </div>
+      <ul className="mt-3 space-y-2">
         {provenance.citations.map((citation, index) => (
           <li
-            className="flex min-w-0 gap-3 rounded-xl bg-muted px-3 py-2.5 text-sm"
+            className="flex min-w-0 text-sm"
             key={citation.claim_id + ":" + index}
           >
+            <CitationEvidence citation={citation}>
             <span
               aria-hidden="true"
-              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-xs font-bold text-primary-strong"
+              className="float-start me-3 flex size-7 shrink-0 items-center justify-center rounded-md border border-border-hover text-xs font-semibold text-primary-strong"
             >
               {index + 1}
             </span>
-            <CitationEvidence citation={citation}>
               <span className="block break-words font-medium text-foreground">
                 <bdi dir="auto">{citation.document_title}</bdi>
               </span>

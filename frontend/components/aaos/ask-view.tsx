@@ -241,8 +241,8 @@ export function AskView() {
   }
 
   return (
-    <EvidenceWorkspace key={entries[0]?.id ?? "empty"}><div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <EvidenceWorkspace key={entries[0]?.id ?? "empty"} header={
+      <div className="mb-8 flex flex-col items-start gap-5">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
             {t("Ask AAOS")}
@@ -255,7 +255,7 @@ export function AskView() {
           <Button
             type="button"
             variant="outline"
-            className="mt-1 rounded-xl"
+            className="min-h-11 self-end rounded-xl"
             onClick={startNewConversation}
             disabled={pending}
           >
@@ -264,7 +264,7 @@ export function AskView() {
           </Button>
         ) : null}
       </div>
-
+    }><div className="mx-auto flex min-h-[calc(100dvh-16rem)] w-full max-w-3xl flex-col gap-8">
       {entries.length === 0 ? (
         <section aria-labelledby="ask-empty-title" className="flex flex-col items-center gap-6 py-6 text-center sm:py-10">
           <span
@@ -308,7 +308,7 @@ export function AskView() {
       <div className="sticky bottom-0 z-10 mt-auto bg-[linear-gradient(to_top,var(--aaos-background)_70%,transparent)] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
         <form
           onSubmit={handleSubmit}
-          className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-[0_14px_34px_rgb(16_33_75_/_0.1)]"
+          className="flex items-end gap-2 rounded-2xl border border-border-hover bg-card p-3 focus-within:ring-2 focus-within:ring-ring"
         >
           <label className="min-w-0 flex-1" htmlFor="ask-composer">
             <span className="sr-only">{t("Your message")}</span>
