@@ -130,7 +130,7 @@ function sortedChoices(listed: string[] | undefined, configured: string | null |
 }
 
 /** Whether answers are produced on this computer or sent to a cloud provider, always visible. */
-export function ModelBadge() {
+export function ModelBadge({ quiet = false }: { quiet?: boolean }) {
   const { t, dir } = useI18n();
   const query = useQuery(modelQueryOptions());
   const queryClient = useQueryClient();
@@ -205,10 +205,12 @@ export function ModelBadge() {
           title={label}
           className={cn(
             "flex size-11 shrink-0 items-center justify-center gap-2 rounded-full text-[13px] font-semibold transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-auto sm:max-w-[16rem] sm:px-3",
-            cloud ? "bg-warning-soft text-warning-strong" : "bg-muted text-foreground",
+            quiet
+              ? cn("rounded-md bg-transparent font-medium sm:px-0", cloud ? "text-warning-strong" : "text-muted-foreground")
+              : cloud ? "bg-warning-soft text-warning-strong" : "bg-muted text-foreground",
           )}
         >
-          <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.9} />
+          <Icon aria-hidden="true" className={cn("size-4 shrink-0", quiet && "sm:hidden")} strokeWidth={1.9} />
           <span className="hidden truncate sm:inline">{label}</span>
         </button>
       </SheetTrigger>

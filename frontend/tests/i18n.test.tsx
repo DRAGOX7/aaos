@@ -30,6 +30,14 @@ afterEach(() => {
 });
 
 describe("translator", () => {
+  it("shows the current full language name in the quiet header and still switches", () => {
+    render(<LanguageToggle quiet />);
+    expect(screen.getByText("English")).toBeVisible();
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("العربية")).toBeVisible();
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("English")).toBeVisible();
+  });
   const en = createTranslator("en");
   const ar = createTranslator("ar");
 

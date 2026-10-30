@@ -23,6 +23,7 @@ import {
   type ThemeChoice,
 } from "@/lib/theme";
 import { useI18n, type MessageKey } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 const CHOICE_LABEL: Record<ThemeChoice, MessageKey> = {
   light: "Light",
@@ -37,7 +38,7 @@ const CHOICE_ICON = { light: Sun, dark: Moon, system: Monitor } as const;
 const serverChoice = (): ThemeChoice => "system";
 
 /** Picks the dashboard theme: Light, Dark, or System (follow the OS). */
-export function ThemeToggle() {
+export function ThemeToggle({ quiet = false }: { quiet?: boolean }) {
   const { t, dir } = useI18n();
   const choice = useSyncExternalStore(subscribeThemeChoice, readThemeChoice, serverChoice);
 
@@ -59,7 +60,8 @@ export function ThemeToggle() {
       <DropdownMenuTrigger asChild>
         <button
           aria-label={t("Theme: {current}. Change theme", { current })}
-          className="flex size-10 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border-hover data-[state=open]:text-foreground"
+          className={cn("flex items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:text-foreground",
+            quiet ? "size-11 rounded-md" : "size-10 rounded-full border border-border bg-card hover:border-border-hover data-[state=open]:border-border-hover")}
           title={t("Theme: {current}", { current })}
           type="button"
         >

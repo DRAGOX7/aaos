@@ -56,10 +56,10 @@ function mockApi(initial: ModelStatus, ...switches: Response[]) {
   };
 }
 
-function renderBadge() {
+function renderBadge(quiet = false) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ModelBadge />
+      <ModelBadge quiet={quiet} />
     </QueryClientProvider>,
   );
 }
@@ -105,6 +105,14 @@ describe("model transport", () => {
 });
 
 describe("model badge", () => {
+  it("keeps the quiet model label connected to its provider/privacy settings", async () => {
+    mockApi(LOCAL);
+    renderBadge(true);
+    const trigger = await screen.findByRole("button", { name: /Answering model: Local/ });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    expect(screen.getByText(/Nothing is sent anywhere/)).toBeVisible();
+  });
   it("says the local model is answering", async () => {
     mockApi(LOCAL);
     renderBadge();

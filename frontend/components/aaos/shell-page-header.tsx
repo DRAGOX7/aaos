@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 import { MobileNav } from "@/components/aaos/mobile-nav";
 import { ModelBadge } from "@/components/aaos/model-badge";
@@ -43,6 +44,7 @@ function HealthPill() {
 /** The one global top bar: navigation on phones, search, answering model, health and identity. */
 export function ShellPageHeader() {
   const { t } = useI18n();
+  const overview = usePathname() === "/";
   return (
     <header className="sticky top-0 z-20 border-b border-border/70 bg-[color:var(--aaos-surface-glass)] backdrop-blur-xl">
       <div className="flex min-h-16 items-center gap-3 px-5 sm:px-6 lg:px-10">
@@ -66,10 +68,11 @@ export function ShellPageHeader() {
         </label>
 
         <div className="ms-auto flex items-center gap-3">
-          <ModelBadge />
-          <HealthPill />
-          <LanguageToggle />
-          <ThemeToggle />
+          {overview ? <HealthPill /> : null}
+          <ModelBadge quiet={overview} />
+          {!overview ? <HealthPill /> : null}
+          <LanguageToggle quiet={overview} />
+          <ThemeToggle quiet={overview} />
           <span
             className="flex size-10 items-center justify-center rounded-full bg-hero text-sm font-bold text-white"
             title={t("AAOS workspace")}
