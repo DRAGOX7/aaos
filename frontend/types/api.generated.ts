@@ -123,6 +123,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask Academic Stream
+         * @description Same request and final answer as ``/ask``, delivered as SSE.
+         */
+        post: operations["ask_academic_stream_api_v1_ask_stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assignments": {
         parameters: {
             query?: never;
@@ -166,6 +186,40 @@ export interface paths {
         };
         /** Get Course */
         get: operations["get_course_api_v1_courses__course_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/document-versions/{version_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Citation Evidence */
+        get: operations["get_citation_evidence_api_v1_document_versions__version_id__evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/document-versions/{version_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cited File */
+        get: operations["get_cited_file_api_v1_document_versions__version_id__file_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -818,6 +872,31 @@ export interface components {
              * Format: date-time
              */
             since: string;
+        };
+        /**
+         * CitationEvidenceView
+         * @description Original source context, not a new assertion of claim verification.
+         */
+        CitationEvidenceView: {
+            /** Course Title */
+            course_title: string;
+            /** Document Title */
+            document_title: string;
+            /** Document Version Id */
+            document_version_id: number;
+            /** End */
+            end: number;
+            /** Excerpts */
+            excerpts: string[];
+            /**
+             * Location Kind
+             * @enum {string}
+             */
+            location_kind: "PAGE" | "STRUCTURE";
+            /** Start */
+            start: number;
+            /** Truncated */
+            truncated: boolean;
         };
         /**
          * CourseListResponse
@@ -1711,6 +1790,39 @@ export interface operations {
             };
         };
     };
+    ask_academic_stream_api_v1_ask_stream_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcademicAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_assignments_api_v1_assignments_get: {
         parameters: {
             query?: {
@@ -1780,6 +1892,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CourseSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_citation_evidence_api_v1_document_versions__version_id__evidence_get: {
+        parameters: {
+            query: {
+                start: number;
+                end: number;
+            };
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationEvidenceView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cited_file_api_v1_document_versions__version_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

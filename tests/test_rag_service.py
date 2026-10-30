@@ -1097,3 +1097,44 @@ def test_atomic_path_uses_question_aware_coverage_after_validated_spans() -> Non
         "generation",
         "claim_nli",
     ]
+
+
+def test_ask_reports_progress_stages_in_pipeline_order() -> None:
+    from aaos.ask_progress import ASK_STAGE_REPORTER, AskStage
+
+    service, *_ = _service()
+    stages: list[AskStage] = []
+    token = ASK_STAGE_REPORTER.set(stages.append)
+    try:
+        result = _ask(service)
+    finally:
+        ASK_STAGE_REPORTER.reset(token)
+
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert stages == [
+        AskStage.SEARCHING,
+        AskStage.CHECKING_COVERAGE,
+        AskStage.WRITING,
+        AskStage.VERIFYING,
+    ]
+
+
+def test_unsupported_answer_skips_the_writing_stage_but_is_still_verified() -> None:
+    from aaos.ask_progress import ASK_STAGE_REPORTER, AskStage
+
+    retriever = FakeRetriever()
+    service, *_ = _service(
+        retriever=retriever,
+        selector=FakeSelector(()),
+        gate=FakeGate(SufficiencyStatus.UNSUPPORTED),
+    )
+    stages: list[AskStage] = []
+    token = ASK_STAGE_REPORTER.set(stages.append)
+    try:
+        result = _ask(service)
+    finally:
+        ASK_STAGE_REPORTER.reset(token)
+
+    assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert AskStage.WRITING not in stages
+    assert stages[-1] is AskStage.VERIFYING

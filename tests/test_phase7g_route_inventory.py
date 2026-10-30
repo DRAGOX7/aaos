@@ -4,6 +4,7 @@ from aaos.main import create_app
 
 EXPECTED_API_PATHS = {
     "/api/v1/ask",
+    "/api/v1/ask/stream",
     "/api/v1/courses",
     "/api/v1/courses/{course_id}",
     "/api/v1/assignments",
@@ -22,6 +23,8 @@ EXPECTED_API_PATHS = {
     # Read-only: local study tasks, and a document's original file.
     "/api/v1/study-tasks",
     "/api/v1/documents/{document_id}/file",
+    "/api/v1/document-versions/{version_id}/evidence",
+    "/api/v1/document-versions/{version_id}/file",
     # The answering model: which one is running, and the confirmed local/Gemini switch.
     "/api/v1/model",
     "/api/v1/model/gemini-models",
@@ -49,6 +52,7 @@ def test_phase7_mutation_inventory_is_closed() -> None:
     assert mutation_paths == {
         ("/api/v1/rag/queries", "POST"),
         ("/api/v1/ask", "POST"),
+        ("/api/v1/ask/stream", "POST"),
         ("/api/v1/approvals/{approval_id}/approve", "POST"),
         ("/api/v1/approvals/{approval_id}/reject", "POST"),
         # Changes where questions are processed; fenced to the local page, needs confirmation

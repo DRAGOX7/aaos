@@ -825,3 +825,18 @@ class ModelOptionsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     models: tuple[str, ...] = Field(max_length=200)
+
+
+class CitationEvidenceView(BaseModel):
+    """Original source context, not a new assertion of claim verification."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    document_version_id: int = Field(gt=0)
+    document_title: str
+    course_title: str
+    location_kind: Literal["PAGE", "STRUCTURE"]
+    start: int = Field(gt=0)
+    end: int = Field(gt=0)
+    excerpts: tuple[str, ...]
+    truncated: bool

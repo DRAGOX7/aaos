@@ -17,7 +17,7 @@ const { askMock, pathnameMock } = vi.hoisted(() => ({
 
 vi.mock("@/lib/api/ask", async () => ({
   ...(await vi.importActual<typeof import("@/lib/api/ask")>("@/lib/api/ask")),
-  fetchAcademicAsk: askMock,
+  streamAcademicAsk: askMock,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -119,6 +119,7 @@ describe("unified Ask view", () => {
     expect(askMock).toHaveBeenCalledWith(
       expect.objectContaining({ question: "What's due this week?" }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(window.sessionStorage.getItem("aaos.ask.handoff")).toBeNull();
   });
@@ -145,6 +146,7 @@ describe("unified Ask view", () => {
         request_id: expect.any(String),
       }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(screen.getByText("What is self-attention?")).toBeVisible();
   });
@@ -167,6 +169,7 @@ describe("unified Ask view", () => {
         conversation_id: "conversation-1",
       }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(localStorage.length).toBe(0);
   });
@@ -194,6 +197,7 @@ describe("unified Ask view", () => {
       3,
       expect.not.objectContaining({ conversation_id: "conversation-1" }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
   });
 
@@ -711,5 +715,28 @@ describe("unified Ask view", () => {
     expect(screen.queryByText("Earlier context.")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "What would you like to work on?" })).toBeVisible();
     expect(screen.getByText(/not restored after refresh/)).toBeVisible();
+  });
+
+  it("shows the live pipeline stage while a streamed answer is on its way", async () => {
+    let finish: (value: AcademicAskResponse) => void = () => undefined;
+    askMock.mockImplementationOnce((
+      _request: unknown,
+      _signal: AbortSignal,
+      onStage: (stage: string) => void,
+    ) => new Promise<AcademicAskResponse>((resolve) => {
+      onStage("SEARCHING");
+      finish = resolve;
+    }));
+    render(<AskView />);
+
+    fillAndSend("Explain backpropagation");
+
+    expect(await screen.findByText("Searching your course files…")).toBeVisible();
+    expect(screen.queryByText("Streamed answer.")).not.toBeInTheDocument();
+    await act(async () => {
+      finish(response({ answer_text: "Streamed answer." }));
+    });
+    expect(await screen.findByText("Streamed answer.")).toBeVisible();
+    expect(screen.queryByText("Searching your course files…")).not.toBeInTheDocument();
   });
 });

@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from aaos.tasks.read_service import TaskReadService
     from aaos.tasks.service import TaskApprovalService
     from aaos.web.activity_read import ActivityReadService
+    from aaos.web.contracts import CitationEvidenceView
     from aaos.web.document_files import DocumentFile, DocumentFileService
     from aaos.web.health_read import CalendarProposalsHealth, SystemHealthService
     from aaos.web.principal import LocalApproverContextProvider
@@ -81,7 +82,6 @@ if TYPE_CHECKING:
         ActivityReader,
         ApprovedCalendarTaskExecutor,
         CourseReader,
-        DocumentFileReader,
         DocumentReader,
         SystemHealthReader,
         TaskApprovalCommands,
@@ -479,7 +479,7 @@ class _LazyDefaultDocumentFileService:
         self._engine: Engine | None = None
         self._delegate: DocumentFileService | None = None
 
-    def open_document_file(self, document_id: int) -> DocumentFile:
+    def _ensure_delegate(self) -> DocumentFileService:
         if self._delegate is None:
             from aaos.persistence.database import create_database_engine, create_session_factory
             from aaos.web.document_files import DocumentFileService
@@ -488,7 +488,16 @@ class _LazyDefaultDocumentFileService:
             self._delegate = DocumentFileService(
                 create_session_factory(self._engine), _document_content_root()
             )
-        return self._delegate.open_document_file(document_id)
+        return self._delegate
+
+    def open_document_file(self, document_id: int) -> DocumentFile:
+        return self._ensure_delegate().open_document_file(document_id)
+
+    def open_document_version_file(self, version_id: int) -> DocumentFile:
+        return self._ensure_delegate().open_document_version_file(version_id)
+
+    def read_evidence(self, version_id: int, start: int, end: int) -> CitationEvidenceView:
+        return self._ensure_delegate().read_evidence(version_id, start, end)
 
     def dispose(self) -> None:
         if self._engine is not None:
@@ -866,7 +875,7 @@ def create_app(
     resolved_ask_service = ask_service
     resolved_moodle_change_reader = moodle_change_reader
     resolved_study_task_service = study_task_service
-    document_file_reader: DocumentFileReader
+    document_file_reader: _LazyDefaultDocumentFileService | DocumentFileService
 
     if session_factory is None:
         lazy_course_reader = _LazyDefaultCourseReader()
@@ -999,6 +1008,7 @@ def create_app(
             calendar_task_executor=calendar_task_executor,
             study_task_reader=resolved_study_task_service,
             document_file_reader=document_file_reader,
+            evidence_reader=document_file_reader,
             model_selection=model_selection,
         )
     )

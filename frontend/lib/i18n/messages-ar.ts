@@ -3,6 +3,16 @@
 // here (the type check fails otherwise). {name} marks a value filled in at run time.
 
 export const AR = {
+  "Retry": "إعادة المحاولة",
+  "Citation evidence": "أدلة الاستشهاد",
+  "Source context for claim {claim}": "سياق المصدر للادعاء {claim}",
+  "Original text from the cited location. This context is not a separate claim verification result.": "النص الأصلي من الموضع المستشهد به. هذا السياق ليس نتيجة تحقق مستقلة من الادعاء.",
+  "Loading evidence…": "جارٍ تحميل الأدلة…",
+  "Evidence is unavailable. The source may no longer be accessible.": "الأدلة غير متاحة. قد لا يكون المصدر متاحاً الآن.",
+  "No extracted text is available at this location.": "لا يوجد نص مستخرج في هذا الموضع.",
+  "Excerpt shortened. Open the original for the full context.": "تم اختصار المقتطف. افتح الأصل للاطلاع على السياق الكامل.",
+  "Open original document": "فتح المستند الأصلي",
+
   // Shell and navigation
   "Overview": "نظرة عامة",
   "Courses": "المقررات",
@@ -264,6 +274,11 @@ export const AR = {
   "Enter to send · Shift+Enter for a new line.": "Enter للإرسال · Shift+Enter لسطر جديد.",
   "AAOS is thinking.": "AAOS يفكّر.",
   "AAOS is thinking…": "AAOS يفكّر…",
+  "Understanding your question…": "جارٍ فهم سؤالك…",
+  "Searching your course files…": "جارٍ البحث في ملفات مقرراتك…",
+  "Checking the files cover your question…": "جارٍ التحقق من أن الملفات تغطي سؤالك…",
+  "Writing an answer from the cited passages…": "جارٍ كتابة إجابة من المقاطع المستشهد بها…",
+  "Verifying each claim against its source…": "جارٍ التحقق من كل ادعاء مقابل مصدره…",
   "Enter a question to continue.": "اكتب سؤالًا للمتابعة.",
   "Your question is too long.": "سؤالك طويل جدًا.",
   "This browser cannot create a secure request ID. Use a current browser to continue.": "لا يستطيع هذا المتصفح إنشاء معرّف طلب آمن. استخدم متصفحًا حديثًا للمتابعة.",

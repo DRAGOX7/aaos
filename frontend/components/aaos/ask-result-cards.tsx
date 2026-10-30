@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { CitationEvidence } from "@/components/aaos/citation-evidence";
 import { PriorityBadge } from "@/components/aaos/priority-badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
@@ -72,7 +73,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
             >
               {index + 1}
             </span>
-            <span className="min-w-0">
+            <CitationEvidence citation={citation}>
               <span className="block break-words font-medium text-foreground">
                 {citation.document_title}
               </span>
@@ -97,7 +98,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
                   ? " · " + t("past course")
                   : ""}
               </span>
-            </span>
+            </CitationEvidence>
           </li>
         ))}
       </ul>

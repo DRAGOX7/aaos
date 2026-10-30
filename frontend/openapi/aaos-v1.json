@@ -1384,6 +1384,66 @@
         "title": "ChatGPTPlanUsageView",
         "type": "object"
       },
+      "CitationEvidenceView": {
+        "additionalProperties": false,
+        "description": "Original source context, not a new assertion of claim verification.",
+        "properties": {
+          "course_title": {
+            "title": "Course Title",
+            "type": "string"
+          },
+          "document_title": {
+            "title": "Document Title",
+            "type": "string"
+          },
+          "document_version_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Document Version Id",
+            "type": "integer"
+          },
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "excerpts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excerpts",
+            "type": "array"
+          },
+          "location_kind": {
+            "enum": [
+              "PAGE",
+              "STRUCTURE"
+            ],
+            "title": "Location Kind",
+            "type": "string"
+          },
+          "start": {
+            "exclusiveMinimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document_version_id",
+          "document_title",
+          "course_title",
+          "location_kind",
+          "start",
+          "end",
+          "excerpts",
+          "truncated"
+        ],
+        "title": "CitationEvidenceView",
+        "type": "object"
+      },
       "CourseListResponse": {
         "additionalProperties": false,
         "description": "Browser-safe course collection response.",
@@ -3664,6 +3724,41 @@
         "summary": "Ask Academic"
       }
     },
+    "/api/v1/ask/stream": {
+      "post": {
+        "description": "Same request and final answer as ``/ask``, delivered as SSE.",
+        "operationId": "ask_academic_stream_api_v1_ask_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcademicAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask Academic Stream"
+      }
+    },
     "/api/v1/assignments": {
       "get": {
         "operationId": "list_assignments_api_v1_assignments_get",
@@ -3767,6 +3862,104 @@
           }
         },
         "summary": "Get Course"
+      }
+    },
+    "/api/v1/document-versions/{version_id}/evidence": {
+      "get": {
+        "operationId": "get_citation_evidence_api_v1_document_versions__version_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Start",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "End",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationEvidenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Citation Evidence"
+      }
+    },
+    "/api/v1/document-versions/{version_id}/file": {
+      "get": {
+        "operationId": "get_cited_file_api_v1_document_versions__version_id__file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Version Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Cited File"
       }
     },
     "/api/v1/documents": {

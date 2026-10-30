@@ -1,6 +1,6 @@
 import type { components } from "@/types/api.generated";
 
-import { createApiError } from "@/lib/api/errors";
+import { ApiError, createApiError } from "@/lib/api/errors";
 
 export type AcademicAskRequest = components["schemas"]["AcademicAskRequest"];
 export type AcademicAskResponse = components["schemas"]["AcademicAskResponse"];
@@ -411,4 +411,113 @@ export async function fetchAcademicAsk(
     throw new MalformedAskResponseError();
   }
   return payload;
+}
+
+// Stages of a streamed Ask request. They describe which step is running and
+// never carry answer text: the answer arrives once, in the final result,
+// after evidence verification.
+export const ASK_STAGES = [
+  "RECEIVED",
+  "SEARCHING",
+  "CHECKING_COVERAGE",
+  "WRITING",
+  "VERIFYING",
+] as const;
+export type AskStage = (typeof ASK_STAGES)[number];
+
+function isAskStage(value: unknown): value is AskStage {
+  return ASK_STAGES.includes(value as AskStage);
+}
+
+type SseEvent = Readonly<{ event: string; data: string }>;
+
+function parseSseFrame(frame: string): SseEvent | null {
+  let event = "message";
+  const data: string[] = [];
+  for (const line of frame.split("\n")) {
+    if (line === "" || line.startsWith(":")) continue;
+    const separator = line.indexOf(":");
+    const field = separator === -1 ? line : line.slice(0, separator);
+    const value = separator === -1 ? "" : line.slice(separator + 1).replace(/^ /, "");
+    if (field === "event") event = value;
+    else if (field === "data") data.push(value);
+  }
+  return data.length === 0 ? null : { event, data: data.join("\n") };
+}
+
+async function* readSseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let pendingCR = false;
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        decoder.decode();
+        break;
+      }
+      let decoded = decoder.decode(value, { stream: true });
+      if (decoded.length === 0) continue;
+      if (pendingCR && decoded.startsWith("\n")) decoded = decoded.slice(1);
+      pendingCR = decoded.endsWith("\r");
+      buffer += decoded.replace(/\r\n?/g, "\n");
+      if (buffer.length > 1_048_576) throw new MalformedAskResponseError();
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const parsed = parseSseFrame(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        if (parsed) yield parsed;
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+}
+
+export async function streamAcademicAsk(
+  request: AcademicAskRequest,
+  signal?: AbortSignal,
+  onStage?: (stage: AskStage) => void,
+): Promise<AcademicAskResponse> {
+  const response = await fetch("/api/v1/ask/stream", {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw await createApiError(response, "ask");
+  }
+  if (response.body === null || !response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream")) {
+    throw new MalformedAskResponseError();
+  }
+
+  for await (const { event, data } of readSseEvents(response.body)) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      throw new MalformedAskResponseError();
+    }
+    if (event === "stage") {
+      if (isRecord(payload) && isAskStage(payload.stage)) onStage?.(payload.stage);
+      continue;
+    }
+    if (event === "result") {
+      if (!isAcademicAskResponse(payload)) throw new MalformedAskResponseError();
+      return payload;
+    }
+    if (event === "error") {
+      throw new ApiError(500, "INTERNAL_ERROR", "AAOS could not complete the request.");
+    }
+  }
+  // The stream ended without a final result.
+  throw new MalformedAskResponseError();
 }

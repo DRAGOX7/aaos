@@ -22,6 +22,7 @@ from aaos.web.activity import (
     decode_activity_cursor,
 )
 from aaos.web.activity_stream import iter_activity_sse
+from aaos.web.ask_stream import iter_ask_sse
 from aaos.web.contracts import (
     AcademicAskRagAnswerProvenanceView,
     AcademicAskRagProvenanceSummaryView,
@@ -38,6 +39,7 @@ from aaos.web.contracts import (
     AssignmentSummary,
     CalendarProposalView,
     ChatGPTPlanUsageView,
+    CitationEvidenceView,
     CourseListResponse,
     CourseSummary,
     DocumentListResponse,
@@ -131,6 +133,12 @@ class DocumentFileReader(Protocol):
     """The original file of one visible document."""
 
     def open_document_file(self, document_id: int) -> DocumentFile: ...
+
+
+class CitationEvidenceReader(Protocol):
+    def read_evidence(self, version_id: int, start: int, end: int) -> CitationEvidenceView: ...
+
+    def open_document_version_file(self, version_id: int) -> DocumentFile: ...
 
 
 class StudyTaskReader(Protocol):
@@ -268,6 +276,7 @@ def create_api_v1_router(
     study_task_reader: StudyTaskReader | None = None,
     document_file_reader: DocumentFileReader | None = None,
     model_selection: ModelSelectionPort | None = None,
+    evidence_reader: CitationEvidenceReader | None = None,
 ) -> APIRouter:
     """Create the versioned Phase 7 browser API router."""
 
@@ -431,97 +440,62 @@ def create_api_v1_router(
                 monitor_task.cancel()
                 await asyncio.gather(monitor_task, return_exceptions=True)
 
-            return AcademicAskResponse(
-                status=AcademicAskStatusView(result.status.value),
-                answer_text=result.answer_text,
-                failure_code=(
-                    result.failure_code.value if result.failure_code is not None else None
-                ),
-                failure_message=result.failure_message,
-                refusal_code=(
-                    result.refusal_code.value if result.refusal_code is not None else None
-                ),
-                sources=tuple(
-                    AcademicAskSource(
-                        tool_name=source.tool_name,
-                        entity_kind=source.entity_kind,
-                        entity_id=source.entity_id,
-                        course_id=source.course_id,
-                        title=source.title,
-                        query_filter=source.query_filter,
-                        source_ref=source.source_ref,
-                        source_turn=source.source_turn,
-                        change_id=source.change_id,
-                        from_snapshot_id=source.from_snapshot_id,
-                        to_snapshot_id=source.to_snapshot_id,
-                        changed_fields=source.changed_fields,
-                        change_kind=source.change_kind,
-                        before_due_at=source.before_due_at,
-                        after_due_at=source.after_due_at,
-                        study_task_status=source.study_task_status,
-                        study_task_priority=source.study_task_priority,
-                        study_task_due_at=source.study_task_due_at,
-                        study_task_course_id=source.study_task_course_id,
-                        study_task_course_title=source.study_task_course_title,
-                        study_task_assignment_id=source.study_task_assignment_id,
-                        study_task_assignment_title=source.study_task_assignment_title,
-                    )
-                    for source in result.sources
-                ),
-                context_sources=tuple(
-                    AcademicAskSource(
-                        tool_name=source.tool_name,
-                        entity_kind=source.entity_kind,
-                        entity_id=source.entity_id,
-                        course_id=source.course_id,
-                        title=source.title,
-                        query_filter=source.query_filter,
-                        source_ref=source.source_ref,
-                        source_turn=source.source_turn,
-                        change_id=source.change_id,
-                        from_snapshot_id=source.from_snapshot_id,
-                        to_snapshot_id=source.to_snapshot_id,
-                        changed_fields=source.changed_fields,
-                        change_kind=source.change_kind,
-                        before_due_at=source.before_due_at,
-                        after_due_at=source.after_due_at,
-                        study_task_status=source.study_task_status,
-                        study_task_priority=source.study_task_priority,
-                        study_task_due_at=source.study_task_due_at,
-                        study_task_course_id=source.study_task_course_id,
-                        study_task_course_title=source.study_task_course_title,
-                        study_task_assignment_id=source.study_task_assignment_id,
-                        study_task_assignment_title=source.study_task_assignment_title,
-                    )
-                    for source in result.context_sources
-                ),
-                rag_provenance=_academic_ask_rag_provenance_view(result.rag_provenance),
-                calendar_proposal=(
-                    CalendarProposalView(
-                        proposal_id=result.calendar_proposal.proposal_id,
-                        approval_id=result.calendar_proposal.approval_id,
-                        operation=result.calendar_proposal.operation,
-                        summary=result.calendar_proposal.summary,
-                        start=result.calendar_proposal.start,
-                        end=result.calendar_proposal.end,
-                        timezone=result.calendar_proposal.timezone,
-                        source_entity_kind=result.calendar_proposal.source_entity_kind,
-                        source_entity_id=result.calendar_proposal.source_entity_id,
-                        approval_status=ApprovalState(result.calendar_proposal.approval_status),
-                        task_status=BrowserTaskState(result.calendar_proposal.task_status),
-                        operation_state=(
-                            OperationState(result.calendar_proposal.operation_state)
-                            if result.calendar_proposal.operation_state is not None
-                            else None
-                        ),
-                    )
-                    if result.calendar_proposal is not None
-                    else None
-                ),
-                study_plan=_study_plan_view(result.study_plan),
-                step_count=result.step_count,
-                conversation_id=result.conversation_id,
-                request_id=body.request_id,
+            return _academic_ask_response(result, body.request_id)
+
+        @router.post(
+            "/ask/stream",
+            response_class=StreamingResponse,
+            responses={200: {"content": {"text/event-stream": {}}}},
+        )
+        async def ask_academic_stream(
+            request: Request,
+            body: AcademicAskRequest,
+        ) -> StreamingResponse:
+            """Same request and final answer as ``/ask``, delivered as SSE."""
+
+            async def run(cancellation: asyncio.Event) -> AcademicAskResponse:
+                result = await ask_service.ask(
+                    body.question,
+                    cancellation,
+                    conversation_id=body.conversation_id,
+                    request_id=body.request_id,
+                )
+                return _academic_ask_response(result, body.request_id)
+
+            return StreamingResponse(
+                iter_ask_sse(request, run),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-store",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+    if evidence_reader is not None:
+
+        @router.get("/document-versions/{version_id}/evidence", response_model=CitationEvidenceView)
+        def get_citation_evidence(
+            response: Response,
+            version_id: int = Path(..., gt=0),
+            start: int = Query(..., gt=0),
+            end: int = Query(..., gt=0),
+        ) -> CitationEvidenceView:
+            response.headers["Cache-Control"] = "no-store"
+            return evidence_reader.read_evidence(version_id, start, end)
+
+        @router.get("/document-versions/{version_id}/file")
+        def get_cited_file(version_id: int = Path(..., gt=0)) -> Response:
+            document = evidence_reader.open_document_version_file(version_id)
+            return Response(
+                content=document.body,
+                media_type=document.media_type,
+                headers={
+                    "Content-Disposition": "inline"
+                    if document.media_type == "application/pdf"
+                    else "attachment",
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store",
+                },
             )
 
     if document_file_reader is not None:
@@ -792,6 +766,100 @@ def _json_compatible_mapping(value: Mapping[str, object] | None) -> dict[str, ob
     if not isinstance(normalized, dict):
         raise TypeError("academic answer provenance must be an object")
     return normalized
+
+
+def _academic_ask_response(
+    result: AcademicAskResult,
+    request_id: UUID | None,
+) -> AcademicAskResponse:
+    return AcademicAskResponse(
+        status=AcademicAskStatusView(result.status.value),
+        answer_text=result.answer_text,
+        failure_code=(result.failure_code.value if result.failure_code is not None else None),
+        failure_message=result.failure_message,
+        refusal_code=(result.refusal_code.value if result.refusal_code is not None else None),
+        sources=tuple(
+            AcademicAskSource(
+                tool_name=source.tool_name,
+                entity_kind=source.entity_kind,
+                entity_id=source.entity_id,
+                course_id=source.course_id,
+                title=source.title,
+                query_filter=source.query_filter,
+                source_ref=source.source_ref,
+                source_turn=source.source_turn,
+                change_id=source.change_id,
+                from_snapshot_id=source.from_snapshot_id,
+                to_snapshot_id=source.to_snapshot_id,
+                changed_fields=source.changed_fields,
+                change_kind=source.change_kind,
+                before_due_at=source.before_due_at,
+                after_due_at=source.after_due_at,
+                study_task_status=source.study_task_status,
+                study_task_priority=source.study_task_priority,
+                study_task_due_at=source.study_task_due_at,
+                study_task_course_id=source.study_task_course_id,
+                study_task_course_title=source.study_task_course_title,
+                study_task_assignment_id=source.study_task_assignment_id,
+                study_task_assignment_title=source.study_task_assignment_title,
+            )
+            for source in result.sources
+        ),
+        context_sources=tuple(
+            AcademicAskSource(
+                tool_name=source.tool_name,
+                entity_kind=source.entity_kind,
+                entity_id=source.entity_id,
+                course_id=source.course_id,
+                title=source.title,
+                query_filter=source.query_filter,
+                source_ref=source.source_ref,
+                source_turn=source.source_turn,
+                change_id=source.change_id,
+                from_snapshot_id=source.from_snapshot_id,
+                to_snapshot_id=source.to_snapshot_id,
+                changed_fields=source.changed_fields,
+                change_kind=source.change_kind,
+                before_due_at=source.before_due_at,
+                after_due_at=source.after_due_at,
+                study_task_status=source.study_task_status,
+                study_task_priority=source.study_task_priority,
+                study_task_due_at=source.study_task_due_at,
+                study_task_course_id=source.study_task_course_id,
+                study_task_course_title=source.study_task_course_title,
+                study_task_assignment_id=source.study_task_assignment_id,
+                study_task_assignment_title=source.study_task_assignment_title,
+            )
+            for source in result.context_sources
+        ),
+        rag_provenance=_academic_ask_rag_provenance_view(result.rag_provenance),
+        calendar_proposal=(
+            CalendarProposalView(
+                proposal_id=result.calendar_proposal.proposal_id,
+                approval_id=result.calendar_proposal.approval_id,
+                operation=result.calendar_proposal.operation,
+                summary=result.calendar_proposal.summary,
+                start=result.calendar_proposal.start,
+                end=result.calendar_proposal.end,
+                timezone=result.calendar_proposal.timezone,
+                source_entity_kind=result.calendar_proposal.source_entity_kind,
+                source_entity_id=result.calendar_proposal.source_entity_id,
+                approval_status=ApprovalState(result.calendar_proposal.approval_status),
+                task_status=BrowserTaskState(result.calendar_proposal.task_status),
+                operation_state=(
+                    OperationState(result.calendar_proposal.operation_state)
+                    if result.calendar_proposal.operation_state is not None
+                    else None
+                ),
+            )
+            if result.calendar_proposal is not None
+            else None
+        ),
+        study_plan=_study_plan_view(result.study_plan),
+        step_count=result.step_count,
+        conversation_id=result.conversation_id,
+        request_id=request_id,
+    )
 
 
 def _academic_ask_rag_provenance_view(

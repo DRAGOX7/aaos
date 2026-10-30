@@ -3,8 +3,8 @@
 import { GraduationCap } from "lucide-react";
 
 import { AskResponseRenderer } from "@/components/aaos/ask-response-renderer";
-import type { AcademicAskResponse } from "@/lib/api/ask";
-import { useI18n } from "@/lib/i18n";
+import type { AcademicAskResponse, AskStage } from "@/lib/api/ask";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 
 export type AskIssueKind = "network" | "timeout" | "stopped" | "unavailable" | "malformed";
 
@@ -33,6 +33,16 @@ function AskIssueMessage({ kind, message }: { kind: AskIssueKind; message: strin
   );
 }
 
+// What AAOS is doing right now while a streamed answer is on its way. These
+// describe pipeline steps only; they say nothing about how fast the model is.
+const STAGE_LABELS: Record<AskStage, MessageKey> = {
+  RECEIVED: "Understanding your question…",
+  SEARCHING: "Searching your course files…",
+  CHECKING_COVERAGE: "Checking the files cover your question…",
+  WRITING: "Writing an answer from the cited passages…",
+  VERIFYING: "Verifying each claim against its source…",
+};
+
 function AssistantMark() {
   return (
     <span
@@ -47,9 +57,11 @@ function AssistantMark() {
 export function AskConversation({
   entries,
   pending,
+  stage = null,
 }: {
   entries: AskThreadEntry[];
   pending: boolean;
+  stage?: AskStage | null;
 }) {
   const { t } = useI18n();
   return (
@@ -90,7 +102,7 @@ export function AskConversation({
               <span className="size-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.15s] motion-reduce:animate-none" />
               <span className="size-1.5 animate-bounce rounded-full bg-primary motion-reduce:animate-none" />
             </span>
-            {t("AAOS is thinking…")}
+            {stage ? t(STAGE_LABELS[stage]) : t("AAOS is thinking…")}
           </p>
         </div>
       ) : null}

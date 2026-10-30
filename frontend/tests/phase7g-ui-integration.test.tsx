@@ -27,7 +27,7 @@ vi.mock("@/components/aaos/activity-stream", () => ({
 
 vi.mock("@/lib/api/ask", async () => ({
   ...(await vi.importActual<typeof import("@/lib/api/ask")>("@/lib/api/ask")),
-  fetchAcademicAsk: askMock,
+  streamAcademicAsk: askMock,
 }));
 
 describe("Phase 7G UI integration boundaries", () => {

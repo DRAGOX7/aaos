@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from aaos.ask_progress import AskStage, report_ask_stage
+
 from .contracts import (
     MAX_RAG_TEXT_CHARACTERS,
     AtomicRequirementDecomposition,
@@ -330,11 +332,13 @@ class LocalRagService:
         if not isinstance(query, RagQuery):
             raise RagOperationalError(RagErrorCode.INVALID_QUERY_SCOPE)
 
+        report_ask_stage(AskStage.SEARCHING)
         candidate_set = self._retrieve(query)
         fused_candidates = self._fuse(candidate_set)
         evidence = self._select(candidate_set, fused_candidates)
         sufficiency = self._evaluate(evidence, candidate_set)
         request = self._build_request(query, candidate_set, evidence)
+        report_ask_stage(AskStage.CHECKING_COVERAGE)
         atomic_decision = await self._classify_atomic_requirements(
             query, request, evidence, candidate_set, sufficiency
         )
@@ -375,7 +379,9 @@ class LocalRagService:
         ):
             output = build_insufficient_model_output(request)
         else:
+            report_ask_stage(AskStage.WRITING)
             output = await self._generate(request, sufficiency)
+        report_ask_stage(AskStage.VERIFYING)
         output = await self._verify_generated_claims(output, evidence, request)
         answer = self._validate(output, request)
         return _render(answer)
