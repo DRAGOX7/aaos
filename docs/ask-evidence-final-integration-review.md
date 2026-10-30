@@ -301,9 +301,40 @@ the full original bytes, consistent with the existing file service.
 - Resolve the two preexisting formatting files and lint/dependency notices in
   separate maintenance work if desired.
 
-Integration correction commit: `b179aa53` on
-`codex/ask-evidence-final-integration`. The local merge and post-merge smoke
-record will be appended after the normal merge completes.
+Integration correction commit: `b179aa53`. Reviewed integration branch tip:
+`00b3b596cdd012af1e5f515400990559b6a9a589` on
+`codex/ask-evidence-final-integration`.
+
+Local merge completed using:
+
+```powershell
+git switch main
+git merge --no-ff codex/ask-evidence-final-integration -m "Merge verified Ask streaming and evidence integration"
+```
+
+Merge commit: **`20bdcff348b8a2a72812763d64c797e3454d004f`**. Its parents are
+the original main `621288d8` and verified integration tip `00b3b596`.
+`git merge-base --is-ancestor` succeeded for all three requested commits against
+main. `git diff --exit-code HEAD^2 HEAD -- src frontend tests` confirmed the
+merge's code and tests equal the tested integration branch. No conflicts occurred.
+
+Post-merge smoke:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/test_ask_stream.py tests/test_ask_local_topic_reference.py tests/test_document_files_and_study_tasks_api.py tests/test_phase7d_scope_audit.py tests/test_rag_service.py tests/test_phase7_documents_api.py tests/test_phase7g_route_inventory.py
+# from frontend:
+npx --no-install vitest run tests/ask-stream.test.ts tests/ask-view.test.tsx tests/evidence-inspector-v2.test.tsx tests/citation-evidence.test.tsx tests/evidence-alignment.test.ts --maxWorkers=2
+```
+
+**99 backend passed** (9.11 seconds); **87 frontend passed / 5 files**
+(7.59 seconds). Final branch is local `main`; this report receives a separate
+documentation-only commit after the merge to record the known merge hash and
+smoke results. Feature/evaluation branches remain preserved. No push or PR.
+
+Read-only live/browser probes ran as disposable `.integration-live.py`,
+`.integration-browser.py`, `.integration-browser-ar.py` and
+`.integration-browser-dark.py` using `.venv\Scripts\python.exe`; the probe files
+and metadata-only logs were removed after their results were recorded here.
 
 Tool-reported security-scan rollup: 7,235,096 total tokens (7,210,315 input,
 including 7,012,096 cached input; 24,781 output). This is the plugin's rollout
