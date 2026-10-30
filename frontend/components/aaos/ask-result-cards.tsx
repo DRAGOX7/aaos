@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { CitationEvidence } from "@/components/aaos/citation-evidence";
 import { PriorityBadge } from "@/components/aaos/priority-badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
@@ -72,9 +73,9 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
             >
               {index + 1}
             </span>
-            <span className="min-w-0">
+            <CitationEvidence citation={citation}>
               <span className="block break-words font-medium text-foreground">
-                {citation.document_title}
+                <bdi dir="auto">{citation.document_title}</bdi>
               </span>
               <span className="block break-words text-muted-foreground">
                 {"page_start" in citation
@@ -85,7 +86,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
                       ? t("Unit {unit}", { unit: citation.unit_start })
                       : t("Units {start}–{end}", { start: citation.unit_start, end: citation.unit_end })}
                 {" · " + t("Version {version}", { version: citation.document_version_id })}
-                {"heading" in citation && citation.heading ? " · " + citation.heading : ""}
+                {"heading" in citation && citation.heading ? <> · <bdi dir="auto">{citation.heading}</bdi></> : null}
                 {"table_index" in citation && citation.table_index != null
                   ? " · " + t("Table {table}, row {row}, column {column}", {
                       table: citation.table_index + 1,
@@ -97,7 +98,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
                   ? " · " + t("past course")
                   : ""}
               </span>
-            </span>
+            </CitationEvidence>
           </li>
         ))}
       </ul>

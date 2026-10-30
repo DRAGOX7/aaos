@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from aaos.moodle.changes import ChangeField, ChangeKind, EntityType
 
+from .intent_router import has_bilingual_write_intent
 from .study_plan_contracts import StudyPlanContext
 
 MAX_CONVERSATION_TURNS = 8
@@ -57,6 +58,7 @@ _GENERIC_REFERENCE = re.compile(
     r"\b(?:"
     r"(?:about|for|to|with|on|from|in|regarding)\s+(?:it|that)"
     r"|(?:related|relevant)\s+to\s+(?:it|that)"
+    r"|compare\s+this"
     r"|(?:explain|describe|summarize|expand\s+on|compare|show|list|find|read|open|repeat|clarify)"
     r"\s+(?:it|that)"
     r"|(?:what|when|where|why|how|is|are|was|were|does|did|can|could|should|would|will|has|have)"
@@ -66,6 +68,16 @@ _GENERIC_REFERENCE = re.compile(
     r"|(?:match|reflect|apply)\s+(?:it|that)\b"
     r"|(?:change|set)\s+its\s+(?:priority|title|name)\b"
     r")\b"
+)
+# A named topic in this message is query text, not a trusted record alias.
+_LOCAL_TOPIC_PREFIX = re.compile(
+    r"^what\s+(?:is|are)\s+(?P<topic>[^?!.;:]+)[?!.]\s*(?:please\s+)?$"
+)
+_LOCAL_EXPLANATION = re.compile(r"(?:explain|describe|summarize|clarify|expand\s+on)\s+it")
+_DEICTIC_REFERENCE = re.compile(r"\b(?:it|its|this|that|these|those|them|they)\b")
+_RECORD_OR_DEICTIC_TOPIC = re.compile(
+    r"\b(?:it|this|that|these|those|them|they|one|my|our|your|their|his|her|its|"
+    r"courses?|assignments?|documents?|tasks?|changes?|deadlines?)\b"
 )
 _CHANGE_REFERENCE = re.compile(
     r"\b(?:that|this|the)\s+"
@@ -705,7 +717,20 @@ class ContextReferenceResolver:
             if all_changes:
                 return ContextResolution(ContextResolutionStatus.MISSING)
 
-        if _GENERIC_REFERENCE.search(normalized) is not None:
+        generic = _GENERIC_REFERENCE.search(normalized)
+        if generic is not None:
+            topic = _LOCAL_TOPIC_PREFIX.fullmatch(normalized[: generic.start()])
+            if (
+                topic is not None
+                and _RECORD_OR_DEICTIC_TOPIC.search(topic.group("topic")) is None
+                and _LOCAL_EXPLANATION.fullmatch(generic.group()) is not None
+                and _DEICTIC_REFERENCE.search(normalized[generic.end() :]) is None
+                and not has_bilingual_write_intent(normalized)
+            ):
+                # "What is KNIME? Explain it ..." refers within this question.
+                # Explicit IDs/typed/ordinal references above still fail closed;
+                # further pronouns must still resolve against trusted context.
+                return ContextResolution(ContextResolutionStatus.NONE)
             if snapshot.active_entity is not None:
                 return _resolved(snapshot.active_entity)
             candidates = _unique_entities(snapshot.last_collection or snapshot.entities)

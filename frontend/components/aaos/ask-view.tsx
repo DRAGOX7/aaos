@@ -16,14 +16,16 @@ import {
 } from "lucide-react";
 
 import { AskConversation, type AskIssueKind, type AskThreadEntry } from "@/components/aaos/ask-conversation";
+import { EvidenceWorkspace } from "@/components/aaos/citation-evidence";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
 import { takeAskHandoff } from "@/lib/ask/handoff";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import {
-  fetchAcademicAsk,
   MalformedAskResponseError,
+  streamAcademicAsk,
   type AcademicAskRequest,
+  type AskStage,
 } from "@/lib/api/ask";
 
 const ASK_CLIENT_TIMEOUT_MS = 60_000;
@@ -100,6 +102,7 @@ export function AskView() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [entries, setEntries] = useState<AskThreadEntry[]>([]);
   const [pending, setPending] = useState(false);
+  const [stage, setStage] = useState<AskStage | null>(null);
   const [validationMessage, setValidationMessage] = useState<MessageKey | null>(null);
   const requestInFlight = useRef(false);
   const activeController = useRef<AbortController | null>(null);
@@ -157,6 +160,7 @@ export function AskView() {
     ]);
     setQuestion("");
     setPending(true);
+    setStage(null);
 
     const controller = new AbortController();
     activeController.current = controller;
@@ -166,7 +170,9 @@ export function AskView() {
     }, ASK_CLIENT_TIMEOUT_MS);
 
     try {
-      const response = await fetchAcademicAsk(request, controller.signal);
+      // The answer is delivered as a stream of stage updates followed by the
+      // final, evidence-verified result; only the waiting indicator changes.
+      const response = await streamAcademicAsk(request, controller.signal, setStage);
       if (response.refusal_code === "STALE_CONTEXT") {
         setConversationId(null);
       } else if (response.conversation_id) {
@@ -203,6 +209,7 @@ export function AskView() {
       requestInFlight.current = false;
       activeController.current = null;
       setPending(false);
+      setStage(null);
     }
   }
 
@@ -234,7 +241,7 @@ export function AskView() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
+    <EvidenceWorkspace key={entries[0]?.id ?? "empty"}><div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
@@ -296,7 +303,7 @@ export function AskView() {
         </section>
       ) : null}
 
-      <AskConversation entries={entries} pending={pending} />
+      <AskConversation entries={entries} pending={pending} stage={stage} />
 
       <div className="sticky bottom-0 z-10 mt-auto bg-[linear-gradient(to_top,var(--aaos-background)_70%,transparent)] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
         <form
@@ -352,6 +359,6 @@ export function AskView() {
           {pending ? t("AAOS is thinking.") : ""}
         </p>
       </div>
-    </div>
+    </div></EvidenceWorkspace>
   );
 }
