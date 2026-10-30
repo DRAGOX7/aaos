@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { AskConversation, type AskIssueKind, type AskThreadEntry } from "@/components/aaos/ask-conversation";
+import { EvidenceWorkspace } from "@/components/aaos/citation-evidence";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/errors";
 import { takeAskHandoff } from "@/lib/ask/handoff";
@@ -240,7 +241,7 @@ export function AskView() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
+    <EvidenceWorkspace key={entries[0]?.id ?? "empty"}><div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] w-full max-w-3xl flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
@@ -358,6 +359,6 @@ export function AskView() {
           {pending ? t("AAOS is thinking.") : ""}
         </p>
       </div>
-    </div>
+    </div></EvidenceWorkspace>
   );
 }

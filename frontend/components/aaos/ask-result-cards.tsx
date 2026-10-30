@@ -75,7 +75,7 @@ export function RagCitationList({ provenance }: { provenance: RagProvenance }) {
             </span>
             <CitationEvidence citation={citation}>
               <span className="block break-words font-medium text-foreground">
-                {citation.document_title}
+                <bdi dir="auto">{citation.document_title}</bdi>
               </span>
               <span className="block break-words text-muted-foreground">
                 {"page_start" in citation

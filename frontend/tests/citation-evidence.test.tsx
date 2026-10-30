@@ -31,12 +31,13 @@ describe("citation inspection", () => {
     const dialog = await screen.findByRole("dialog", { name: "Algorithms" });
     expect(await screen.findByText("Exact source text.")).toBeVisible();
     expect(screen.getByText("AI380")).toBeVisible();
-    expect(screen.getByText(/Source context for claim claim-1/)).toBeVisible();
+    expect(screen.getByRole("region", { name: "Source context" })).toBeVisible();
+    expect(screen.getByText(/Exact highlighting is unavailable/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Open original document" })).toHaveAttribute("href", "/api/v1/document-versions/31/file#page=2");
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/document-versions/31/evidence?start=2&end=2", expect.any(Object));
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
     fireEvent.click(screen.getByRole("button", { name: /Lecture notes/ }));
     expect(await screen.findByText("Structural original.")).toBeVisible();
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/document-versions/42/evidence?start=4&end=5", expect.any(Object));

@@ -1138,3 +1138,167 @@ def test_unsupported_answer_skips_the_writing_stage_but_is_still_verified() -> N
     assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
     assert AskStage.WRITING not in stages
     assert stages[-1] is AskStage.VERIFYING
+
+
+def test_inspection_records_only_validated_claim_and_original_retrieved_span() -> None:
+    from aaos.agent.phase4_adapter import _response_payload
+    from aaos.rag.inspection import INSPECTIONS
+    from aaos.web.inspection import enrich_inspection
+    from aaos.web.routes import _academic_ask_rag_provenance_view
+
+    records = []
+    token = INSPECTIONS.set(records)
+    try:
+        service, *_ = _service()
+        result = _ask(service)
+    finally:
+        INSPECTIONS.reset(token)
+    projected = _academic_ask_rag_provenance_view(_response_payload(result))
+    enriched = enrich_inspection(projected, records)
+    assert enriched is not None
+    inspection = enriched.citations[0].inspection
+    assert inspection is not None
+    assert inspection.claim_text == result.answer.claims[0].text
+    assert inspection.passages[0].text == EVIDENCE[0].exact_text
+    assert inspection.document_version_id == 101
+    assert inspection.kind == "RETRIEVED_PASSAGE"
+    assert INSPECTIONS.get() is None
+    # A final answer from another version/revision must not inherit the binding.
+    stale = projected.model_copy(update={"content_revision": 999})
+    assert enrich_inspection(stale, records).citations[0].inspection is None
+    changed_citation = projected.citations[0].model_copy(update={"document_version_id": 999})
+    changed = projected.model_copy(update={"citations": (changed_citation,)})
+    assert enrich_inspection(changed, records).citations[0].inspection is None
+
+
+def test_insufficient_answers_cannot_publish_inspection_metadata() -> None:
+    from aaos.rag.inspection import INSPECTIONS
+
+    records = []
+    token = INSPECTIONS.set(records)
+    try:
+        service, *_ = _service(
+            selector=FakeSelector(()), gate=FakeGate(SufficiencyStatus.UNSUPPORTED)
+        )
+        assert _ask(service).answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    finally:
+        INSPECTIONS.reset(token)
+    assert records == []
+
+
+def test_ask_json_and_stream_share_optional_inspection_without_agent_schema_changes() -> None:
+    import json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from aaos.agent.academic_orchestrator import AcademicAskResult, AcademicAskStatus
+    from aaos.agent.phase4_adapter import _response_payload
+    from aaos.web.routes import create_api_v1_router
+
+    class Courses:
+        def list_courses(self):
+            return ()
+
+    class Ask:
+        async def ask(self, question, cancellation=None, **kwargs):
+            service, *_ = _service()
+            response = await service.ask(QUERY)
+            payload = _response_payload(response)
+            # The agent observation still carries only its original closed citation shape.
+            assert "inspection" not in payload["citations"][0]
+            return AcademicAskResult(
+                AcademicAskStatus.ANSWERED,
+                answer_text=response.answer.answer_text,
+                step_count=1,
+                rag_provenance=payload,
+            )
+
+    app = FastAPI()
+    app.include_router(create_api_v1_router(Courses(), ask_service=Ask()))
+    with TestClient(app) as client:
+        plain = client.post("/api/v1/ask", json={"question": "Explain the deadline"})
+        streamed = client.post("/api/v1/ask/stream", json={"question": "Explain the deadline"})
+    assert plain.status_code == streamed.status_code == 200
+    frames = streamed.text.split("\n\n")
+    final = next(frame for frame in frames if frame.startswith("event: result"))
+    assert json.loads(final.split("data: ", 1)[1]) == plain.json()
+    inspection = plain.json()["rag_provenance"]["citations"][0]["inspection"]
+    assert inspection["claim_text"] == "The deadline is Friday."
+    assert inspection["passages"][0]["text"] == EVIDENCE[0].exact_text
+    assert all("inspection" not in frame for frame in frames if frame.startswith("event: stage"))
+
+
+def test_parallel_inspection_collectors_remain_request_local() -> None:
+    from aaos.rag.inspection import INSPECTIONS
+
+    async def one():
+        records = []
+        token = INSPECTIONS.set(records)
+        try:
+            await asyncio.sleep(0)
+            service, *_ = _service()
+            await service.ask(QUERY)
+            await asyncio.sleep(0)
+            assert INSPECTIONS.get() is records
+            assert len(records) == 1
+            return records[0]
+        finally:
+            INSPECTIONS.reset(token)
+
+    async def scenario():
+        first, second = await asyncio.gather(one(), one())
+        assert first is not second
+        assert INSPECTIONS.get() is None
+
+    asyncio.run(scenario())
+
+
+def test_ambiguous_claim_chunks_do_not_publish_an_arbitrary_passage() -> None:
+    from aaos.rag.inspection import INSPECTIONS
+
+    second = replace(EVIDENCE[0], evidence_id="ev-2", chunk_key="chunk-2")
+    retriever = FakeRetriever()
+    output = _output(claims=(RagClaim("claim-1", "The deadline is Friday.", ("ev-1", "ev-2")),))
+    records = []
+    token = INSPECTIONS.set(records)
+    try:
+        service, *_ = _service(
+            retriever=retriever,
+            selector=FakeSelector((EVIDENCE[0], second)),
+            generator=FakeGenerator(retriever, output),
+        )
+        result = _ask(service)
+    finally:
+        INSPECTIONS.reset(token)
+    assert result.answer.status is RagAnswerStatus.ANSWER
+    assert records and records[0].bindings == ()
+
+
+def test_rejected_claims_publish_no_inspection_and_no_preverification_metadata() -> None:
+    from aaos.rag.inspection import INSPECTIONS
+
+    records = []
+
+    class RejectingVerifier:
+        async def verify(self, claim, *, evidence, **kwargs):
+            assert records == []
+            return EntailmentResult.NOT_ENTAILED
+
+    retriever = FakeRetriever()
+    service = GuardedLocalRagService(
+        retriever=retriever,
+        evidence_selector=FakeSelector(),
+        sufficiency_gate=FakeGate(),
+        answer_generator=FakeGenerator(retriever, _output()),
+        citation_validator=CitationValidator(),
+        semantic_classifier=FakeSemanticClassifier(),
+        claim_entailment_verifier=RejectingVerifier(),
+    )
+    token = INSPECTIONS.set(records)
+    try:
+        result = _ask(service)
+    finally:
+        INSPECTIONS.reset(token)
+    assert result.answer.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert records == []

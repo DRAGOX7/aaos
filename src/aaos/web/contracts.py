@@ -136,12 +136,37 @@ class AcademicAskSource(BaseModel):
     study_task_assignment_title: str | None = Field(default=None, max_length=500)
 
 
+class CitationPassageView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    location: int = Field(gt=0)
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    text: str = Field(min_length=1, max_length=16000)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "CitationPassageView":
+        if self.end <= self.start:
+            raise ValueError("passage offsets must be ordered")
+        return self
+
+
+class CitationInspectionView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    document_version_id: int = Field(gt=0)
+    claim_text: str = Field(min_length=1, max_length=4096)
+    kind: Literal["RETRIEVED_PASSAGE"] = "RETRIEVED_PASSAGE"
+    passages: tuple[CitationPassageView, ...] = Field(min_length=1, max_length=4)
+
+
 class AcademicAskRagPageCitationView(BaseModel):
     """Trusted page citation carried by the bounded Ask RAG projection."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     claim_id: str = Field(min_length=1, max_length=255)
+    inspection: CitationInspectionView | None = None
     document_version_id: int = Field(gt=0)
     document_title: str = Field(min_length=1, max_length=2048)
     page_start: int = Field(gt=0)
@@ -160,6 +185,7 @@ class AcademicAskRagStructuralCitationView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     claim_id: str = Field(min_length=1, max_length=255)
+    inspection: CitationInspectionView | None = None
     document_version_id: int = Field(gt=0)
     document_title: str = Field(min_length=1, max_length=2048)
     unit_start: int = Field(gt=0)

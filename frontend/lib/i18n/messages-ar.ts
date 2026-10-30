@@ -3,6 +3,14 @@
 // here (the type check fails otherwise). {name} marks a value filled in at run time.
 
 export const AR = {
+  "Evidence inspector": "فاحص الأدلة",
+  "Selected claim": "الادعاء المحدد",
+  "Retrieved passage": "المقطع المسترجع",
+  "Source context": "سياق المصدر",
+  "Surrounding source context": "سياق المصدر المحيط",
+  "Highlight locates a cited retrieved passage, not a minimal verified claim span.": "يحدد التظليل موضع المقطع المسترجع المستشهد به، ولا يحدد أدنى نص يثبت الادعاء.",
+  "Exact highlighting is unavailable for some source locations. The answer's verification status is unchanged.": "التظليل الدقيق غير متاح لبعض مواضع المصدر. تبقى حالة التحقق من الإجابة كما هي.",
+
   "Retry": "إعادة المحاولة",
   "Citation evidence": "أدلة الاستشهاد",
   "Source context for claim {claim}": "سياق المصدر للادعاء {claim}",

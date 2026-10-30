@@ -14,6 +14,7 @@ from fastapi.responses import Response, StreamingResponse
 from aaos.agent.academic_orchestrator import AcademicAskResult
 from aaos.agent.study_plan_contracts import StudyPlan, StudyPlanSourceReference
 from aaos.inference.selection import ModelSelectionError
+from aaos.rag.inspection import INSPECTIONS, InspectionRecord
 from aaos.tasks.contracts import BrowserTaskState
 from aaos.web.activity import (
     ActivityCursor,
@@ -66,6 +67,7 @@ from aaos.web.contracts import (
 )
 from aaos.web.errors import Phase7ApiError
 from aaos.web.health import SystemHealthResponse
+from aaos.web.inspection import enrich_inspection
 from aaos.web.mutation_security import MutationRequestRejected, enforce_mutation_fence
 
 if TYPE_CHECKING:
@@ -411,20 +413,34 @@ def create_api_v1_router(
 
     if ask_service is not None:
 
+        async def execute_ask(
+            body: AcademicAskRequest, cancellation: asyncio.Event
+        ) -> AcademicAskResponse:
+            records: list[InspectionRecord] = []
+            token = INSPECTIONS.set(records)
+            try:
+                result = await ask_service.ask(
+                    body.question,
+                    cancellation,
+                    conversation_id=body.conversation_id,
+                    request_id=body.request_id,
+                )
+                response = _academic_ask_response(result, body.request_id)
+                return response.model_copy(
+                    update={
+                        "rag_provenance": enrich_inspection(response.rag_provenance, records),
+                    }
+                )
+            finally:
+                INSPECTIONS.reset(token)
+
         @router.post("/ask", response_model=AcademicAskResponse)
         async def ask_academic(
             request: Request,
             body: AcademicAskRequest,
         ) -> AcademicAskResponse:
             cancellation = asyncio.Event()
-            ask_task = asyncio.create_task(
-                ask_service.ask(
-                    body.question,
-                    cancellation,
-                    conversation_id=body.conversation_id,
-                    request_id=body.request_id,
-                )
-            )
+            ask_task = asyncio.create_task(execute_ask(body, cancellation))
 
             async def monitor_disconnect() -> None:
                 while not ask_task.done():
@@ -435,12 +451,12 @@ def create_api_v1_router(
 
             monitor_task = asyncio.create_task(monitor_disconnect())
             try:
-                result = await ask_task
+                response = await ask_task
             finally:
                 monitor_task.cancel()
                 await asyncio.gather(monitor_task, return_exceptions=True)
 
-            return _academic_ask_response(result, body.request_id)
+            return response
 
         @router.post(
             "/ask/stream",
@@ -454,13 +470,7 @@ def create_api_v1_router(
             """Same request and final answer as ``/ask``, delivered as SSE."""
 
             async def run(cancellation: asyncio.Event) -> AcademicAskResponse:
-                result = await ask_service.ask(
-                    body.question,
-                    cancellation,
-                    conversation_id=body.conversation_id,
-                    request_id=body.request_id,
-                )
-                return _academic_ask_response(result, body.request_id)
+                return await execute_ask(body, cancellation)
 
             return StreamingResponse(
                 iter_ask_sse(request, run),

@@ -384,7 +384,11 @@ class LocalRagService:
         report_ask_stage(AskStage.VERIFYING)
         output = await self._verify_generated_claims(output, evidence, request)
         answer = self._validate(output, request)
-        return _render(answer)
+        response = _render(answer)
+        from aaos.rag.inspection import record_inspection
+
+        record_inspection(response, evidence)
+        return response
 
     def _retrieve(self, query: RagQuery) -> RetrievalCandidateSet:
         try:

@@ -497,6 +497,7 @@ export interface components {
             document_title: string;
             /** Document Version Id */
             document_version_id: number;
+            inspection?: components["schemas"]["CitationInspectionView"] | null;
             /** Page End */
             page_end: number;
             /** Page Start */
@@ -529,6 +530,7 @@ export interface components {
             document_version_id: number;
             /** Heading */
             heading?: string | null;
+            inspection?: components["schemas"]["CitationInspectionView"] | null;
             /** Row Index */
             row_index?: number | null;
             /** Table Index */
@@ -897,6 +899,32 @@ export interface components {
             start: number;
             /** Truncated */
             truncated: boolean;
+        };
+        /** CitationInspectionView */
+        CitationInspectionView: {
+            /** Claim Text */
+            claim_text: string;
+            /** Document Version Id */
+            document_version_id: number;
+            /**
+             * Kind
+             * @default RETRIEVED_PASSAGE
+             * @constant
+             */
+            kind: "RETRIEVED_PASSAGE";
+            /** Passages */
+            passages: components["schemas"]["CitationPassageView"][];
+        };
+        /** CitationPassageView */
+        CitationPassageView: {
+            /** End */
+            end: number;
+            /** Location */
+            location: number;
+            /** Start */
+            start: number;
+            /** Text */
+            text: string;
         };
         /**
          * CourseListResponse

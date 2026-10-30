@@ -164,6 +164,22 @@ function isSource(value: unknown): value is AcademicAskSource {
   return true;
 }
 
+export function isCitationInspection(value: unknown, citation: Record<string, unknown>): boolean {
+  if (value == null) return true; // Historical answers have no passage metadata.
+  if (!isRecord(value) || value.document_version_id !== citation.document_version_id
+    || value.kind !== "RETRIEVED_PASSAGE" || !isBoundedString(value.claim_text, 4096)
+    || !value.claim_text || !Array.isArray(value.passages) || value.passages.length < 1
+    || value.passages.length > 4) return false;
+  const start = "page_start" in citation ? citation.page_start : citation.unit_start;
+  const end = "page_end" in citation ? citation.page_end : citation.unit_end;
+  return value.passages.every((passage) => isRecord(passage)
+    && isInteger(passage.location) && typeof start === "number" && typeof end === "number"
+    && passage.location >= start && passage.location <= end
+    && isInteger(passage.start) && passage.start >= 0
+    && isInteger(passage.end) && passage.end > passage.start
+    && isBoundedString(passage.text, 16000) && passage.text.length > 0);
+}
+
 function isRagCitation(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (
